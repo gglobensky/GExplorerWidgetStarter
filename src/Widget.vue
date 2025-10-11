@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from '/src/runtime/vue.ts'
+import { ref, computed, watch } from '/runtime/vue.js'
 import { fsListDir, fsValidate } from '/src/bridge/ipc.ts'
 
 type HostAction = { type: 'nav'; to: string } | { type: 'openUrl'; url: string }
@@ -15,7 +15,7 @@ const cfg = computed(() => ({
   view: props.config?.view || {}
 }))
 
-const cwd = ref<string>(String(cfg.value.data.rpath || ''))
+const cwd = ref<string>('')
 const entries = ref<Array<{ name: string; fullPath: string }>>([])
 const loading = ref(false)
 const error = ref<string>('')
@@ -41,7 +41,19 @@ async function open(fullPath: string) {
   }
 }
 
-onMounted(() => { if (cwd.value) loadDir(cwd.value) })
+// react to rpath (or fallback to targetPath) immediately & on changes
+watch(
+  () => [cfg.value.data.rpath, cfg.value.data.targetPath],
+  ([r, t]) => {
+    const next = String(r ?? t ?? '')
+    if (next !== cwd.value) {
+      cwd.value = next
+      if (next) loadDir(next)
+      else entries.value = []
+    }
+  },
+  { immediate: true }
+)
 </script>
 
 <template>

@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "vite build",
-    "watch": "vite build --watch",
+    "build": "vite build -c vite.config.ts",
+    "watch": "vite build -c vite.config.ts --watch",
     "typecheck": "vue-tsc --noEmit"
   },
   "devDependencies": {

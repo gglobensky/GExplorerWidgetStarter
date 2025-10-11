@@ -1,32 +1,71 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
-import cssInjectedByJsPlugin from 'vite-plugin-css-injected-by-js'
-import enforceScopedStyles from './tools/enforceScopedStyles'
+import cssInjectedByJs from 'vite-plugin-css-injected-by-js'
+import fs from 'node:fs'
+import path from 'node:path'
 
-// Where to write the single-file output.
-// Example (Windows):
-//   set OUTPUT_DIR=C:\path\to\GExplorer\UserInterface\public\runtime-widgets\my-widget
-const OUT = process.env.OUTPUT_DIR || 'dist'
+// Load per-widget build knobs
+const cfgPath = path.resolve(process.cwd(), 'widget.build.json')
+const cfg = fs.existsSync(cfgPath) ? JSON.parse(fs.readFileSync(cfgPath, 'utf-8')) : {}
 
-// Single-file, externalize host imports (/src/...); keep filename index.js
+const widgetType = process.env.WIDGET_TYPE || cfg.widgetType || 'hello'
+const outPublic = process.env.OUTPUT_PUBLIC_DIR || cfg.outputPublicDir || ''
+const outDir = path.join(outPublic, 'runtime-widgets', widgetType)
+
+// Detect watch mode (so we don't drop console in dev/watch)
+const isWatch = process.argv.includes('--watch') || process.env.WATCH === 'true'
+
+// Sourcemap toggle (env overrides file)
+const sourceMap =
+  process.env.SOURCEMAP ? process.env.SOURCEMAP === 'true' : Boolean(cfg.sourcemap)
+
+// Helper: mark host-resolved imports as external
+function isHostExternal(id: string) {
+  return (
+    id === 'vue' ||
+    id === '/runtime/vue.js' ||
+    id.startsWith('/src/') ||
+    id.startsWith('/runtime/')
+  )
+}
+
 export default defineConfig({
-  plugins: [enforceScopedStyles(), vue(), cssInjectedByJsPlugin()],
+  plugins: [
+    vue(),
+    cssInjectedByJs(),
+    // (Keep your scoped-style enforcement plugin if you have it)
+    // enforceScopedStyles()
+  ],
+  define: {
+    'process.env.NODE_ENV': JSON.stringify('production'),
+    globalThis: 'window',
+  },
   build: {
-    outDir: OUT,
-    emptyOutDir: false,
+    target: 'es2020',
+    sourcemap: sourceMap,
+    minify: 'esbuild',
     cssCodeSplit: false,
-    sourcemap: false,
+    outDir,
+    emptyOutDir: true,
+    assetsDir: '.',
     lib: {
-      entry: 'src/entry.ts',
+      entry: path.resolve(process.cwd(), 'src/entry.ts'),
       formats: ['es'],
-      fileName: () => 'index'
+      fileName: () => 'index.js',
     },
     rollupOptions: {
-      external: (id) => id.startsWith('/src/'), // leave host modules for runtime
+      // Do not bundle the host or vue — they’re provided at runtime
+      external: (id) => isHostExternal(id),
       output: {
-        entryFileNames: 'index.js',
-        assetFileNames: 'index.[ext]'
-      }
-    }
-  }
+        // Re-map 'vue' to the host shim URL in case an author imports 'vue'
+        paths: {
+          vue: '/runtime/vue.js',
+        },
+      },
+    },
+    esbuild: {
+      // Keep console in watch/dev; strip in release builds
+      drop: isWatch ? [] : ['console', 'debugger'],
+    },
+  },
 })
