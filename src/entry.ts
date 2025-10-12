@@ -2,12 +2,12 @@ import Widget from './Widget.vue'
 
 export default {
   api: '1.0',
-  id: 'hello',
-  version: '0.0.1',
+  id: 'items',
+  version: '0.3.1',
   Component: Widget,
   defaults: {
-    data: { message: 'Hello, World!', targetPath: '' },
-    view: { buttonLabel: 'Open', layout: 'card' }
+    data: { rpath: '' },
+    view: { layout: 'list', columns: 1, itemSize: 'md', showHidden: false, navigateMode: 'internal' }
   },
   capabilities: []
 }
