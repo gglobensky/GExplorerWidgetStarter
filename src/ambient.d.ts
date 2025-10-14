@@ -7,8 +7,6 @@ declare module '/src/runtime/vue.ts' {
 declare module '/src/bridge/ipc.ts' {
   export type DirEntry = { name: string; fullPath: string }
 
-  export function send<T = any>(type: string, payload?: any, timeoutMs?: number): Promise<T>
-
   export function fsValidate(path: string): Promise<{
     ok: boolean; exists: boolean; isDir: boolean; path: string; error?: string
   }>
@@ -17,9 +15,50 @@ declare module '/src/bridge/ipc.ts' {
     ok: boolean; basePath?: string; entries: DirEntry[]; error?: string
   }>
 
+  export function fsListDirWithAuth(widgetType: string, widgetId: string, path: string): Promise<{
+    ok: boolean; basePath?: string; entries: DirEntry[]; error?: string
+  }>
+
   export function fsDriveStats(roots: string[]): Promise<Array<{
     root: string; ready: boolean; total: number; free: number; used: number; error?: string
   }>>
+  
+  export function fsOpen(path: string): Promise<{ ok: boolean; error?: string }>
+
+  export function shortcutsProbe(paths: string[]): Promise<{
+    results: Array<{ path: string; IconKey: string }>
+  }>
+}
+
+// Network bridge (gated by permissions)
+declare module '/src/bridge/network.ts' {
+  export function networkFetch(
+    widgetType: string,
+    widgetId: string,
+    url: string,
+    options?: {
+      method?: string
+      headers?: Record<string, string>
+      body?: string
+    }
+  ): Promise<{
+    ok: boolean
+    status: number
+    statusText: string
+    json: () => Promise<any>
+    text: () => Promise<string>
+  }>
+}
+
+// Consent service
+declare module '/src/consent/service' {
+  export function ensureConsent(
+    widgetType: string,
+    widgetId: string,
+    path: string,
+    caps: string[],
+    options?: { afterDenied?: boolean }
+  ): Promise<boolean>
 }
 
 // Example host shared lib
