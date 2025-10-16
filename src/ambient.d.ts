@@ -66,3 +66,96 @@ declare module '/src/runtime/libs/dayjs.ts' {
   import dayjs from 'dayjs'
   export { dayjs }
 }
+
+// ============================================
+// WIDGET DEFINITION TYPES (GLOBAL)
+// ============================================
+
+// Standard layout IDs
+type GridLayoutId = 'list' | 'grid' | 'details'
+type SidebarLayoutId = 'compact' | 'expanded'
+
+// Context configurations
+interface GridContext {
+  size: {
+    minCols: number
+    minRows: number
+    maxCols?: number
+    maxRows?: number
+    defaultCols: number
+    defaultRows: number
+  }
+  layouts?: Array<{
+    id: GridLayoutId | string
+    icon?: string
+    tooltip?: string
+  }>
+  controls?: {
+    columns?: { 
+      min: number
+      max: number
+      default: number
+      appliesTo?: string[]
+    }
+    itemSize?: { 
+      options: Array<'sm' | 'md' | 'lg'>
+      default: 'sm' | 'md' | 'lg' 
+    }
+  }
+}
+
+interface SidebarContext {
+  size: {
+    minHeight: number
+    maxHeight?: number
+    defaultHeight: number
+  }
+  layouts?: Array<{
+    id: SidebarLayoutId | string
+    icon?: string
+    tooltip?: string
+  }>
+}
+
+// Widget placement info (passed to widget as prop)
+interface WidgetPlacement {
+  context: 'grid' | 'sidebar' | 'embedded'
+  layout: string
+  size: {
+    width?: number
+    height?: number
+    cols?: number
+    rows?: number
+  }
+}
+
+// Widget definition
+interface WidgetDefinition {
+  api: '1.0'
+  id: string
+  version: string
+  Component: any
+  
+  contexts: {
+    grid?: GridContext
+    sidebar?: SidebarContext
+  }
+  
+  defaults: Record<string, any>
+  capabilities: string[]
+}
+
+// Props that every widget receives
+interface WidgetProps {
+  config?: Record<string, any>
+  theme?: Record<string, string>
+  placement: WidgetPlacement
+  runAction?: (action: HostAction) => void
+  editMode?: boolean
+}
+
+// Host actions
+type HostAction =
+  | { type: 'nav'; to: string }
+  | { type: 'open'; path: string }
+  | { type: 'openUrl'; url: string; options?: { askUser?: boolean; title?: string } }

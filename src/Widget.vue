@@ -4,7 +4,6 @@ import { fsListDir, fsValidate, fsListDirWithAuth, shortcutsProbe  } from '/src/
 import { loadIconPack, iconFor, ensureIconsFor } from '/src/icons/index.ts'
 import { ensureConsent } from '/src/consent/service'
 
-console.log('I am different again!!!');
 type HostAction =
   | { type: 'nav'; to: string; replace?: boolean; sourceId?: string }
   | { type: 'open'; path: string }
@@ -13,6 +12,16 @@ const props = defineProps<{
   config?: { data?: any; view?: any }
   theme?: Record<string, string>
   runAction?: (a: HostAction) => void
+  placement?: {
+    context: 'grid' | 'sidebar' | 'embedded'
+    size: { cols?: number; rows?: number; width?: number; height?: number }
+  }
+  editMode?: boolean
+}>()
+
+// Emit config changes back to parent (for saving)
+const emit = defineEmits<{
+  (e: 'updateConfig', config: any): void
 }>()
 
 type SortKey = 'name' | 'kind' | 'ext'
@@ -22,6 +31,7 @@ const sortKey = ref<SortKey>((props.config?.view?.sortKey as SortKey) || 'name')
 const sortDir = ref<SortDir>((props.config?.view?.sortDir as SortDir) || 'asc')
 
 const iconsTick = ref(0)
+
 
 void loadIconPack()
 
@@ -34,18 +44,6 @@ function iconIsImg(e: any) {
 }
 function iconSrc(e: any) {
   return iconFor({ kind: e?.Kind, ext: e?.Ext, iconKey: e?.IconKey }, 32)
-}
-
-function formatSize(bytes?: number | null): string {
-  if (bytes == null || bytes < 0) return ''
-  const units = ['B','KB','MB','GB','TB','PB']
-  let n = bytes
-  let i = 0
-  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++ }
-  // keep 1 decimal for small values, else integer
-  const num = (i === 0) ? Math.round(n).toString()
-                        : (n < 10 ? n.toFixed(1) : Math.round(n).toString())
-  return `${num} ${units[i]}`
 }
 
 /* --- helpers for aligned SIZE + MODIFIED --- */
@@ -85,11 +83,35 @@ const cfg = computed(() => ({
   view: props.config?.view ?? {},
 }))
 
+const autoColumns = computed(() => {
+  // If in sidebar, always use 1 column
+  if (props.placement?.context === 'sidebar') return 1
+  
+  // Otherwise, calculate based on grid columns allocated
+  const gridCols = props.placement?.size?.cols || 4
+  
+  // More grid space = more item columns
+  if (gridCols <= 2) return 1
+  if (gridCols <= 3) return 2
+  if (gridCols <= 5) return 3
+  if (gridCols <= 8) return 4
+  return 5
+})
+
+const autoItemSize = computed(() => {
+  const gridCols = props.placement?.size?.cols || 4
+  
+  // Small allocation = small items
+  if (gridCols <= 3) return 'sm'
+  if (gridCols <= 6) return 'md'
+  return 'lg'
+})
+
 const merged = computed(() => ({
   rpath: String(cfg.value.data.rpath ?? ''),
   layout: String(cfg.value.view.layout ?? 'list'),
-  columns: Math.max(1, Number(cfg.value.view.columns ?? 1) || 1),
-  itemSize: String(cfg.value.view.itemSize ?? 'md'),
+  columns: cfg.value.view.columns || autoColumns.value,
+  itemSize: cfg.value.view.itemSize || autoItemSize.value,  // ← Auto-adjust
   showHidden: !!(cfg.value.view.showHidden ?? false),
   navigateMode: String(cfg.value.view.navigateMode ?? 'internal').toLowerCase(),
 }))
@@ -318,125 +340,272 @@ const hostVars = computed(() => ({
   '--items-bg':     props.theme?.bg || 'var(--surface-2, transparent)',
   '--items-header-sep': props.theme?.headerSep || 'rgba(255,255,255,.22)', // NEW
 }) as Record<string, string>)
+
+function updateColumns(delta: number) {
+  if (!props.editMode) return
+  
+  const current = merged.value.columns
+  const newColumns = Math.max(1, Math.min(8, current + delta))
+  
+  // Update config
+  const newConfig = {
+    ...props.config,
+    view: {
+      ...props.config?.view,
+      columns: newColumns
+    }
+  }
+  
+  emit('updateConfig', newConfig)
+}
+
+function cycleItemSize() {
+  if (!props.editMode) return
+  
+  const sizes = ['sm', 'md', 'lg']
+  const currentIdx = sizes.indexOf(merged.value.itemSize)
+  const nextIdx = (currentIdx + 1) % sizes.length
+  
+  const newConfig = {
+    ...props.config,
+    view: {
+      ...props.config?.view,
+      itemSize: sizes[nextIdx]
+    }
+  }
+  
+  emit('updateConfig', newConfig)
+}
+
+function cycleLayout() {
+  if (!props.editMode) return
+  
+  const layouts = ['list', 'grid', 'details']
+  const currentIdx = layouts.indexOf(merged.value.layout)
+  const nextIdx = (currentIdx + 1) % layouts.length
+  
+  const newConfig = {
+    ...props.config,
+    view: {
+      ...props.config?.view,
+      layout: layouts[nextIdx]
+    }
+  }
+  
+  emit('updateConfig', newConfig)
+}
 </script>
 
 <template>
   <div class="items-root" :style="hostVars">
-    <div v-if="loading" class="msg">Loading…</div>
-    <div v-else-if="error" class="err">{{ error }}</div>
-    <div v-else-if="!merged.rpath" class="msg">(no path)</div>
-	
-    <!-- Details view -->
-	<div
-	  v-else-if="merged.layout === 'details'"
-	  class="details-root"
-	  :data-icons="iconsTick"
-	>
-	  <!-- header -->
-	  <div class="details-header">
-		<button class="th th-name" @click="onHeaderClick('name')">
-		  Name <span v-if="sortKey==='name'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
-		</button>
-		<button class="th th-ext"  @click="onHeaderClick('ext')">
-		  Ext <span v-if="sortKey==='ext'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
-		</button>
-		<button class="th th-size" @click="onHeaderClick('size')">
-		  Size <span v-if="sortKey==='size'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
-		</button>
-		<button class="th th-mod"  @click="onHeaderClick('modified')">
-		  Modified <span v-if="sortKey==='modified'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
-		</button>
+    <!-- Edit mode toolbar -->
+    <div v-if="editMode" class="edit-toolbar">
+      <div class="edit-group">
+        <span class="edit-label">Layout:</span>
+        <button class="edit-btn" @click="cycleLayout" :title="`Current: ${merged.layout}`">
+          {{ merged.layout === 'list' ? '☰' : merged.layout === 'grid' ? '▦' : '▤' }}
+        </button>
+      </div>
+      
+      <div v-if="merged.layout === 'grid'" class="edit-group">
+        <span class="edit-label">Columns:</span>
+        <button class="edit-btn" @click="updateColumns(-1)" :disabled="merged.columns <= 1">−</button>
+        <span class="edit-value">{{ merged.columns }}</span>
+        <button class="edit-btn" @click="updateColumns(1)" :disabled="merged.columns >= 8">+</button>
+      </div>
+      
+      <div class="edit-group">
+        <span class="edit-label">Size:</span>
+        <button class="edit-btn" @click="cycleItemSize" :title="`Current: ${merged.itemSize}`">
+          {{ merged.itemSize.toUpperCase() }}
+        </button>
+      </div>
+    </div>
+    
+    <div class="items-scroll-container">
+      <div v-if="loading" class="msg">Loading…</div>
+      <div v-else-if="error" class="err">{{ error }}</div>
+      <div v-else-if="!merged.rpath" class="msg">(no path)</div>
+    
+      <!-- Details view -->
+      <div
+        v-else-if="merged.layout === 'details'"
+        class="details-root"
+        :data-icons="iconsTick"
+      >
+        <!-- header -->
+        <div class="details-header">
+          <button class="th th-name" @click="onHeaderClick('name')">
+            Name <span v-if="sortKey==='name'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+          </button>
+          <button class="th th-ext"  @click="onHeaderClick('ext')">
+            Ext <span v-if="sortKey==='ext'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+          </button>
+          <button class="th th-size" @click="onHeaderClick('size')">
+            Size <span v-if="sortKey==='size'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+          </button>
+          <button class="th th-mod"  @click="onHeaderClick('modified')">
+            Modified <span v-if="sortKey==='modified'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+          </button>
+        </div>
 
-	  </div>
+        <!-- rows -->
+        <div class="details-body">
+          <div
+            v-for="e in sortedEntries"
+            :key="e.FullPath"
+            class="drow"
+            :title="e.FullPath"
+            @click.stop="openEntry(e.FullPath)"
+          >
+            <div class="td td-name">
+            <span class="icon">
+              <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
+              <span v-else>{{ iconText(e) }}</span>
+            </span>
+            <span class="name">{{ e.Name || e.FullPath }}</span>
+            </div>
+            <div class="td td-ext">{{ e.Ext || '' }}</div>
+            <!-- Size (right-aligned: number + fixed-width unit) -->
+            <div class="td td-size">
+              <span class="num">{{ sizeParts(e?.Size).num }}</span>
+              <span class="unit">{{ sizeParts(e?.Size).unit }}</span>
+            </div>
 
-	  <!-- rows -->
-	  <div class="details-body">
-		<div
-		  v-for="e in sortedEntries"
-		  :key="e.FullPath"
-		  class="drow"
-		  :title="e.FullPath"
-		  @click.stop="openEntry(e.FullPath)"
-		>
-		  <div class="td td-name">
-			<span class="icon">
-			  <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
-			  <span v-else>{{ iconText(e) }}</span>
-			</span>
-			<span class="name">{{ e.Name || e.FullPath }}</span>
-		  </div>
-			<div class="td td-ext">{{ e.Ext || '' }}</div>
-			<!-- Size (right-aligned: number + fixed-width unit) -->
-			<div class="td td-size">
-			  <span class="num">{{ sizeParts(e?.Size).num }}</span>
-			  <span class="unit">{{ sizeParts(e?.Size).unit }}</span>
-			</div>
+            <!-- Modified (right-aligned: date + time, both fixed widths) -->
+            <div class="td td-mod">
+              <span class="date">{{ modParts(e?.ModifiedAt).date }}</span>
+              <span class="time">{{ modParts(e?.ModifiedAt).time }}</span>
+            </div>
 
-			<!-- Modified (right-aligned: date + time, both fixed widths) -->
-			<div class="td td-mod">
-			  <span class="date">{{ modParts(e?.ModifiedAt).date }}</span>
-			  <span class="time">{{ modParts(e?.ModifiedAt).time }}</span>
-			</div>
+          </div>
+        </div>
+      </div>
+      <!-- List view -->
+      <div
+        v-else-if="merged.layout === 'list'"
+        class="list-root"
+        :data-icons="iconsTick"
+      >
+        <button
+        v-for="e in sortedEntries"
+        :key="e.FullPath"
+        class="row"
+        :title="e.FullPath"
+        @click.stop="openEntry(e.FullPath)"
+        >
+        <div class="icon">
+          <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
+          <span v-else>{{ iconText(e) }}</span>
+        </div>
+        <div class="name">{{ e.Name || e.FullPath }}</div>
+        </button>
+      </div>
 
-		</div>
-	  </div>
-	</div>
-	<!-- List view -->
-	<div
-	  v-else-if="merged.layout === 'list'"
-	  class="list-root"
-	  :data-icons="iconsTick"
-	>
-	  <button
-		v-for="e in sortedEntries"
-		:key="e.FullPath"
-		class="row"
-		:title="e.FullPath"
-		@click.stop="openEntry(e.FullPath)"
-	  >
-		<div class="icon">
-		  <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
-		  <span v-else>{{ iconText(e) }}</span>
-		</div>
-		<div class="name">{{ e.Name || e.FullPath }}</div>
-	  </button>
-	</div>
-
-	<!-- Grid view -->
-	<div
-	  v-else-if="merged.layout === 'grid'"
-	  class="grid-root"
-	  :data-icons="iconsTick"
-	  :style="{
-		display: 'grid',
-		gap: S.gap + 'px',
-		padding: S.gap + 'px',
-		gridTemplateColumns: `repeat(${Math.max(1, merged.columns)}, minmax(0, 1fr))`
-	  }"
-	>
-	  <button
-		v-for="e in sortedEntries"
-		:key="e.FullPath"
-		class="row"
-		:title="e.FullPath"
-		@click.stop="openEntry(e.FullPath)"
-	  >
-		<div class="icon">
-		  <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
-		  <span v-else>{{ iconText(e) }}</span>
-		</div>
-		<div class="name">{{ e.Name || e.FullPath }}</div>
-	  </button>
-	</div>
+      <!-- Grid view -->
+      <div
+        v-else-if="merged.layout === 'grid'"
+        class="grid-root"
+        :data-icons="iconsTick"
+        :style="{
+        display: 'grid',
+        gap: S.gap + 'px',
+        padding: S.gap + 'px',
+        gridTemplateColumns: `repeat(${Math.max(1, merged.columns)}, minmax(0, 1fr))`
+        }"
+      >
+        <button
+        v-for="e in sortedEntries"
+        :key="e.FullPath"
+        class="row"
+        :title="e.FullPath"
+        @click.stop="openEntry(e.FullPath)"
+        >
+        <div class="icon">
+          <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
+          <span v-else>{{ iconText(e) }}</span>
+        </div>
+        <div class="name">{{ e.Name || e.FullPath }}</div>
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
 /* ========== shared ========== */
 .items-root {
-    color: var(--items-fg);
-    padding: 8px; 
-    box-sizing: border-box;
+  color: var(--items-fg);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+/* Edit mode toolbar */
+.edit-toolbar {
+  display: flex;
+  gap: 12px;
+  padding: 8px;
+  background: var(--surface-1, #1a1a1a);
+  border-bottom: 1px solid var(--border, #555);
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.edit-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.edit-label {
+  font-size: 0.85em;
+  opacity: 0.7;
+  font-weight: 500;
+}
+
+.edit-value {
+  font-size: 0.9em;
+  font-weight: 600;
+  min-width: 20px;
+  text-align: center;
+}
+
+.edit-btn {
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border, #555);
+  background: var(--surface-2, #222);
+  color: var(--fg, #eee);
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: all 0.15s ease;
+  min-width: 28px;
+  text-align: center;
+}
+
+.edit-btn:hover:not(:disabled) {
+  background: var(--surface-3, #333);
+  border-color: var(--accent, #4ea1ff);
+}
+
+.edit-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.edit-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.items-scroll-container {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px;
+  box-sizing: border-box;
 }
 .msg { padding: 12px; opacity: .8; }
 .err { padding: 12px; color: #f77; }
@@ -589,4 +758,14 @@ const hostVars = computed(() => ({
 /* details-specific image sizing */
 .details-root .icon img { display: block; width: 1.2em; height: 1.2em; object-fit: contain; }
 .details-root .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.drow:hover {
+  background: var(--items-hover-bg, var(--surface-3, #2a2a2a));
+  border-color: var(--items-hover-border, var(--border-hover, #666));
+}
+
+.row:hover {
+  background: var(--items-hover-bg, var(--surface-3, #2a2a2a));
+  border-color: var(--items-hover-border, var(--border-hover, #666));
+}
 </style>

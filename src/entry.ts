@@ -15,7 +15,12 @@ export default {
     },
     sidebar: {
       minHeight: 200
-    }
+    },
+    layouts: [
+      { id: 'list', icon: '☰', tooltip: 'List View' },
+      { id: 'grid', icon: '▦', tooltip: 'Grid View' },
+      { id: 'details', icon: '▤', tooltip: 'Details View' }
+    ]
   },
   
   defaults: {

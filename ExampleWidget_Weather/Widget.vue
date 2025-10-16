@@ -7,7 +7,7 @@ const props = defineProps<{
   theme?: Record<string, string>
   placement?: {  // ← NEW
     context: 'grid' | 'sidebar' | 'embedded'
-    size: any
+    size: { cols?: number; rows?: number }
   }
 }>()
 
@@ -16,6 +16,14 @@ const loading = ref(false)
 
 // Adapt layout based on context
 const isCompact = computed(() => props.placement?.context === 'sidebar')
+// Scale factor based on grid size
+const scale = computed(() => {
+  const cols = props.placement?.size?.cols || 2
+  const rows = props.placement?.size?.rows || 2
+  
+  // Small (2x2) = 1.0, Medium (3x3) = 1.2, Large (4x4) = 1.5
+  return Math.min(1.5, 0.8 + (cols / 5))
+})
 
 async function fetchWeather() {
   loading.value = true
@@ -45,7 +53,10 @@ async function fetchWeather() {
 </script>
 
 <template>
-  <div class="weather-root" :class="{ compact: isCompact }">
+  <div class="weather-root" :style="{ 
+    fontSize: `${scale}em`,
+    padding: `${12 * scale}px`
+  }">
     <div class="header">
       <h3>Weather</h3>
       <button @click="fetchWeather" :disabled="loading" class="fetch-btn">
