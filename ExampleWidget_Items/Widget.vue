@@ -533,9 +533,19 @@ function cycleLayout() {
 </template>
 
 <style scoped>
-/* ========== shared ========== */
+/* ========== INHERIT GLOBAL THEME ========== */
 .items-root {
+  /* Use global font size as base */
+  font-size: var(--font-md);
   color: var(--items-fg);
+  
+  /* Everything inside inherits from this unless overridden */
+  --local-font-sm: calc(1em * 0.85);
+  --local-font-md: 1em;
+  --local-font-lg: calc(1em * 1.15);
+  --local-spacing: var(--space-sm);
+  --local-radius: var(--radius-md);
+  
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -543,131 +553,129 @@ function cycleLayout() {
   box-sizing: border-box;
 }
 
-/* Edit mode toolbar */
+.items-scroll-container {
+  flex: 1;
+  overflow-y: auto;  /* ← THIS scrolls */
+  overflow-x: hidden;
+  box-sizing: border-box;
+}
+
+/* Stop scroll propagation when hovering widget */
+.items-scroll-container:hover {
+  overscroll-behavior: contain;
+}
+
+/* ========== Edit toolbar ========== */
 .edit-toolbar {
   display: flex;
-  gap: 12px;
-  padding: 8px;
+  gap: var(--space-md);
+  padding: var(--space-sm);
   background: var(--surface-1, #1a1a1a);
   border-bottom: 1px solid var(--border, #555);
   flex-shrink: 0;
   align-items: center;
-}
-
-.edit-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  font-size: var(--font-sm);  /* Slightly smaller for toolbar */
 }
 
 .edit-label {
-  font-size: 0.85em;
+  font-size: var(--local-font-sm);
   opacity: 0.7;
   font-weight: 500;
 }
 
 .edit-value {
-  font-size: 0.9em;
+  font-size: var(--local-font-md);
   font-weight: 600;
   min-width: 20px;
   text-align: center;
 }
 
 .edit-btn {
-  padding: 4px 8px;
-  border-radius: 4px;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border, #555);
   background: var(--surface-2, #222);
   color: var(--fg, #eee);
   cursor: pointer;
-  font-size: 0.9em;
+  font-size: var(--local-font-sm);
   transition: all 0.15s ease;
   min-width: 28px;
   text-align: center;
 }
 
-.edit-btn:hover:not(:disabled) {
-  background: var(--surface-3, #333);
-  border-color: var(--accent, #4ea1ff);
-}
-
-.edit-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-
-.edit-btn:active:not(:disabled) {
-  transform: translateY(1px);
-}
-
-.items-scroll-container {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 8px;
-  box-sizing: border-box;
-}
-.msg { padding: 12px; opacity: .8; }
-.err { padding: 12px; color: #f77; }
-
-/* list & grid containers */
-.list-root { display: grid; gap: 6px; padding: 6px; }
-.grid-root { /* grid columns are set inline via :style in template */ }
-
-/* row (used by list & grid) */
+/* ========== List & Grid items ========== */
 .row {
   cursor: pointer;
   border: 1px solid var(--items-border);
   background: var(--items-bg);
   color: inherit;
-  border-radius: 10px;
+  border-radius: var(--local-radius);
   display: flex;
   flex-direction: row;
-  gap: 10px;
+  gap: var(--local-spacing);
   align-items: center;
-  min-height: 34px;
-  padding: 6px 10px;
+  min-height: calc(var(--base-font-size) * 2.4);  /* Scale with font */
+  padding: var(--space-xs) var(--space-sm);
   box-sizing: border-box;
+  font-size: var(--local-font-md);
 }
-.icon img { display: block; width: 1.2em; height: 1.2em; object-fit: contain; }
-.name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* ========== details view ========== */
-/* 4 columns: Name | Ext | Size | Modified */
+.icon {
+  width: calc(var(--base-font-size) * 1.4);
+  height: calc(var(--base-font-size) * 1.4);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: inherit;
+}
+
+/* ========== Details view ========== */
 .details-root {
   --cols: 1fr minmax(90px,120px) minmax(110px,140px) minmax(180px,220px);
-  --padX: 10px;    /* keep header/data horizontal padding identical */
-  --padY: 6px;
-  --iconW: 1.6em;  /* icon space used in the first column */
-  --gap:   6px;
+  --padX: var(--space-sm);
+  --padY: var(--space-xs);
+  --iconW: calc(var(--base-font-size) * 1.4);
+  --gap: var(--space-xs);
 
   display: grid;
-  gap: 4px;
+  gap: var(--space-xs);
   padding: var(--padY);
+  font-size: var(--local-font-md);
 }
 
-/* header frame matches row frame so edges align perfectly */
 .details-header {
   display: grid;
   grid-template-columns: var(--cols);
   gap: var(--gap);
   align-items: center;
-
   border: 1px solid var(--items-border);
   background: var(--items-bg);
-  border-radius: 10px;
-  min-height: 34px;
+  border-radius: var(--local-radius);
+  min-height: calc(var(--base-font-size) * 2.4);
   padding: var(--padY) var(--padX);
   box-sizing: border-box;
-  position: relative; /* for separators */
+  position: relative;
 }
 
-/* header cells: NO extra horizontal padding (prevents width drift) */
 .th {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 34px;
+  gap: var(--space-xs);
+  height: 100%;
   line-height: 1;
   background: transparent;
   color: inherit;
@@ -676,96 +684,70 @@ function cycleLayout() {
   margin: 0;
   cursor: pointer;
   font-weight: 600;
-}
-.th:hover { background: rgba(255,255,255,0.04); }
-.th:focus-visible { outline: 2px solid var(--items-border); outline-offset: 2px; }
-
-/* keep Name text aligned with row icons */
-.th-name { padding-left: calc(var(--iconW) + 10px); }
-
-/* numeric headers align right */
-.th-size, .th-mod { text-align: right; }
-
-/* vertical separators between header cells (themeable) */
-.details-header .th + .th { position: relative; }
-.details-header .th + .th::before {
-  content: "";
-  position: absolute;
-  left: -3px; /* center the 1px line in the 6px gap */
-  top: 6px;
-  bottom: 6px;
-  width: 1px;
-  background: var(--items-header-sep, rgba(255,255,255,.22));
-  opacity: 1;
-  pointer-events: none;
+  font-size: var(--local-font-md);
 }
 
-/* data rows */
 .drow {
   display: grid;
   grid-template-columns: var(--cols);
   gap: var(--gap);
   align-items: center;
-
   border: 1px solid var(--items-border);
   background: var(--items-bg);
-  border-radius: 10px;
-  min-height: 34px;
+  border-radius: var(--local-radius);
+  min-height: calc(var(--base-font-size) * 2.4);
   padding: var(--padY) var(--padX);
   box-sizing: border-box;
   cursor: pointer;
+  font-size: var(--local-font-md);
 }
 
-/* name cell mirrors list/grid layout */
 .td-name {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  min-width: 0; /* allow ellipsis */
+  gap: var(--space-sm);
+  min-width: 0;
 }
-.td-name .icon { width: var(--iconW); flex: 0 0 var(--iconW); text-align: center; }
 
-/* common cells */
+.td-name .icon {
+  width: var(--iconW);
+  flex: 0 0 var(--iconW);
+  text-align: center;
+}
+
 .td-ext, .td-size, .td-mod {
   opacity: .9;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-size: var(--local-font-sm);
 }
 
-/* SIZE: right-aligned number + fixed-width unit, tabular digits */
+/* Size and date cells use tabular numbers */
+.td-size, .td-mod {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
 .td-size {
   display: flex;
   justify-content: flex-end;
-  gap: 6px;
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum" 1;
+  gap: var(--space-xs);
 }
-.td-size .num { text-align: right; }
-.td-size .unit { min-width: 3ch; text-align: left; opacity: .85; }
 
-/* MODIFIED: right-aligned date + time, fixed widths, tabular digits */
 .td-mod {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum" 1;
-}
-.td-mod .date { min-width: 10ch; text-align: right; }
-.td-mod .time { min-width: 8ch;  text-align: right; }
-
-/* details-specific image sizing */
-.details-root .icon img { display: block; width: 1.2em; height: 1.2em; object-fit: contain; }
-.details-root .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.drow:hover {
-  background: var(--items-hover-bg, var(--surface-3, #2a2a2a));
-  border-color: var(--items-hover-border, var(--border-hover, #666));
+  gap: var(--space-sm);
 }
 
-.row:hover {
-  background: var(--items-hover-bg, var(--surface-3, #2a2a2a));
-  border-color: var(--items-hover-border, var(--border-hover, #666));
+/* Messages */
+.msg, .err {
+  padding: var(--space-md);
+  font-size: var(--local-font-md);
+}
+
+.err {
+  color: #f77;
 }
 </style>

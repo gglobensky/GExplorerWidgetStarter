@@ -1,12 +1,13 @@
+// entry.ts (for local-player)
 import Widget from './Widget.vue'
 
 export default {
   api: '1.0',
-  id: 'items',
-  version: '0.3.1',
+  id: 'local-player',          // must match folder name + your sidebar "type"
+  version: '0.1.0',
   Component: Widget,
-  
-  // NEW: Declare context support
+
+  // Match your established schema (same shape as `items`)
   contexts: {
     grid: {
       minSize: { cols: 2, rows: 1 },
@@ -14,25 +15,24 @@ export default {
       defaultSize: { cols: 4, rows: 3 }
     },
     sidebar: {
-      minHeight: 200
+      minHeight: 120
     },
+    // In your working example, `layouts` is at this level, not nested under sidebar.
     layouts: [
-      { id: 'list', icon: '☰', tooltip: 'List View' },
-      { id: 'grid', icon: '▦', tooltip: 'Grid View' },
-      { id: 'details', icon: '▤', tooltip: 'Details View' }
+      { id: 'compact',  icon: '◫', tooltip: 'Compact' },
+      { id: 'expanded', icon: '▭', tooltip: 'Expanded' },
+      { id: 'collapsed', icon: '▯', tooltip: 'Collapsed' }
     ]
   },
-  
+
+  // Keep it minimal; you can add actual config later
   defaults: {
-    data: { rpath: '' },
-    view: { 
-      layout: 'list', 
-      columns: 1, 
-      itemSize: 'md', 
-      showHidden: false, 
-      navigateMode: 'internal' 
+    data: {},
+    view: {
+      // you can stash layout state here if your host reads it
+      layout: 'compact'
     }
   },
-  
+
   capabilities: []
 }

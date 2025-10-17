@@ -1,771 +1,600 @@
 <script setup lang="ts">
-import { ref, computed, watch } from '/runtime/vue.js'
-import { fsListDir, fsValidate, fsListDirWithAuth, shortcutsProbe  } from '/src/bridge/ipc.ts'
-import { loadIconPack, iconFor, ensureIconsFor } from '/src/icons/index.ts'
-import { ensureConsent } from '/src/consent/service'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 
-type HostAction =
-  | { type: 'nav'; to: string; replace?: boolean; sourceId?: string }
-  | { type: 'open'; path: string }
+const showQueue = ref(true)          // NEW: queue visibility
+
+function toggleQueue() {             // NEW: toggle
+  showQueue.value = !showQueue.value
+}
 
 const props = defineProps<{
-  config?: { data?: any; view?: any }
-  theme?: Record<string, string>
-  runAction?: (a: HostAction) => void
-  placement?: {
-    context: 'grid' | 'sidebar' | 'embedded'
-    size: { cols?: number; rows?: number; width?: number; height?: number }
-  }
-  editMode?: boolean
+  context?: 'sidebar' | 'grid',
+  variant?: 'compact' | 'expanded' | 'collapsed',
+  width?: number,
+  height?: number,
+  gridSize?: { cols: number; rows: number }
 }>()
 
-// Emit config changes back to parent (for saving)
-const emit = defineEmits<{
-  (e: 'updateConfig', config: any): void
-}>()
-
-type SortKey = 'name' | 'kind' | 'ext'
-type SortDir = 'asc' | 'desc'
-
-const sortKey = ref<SortKey>((props.config?.view?.sortKey as SortKey) || 'name')
-const sortDir = ref<SortDir>((props.config?.view?.sortDir as SortDir) || 'asc')
-
-const iconsTick = ref(0)
-
-
-void loadIconPack()
-
-function iconText(e: any) {
-  return iconFor({ kind: e?.Kind, ext: e?.Ext, iconKey: e?.IconKey }, 32)
-}
-function iconIsImg(e: any) {
-  const v = iconFor({ kind: e?.Kind, ext: e?.Ext, iconKey: e?.IconKey }, 32)
-  return typeof v === 'string' && v.startsWith('data:image/')
-}
-function iconSrc(e: any) {
-  return iconFor({ kind: e?.Kind, ext: e?.Ext, iconKey: e?.IconKey }, 32)
+type Track = {
+  id: string
+  name: string
+  url: string
+  type?: string
+  artist?: string
+  album?: string
+  coverUrl?: string
+  duration?: number
 }
 
-/* --- helpers for aligned SIZE + MODIFIED --- */
-function sizeParts(bytes?: number | null): { num: string; unit: string } {
-  if (bytes == null || bytes < 0) return { num: '', unit: '' }
-  const units = ['B','KB','MB','GB','TB','PB']
-  let n = bytes
-  let i = 0
-  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++ }
-  const num = i === 0
-    ? Math.round(n).toString()
-    : (n < 10 ? n.toFixed(1) : Math.round(n).toString())
-  return { num, unit: units[i] }
-}
+const ACCEPTED = [
+  'audio/mpeg','audio/mp3','audio/ogg','audio/oga',
+  'audio/aac','audio/x-m4a','audio/flac','audio/wav','audio/webm'
+]
 
-// Keep user’s 12/24h preference, but make components 2-digit for alignment
-const hour12Pref = new Intl.DateTimeFormat().resolvedOptions().hour12 ?? false
-const FMT_DATE = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' })
-const FMT_TIME = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: hour12Pref })
+// ----- ResizeObserver -> layout class -----
+const rootEl = ref<HTMLElement | null>(null)
+const containerWidth = ref(0)
+let ro: ResizeObserver | null = null
+let roRaf: number | null = null
 
-function modParts(ms?: number | null): { date: string; time: string } {
-  if (ms == null || ms <= 0) return { date: '', time: '' }
-  const d = new Date(ms)
-  return { date: FMT_DATE.format(d), time: FMT_TIME.format(d) }
-}
-
-// style tokens (sm/md/lg)
-function sizeTokens(Size?: string) {
-  const s = (Size || 'md').toLowerCase()
-  if (s === 'sm') return { padY: 8, padX: 10, radius: 8, gap: 6, font: 0.95, title: 600 }
-  if (s === 'lg') return { padY: 14, padX: 14, radius: 12, gap: 10, font: 1.05, title: 650 }
-  return { padY: 10, padX: 12, radius: 10, gap: 8, font: 1.0, title: 600 } // md
-}
-
-const cfg = computed(() => ({
-  data: props.config?.data ?? {},
-  view: props.config?.view ?? {},
-}))
-
-const autoColumns = computed(() => {
-  // If in sidebar, always use 1 column
-  if (props.placement?.context === 'sidebar') return 1
-  
-  // Otherwise, calculate based on grid columns allocated
-  const gridCols = props.placement?.size?.cols || 4
-  
-  // More grid space = more item columns
-  if (gridCols <= 2) return 1
-  if (gridCols <= 3) return 2
-  if (gridCols <= 5) return 3
-  if (gridCols <= 8) return 4
-  return 5
-})
-
-const autoItemSize = computed(() => {
-  const gridCols = props.placement?.size?.cols || 4
-  
-  // Small allocation = small items
-  if (gridCols <= 3) return 'sm'
-  if (gridCols <= 6) return 'md'
-  return 'lg'
-})
-
-const merged = computed(() => ({
-  rpath: String(cfg.value.data.rpath ?? ''),
-  layout: String(cfg.value.view.layout ?? 'list'),
-  columns: cfg.value.view.columns || autoColumns.value,
-  itemSize: cfg.value.view.itemSize || autoItemSize.value,  // ← Auto-adjust
-  showHidden: !!(cfg.value.view.showHidden ?? false),
-  navigateMode: String(cfg.value.view.navigateMode ?? 'internal').toLowerCase(),
-}))
-
-const cwd = ref<string>('')
-const entries = ref<Array<{ name: string; FullPath: string }>>([])
-const loading = ref(false)
-const error = ref('')
-
-// bytes -> nice string
-function formatBytes(n?: number | null) {
-  if (n == null || isNaN(n)) return ''
-  const units = ['B','KB','MB','GB','TB','PB']
-  let x = Math.max(0, Number(n)), i = 0
-  while (x >= 1024 && i < units.length - 1) { x /= 1024; i++ }
-  return `${x.toFixed(i ? 1 : 0)} ${units[i]}`
-}
-
-// epoch ms / dateish -> local date+time
-function formatDateISO(v?: number | string | Date | null) {
-  if (v == null) return ''
-  const d = typeof v === 'number' ? new Date(v) : (v instanceof Date ? v : new Date(v))
-  return isNaN(d.getTime()) ? '' : d.toLocaleString()
-}
-
-
-// REPLACE the previous loadDir implementation with this
-async function loadDir(path: string) {
-  if (!path) { entries.value = []; return }
-  loading.value = true
-  error.value = ''
-  try {
-    // 1) Try normal list first (optimistic)
-    let res = await fsListDir(path)
-
-    // 2) If it failed, check for access denied
-    if (!res?.ok) {
-      const raw = String(res?.error || '')
-      const msg = raw.toLowerCase()
-      const accessDenied =
-        msg.includes('access denied') ||
-        msg.includes('unauthorized') ||
-        msg.includes('e_access_denied') ||
-        /access.*denied/.test(msg) ||
-        /denied/.test(msg)
-
-      if (accessDenied) {
-        console.log('[items] Access denied → requesting consent…', { path, raw })
-
-        // IMPORTANT: widget identity comes from the app/registry, not from the widget
-        const widgetType = 'items'     // if you have it from props/def, use that instead
-        const widgetId   = 'items'     // same note: prefer registry-provided id if available
-
-        // Ask for minimal caps for listing
-        const granted = await ensureConsent(widgetType, widgetId, path, ['Read', 'Metadata'], { afterDenied: true })
-        if (!granted) {
-          throw new Error('Permission not granted')
-        }
-
-        // Retry the same operation after consent
-        res = await fsListDirWithAuth(widgetType, widgetId, path)
-        if (!res?.ok) {
-          throw new Error(res?.error || 'list failed after consent')
-        }
-      } else {
-        throw new Error(res?.error || 'list failed')
-      }
-    }
-
-    // 3) Process entries
-    let list = Array.isArray((res as any).entries) ? (res as any).entries : []
-    if (!merged.value.showHidden) {
-      list = list.filter(e => !String(e?.Name || '').startsWith('.'))
-    }
-    entries.value = list.sort((a: any, b: any) =>
-      String(a?.Name ?? '').localeCompare(String(b?.Name ?? ''), undefined, { numeric: true, sensitivity: 'base' })
-    )
-
-    // 4) Per-shortcut icon keys
-    const lnks = (entries.value as any[])
-      .filter(e => e?.Kind === 'link' && e?.Ext === '.lnk' && (!e.IconKey || !String(e.IconKey).startsWith('link:')))
-      .map(e => e.FullPath)
-
-    if (lnks.length) {
-      try {
-        const r = await shortcutsProbe(lnks)
-        const arr = (r?.results ?? []) as Array<{ path: string; IconKey: string }>
-        if (arr.length) {
-          const map = new Map(arr.map(x => [x.path, x.IconKey]))
-          for (const e of entries.value as any[]) {
-            const k = map.get(e.FullPath)
-            if (k) e.IconKey = k
-          }
-        }
-      } catch { /* ignore */ }
-    }
-
-    // 5) Fetch icons
-    const n = await ensureIconsFor(
-      (entries.value as any[]).map(e => ({ iconKey: e.IconKey })), 32
-    )
-    if (n > 0) iconsTick.value++
-
-  } catch (e: any) {
-    error.value = String(e?.message ?? e ?? 'Error')
-    entries.value = []
-  } finally {
-    loading.value = false
-  }
-}
-
-
-
-async function openEntry(FullPath: string) {
-  if (!FullPath) return
-  try {
-    const v = await fsValidate(FullPath)
-    const isDir = !!v?.isDir
-    const preferTab =
-      merged.value.navigateMode === 'tab' ||
-      (merged.value.navigateMode !== 'internal' && typeof props.runAction === 'function')
-
-    if (isDir) {
-      if (preferTab) {
-        props.runAction?.({ type: 'nav', to: FullPath })
-      } else {
-        cwd.value = FullPath
-        await loadDir(cwd.value)
-      }
-      return
-    }
-
-    // ========== FILE OPENING (was missing!) ==========
-    // For files, send 'open' action to the host
-    const ext = String(v?.path || FullPath).split('.').pop()?.toLowerCase() || ''
-    
-    // Check if it's a .lnk shortcut
-    if (ext === 'lnk') {
-      // Let the host resolve and open the shortcut target
-      props.runAction?.({ type: 'open', path: FullPath })
-      return
-    }
-    
-    // Regular file - open with default application
-    props.runAction?.({ type: 'open', path: FullPath })
-
-  } catch (err) {
-    console.error('[items] openEntry failed:', err)
-  }
-}
-
-
-// react when rpath arrives/changes
-watch(
-  () => merged.value.rpath,
-  (next) => {
-    if (next && next !== cwd.value) { cwd.value = next; loadDir(next) }
-  },
-  { immediate: true }
-)
-
-watch(
-  () => [props.config?.view?.sortKey, props.config?.view?.sortDir],
-  ([k, d]) => {
-    if (k && (k === 'name' || k === 'kind' || k === 'ext')) sortKey.value = k
-    if (d && (d === 'asc' || d === 'desc')) sortDir.value = d
-  }
-)
-
-const S = computed(() => sizeTokens(merged.value.itemSize))
-const KIND_ORDER: Record<string, number> = { dir: 0, link: 1, file: 2 }
-
-function cmp(a: string, b: string) {
-  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' })
-}
-
-/* remove this whole sorter and replace with: */
-const sortedEntries = computed(() => {
-  const data = Array.isArray(entries.value) ? entries.value.slice() : []
-  const k = sortKey.value
-  const dir = sortDir.value === 'asc' ? 1 : -1
-
-  const cmp = (a: string, b: string) =>
-    String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' })
-
-  data.sort((A: any, B: any) => {
-    if (k === 'name') {
-      return cmp(A?.Name, B?.Name) * dir
-    }
-    if (k === 'ext') {
-      const c = cmp(A?.Ext || '', B?.Ext || '')
-      return (c || cmp(A?.Name, B?.Name)) * dir
-    }
-    if (k === 'size') {
-      const sa = (A?.Size ?? 0) as number
-      const sb = (B?.Size ?? 0) as number
-      const c = (sa === sb ? 0 : (sa < sb ? -1 : 1))
-      return (c || cmp(A?.Name, B?.Name)) * dir
-    }
-    if (k === 'modified') {
-      const ta = A?.ModifiedAt ? new Date(A.ModifiedAt).getTime() : 0
-      const tb = B?.ModifiedAt ? new Date(B.ModifiedAt).getTime() : 0
-      const c = (ta === tb ? 0 : (ta < tb ? -1 : 1))
-      return (c || cmp(A?.Name, B?.Name)) * dir
-    }
-    return 0
+onMounted(() => {
+  if (!rootEl.value) return
+  ro = new ResizeObserver(entries => {
+    const w = Math.round(entries[0]?.contentRect?.width || 0)
+    if (roRaf) cancelAnimationFrame(roRaf)
+    roRaf = requestAnimationFrame(() => {
+      if (Math.abs(w - containerWidth.value) >= 3) containerWidth.value = w
+      roRaf = null
+    })
   })
-
-  return data
+  ro.observe(rootEl.value)
+})
+onBeforeUnmount(() => {
+  ro?.disconnect()
+  if (roRaf) cancelAnimationFrame(roRaf)
+  ro = null
+  roRaf = null
 })
 
+/**
+ * micro  <= 200px: only play/pause (tooltip shows details)
+ * ultra  <= 280px: 1 group per row (4 rows)
+ * narrow <= 360px: 2 groups/row (transport|time, modes|volume)
+ * medium <= 520px: 2 groups/row, roomier seek
+ * wide   >  520px: single row
+ */
+const layoutClass = computed(() => {
+  const w = containerWidth.value
+  if (w <= 200) return 'micro'
+  if (w <= 280) return 'ultra'
+  if (w <= 360) return 'narrow'
+  if (w <= 520) return 'medium'
+  return 'wide'
+})
 
-function onHeaderClick(nextKey: SortKey) {
-  if (sortKey.value === nextKey) {
-    sortDir.value = (sortDir.value === 'asc' ? 'desc' : 'asc')
-  } else {
-    sortKey.value = nextKey
-    sortDir.value = 'asc'
-  }
+// ----- Player state -----
+const audioEl = ref<HTMLAudioElement | null>(null)
+const queue = ref<Track[]>([])
+const currentIndex = ref<number>(-1)
+const isPlaying = ref(false)
+const currentTime = ref(0)
+const duration = ref(0)
+const volume = ref(0.9)
+const lastNonZeroVolume = ref(0.9)
+const repeat = ref<'off' | 'one' | 'all'>('off')
+const shuffle = ref(false)
+const draggingOver = ref(false)
+
+const hasTracks = computed(() => queue.value.length > 0)
+const canPrev = computed(() => queue.value.length > 0)
+const canNext = computed(() => queue.value.length > 0)
+const current = computed(() => queue.value[currentIndex.value] || null)
+
+function fmtTime(sec: number) {
+  if (!isFinite(sec)) return '0:00'
+  const s = Math.floor(sec % 60)
+  const m = Math.floor(sec / 60)
+  return `${m}:${s.toString().padStart(2,'0')}`
 }
 
-// theme → CSS vars for simple styling
-const hostVars = computed(() => ({
-  '--items-border': props.theme?.border || 'var(--border, #555)',
-  '--items-fg':     props.theme?.fg || 'var(--fg, #eee)',
-  '--items-bg':     props.theme?.bg || 'var(--surface-2, transparent)',
-  '--items-header-sep': props.theme?.headerSep || 'rgba(255,255,255,.22)', // NEW
-}) as Record<string, string>)
+function setVolume(v: number) {
+  const clamped = Math.min(1, Math.max(0, v))
+  volume.value = clamped
+  if (clamped > 0) lastNonZeroVolume.value = clamped
+  if (audioEl.value) audioEl.value.volume = clamped
+}
+function toggleMute() {
+  if (volume.value > 0) setVolume(0)
+  else setVolume(lastNonZeroVolume.value || 0.5)
+}
 
-function updateColumns(delta: number) {
-  if (!props.editMode) return
-  
-  const current = merged.value.columns
-  const newColumns = Math.max(1, Math.min(8, current + delta))
-  
-  // Update config
-  const newConfig = {
-    ...props.config,
-    view: {
-      ...props.config?.view,
-      columns: newColumns
+function load(index: number) {
+  if (index < 0 || index >= queue.value.length) return
+  currentIndex.value = index
+  const a = audioEl.value!
+  a.src = queue.value[index].url
+  a.load()
+  currentTime.value = 0
+  duration.value = 0
+}
+
+async function play(index?: number) {
+  if (!audioEl.value) return
+  if (typeof index === 'number') {
+    load(index)
+  } else if (currentIndex.value === -1 && queue.value.length) {
+    load(0)
+  }
+  try {
+    await audioEl.value.play()
+    isPlaying.value = true
+  } catch {
+    isPlaying.value = false
+  }
+}
+function pause() {
+  audioEl.value?.pause()
+  isPlaying.value = false
+}
+function togglePlay() {
+  if (!hasTracks.value) return
+  isPlaying.value ? pause() : play()
+}
+
+function next() {
+  if (!queue.value.length) return
+  if (repeat.value === 'one') { play(currentIndex.value); return }
+
+  if (shuffle.value) {
+    let n = currentIndex.value
+    if (queue.value.length > 1) {
+      while (n === currentIndex.value) n = Math.floor(Math.random() * queue.value.length)
     }
+    load(n); play(); return
   }
-  
-  emit('updateConfig', newConfig)
+
+  let n = currentIndex.value + 1
+  if (n >= queue.value.length) {
+    if (repeat.value === 'all') n = 0
+    else { pause(); return }
+  }
+  load(n); play()
+}
+function prev() {
+  if (!queue.value.length) return
+  if (audioEl.value && currentTime.value > 2) { audioEl.value.currentTime = 0; return }
+  let p = currentIndex.value - 1
+  if (p < 0) {
+    if (repeat.value === 'all') p = queue.value.length - 1
+    else { pause(); return }
+  }
+  load(p); play()
 }
 
-function cycleItemSize() {
-  if (!props.editMode) return
-  
-  const sizes = ['sm', 'md', 'lg']
-  const currentIdx = sizes.indexOf(merged.value.itemSize)
-  const nextIdx = (currentIdx + 1) % sizes.length
-  
-  const newConfig = {
-    ...props.config,
-    view: {
-      ...props.config?.view,
-      itemSize: sizes[nextIdx]
-    }
-  }
-  
-  emit('updateConfig', newConfig)
+function onTimeUpdate() { if (audioEl.value) currentTime.value = audioEl.value.currentTime }
+function onLoadedMeta()  { if (audioEl.value) duration.value = audioEl.value.duration || 0 }
+function onEnded() { next() }
+
+function seek(e: Event) {
+  if (!audioEl.value || !duration.value) return
+  const t = e.target as HTMLInputElement
+  const v = parseFloat(t.value)
+  audioEl.value.currentTime = v * duration.value
+}
+function volInput(e: Event) {
+  const t = e.target as HTMLInputElement
+  setVolume(parseFloat(t.value))
 }
 
-function cycleLayout() {
-  if (!props.editMode) return
-  
-  const layouts = ['list', 'grid', 'details']
-  const currentIdx = layouts.indexOf(merged.value.layout)
-  const nextIdx = (currentIdx + 1) % layouts.length
-  
-  const newConfig = {
-    ...props.config,
-    view: {
-      ...props.config?.view,
-      layout: layouts[nextIdx]
-    }
-  }
-  
-  emit('updateConfig', newConfig)
+// ----- Queue ops -----
+function clearQueue() {
+  pause()
+  queue.value = []
+  currentIndex.value = -1
+  currentTime.value = 0
+  duration.value = 0
 }
+function removeAt(index: number) {
+  const wasCurrent = index === currentIndex.value
+  queue.value.splice(index, 1)
+  if (wasCurrent) {
+    if (queue.value.length === 0) { clearQueue(); return }
+    const nextIdx = Math.min(index, queue.value.length - 1)
+    load(nextIdx)
+    if (isPlaying.value) play()
+  } else if (index < currentIndex.value) {
+    currentIndex.value -= 1
+  }
+}
+function addFiles(files: FileList | File[]) {
+  const tracks: Track[] = []
+  for (const f of Array.from(files)) {
+    const typeOk = ACCEPTED.includes(f.type) || /\.(mp3|ogg|oga|aac|m4a|flac|wav|webm)$/i.test(f.name)
+    if (!typeOk) continue
+    const id = `${f.name}-${f.size}-${f.lastModified}-${Math.random().toString(36).slice(2)}`
+    const url = URL.createObjectURL(f)
+    tracks.push({ id, name: f.name, url, type: f.type })
+  }
+  if (!tracks.length) return
+  const startEmpty = queue.value.length === 0
+  queue.value.push(...tracks)
+  if (startEmpty) { load(0); play() }
+}
+
+// ----- DnD + file picker -----
+function prevent(e: Event) { e.preventDefault(); e.stopPropagation() }
+function onDragEnter(e: DragEvent) { prevent(e); draggingOver.value = true }
+function onDragOver(e: DragEvent) { prevent(e) }
+function onDragLeave(e: DragEvent) { prevent(e); draggingOver.value = false }
+function onDrop(e: DragEvent) {
+  prevent(e); draggingOver.value = false
+  if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files)
+}
+
+const fileInput = ref<HTMLInputElement | null>(null)
+function clickPick() { fileInput.value?.click() }
+function onFileInput(e: Event) {
+  const input = e.target as HTMLInputElement
+  if (input.files?.length) addFiles(input.files)
+  input.value = ''
+}
+
+// ----- Mount / unmount -----
+onMounted(() => { if (audioEl.value) audioEl.value.volume = volume.value })
+onBeforeUnmount(() => { for (const t of queue.value) if (t.url.startsWith('blob:')) URL.revokeObjectURL(t.url) })
+
+// ----- UI helpers -----
+function toggleRepeat() {
+  repeat.value = repeat.value === 'off' ? 'all' : repeat.value === 'all' ? 'one' : 'off'
+}
+function toggleShuffle() { shuffle.value = !shuffle.value }
+function onRowDblClick(i: number) { play(i) }
+
+// Tooltip for micro layout
+const microTooltip = computed(() => {
+  const title = current.value?.name || 'No track'
+  const t = `${fmtTime(currentTime.value)} / ${fmtTime(duration.value || 0)}`
+  return `${title}\n${t}`
+})
+
+// after layoutClass computed
+const isTight = computed(() => layoutClass.value === 'micro' || layoutClass.value === 'ultra')
+
+// unified tooltip text for the play/pause & add buttons
+const playTooltip = computed(() => {
+  const head = isPlaying.value ? 'Pause' : 'Play'
+  const name = queue.value[currentIndex.value]?.name
+  const timeLine = `${fmtTime(currentTime.value)} / ${fmtTime(duration.value || 0)}`
+  return name ? `${head}\n${name}\n${timeLine}` : head
+})
+
+const addTooltip = computed(() => {
+  const name = queue.value[currentIndex.value]?.name
+  const timeLine = `${fmtTime(currentTime.value)} / ${fmtTime(duration.value || 0)}`
+  return name ? `Add files…\n${name}\n${timeLine}` : 'Add files…'
+})
 </script>
 
 <template>
-  <div class="items-root" :style="hostVars">
-    <!-- Edit mode toolbar -->
-    <div v-if="editMode" class="edit-toolbar">
-      <div class="edit-group">
-        <span class="edit-label">Layout:</span>
-        <button class="edit-btn" @click="cycleLayout" :title="`Current: ${merged.layout}`">
-          {{ merged.layout === 'list' ? '☰' : merged.layout === 'grid' ? '▦' : '▤' }}
-        </button>
+  <div class="player-root"
+       :class="[props.context, props.variant, layoutClass, { 'drag-over': draggingOver }]"
+       ref="rootEl"
+       @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
+
+    <!-- Hidden input for manual file picking -->
+    <input ref="fileInput"
+           type="file" multiple
+           :accept="ACCEPTED.join(',')"
+           style="display:none"
+           @change="onFileInput" />
+
+    <!-- Controls -->
+    <div class="controls" :class="layoutClass">
+      <!-- Transport -->
+      <div class="transport">
+      <!-- Prev/Next only when not in micro -->
+      <button
+        v-if="layoutClass !== 'micro'"
+        class="btn prev"
+        title="Previous"
+        :disabled="!canPrev"
+        @click="prev">⏮</button>
+
+      <button
+        class="btn primary play"
+        :title="playTooltip"
+        :disabled="!hasTracks"
+        @click="togglePlay">
+        <span v-if="isPlaying">⏸</span><span v-else>▶</span>
+      </button>
+
+      <!-- Extra add button only in micro -->
+      <button
+        v-if="layoutClass === 'micro'"
+        class="btn add"
+        :title="addTooltip"
+        @click="clickPick">⏏</button>
+
+      <button
+        v-if="layoutClass !== 'micro'"
+        class="btn next"
+        title="Next"
+        :disabled="!canNext"
+        @click="next">⏭</button>
+    </div>
+
+      <!-- Time / Seek -->
+      <div class="time"  v-if="layoutClass !== 'micro'">
+        <span class="mono left">{{ fmtTime(currentTime) }}</span>
+        <input class="seek" type="range"
+               min="0" max="1" step="0.001"
+               :value="duration ? currentTime / duration : 0"
+               :disabled="!hasTracks || !duration"
+               @input="seek"
+               :title="fmtTime(currentTime) + ' / ' + fmtTime(duration || 0)" />
+        <span class="mono right">-{{ fmtTime(Math.max(0, (duration || 0) - currentTime)) }}</span>
       </div>
-      
-      <div v-if="merged.layout === 'grid'" class="edit-group">
-        <span class="edit-label">Columns:</span>
-        <button class="edit-btn" @click="updateColumns(-1)" :disabled="merged.columns <= 1">−</button>
-        <span class="edit-value">{{ merged.columns }}</span>
-        <button class="edit-btn" @click="updateColumns(1)" :disabled="merged.columns >= 8">+</button>
-      </div>
-      
-      <div class="edit-group">
-        <span class="edit-label">Size:</span>
-        <button class="edit-btn" @click="cycleItemSize" :title="`Current: ${merged.itemSize}`">
-          {{ merged.itemSize.toUpperCase() }}
+
+      <!-- Modes -->
+      <div class="modes"  v-if="layoutClass !== 'micro'">
+        <button class="btn" :class="{ active: shuffle }" title="Shuffle" @click="toggleShuffle">🔀</button>
+        <button class="btn" :class="{ active: repeat !== 'off' }" title="Repeat (off/all/one)" @click="toggleRepeat">
+          <span v-if="repeat === 'off'">🔁</span>
+          <span v-else-if="repeat === 'all'">🔂</span>
+          <span v-else>🔂1</span>
         </button>
+        <!-- Add files lives here -->
+        <button class="btn" title="Add files…" @click="clickPick">⏏</button>
+      </div>
+
+      <!-- Volume -->
+      <div class="volume" v-if="layoutClass !== 'micro'">
+        <button class="btn mute" :class="{ active: volume === 0 }" title="Mute/Unmute" @click="toggleMute">🔊</button>
+        <input class="vol" type="range" min="0" max="1" step="0.01" :value="volume" @input="volInput" />
       </div>
     </div>
-    
-    <div class="items-scroll-container">
-      <div v-if="loading" class="msg">Loading…</div>
-      <div v-else-if="error" class="err">{{ error }}</div>
-      <div v-else-if="!merged.rpath" class="msg">(no path)</div>
-    
-      <!-- Details view -->
-      <div
-        v-else-if="merged.layout === 'details'"
-        class="details-root"
-        :data-icons="iconsTick"
-      >
-        <!-- header -->
-        <div class="details-header">
-          <button class="th th-name" @click="onHeaderClick('name')">
-            Name <span v-if="sortKey==='name'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
-          </button>
-          <button class="th th-ext"  @click="onHeaderClick('ext')">
-            Ext <span v-if="sortKey==='ext'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
-          </button>
-          <button class="th th-size" @click="onHeaderClick('size')">
-            Size <span v-if="sortKey==='size'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
-          </button>
-          <button class="th th-mod"  @click="onHeaderClick('modified')">
-            Modified <span v-if="sortKey==='modified'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
-          </button>
-        </div>
 
-        <!-- rows -->
-        <div class="details-body">
-          <div
-            v-for="e in sortedEntries"
-            :key="e.FullPath"
-            class="drow"
-            :title="e.FullPath"
-            @click.stop="openEntry(e.FullPath)"
-          >
-            <div class="td td-name">
-            <span class="icon">
-              <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
-              <span v-else>{{ iconText(e) }}</span>
-            </span>
-            <span class="name">{{ e.Name || e.FullPath }}</span>
-            </div>
-            <div class="td td-ext">{{ e.Ext || '' }}</div>
-            <!-- Size (right-aligned: number + fixed-width unit) -->
-            <div class="td td-size">
-              <span class="num">{{ sizeParts(e?.Size).num }}</span>
-              <span class="unit">{{ sizeParts(e?.Size).unit }}</span>
-            </div>
-
-            <!-- Modified (right-aligned: date + time, both fixed widths) -->
-            <div class="td td-mod">
-              <span class="date">{{ modParts(e?.ModifiedAt).date }}</span>
-              <span class="time">{{ modParts(e?.ModifiedAt).time }}</span>
-            </div>
-
-          </div>
-        </div>
+    <!-- Header (only when there are tracks) -->
+    <div v-if="queue.length" class="queue-header">
+      <div class="qh-left">
+        <strong>Queue</strong>
+        <span class="count">{{ queue.length }}</span>
       </div>
-      <!-- List view -->
-      <div
-        v-else-if="merged.layout === 'list'"
-        class="list-root"
-        :data-icons="iconsTick"
+      <button
+        class="qh-toggle icon-btn"
+        :aria-expanded="showQueue"
+        :title="showQueue ? 'Hide list' : 'Show list'"
+        @click="toggleQueue"
       >
-        <button
-        v-for="e in sortedEntries"
-        :key="e.FullPath"
-        class="row"
-        :title="e.FullPath"
-        @click.stop="openEntry(e.FullPath)"
-        >
-        <div class="icon">
-          <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
-          <span v-else>{{ iconText(e) }}</span>
-        </div>
-        <div class="name">{{ e.Name || e.FullPath }}</div>
-        </button>
-      </div>
+        <span v-if="showQueue">▾</span>
+        <span v-else>▸</span>
+      </button>
+    </div>
 
-      <!-- Grid view -->
-      <div
-        v-else-if="merged.layout === 'grid'"
-        class="grid-root"
-        :data-icons="iconsTick"
-        :style="{
-        display: 'grid',
-        gap: S.gap + 'px',
-        padding: S.gap + 'px',
-        gridTemplateColumns: `repeat(${Math.max(1, merged.columns)}, minmax(0, 1fr))`
-        }"
-      >
-        <button
-        v-for="e in sortedEntries"
-        :key="e.FullPath"
-        class="row"
-        :title="e.FullPath"
-        @click.stop="openEntry(e.FullPath)"
-        >
-        <div class="icon">
-          <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
-          <span v-else>{{ iconText(e) }}</span>
-        </div>
-        <div class="name">{{ e.Name || e.FullPath }}</div>
-        </button>
+    <!-- List (only when there are tracks AND it's expanded) -->
+    <div v-if="queue.length && showQueue" class="queue">
+      <div class="row header">
+        <span>#</span><span>Title</span><span class="dur">Length</span><span class="act"></span>
+      </div>
+      <div v-for="(t, i) in queue" :key="t.id"
+          class="row"
+          :class="{ current: i === currentIndex }"
+          @dblclick="onRowDblClick(i)">
+        <span class="idx">{{ i + 1 }}</span>
+        <span class="title" :title="t.name">{{ t.name }}</span>
+        <span class="dur mono" v-if="i === currentIndex && duration">{{ fmtTime(duration) }}</span>
+        <span class="dur mono" v-else>–</span>
+        <span class="act">
+          <button class="icon-btn" title="Remove" @click="removeAt(i)">✕</button>
+        </span>
       </div>
     </div>
+
+    <!-- Empty (only when there are NO tracks at all) -->
+    <div v-if="queue.length === 0" class="empty">
+      <p>Drop audio files here or</p>
+      <button class="btn" @click="clickPick">Add files…</button>
+    </div>
+
+    <!-- Audio element -->
+    <audio ref="audioEl"
+           @loadedmetadata="onLoadedMeta"
+           @timeupdate="onTimeUpdate"
+           @ended="onEnded"
+           preload="metadata" />
   </div>
 </template>
 
 <style scoped>
-/* ========== shared ========== */
-.items-root {
-  color: var(--items-fg);
-  height: 100%;
+.player-root{
+  display:flex; flex-direction:column; height:100%;
+  background:var(--surface-2,#222); color:var(--fg,#eee);
+  border:1px solid var(--border,#555); border-radius:var(--radius-md,8px);
+  padding:var(--space-sm,8px); box-sizing:border-box;
+}
+.player-root.drag-over{ outline:2px dashed var(--accent,#4ea1ff); outline-offset:-2px; }
+
+/* -------- Controls grid -------- */
+.controls{
+  display:grid; gap:var(--space-sm,8px);
+  align-items:center; justify-items:center;
+  padding:var(--space-xs,6px) var(--space-sm,8px);
+  background:var(--surface-1,#1a1a1a);
+  border:1px solid var(--border,#555); border-radius:var(--radius-sm,6px);
+  box-sizing:border-box; overflow:hidden;
+}
+
+.controls .transport {
+  grid-area: transport;
   display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  box-sizing: border-box;
-}
-
-/* Edit mode toolbar */
-.edit-toolbar {
-  display: flex;
-  gap: 12px;
-  padding: 8px;
-  background: var(--surface-1, #1a1a1a);
-  border-bottom: 1px solid var(--border, #555);
-  flex-shrink: 0;
+  gap: var(--space-sm, 8px);
   align-items: center;
+  justify-content: center; 
+}
+.controls .time{ grid-area:time; display:flex; align-items:center; gap:var(--space-sm,8px); min-width:0; justify-self:stretch; }
+.controls .modes{ grid-area:modes; display:flex; gap:var(--space-sm,8px); align-items:center; }
+.controls .volume{ grid-area:volume; display:flex; gap:6px; align-items:center; width:100%; max-width:240px; justify-self:end; }
+.controls .seek{ flex:1; min-width:80px; }
+.controls .vol { width:100%; }
+
+/* WIDE: single row (time grows; volume constrained) */
+.controls.wide{
+  grid-template-columns:auto minmax(180px,1fr) auto minmax(140px, 240px);
+  grid-template-areas:"transport time modes volume";
 }
 
-.edit-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+/* MEDIUM: 2 rows (centered columns) */
+.controls.medium{
+  grid-template-columns:1fr 1fr;
+  grid-template-areas:
+    "transport time"
+    "modes     volume";
 }
 
-.edit-label {
-  font-size: 0.85em;
-  opacity: 0.7;
-  font-weight: 500;
+/* NARROW: same as medium but labels hidden (see below) */
+.controls.narrow{
+  grid-template-columns:1fr 1fr;
+  grid-template-areas:
+    "transport time"
+    "modes     volume";
 }
 
-.edit-value {
-  font-size: 0.9em;
-  font-weight: 600;
-  min-width: 20px;
-  text-align: center;
+/* ULTRA: each group full row; let volume expand full width */
+.controls.ultra{
+  grid-template-columns:1fr;
+  grid-template-areas:
+    "transport"
+    "time"
+    "modes"
+    "volume";
+}
+.controls.ultra .volume{ max-width:none; justify-self:stretch; }
+
+/* MICRO: only play/pause centered */
+.controls.micro{
+  grid-template-columns:1fr;
+  grid-template-areas:"transport";
 }
 
-.edit-btn {
-  padding: 4px 8px;
-  border-radius: 4px;
-  border: 1px solid var(--border, #555);
-  background: var(--surface-2, #222);
-  color: var(--fg, #eee);
-  cursor: pointer;
-  font-size: 0.9em;
-  transition: all 0.15s ease;
-  min-width: 28px;
-  text-align: center;
+.controls.micro .transport .play{ height:32px; padding:0 12px; }
+
+.controls.micro .transport,
+.controls.ultra .transport {
+  gap: 6px; /* a hair tighter than default */
 }
 
-.edit-btn:hover:not(:disabled) {
-  background: var(--surface-3, #333);
-  border-color: var(--accent, #4ea1ff);
+/* Hide time labels on tight layouts */
+.controls.narrow .time .mono,
+.controls.ultra  .time .mono,
+.controls.micro  .time .mono{ display:none; }
+
+/* Buttons */
+.btn{
+  height:28px; padding:0 8px; border-radius:var(--radius-sm,6px);
+  border:1px solid var(--border,#555); background:var(--surface-2,#222);
+  color:var(--fg,#eee); cursor:pointer; transition:all .12s ease;
+}
+.btn:hover:not(:disabled){ background:var(--surface-3,#333); border-color:var(--accent,#4ea1ff); }
+.btn:disabled{ opacity:.4; cursor:not-allowed; }
+.btn.primary{ font-weight:700; }
+.btn.active{ border-color:var(--accent,#4ea1ff); box-shadow:0 0 0 1px var(--accent,#4ea1ff) inset; }
+.mono{ font-variant-numeric:tabular-nums; opacity:.8; }
+
+/* -------- Queue -------- */
+.queue { overflow-y: auto; overflow-x: hidden; }
+
+.row{
+  display:grid; grid-template-columns:36px 1fr 70px 40px;
+  align-items:center; gap:6px; padding:6px 8px;
+  border-top:1px solid rgba(255,255,255,.05);
+}
+.row.header{ position:sticky; top:0; background:var(--surface-2,#222); font-weight:600; border-top:none; }
+.row.current{ background:rgba(78,161,255,.12); outline:1px solid var(--accent,#4ea1ff); outline-offset:-1px; }
+.idx{ opacity:.6; }
+.title{ overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.dur{ text-align:right; opacity:.8; }
+.act{ display:flex; justify-content:flex-end; }
+
+.icon-btn{
+  width:22px; height:22px; border-radius:4px;
+  border:1px solid var(--border,#555); background:var(--surface-2,#222);
+  color:var(--fg,#eee); cursor:pointer; transition:all .12s ease;
+}
+.icon-btn:hover{ background:var(--surface-3,#333); border-color:var(--accent,#4ea1ff); }
+
+/* In MICRO & ULTRA, show only the Title column */
+/* Never show horizontal scroll in the queue */
+.queue { overflow-y: auto; overflow-x: hidden; }
+
+/* In micro/ultra, hide the header row entirely */
+.player-root.micro .queue .row.header,
+.player-root.ultra .queue .row.header {
+  display: none !important;
 }
 
-.edit-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
+/* In micro/ultra, collapse to a single column: Title only */
+.player-root.micro .queue .row,
+.player-root.ultra .queue .row {
+  grid-template-columns: 1fr; /* title column only */
 }
 
-.edit-btn:active:not(:disabled) {
-  transform: translateY(1px);
+/* Hide the other cells in micro/ultra rows */
+.player-root.micro .queue .row .idx,
+.player-root.micro .queue .row .dur,
+.player-root.micro .queue .row .act,
+.player-root.ultra .queue .row .idx,
+.player-root.ultra .queue .row .dur,
+.player-root.ultra .queue .row .act {
+  display: none !important;
 }
 
-.items-scroll-container {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 8px;
-  box-sizing: border-box;
-}
-.msg { padding: 12px; opacity: .8; }
-.err { padding: 12px; color: #f77; }
-
-/* list & grid containers */
-.list-root { display: grid; gap: 6px; padding: 6px; }
-.grid-root { /* grid columns are set inline via :style in template */ }
-
-/* row (used by list & grid) */
-.row {
-  cursor: pointer;
-  border: 1px solid var(--items-border);
-  background: var(--items-bg);
-  color: inherit;
-  border-radius: 10px;
-  display: flex;
-  flex-direction: row;
-  gap: 10px;
-  align-items: center;
-  min-height: 34px;
-  padding: 6px 10px;
-  box-sizing: border-box;
-}
-.icon img { display: block; width: 1.2em; height: 1.2em; object-fit: contain; }
-.name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-/* ========== details view ========== */
-/* 4 columns: Name | Ext | Size | Modified */
-.details-root {
-  --cols: 1fr minmax(90px,120px) minmax(110px,140px) minmax(180px,220px);
-  --padX: 10px;    /* keep header/data horizontal padding identical */
-  --padY: 6px;
-  --iconW: 1.6em;  /* icon space used in the first column */
-  --gap:   6px;
-
-  display: grid;
-  gap: 4px;
-  padding: var(--padY);
-}
-
-/* header frame matches row frame so edges align perfectly */
-.details-header {
-  display: grid;
-  grid-template-columns: var(--cols);
-  gap: var(--gap);
-  align-items: center;
-
-  border: 1px solid var(--items-border);
-  background: var(--items-bg);
-  border-radius: 10px;
-  min-height: 34px;
-  padding: var(--padY) var(--padX);
-  box-sizing: border-box;
-  position: relative; /* for separators */
-}
-
-/* header cells: NO extra horizontal padding (prevents width drift) */
-.th {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 34px;
-  line-height: 1;
-  background: transparent;
-  color: inherit;
-  border: 0;
-  padding: 0;
-  margin: 0;
-  cursor: pointer;
-  font-weight: 600;
-}
-.th:hover { background: rgba(255,255,255,0.04); }
-.th:focus-visible { outline: 2px solid var(--items-border); outline-offset: 2px; }
-
-/* keep Name text aligned with row icons */
-.th-name { padding-left: calc(var(--iconW) + 10px); }
-
-/* numeric headers align right */
-.th-size, .th-mod { text-align: right; }
-
-/* vertical separators between header cells (themeable) */
-.details-header .th + .th { position: relative; }
-.details-header .th + .th::before {
-  content: "";
-  position: absolute;
-  left: -3px; /* center the 1px line in the 6px gap */
-  top: 6px;
-  bottom: 6px;
-  width: 1px;
-  background: var(--items-header-sep, rgba(255,255,255,.22));
-  opacity: 1;
-  pointer-events: none;
-}
-
-/* data rows */
-.drow {
-  display: grid;
-  grid-template-columns: var(--cols);
-  gap: var(--gap);
-  align-items: center;
-
-  border: 1px solid var(--items-border);
-  background: var(--items-bg);
-  border-radius: 10px;
-  min-height: 34px;
-  padding: var(--padY) var(--padX);
-  box-sizing: border-box;
-  cursor: pointer;
-}
-
-/* name cell mirrors list/grid layout */
-.td-name {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0; /* allow ellipsis */
-}
-.td-name .icon { width: var(--iconW); flex: 0 0 var(--iconW); text-align: center; }
-
-/* common cells */
-.td-ext, .td-size, .td-mod {
-  opacity: .9;
-  white-space: nowrap;
+/* Keep long titles tidy */
+.player-root.micro .queue .row .title,
+.player-root.ultra .queue .row .title {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* SIZE: right-aligned number + fixed-width unit, tabular digits */
-.td-size {
+/* Queue header (compact, aligns with your theme) */
+.queue-header {
   display: flex;
-  justify-content: flex-end;
-  gap: 6px;
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum" 1;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--space-sm, 8px);
+  padding: 6px 8px;
+  border: 1px solid var(--border, #555);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface-1, #1a1a1a);
 }
-.td-size .num { text-align: right; }
-.td-size .unit { min-width: 3ch; text-align: left; opacity: .85; }
 
-/* MODIFIED: right-aligned date + time, fixed widths, tabular digits */
-.td-mod {
+.queue-header .qh-left {
   display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum" 1;
-}
-.td-mod .date { min-width: 10ch; text-align: right; }
-.td-mod .time { min-width: 8ch;  text-align: right; }
-
-/* details-specific image sizing */
-.details-root .icon img { display: block; width: 1.2em; height: 1.2em; object-fit: contain; }
-.details-root .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.drow:hover {
-  background: var(--items-hover-bg, var(--surface-3, #2a2a2a));
-  border-color: var(--items-hover-border, var(--border-hover, #666));
+  align-items: baseline;
+  gap: 8px;
 }
 
-.row:hover {
-  background: var(--items-hover-bg, var(--surface-3, #2a2a2a));
-  border-color: var(--items-hover-border, var(--border-hover, #666));
+.queue-header .count {
+  opacity: 0.7;
+  font-size: 12px;
 }
+
+/* reuse your small icon button style */
+.qh-toggle {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* In micro/ultra, keep header super tight */
+.player-root.micro .queue-header,
+.player-root.ultra .queue-header {
+  padding: 4px 6px;
+}
+
+/* Empty state */
+.empty{ margin:auto; text-align:center; opacity:.85; }
+.empty .btn{ margin-top:8px; }
 </style>

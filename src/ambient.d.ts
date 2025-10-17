@@ -159,3 +159,9 @@ type HostAction =
   | { type: 'nav'; to: string }
   | { type: 'open'; path: string }
   | { type: 'openUrl'; url: string; options?: { askUser?: boolean; title?: string } }
+  
+/* Widget base styles */
+.widget-host {
+  font-size: var(--font-md);
+  color: var(--fg);
+}
