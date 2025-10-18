@@ -1,38 +1,40 @@
-// entry.ts (for local-player)
+// src/widgets/music/src/entry.ts
 import Widget from './Widget.vue'
 
 export default {
   api: '1.0',
-  id: 'local-player',          // must match folder name + your sidebar "type"
-  version: '0.1.0',
+  id: 'local-player',                // must match entry.widget.type used in your library
+  version: '1.0.0',
   Component: Widget,
 
-  // Match your established schema (same shape as `items`)
   contexts: {
     grid: {
-      minSize: { cols: 2, rows: 1 },
-      maxSize: { cols: 12, rows: 8 },
-      defaultSize: { cols: 4, rows: 3 }
+      minSize:     { cols: 2, rows: 1 },
+      maxSize:     { cols: 6, rows: 3 },
+      defaultSize: { cols: 3, rows: 2 },
     },
+
     sidebar: {
-      minHeight: 120
+      // Keep this shape the same as your working example
+      // (your sidebar's getMinHeight already understands it)
+      minHeight: 84,
+
+      // The order here is the cycle order in your sidebar menu
+      layouts: [
+        { id: 'compact',  tooltip: 'Compact View (single row)' },
+        { id: 'expanded', tooltip: 'Expanded View (controls + queue)' },
+        // no 'collapsed' here — you said the app handles that globally
+      ],
     },
-    // In your working example, `layouts` is at this level, not nested under sidebar.
-    layouts: [
-      { id: 'compact',  icon: '◫', tooltip: 'Compact' },
-      { id: 'expanded', icon: '▭', tooltip: 'Expanded' },
-      { id: 'collapsed', icon: '▯', tooltip: 'Collapsed' }
-    ]
   },
 
-  // Keep it minimal; you can add actual config later
+  // Seed whatever defaults your widget reads from props/config
   defaults: {
-    data: {},
-    view: {
-      // you can stash layout state here if your host reads it
-      layout: 'compact'
-    }
+    queueName: 'Queue',
+    volume: 0.9,
+    repeat: 'off',
+    shuffle: false,
   },
 
-  capabilities: []
+  capabilities: [],
 }

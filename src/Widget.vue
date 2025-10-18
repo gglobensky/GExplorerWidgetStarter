@@ -1,29 +1,56 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 
 /**
  * NOTE ABOUT FILE PICKERS / SAVE DIALOGS
- * --------------------------------------
- * We currently call the File System Access API (showOpenFilePicker / showSaveFilePicker)
- * directly from the widget. THIS BYPASSES your auth/ticket layer.
- * 
+ * We currently call the File System Access API directly from the widget.
+ * THIS BYPASSES your auth/ticket layer.
+ *
  * >>> TODO(GEX): Replace these calls with your audited Items-powered pickers
  * >>> and fsReadText/fsWriteText IPC once ready.
- * 
- * Every place where we use these APIs is clearly marked with BIG comments.
  */
 
-const showQueue = ref(true)
-function toggleQueue() { showQueue.value = !showQueue.value }
-
+// ---- Props ----
 const props = defineProps<{
-  context?: 'sidebar' | 'grid',
-  variant?: 'compact' | 'expanded' | 'collapsed',
-  width?: number,
-  height?: number,
-  gridSize?: { cols: number; rows: number }
+  config?: Record<string, any>
+  placement?: {
+    context: 'grid' | 'sidebar' | 'embedded'
+    layout: string
+    size?: any
+  }
+  runAction?: (a: any) => void
+  context?: 'sidebar' | 'grid'
+  variant?: 'compact' | 'expanded' | 'collapsed'
+  width?: number
+  height?: number
+  theme?: string
+  editMode?: boolean
 }>()
 
+// ---- Computed host context ----
+const hostContext = computed<'grid' | 'sidebar' | 'embedded'>(() =>
+  props.placement?.context ?? props.context ?? 'sidebar'
+)
+
+const hostLayout = computed<string>(() =>
+  props.placement?.layout ?? props.variant ?? 'expanded'
+)
+
+watch(() => hostLayout.value, () => {
+  nextTick(() => {
+    // When layout changes, check if we need to reconnect observer
+    if (hostLayout.value !== 'compact' && rootEl.value) {
+      // Observer should already be there, but force remeasure
+      ro?.disconnect()
+      containerWidth.value = 0
+      measureNow()
+      ro = new ResizeObserver(() => measureNow())
+      ro.observe(rootEl.value)
+    }
+  })
+})
+
+// ---- Types ----
 type Track = {
   id: string
   name: string
@@ -37,52 +64,72 @@ type Track = {
   srcHint?: string
 }
 
-// keep your MIME list, add a companion extension list + combined accept
+// ---- Constants ----
 const ACCEPTED_MIMES = [
-  'audio/mpeg','audio/mp3','audio/ogg','audio/oga',
-  'audio/aac','audio/x-m4a','audio/flac','audio/wav','audio/webm'
+  'audio/mpeg', 'audio/mp3', 'audio/ogg', 'audio/oga',
+  'audio/aac', 'audio/x-m4a', 'audio/flac', 'audio/wav', 'audio/webm'
 ]
-const ACCEPTED_EXTS  = [
-  '.mp3','.ogg','.oga','.aac','.m4a','.flac','.wav','.webm',
-  '.gexm', // our playlist
-  // (later we can add .m3u/.m3u8/.pls etc.)
+
+const ACCEPTED_EXTS = [
+  '.mp3', '.ogg', '.oga', '.aac', '.m4a', '.flac', '.wav', '.webm', '.gexm'
 ]
+
 const INPUT_ACCEPT = [...ACCEPTED_MIMES, ...ACCEPTED_EXTS].join(',')
 
-// ----- ResizeObserver -> layout class -----
+const LONG_PRESS_MS = 400
+const SEEK_TICK_MS = 80
+const SEEK_DELTA = 0.25
+
+// ---- UI state ----
+const showVolPop = ref(false)
+const showQueue = ref(true)
+const isPressing = ref(false)
+let longTimer: number | undefined
+let seekTimer: number | undefined
+
+function onPointerDown(e: PointerEvent) {
+  if (e.button !== 0) return
+  const t = e.target as HTMLElement
+  if (t.closest('.queue')) isPressing.value = true
+}
+
+function onPointerUp() {
+  isPressing.value = false
+}
+
+function toggleQueue() {
+  showQueue.value = !showQueue.value
+}
+
+// ---- Adaptive layout measurement ----
 const rootEl = ref<HTMLElement | null>(null)
+const controlsEl = ref<HTMLElement | null>(null)
 const containerWidth = ref(0)
+const volBtnEl = ref<HTMLElement | null>(null)
+const volPopStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' })
+
 let ro: ResizeObserver | null = null
-let roRaf: number | null = null
 
-onMounted(() => {
-  if (!rootEl.value) return
-  ro = new ResizeObserver(entries => {
-    const w = Math.round(entries[0]?.contentRect?.width || 0)
-    if (roRaf) cancelAnimationFrame(roRaf)
-    roRaf = requestAnimationFrame(() => {
-      if (Math.abs(w - containerWidth.value) >= 3) containerWidth.value = w
-      roRaf = null
-    })
-  })
-  ro.observe(rootEl.value)
-})
-onBeforeUnmount(() => {
-  ro?.disconnect()
-  if (roRaf) cancelAnimationFrame(roRaf)
-  ro = null
-  roRaf = null
+const measureNow = () => {
+  const el = controlsEl.value || rootEl.value
+  if (!el) return
+  const w = Math.round(el.getBoundingClientRect().width || 0)
+  if (Math.abs(w - containerWidth.value) >= 1) containerWidth.value = w
+}
+
+const hostWidthFallback = computed<number>(() => {
+  const p = props.placement?.size
+  const w =
+    typeof p?.width === 'number' && p.width > 0
+      ? p.width
+      : typeof props.width === 'number' && props.width > 0
+        ? props.width
+        : 0
+  return w
 })
 
-/**
- * micro  <= 200px: only play/pause (+add) (tooltip shows details)
- * ultra  <= 280px: 1 group per row (4 rows)
- * narrow <= 360px: 2 groups/row (transport|time, modes|volume)
- * medium <= 520px: 2 groups/row, roomier seek
- * wide   >  520px: single row
- */
 const layoutClass = computed(() => {
-  const w = containerWidth.value
+  const w = containerWidth.value || hostWidthFallback.value || 0
   if (w <= 200) return 'micro'
   if (w <= 280) return 'ultra'
   if (w <= 360) return 'narrow'
@@ -90,8 +137,7 @@ const layoutClass = computed(() => {
   return 'wide'
 })
 
-// ----- Player state -----
-
+// ---- Player state ----
 const audioEl = ref<HTMLAudioElement | null>(null)
 const queue = ref<Track[]>([])
 const currentIndex = ref<number>(-1)
@@ -104,16 +150,90 @@ const repeat = ref<'off' | 'one' | 'all'>('off')
 const shuffle = ref(false)
 const draggingOver = ref(false)
 
+// ---- Queue title / rename ----
+const queueName = ref('Queue')
+const renaming = ref(false)
+const nameInput = ref<HTMLInputElement | null>(null)
+const draftQueueName = ref('')
+
+// ---- Row dragging ----
+const draggingIndex = ref<number | null>(null)
+const hoverIndex = ref<number | null>(null)
+const isRowDragging = ref(false)
+const draggingId = ref<string | null>(null)
+
+// ---- Computed ----
 const hasTracks = computed(() => queue.value.length > 0)
 const canPrev = computed(() => queue.value.length > 0)
 const canNext = computed(() => queue.value.length > 0)
 const current = computed(() => queue.value[currentIndex.value] || null)
 
+const displayQueue = computed<Track[]>(() => {
+  const arr = [...queue.value]
+  if (isRowDragging.value && draggingIndex.value !== null && hoverIndex.value !== null) {
+    const [dragged] = arr.splice(draggingIndex.value, 1)
+    arr.splice(hoverIndex.value, 0, dragged)
+  }
+  return arr
+})
+
+const playTooltip = computed(() => {
+  const head = isPlaying.value ? 'Pause' : 'Play'
+  const name = queue.value[currentIndex.value]?.name
+  const timeLine = `${fmtTime(currentTime.value)} / ${fmtTime(duration.value || 0)}`
+  return name ? `${head}\n${name}\n${timeLine}` : head
+})
+
+const addTooltip = computed(() => {
+  const name = queue.value[currentIndex.value]?.name
+  const timeLine = `${fmtTime(currentTime.value)} / ${fmtTime(duration.value || 0)}`
+  return name ? `Add files…\n${name}\n${timeLine}` : 'Add files…'
+})
+
+// ---- Lifecycle ----
+onMounted(async () => {
+  if (audioEl.value) audioEl.value.volume = volume.value
+
+  document.addEventListener('click', onDocClick)
+  document.addEventListener('keydown', onKeydown)
+  document.addEventListener('pointerup', onPointerUp)
+  document.addEventListener('pointercancel', onPointerUp)
+  window.addEventListener('blur', onPointerUp)
+
+  await nextTick()
+  measureNow()
+  if (!containerWidth.value && hostWidthFallback.value) {
+    containerWidth.value = hostWidthFallback.value
+  }
+
+  ro = new ResizeObserver(() => measureNow())
+  if (controlsEl.value) ro.observe(controlsEl.value)
+  if (rootEl.value) ro.observe(rootEl.value)
+})
+
+onBeforeUnmount(() => {
+  for (const t of queue.value) if (t.url?.startsWith?.('blob:')) URL.revokeObjectURL(t.url)
+
+  document.removeEventListener('mousemove', handleRowDrag)
+  document.removeEventListener('mouseup', stopRowDrag)
+  document.removeEventListener('click', onDocClick)
+  document.removeEventListener('keydown', onKeydown)
+  clearLong()
+  clearSeek()
+  document.removeEventListener('pointerup', onPointerUp)
+  document.removeEventListener('pointercancel', onPointerUp)
+  window.removeEventListener('blur', onPointerUp)
+
+  ro?.disconnect()
+  ro = null
+})
+
+// ---- Format & volume ----
 function fmtTime(sec: number) {
   if (!isFinite(sec)) return '0:00'
   const s = Math.floor(sec % 60)
   const m = Math.floor(sec / 60)
-  return `${m}:${s.toString().padStart(2,'0')}`
+  return `${m}:${s.toString().padStart(2, '0')}`
 }
 
 function setVolume(v: number) {
@@ -122,17 +242,17 @@ function setVolume(v: number) {
   if (clamped > 0) lastNonZeroVolume.value = clamped
   if (audioEl.value) audioEl.value.volume = clamped
 }
+
 function toggleMute() {
-  if (volume.value > 0) setVolume(0)
-  else setVolume(lastNonZeroVolume.value || 0.5)
+  setVolume(volume.value > 0 ? 0 : lastNonZeroVolume.value || 0.5)
 }
 
+// ---- Player controls ----
 function load(index: number) {
   if (index < 0 || index >= queue.value.length) return
   currentIndex.value = index
   const t = queue.value[index]
   const a = audioEl.value!
-  // Guard: unresolved entries should be skipped on load
   if (!t.url) return
   a.src = t.url
   a.load()
@@ -145,7 +265,6 @@ async function play(index?: number) {
   if (typeof index === 'number') {
     load(index)
   } else if (currentIndex.value === -1 && queue.value.length) {
-    // jump to first resolvable track
     const firstPlayable = queue.value.findIndex(t => !!t.url)
     if (firstPlayable >= 0) load(firstPlayable)
   }
@@ -158,10 +277,12 @@ async function play(index?: number) {
     isPlaying.value = false
   }
 }
+
 function pause() {
   audioEl.value?.pause()
   isPlaying.value = false
 }
+
 function togglePlay() {
   if (!hasTracks.value) return
   isPlaying.value ? pause() : play()
@@ -169,51 +290,73 @@ function togglePlay() {
 
 function next() {
   if (!queue.value.length) return
-  if (repeat.value === 'one') { play(currentIndex.value); return }
-
+  if (repeat.value === 'one') {
+    play(currentIndex.value)
+    return
+  }
   if (shuffle.value) {
     let n = currentIndex.value
     if (queue.value.length > 1) {
       while (n === currentIndex.value) n = Math.floor(Math.random() * queue.value.length)
     }
-    load(n); play(); return
+    load(n)
+    play()
+    return
   }
-
   let n = currentIndex.value + 1
   if (n >= queue.value.length) {
     if (repeat.value === 'all') n = 0
-    else { pause(); return }
+    else {
+      pause()
+      return
+    }
   }
-  // skip unresolved placeholders
   const start = n
   while (n !== currentIndex.value) {
     if (queue.value[n]?.url) break
     n = (n + 1) % queue.value.length
     if (n === start) break
   }
-  load(n); play()
+  load(n)
+  play()
 }
+
 function prev() {
   if (!queue.value.length) return
-  if (audioEl.value && currentTime.value > 2) { audioEl.value.currentTime = 0; return }
+  if (audioEl.value && currentTime.value > 2) {
+    audioEl.value.currentTime = 0
+    return
+  }
   let p = currentIndex.value - 1
   if (p < 0) {
     if (repeat.value === 'all') p = queue.value.length - 1
-    else { pause(); return }
+    else {
+      pause()
+      return
+    }
   }
-  // skip unresolved placeholders backwards
   const start = p
   while (p !== currentIndex.value) {
     if (queue.value[p]?.url) break
     p = (p - 1 + queue.value.length) % queue.value.length
     if (p === start) break
   }
-  load(p); play()
+  load(p)
+  play()
 }
 
-function onTimeUpdate() { if (audioEl.value) currentTime.value = audioEl.value.currentTime }
-function onLoadedMeta()  { if (audioEl.value) duration.value = audioEl.value.duration || 0 }
-function onEnded() { next() }
+// ---- Audio events ----
+function onTimeUpdate() {
+  if (audioEl.value) currentTime.value = audioEl.value.currentTime
+}
+
+function onLoadedMeta() {
+  if (audioEl.value) duration.value = audioEl.value.duration || 0
+}
+
+function onEnded() {
+  next()
+}
 
 function seek(e: Event) {
   if (!audioEl.value || !duration.value) return
@@ -221,12 +364,13 @@ function seek(e: Event) {
   const v = parseFloat(t.value)
   audioEl.value.currentTime = v * duration.value
 }
+
 function volInput(e: Event) {
   const t = e.target as HTMLInputElement
   setVolume(parseFloat(t.value))
 }
 
-// ----- Queue ops -----
+// ---- Queue ops ----
 function clearQueue() {
   pause()
   queue.value = []
@@ -234,29 +378,31 @@ function clearQueue() {
   currentTime.value = 0
   duration.value = 0
 }
-function removeAt(index: number) {
-  const wasCurrent = index === currentIndex.value
-  queue.value.splice(index, 1)
+
+function removeAt(realIndex: number) {
+  const wasCurrent = realIndex === currentIndex.value
+  queue.value.splice(realIndex, 1)
   if (wasCurrent) {
-    if (queue.value.length === 0) { clearQueue(); return }
-    const nextIdx = Math.min(index, queue.value.length - 1)
-    // NOTE: do not auto-play if that next item is unresolved
+    if (queue.value.length === 0) {
+      clearQueue()
+      return
+    }
+    const nextIdx = Math.min(realIndex, queue.value.length - 1)
     load(nextIdx)
     if (isPlaying.value) play()
-  } else if (index < currentIndex.value) {
+  } else if (realIndex < currentIndex.value) {
     currentIndex.value -= 1
   }
 }
+
 function addFiles(files: FileList | File[]) {
   const tracks: Track[] = []
   for (const f of Array.from(files)) {
     const name = f.name || ''
-    const lower = name.toLowerCase()
-    const isAudio = ACCEPTED_MIMES.includes(f.type) ||
-                    /\.(mp3|ogg|oga|aac|m4a|flac|wav|webm)$/i.test(name)
-
+    const isAudio =
+      ACCEPTED_MIMES.includes(f.type) ||
+      /\.(mp3|ogg|oga|aac|m4a|flac|wav|webm)$/i.test(name)
     if (!isAudio) continue
-
     const id = `${name}-${f.size}-${f.lastModified}-${Math.random().toString(36).slice(2)}`
     const url = URL.createObjectURL(f)
     tracks.push({ id, name, url, type: f.type, srcHint: '', missing: false })
@@ -264,30 +410,51 @@ function addFiles(files: FileList | File[]) {
   if (!tracks.length) return
   const startEmpty = queue.value.length === 0
   queue.value.push(...tracks)
-  if (startEmpty) { load(0); play() }
+  if (startEmpty) {
+    load(0)
+    play()
+  }
 }
 
+// ---- DnD ----
+function prevent(e: Event) {
+  e.preventDefault()
+  e.stopPropagation()
+}
 
-// ----- DnD + file picker -----
-function prevent(e: Event) { e.preventDefault(); e.stopPropagation() }
-function onDragEnter(e: DragEvent) { prevent(e); draggingOver.value = true }
-function onDragOver(e: DragEvent) { prevent(e) }
-function onDragLeave(e: DragEvent) { prevent(e); draggingOver.value = false }
+function onDragEnter(e: DragEvent) {
+  prevent(e)
+  draggingOver.value = true
+}
+
+function onDragOver(e: DragEvent) {
+  prevent(e)
+}
+
+function onDragLeave(e: DragEvent) {
+  prevent(e)
+  draggingOver.value = false
+}
+
 function onDrop(e: DragEvent) {
-  prevent(e); draggingOver.value = false
+  prevent(e)
+  draggingOver.value = false
   if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files)
 }
 
+// ---- File picker ----
 const fileInput = ref<HTMLInputElement | null>(null)
-function clickPick() { fileInput.value?.click() }
+
+function clickPick() {
+  fileInput.value?.click()
+}
+
 async function onFileInput(e: Event) {
   const input = e.target as HTMLInputElement
   const files = input.files ? Array.from(input.files) : []
-  input.value = '' // always reset
-
+  input.value = ''
   if (!files.length) return
 
-  // split into playlists and audio
   const playlists: File[] = []
   const audios: File[] = []
   for (const f of files) {
@@ -297,15 +464,12 @@ async function onFileInput(e: Event) {
   }
 
   if (audios.length) addFiles(audios)
-
-  // Parse each .gexm and merge
   for (const pf of playlists) {
     try {
       const text = await pf.text()
-      importGexm(text)  // defined below
+      importGexm(text)
     } catch (err) {
       console.warn('[gexm] failed to read:', pf.name, err)
-      // (optional) surface a small UI message/snackbar here
     }
   }
 }
@@ -314,15 +478,10 @@ function importGexm(jsonText: string) {
   let data: any
   try {
     data = JSON.parse(jsonText)
-  } catch (e) {
-    console.warn('[gexm] invalid JSON')
+  } catch {
     return
   }
-
-  if (!data || data.kind !== 'gexm.playlist' || !Array.isArray(data.items)) {
-    console.warn('[gexm] not a valid gexm.playlist')
-    return
-  }
+  if (!data || data.kind !== 'gexm.playlist' || !Array.isArray(data.items)) return
 
   const imported: Track[] = []
   for (const it of data.items as Array<any>) {
@@ -330,62 +489,26 @@ function importGexm(jsonText: string) {
     const href = String(it?.href ?? '')
     const type = typeof it?.type === 'string' ? it.type : ''
     const id = `${name}-${Math.random().toString(36).slice(2)}`
-
-    // We can ONLY safely play http(s) directly right now.
-    // blob: from a previous session will not resolve => mark missing/skipped.
-    // file:// or raw paths will be addressed later via FsBridge (TODO).
     const hrefLower = href.toLowerCase()
-    const looksPlayableNow = hrefLower.startsWith('http://') || hrefLower.startsWith('https://')
+    const looksPlayableNow =
+      hrefLower.startsWith('http://') || hrefLower.startsWith('https://')
 
     if (looksPlayableNow) {
       imported.push({ id, name, url: href, type, srcHint: href, missing: false })
     } else {
-      // mark as missing/skipped (your earlier requirement)
       imported.push({ id, name, url: '', type, srcHint: href, missing: true })
     }
   }
 
   const startEmpty = queue.value.length === 0
   queue.value.push(...imported)
-  // keep current playback state; only autoload if previously empty
-  if (startEmpty && queue.value.length) { load(0); play() }
+  if (startEmpty && queue.value.length) {
+    load(0)
+    play()
+  }
 }
 
-
-// ----- Mount / unmount -----
-onMounted(() => { if (audioEl.value) audioEl.value.volume = volume.value })
-onBeforeUnmount(() => {
-  for (const t of queue.value) if (t.url.startsWith('blob:')) URL.revokeObjectURL(t.url)
-})
-
-// ----- UI helpers -----
-function toggleRepeat() {
-  repeat.value = repeat.value === 'off' ? 'all' : repeat.value === 'all' ? 'one' : 'off'
-}
-function toggleShuffle() { shuffle.value = !shuffle.value }
-function onRowDblClick(i: number) { if (queue.value[i]?.url) play(i) }
-
-// Tooltip (tight)
-const isTight = computed(() => layoutClass.value === 'micro' || layoutClass.value === 'ultra')
-const playTooltip = computed(() => {
-  const head = isPlaying.value ? 'Pause' : 'Play'
-  const name = queue.value[currentIndex.value]?.name
-  const timeLine = `${fmtTime(currentTime.value)} / ${fmtTime(duration.value || 0)}`
-  return name ? `${head}\n${name}\n${timeLine}` : head
-})
-const addTooltip = computed(() => {
-  const name = queue.value[currentIndex.value]?.name
-  const timeLine = `${fmtTime(currentTime.value)} / ${fmtTime(duration.value || 0)}`
-  return name ? `Add files…\n${name}\n${timeLine}` : 'Add files…'
-})
-
-// ====== Queue title: rename inline + save/load ======
-const queueName = ref('Queue')
-const renaming = ref(false)
-const nameInput = ref<HTMLInputElement | null>(null)
-// add next to queueName/renaming/nameInput
-const draftQueueName = ref('')
-
+// ---- Queue title / rename ----
 function beginRename() {
   draftQueueName.value = queueName.value
   renaming.value = true
@@ -394,17 +517,18 @@ function beginRename() {
     nameInput.value?.select()
   })
 }
-function cancelRename() { renaming.value = false }
+
+function cancelRename() {
+  renaming.value = false
+}
+
 function commitRename() {
   const v = draftQueueName.value.trim()
   if (v) queueName.value = v
   renaming.value = false
 }
 
-// Save playlist (.gexm)
-/**
- * >>> TODO(GEX): replace File System Access API usage with audited Items-based save flow.
- */
+// ---- Save/Load playlist ----
 async function savePlaylistGexm() {
   try {
     const payload = {
@@ -413,31 +537,32 @@ async function savePlaylistGexm() {
       name: queueName.value,
       items: queue.value.map(t => ({
         name: t.name,
-        // WARNING: blob: URLs are ephemeral. This allows “documenting” the queue
-        // for now; it won’t be fully portable. We keep a hint for future path.
         href: t.url || '',
         type: t.type || '',
         srcHint: t.srcHint || '',
-        missing: !!t.missing,
-      })),
+        missing: !!t.missing
+      }))
     }
     const text = JSON.stringify(payload, null, 2)
 
-    // --- TEMP: File System Access API ---
-    // >>> TODO(GEX): swap to Items-powered “Save As…” and fsWriteText().
     // @ts-ignore
     if ('showSaveFilePicker' in window) {
       // @ts-ignore
       const handle = await window.showSaveFilePicker({
         suggestedName: `${queueName.value || 'Playlist'}.gexm`,
-        types: [{ description: 'GExplorer Music Playlist', accept: { 'application/json': ['.gexm'] } }],
+        types: [
+          {
+            description: 'GExplorer Music Playlist',
+            accept: { 'application/json': ['.gexm'] }
+          }
+        ]
       })
       const writable = await handle.createWritable()
       await writable.write(new Blob([text], { type: 'application/json' }))
       await writable.close()
       return
     }
-    // Fallback: download via blob
+
     const blob = new Blob([text], { type: 'application/json' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
@@ -449,23 +574,27 @@ async function savePlaylistGexm() {
   }
 }
 
-// Load & merge (.gexm / .m3u / audio)
-/**
- * >>> TODO(GEX): replace File System Access API usage with audited Items-based open flow.
- */
 async function loadAndMerge() {
   try {
-    // --- TEMP: File System Access API ---
     // @ts-ignore
     if ('showOpenFilePicker' in window) {
       // @ts-ignore
       const handles: FileSystemFileHandle[] = await window.showOpenFilePicker({
         multiple: true,
         types: [
-          { description: 'Audio', accept: { 'audio/*': ['.mp3','.ogg','.oga','.aac','.m4a','.flac','.wav','.webm'] } },
-          { description: 'GExplorer Playlist', accept: { 'application/json': ['.gexm'] } },
-          { description: 'M3U Playlist', accept: { 'audio/x-mpegurl': ['.m3u','.m3u8'] } },
-        ],
+          {
+            description: 'Audio',
+            accept: { 'audio/*': ['.mp3', '.ogg', '.oga', '.aac', '.m4a', '.flac', '.wav', '.webm'] }
+          },
+          {
+            description: 'GExplorer Playlist',
+            accept: { 'application/json': ['.gexm'] }
+          },
+          {
+            description: 'M3U Playlist',
+            accept: { 'audio/x-mpegurl': ['.m3u', '.m3u8'] }
+          }
+        ]
       })
 
       const toAdd: Track[] = []
@@ -481,8 +610,6 @@ async function loadAndMerge() {
             const j = JSON.parse(txt)
             if (j?.items && Array.isArray(j.items)) {
               for (const it of j.items) {
-                // If we have a serializable href that is a file path, we can’t deref it here.
-                // We keep a placeholder (missing=true) with a srcHint so the user sees what was intended.
                 if (!it.href || String(it.href).startsWith('blob:')) {
                   placeholders.push({
                     id: `missing-${Math.random().toString(36).slice(2)}`,
@@ -490,23 +617,16 @@ async function loadAndMerge() {
                     url: '',
                     missing: true,
                     srcHint: it.srcHint || it.href || it.name || '',
-                    type: it.type || '',
+                    type: it.type || ''
                   })
                 } else {
-                  // Best-effort: if it.href is a http(s) URL, try to stream as <audio> (CORS permitting)
-                  // Otherwise, also keep as placeholder.
-                  try {
-                    const id = `ext-${Math.random().toString(36).slice(2)}`
-                    toAdd.push({ id, name: it.name || it.href, url: String(it.href), type: it.type || '' })
-                  } catch {
-                    placeholders.push({
-                      id: `missing-${Math.random().toString(36).slice(2)}`,
-                      name: it.name || '(unknown)',
-                      url: '',
-                      missing: true,
-                      srcHint: it.href || '',
-                    })
-                  }
+                  const id = `ext-${Math.random().toString(36).slice(2)}`
+                  toAdd.push({
+                    id,
+                    name: it.name || it.href,
+                    url: String(it.href),
+                    type: it.type || ''
+                  })
                 }
               }
             }
@@ -519,16 +639,18 @@ async function loadAndMerge() {
         if (nameLower.endsWith('.m3u') || nameLower.endsWith('.m3u8')) {
           try {
             const txt = await file.text()
-            const lines = txt.split(/\r?\n/).map(s => s.trim()).filter(Boolean)
+            const lines = txt
+              .split(/\r?\n/)
+              .map(s => s.trim())
+              .filter(Boolean)
             for (const line of lines) {
               if (line.startsWith('#')) continue
-              // We can’t resolve local paths here; treat as placeholder
               placeholders.push({
                 id: `m3u-${Math.random().toString(36).slice(2)}`,
                 name: line.split(/[\\/]/).pop() || line,
                 url: '',
                 missing: true,
-                srcHint: line,
+                srcHint: line
               })
             }
           } catch (e) {
@@ -537,287 +659,805 @@ async function loadAndMerge() {
           continue
         }
 
-        // Assume audio file
-        if (ACCEPTED.includes(file.type) || /\.(mp3|ogg|oga|aac|m4a|flac|wav|webm)$/i.test(file.name)) {
+        if (
+          ACCEPTED_MIMES.includes(file.type) ||
+          /\.(mp3|ogg|oga|aac|m4a|flac|wav|webm)$/i.test(file.name)
+        ) {
           const id = `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2)}`
           const url = URL.createObjectURL(file)
           toAdd.push({ id, name: file.name, url, type: file.type })
         }
       }
 
-      // Merge: add real tracks first, then placeholders (so play starts if empty)
       const startEmpty = queue.value.length === 0
       queue.value.push(...toAdd, ...placeholders)
-      if (startEmpty && toAdd.length) { load(0); play() }
+      if (startEmpty && toAdd.length) {
+        load(0)
+        play()
+      }
       return
     }
 
-    // Fallback if FS Access API not available: just open the hidden input for audio files
     clickPick()
   } catch (e) {
     console.warn('[open] failed', e)
   }
 }
+
+// ---- UI helpers ----
+function toggleRepeat() {
+  repeat.value = repeat.value === 'off' ? 'all' : repeat.value === 'all' ? 'one' : 'off'
+}
+
+function toggleShuffle() {
+  shuffle.value = !shuffle.value
+}
+
+function onRowDblClickDisplay(iDisplay: number) {
+  const real = displayToRealIndex(iDisplay)
+  if (real >= 0 && queue.value[real]?.url) play(real)
+}
+
+// ---- Row dragging ----
+function displayToRealIndex(iDisplay: number): number {
+  const id = displayQueue.value[iDisplay]?.id
+  return id ? queue.value.findIndex(t => t.id === id) : -1
+}
+
+function startRowDrag(iDisplay: number, event: MouseEvent) {
+  const target = event.target as HTMLElement
+  if (target.closest('.icon-btn')) return
+  draggingIndex.value = iDisplay
+  hoverIndex.value = iDisplay
+  isRowDragging.value = false
+  draggingId.value = displayQueue.value[iDisplay]?.id ?? null
+  document.addEventListener('mousemove', handleRowDrag)
+  document.addEventListener('mouseup', stopRowDrag)
+  document.body.style.cursor = 'grabbing'
+  event.preventDefault()
+}
+
+function handleRowDrag(event: MouseEvent) {
+  if (draggingIndex.value === null) return
+  if (!isRowDragging.value) isRowDragging.value = true
+  const nodes = Array.from(
+    (rootEl.value as HTMLElement)?.querySelectorAll('.queue .row.item') ?? []
+  ) as HTMLElement[]
+  let newHover: number | null = null
+  nodes.forEach((el, idx) => {
+    const rect = el.getBoundingClientRect()
+    if (event.clientY >= rect.top && event.clientY <= rect.bottom) {
+      newHover = idx
+    }
+  })
+  if (newHover !== null) hoverIndex.value = newHover
+}
+
+function stopRowDrag() {
+  if (draggingIndex.value === null) return
+  if (isRowDragging.value && hoverIndex.value !== null && hoverIndex.value !== draggingIndex.value) {
+    const newOrder = [...displayQueue.value]
+    const currentId = queue.value[currentIndex.value]?.id
+    queue.value = newOrder
+    if (currentId) {
+      const idx = queue.value.findIndex(t => t.id === currentId)
+      if (idx >= 0) currentIndex.value = idx
+    }
+  }
+  draggingIndex.value = null
+  hoverIndex.value = null
+  isRowDragging.value = false
+  draggingId.value = null
+  document.body.style.cursor = ''
+  document.removeEventListener('mousemove', handleRowDrag)
+  document.removeEventListener('mouseup', stopRowDrag)
+}
+
+// ---- Compact layout helpers ----
+function toggleVolPop() {
+  if (showVolPop.value) {
+    showVolPop.value = false
+    return
+  }
+  const btn = volBtnEl.value
+  if (!btn) return
+  const r = btn.getBoundingClientRect()
+  volPopStyle.value = {
+    left: `${Math.round(r.left + r.width / 2)}px`,
+    top: `${Math.round(r.bottom + 8)}px`
+  }
+  showVolPop.value = true
+}
+
+function closeVolPop() {
+  showVolPop.value = false
+}
+
+function onDocClick(e: MouseEvent) {
+  if (!showVolPop.value) return
+  const t = e.target as HTMLElement
+  if (!t.closest('.vol-pop') && !t.closest('[data-vol-btn]')) closeVolPop()
+}
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') closeVolPop()
+}
+
+// ---- Long-press seek ----
+function startSeek(dir: 1 | -1) {
+  if (!audioEl.value || !duration.value) return
+  seekTimer = window.setInterval(() => {
+    if (!audioEl.value || !duration.value) return
+    const next = Math.max(
+      0,
+      Math.min(duration.value, (audioEl.value.currentTime || 0) + dir * SEEK_DELTA)
+    )
+    audioEl.value.currentTime = next
+  }, SEEK_TICK_MS)
+}
+
+function clearSeek() {
+  if (seekTimer) {
+    clearInterval(seekTimer)
+    seekTimer = undefined
+  }
+}
+
+function clearLong() {
+  if (longTimer) {
+    clearTimeout(longTimer)
+    longTimer = undefined
+  }
+}
+
+function onPrevDown() {
+  clearLong()
+  longTimer = window.setTimeout(() => startSeek(-1), LONG_PRESS_MS)
+}
+
+function onPrevUp() {
+  const didLong = !!seekTimer
+  clearLong()
+  clearSeek()
+  if (!didLong) prev()
+}
+
+function onNextDown() {
+  clearLong()
+  longTimer = window.setTimeout(() => startSeek(1), LONG_PRESS_MS)
+}
+
+function onNextUp() {
+  const didLong = !!seekTimer
+  clearLong()
+  clearSeek()
+  if (!didLong) next()
+}
 </script>
 
 <template>
-  <div class="player-root"
-       :class="[props.context, props.variant, layoutClass, { 'drag-over': draggingOver }]"
-       ref="rootEl"
-       @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
+  <!-- Hidden input used by both layouts -->
+  <input
+    ref="fileInput"
+    type="file"
+    multiple
+    :accept="INPUT_ACCEPT"
+    style="display: none"
+    @change="onFileInput"
+  />
 
-    <!-- Hidden input for manual file picking -->
-    <input ref="fileInput"
-      type="file" multiple
-      :accept="INPUT_ACCEPT"
-      style="display:none"
-      @change="onFileInput" />
-
-    <!-- Controls -->
-    <div class="controls" :class="layoutClass">
-      <!-- Transport -->
-      <div class="transport">
-        <button v-if="layoutClass !== 'micro'" class="btn prev" title="Previous" :disabled="!canPrev" @click="prev">⏮</button>
-
-        <button class="btn primary play" :title="playTooltip" :disabled="!hasTracks" @click="togglePlay">
-          <span v-if="isPlaying">⏸</span><span v-else>▶</span>
+  <!-- COMPACT VARIANT -->
+  <template v-if="hostLayout === 'compact'">
+    <div class="compact">
+      <!-- Title strip with volume button at right -->
+      <div class="compact-title" :title="playTooltip">
+        <span class="title-text">{{ current?.name || 'No track' }}</span>
+        <button
+          ref="volBtnEl"
+          class="btn vol-in-title"
+          data-vol-btn
+          :class="{ active: volume === 0 }"
+          title="Volume"
+          @click.stop="toggleVolPop"
+        >
+          🔊
         </button>
-
-        <!-- Extra add button only in micro -->
-        <button v-if="layoutClass === 'micro'" class="btn add" :title="addTooltip" @click="clickPick">⏏</button>
-
-        <button v-if="layoutClass !== 'micro'" class="btn next" title="Next" :disabled="!canNext" @click="next">⏭</button>
       </div>
 
-      <!-- Time / Seek -->
-      <div class="time" v-if="layoutClass !== 'micro'">
-        <span class="mono left">{{ fmtTime(currentTime) }}</span>
-        <input class="seek" type="range"
-               min="0" max="1" step="0.001"
-               :value="duration ? currentTime / duration : 0"
-               :disabled="!hasTracks || !duration"
-               @input="seek"
-               :title="fmtTime(currentTime) + ' / ' + fmtTime(duration || 0)" />
-        <span class="mono right">-{{ fmtTime(Math.max(0, (duration || 0) - currentTime)) }}</span>
+      <!-- fixed overlay popover so it never clips -->
+      <div v-if="showVolPop" class="vol-pop fixed" :style="volPopStyle" @click.stop>
+        <input
+          class="vol-vertical"
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          :value="volume"
+          @input="volInput"
+        />
       </div>
 
-      <!-- Modes -->
-      <div class="modes" v-if="layoutClass !== 'micro'">
-        <button class="btn" :class="{ active: shuffle }" title="Shuffle" @click="toggleShuffle">🔀</button>
-        <button class="btn" :class="{ active: repeat !== 'off' }" title="Repeat (off/all/one)" @click="toggleRepeat">
-          <span v-if="repeat === 'off'">🔁</span>
-          <span v-else-if="repeat === 'all'">🔂</span>
-          <span v-else>🔂1</span>
+      <!-- Single-row controls, centered; play/open share a slot -->
+      <div class="compact-controls">
+        <button
+          class="btn"
+          :disabled="!canPrev"
+          @pointerdown.prevent="onPrevDown"
+          @pointerup.prevent="onPrevUp"
+          @pointercancel.prevent="onPrevUp"
+        >
+          ◀
         </button>
-        <button class="btn" title="Add files…" @click="clickPick">⏏</button>
-      </div>
-
-      <!-- Volume -->
-      <div class="volume" v-if="layoutClass !== 'micro'">
-        <button class="btn mute" :class="{ active: volume === 0 }" title="Mute/Unmute" @click="toggleMute">🔊</button>
-        <input class="vol" type="range" min="0" max="1" step="0.01" :value="volume" @input="volInput" />
+        <div class="pair">
+          <button
+            class="btn"
+            :title="playTooltip"
+            :disabled="!hasTracks"
+            @click="togglePlay"
+          >
+            <span v-if="isPlaying">⏸</span><span v-else>▶</span>
+          </button>
+          <button class="btn" title="Add files…" @click="clickPick">⏏</button>
+        </div>
+        <button
+          class="btn"
+          :disabled="!canNext"
+          @pointerdown.prevent="onNextDown"
+          @pointerup.prevent="onNextUp"
+          @pointercancel.prevent="onNextUp"
+        >
+          ▶
+        </button>
       </div>
     </div>
+  </template>
 
-    <!-- Header (only when there are tracks) -->
-    <div v-if="queue.length" class="queue-header">
-      <div class="qh-left">
-        <template v-if="!renaming">
-          <strong class="qh-title" @dblclick="beginRename" :title="'Double-click to rename'">{{ queueName }}</strong>
-        </template>
-        <template v-else>
+  <!-- EXPANDED VARIANT -->
+  <template v-else>
+    <div
+      class="player-root"
+      :class="[hostContext, hostLayout, layoutClass, { 'drag-over': draggingOver, dragging: isRowDragging, pressing: isPressing }]"
+      @pointerdown="onPointerDown"
+      ref="rootEl"
+      @dragenter="onDragEnter"
+      @dragover="onDragOver"
+      @dragleave="onDragLeave"
+      @drop="onDrop"
+    >
+      <!-- Controls (observed for width adaptivity) -->
+      <div class="controls" :class="layoutClass" ref="controlsEl">
+        <div class="transport">
+          <button v-if="layoutClass !== 'micro'" class="btn prev" title="Previous" :disabled="!canPrev" @click="prev">⏮</button>
+          <button class="btn primary play" :title="playTooltip" :disabled="!hasTracks" @click="togglePlay">
+            <span v-if="isPlaying">⏸</span><span v-else>▶</span>
+          </button>
+          <button v-if="layoutClass === 'micro'" class="btn add" :title="addTooltip" @click="clickPick">⏏</button>
+          <button v-if="layoutClass !== 'micro'" class="btn next" title="Next" :disabled="!canNext" @click="next">⏭</button>
+        </div>
+        <div class="time" v-if="layoutClass !== 'micro'">
+          <span class="mono left">{{ fmtTime(currentTime) }}</span>
           <input
-            ref="nameInput"
-            class="qh-input"
-            v-model="draftQueueName"
-            @keydown.enter.prevent="commitRename"
-            @keydown.esc.prevent="cancelRename"
-            @blur="commitRename"
+            class="seek"
+            type="range"
+            min="0"
+            max="1"
+            step="0.001"
+            :value="duration ? currentTime / duration : 0"
+            :disabled="!hasTracks || !duration"
+            @input="seek"
+            :title="fmtTime(currentTime) + ' / ' + fmtTime(duration || 0)"
           />
-          <!-- prevent blur firing before click -->
-          <button class="icon-btn" title="Save name" @mousedown.prevent @click="commitRename">✔</button>
-          <button class="icon-btn" title="Cancel"    @mousedown.prevent @click="cancelRename">✕</button>
-        </template>
-        <span class="count">{{ queue.length }}</span>
+          <span class="mono right">-{{ fmtTime(Math.max(0, (duration || 0) - currentTime)) }}</span>
+        </div>
+        <div class="modes" v-if="layoutClass !== 'micro'">
+          <button class="btn" :class="{ active: shuffle }" title="Shuffle" @click="toggleShuffle">🔀</button>
+          <button class="btn" :class="{ active: repeat !== 'off' }" title="Repeat (off/all/one)" @click="toggleRepeat">
+            <span v-if="repeat === 'off'">🔁</span>
+            <span v-else-if="repeat === 'all'">🔂</span>
+            <span v-else>🔂1</span>
+          </button>
+          <button class="btn" title="Add files…" @click="clickPick">⏏</button>
+        </div>
+        <div class="volume" v-if="layoutClass !== 'micro'">
+          <button class="btn mute" :class="{ active: volume === 0 }" title="Mute/Unmute" @click="toggleMute">🔊</button>
+          <input class="vol" type="range" min="0" max="1" step="0.01" :value="volume" @input="volInput" />
+        </div>
       </div>
 
-      <div class="qh-actions">
-        <button class="icon-btn" title="Load / merge (.gexm, .m3u, audio…)" @click="loadAndMerge">⤒</button>
-        <button class="icon-btn" title="Save playlist (.gexm)" @click="savePlaylistGexm">💾</button>
-        <button class="qh-toggle icon-btn" :aria-expanded="showQueue" :title="showQueue ? 'Hide list' : 'Show list'" @click="toggleQueue">
-          <span v-if="showQueue">▾</span><span v-else>▸</span>
-        </button>
+      <!-- Header -->
+      <div v-if="queue.length" class="queue-header">
+        <div class="qh-left">
+          <template v-if="!renaming">
+            <strong class="qh-title" @dblclick="beginRename" :title="'Double-click to rename'">{{ queueName }}</strong>
+          </template>
+          <template v-else>
+            <input
+              ref="nameInput"
+              class="qh-input"
+              v-model="draftQueueName"
+              @keydown.enter.prevent="commitRename"
+              @keydown.esc.prevent="cancelRename"
+              @blur="commitRename"
+            />
+            <button class="icon-btn" title="Save name" @mousedown.prevent @click="commitRename">✔</button>
+            <button class="icon-btn" title="Cancel" @mousedown.prevent @click="cancelRename">✕</button>
+          </template>
+          <span class="count">{{ queue.length }}</span>
+        </div>
+        <div class="qh-actions">
+          <button class="icon-btn" title="Load / merge (.gexm, .m3u, audio…)" @click="loadAndMerge">⤒</button>
+          <button class="icon-btn" title="Save playlist (.gexm)" @click="savePlaylistGexm">💾</button>
+          <button
+            class="qh-toggle icon-btn"
+            :aria-expanded="showQueue"
+            :title="showQueue ? 'Hide list' : 'Show list'"
+            @click="toggleQueue"
+          >
+            <span v-if="showQueue">▾</span><span v-else>▸</span>
+          </button>
+        </div>
       </div>
-    </div>
 
-    <!-- List (only when there are tracks AND it's expanded) -->
-    <div v-if="queue.length && showQueue" class="queue">
-      <div class="row header">
-        <span>#</span><span>Title</span><span class="dur">Length</span><span class="act"></span>
-      </div>
-      <div v-for="(t, i) in queue" :key="t.id"
-          class="row"
-          :class="{ current: i === currentIndex, skipped: t.missing }"
+      <!-- List -->
+      <div v-if="queue.length && showQueue" class="queue">
+        <div class="row header">
+          <span>#</span><span>Title</span><span class="dur">Length</span><span class="act"></span>
+        </div>
+        <div
+          v-for="(t, i) in displayQueue"
+          :key="t.id"
+          class="row item"
+          :class="{ skipped: t.missing, 'is-dragging': isRowDragging && draggingId === t.id }"
           :title="t.missing ? (t.srcHint ? 'Unavailable: ' + t.srcHint : 'Unavailable') : ''"
-          @dblclick="onRowDblClick(i)">
-        <span class="idx">{{ i + 1 }}</span>
-        <span class="title" :title="t.name">
-          {{ t.name }}
-          <em v-if="t.missing" class="skip-tag"> (skipped)</em>
-        </span>
-        <span class="dur mono" v-if="!t.missing && i === currentIndex && duration">{{ fmtTime(duration) }}</span>
-        <span class="dur mono" v-else>–</span>
-        <span class="act">
-          <button class="icon-btn" title="Remove" @click="removeAt(i)">✕</button>
-        </span>
+          @dblclick="onRowDblClickDisplay(i)"
+          @mousedown="startRowDrag(i, $event)"
+        >
+          <span class="idx">{{ i + 1 }}</span>
+          <span class="title" :title="t.name">
+            {{ t.name }}
+            <em v-if="t.missing" class="skip-tag"> (skipped)</em>
+          </span>
+          <span class="dur mono" v-if="!t.missing && t.id === queue[currentIndex]?.id && duration">{{ fmtTime(duration) }}</span>
+          <span class="dur mono" v-else>–</span>
+          <span class="act">
+            <button class="icon-btn" title="Remove" @click="removeAt(displayToRealIndex(i))">✕</button>
+          </span>
+        </div>
       </div>
-    </div>
 
-    <!-- Empty (only when there are NO tracks at all) -->
-    <div v-if="queue.length === 0" class="empty">
-      <p>Drop audio files here or</p>
-      <button class="btn" @click="clickPick">Add files…</button>
-    </div>
+      <!-- Empty -->
+      <div v-if="queue.length === 0" class="empty">
+        <p>Drop audio files here or</p>
+        <button class="btn" @click="clickPick">Add files…</button>
+      </div>
 
-    <!-- Audio element -->
-    <audio ref="audioEl"
-           @loadedmetadata="onLoadedMeta"
-           @timeupdate="onTimeUpdate"
-           @ended="onEnded"
-           preload="metadata" />
-  </div>
+    </div>
+  </template>
+  
+      <!-- Audio element -->
+      <audio ref="audioEl" @loadedmetadata="onLoadedMeta" @timeupdate="onTimeUpdate" @ended="onEnded" preload="metadata" />
 </template>
 
 <style scoped>
-.player-root{
-  display:flex; flex-direction:column; height:100%;
-  background:var(--surface-2,#222); color:var(--fg,#eee);
-  border:1px solid var(--border,#555); border-radius:var(--radius-md,8px);
-  padding:var(--space-sm,8px); box-sizing:border-box;
+.player-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--surface-2, #222);
+  color: var(--fg, #eee);
+  border: 1px solid var(--border, #555);
+  border-radius: var(--radius-md, 8px);
+  padding: var(--space-sm, 8px);
+  box-sizing: border-box;
 }
-.player-root.drag-over{ outline:2px dashed var(--accent,#4ea1ff); outline-offset:-2px; }
+
+.player-root.drag-over {
+  outline: 2px dashed var(--accent, #4ea1ff);
+  outline-offset: -2px;
+}
 
 /* -------- Controls grid -------- */
-.controls{
-  display:grid; gap:var(--space-sm,8px);
-  align-items:center; justify-items:center;
-  padding:var(--space-xs,6px) var(--space-sm,8px);
-  background:var(--surface-1,#1a1a1a);
-  border:1px solid var(--border,#555); border-radius:var(--radius-sm,6px);
-  box-sizing:border-box; overflow:hidden;
+.controls {
+  display: grid;
+  gap: var(--space-sm, 8px);
+  align-items: center;
+  justify-items: center;
+  padding: var(--space-xs, 6px) var(--space-sm, 8px);
+  background: var(--surface-1, #1a1a1a);
+  border: 1px solid var(--border, #555);
+  border-radius: var(--radius-sm, 6px);
+  box-sizing: border-box;
+  overflow: hidden;
 }
-.controls .transport{ grid-area:transport; display:flex; gap:var(--space-sm,8px); align-items:center; justify-content:center; }
-.controls .time{ grid-area:time; display:flex; align-items:center; gap:var(--space-sm,8px); min-width:0; justify-self:stretch; }
-.controls .modes{ grid-area:modes; display:flex; gap:var(--space-sm,8px); align-items:center; }
-.controls .volume{ grid-area:volume; display:flex; gap:6px; align-items:center; width:100%; max-width:240px; justify-self:end; }
-.controls .seek{ flex:1; min-width:80px; }
-.controls .vol { width:100%; }
 
-/* WIDE: single row (time grows; volume constrained) */
-.controls.wide{
-  grid-template-columns:auto minmax(180px,1fr) auto minmax(140px, 240px);
-  grid-template-areas:"transport time modes volume";
+.controls .transport {
+  grid-area: transport;
+  display: flex;
+  gap: var(--space-sm, 8px);
+  align-items: center;
+  justify-content: center;
 }
+
+.controls .time {
+  grid-area: time;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm, 8px);
+  min-width: 0;
+  justify-self: stretch;
+}
+
+.controls .modes {
+  grid-area: modes;
+  display: flex;
+  gap: var(--space-sm, 8px);
+  align-items: center;
+}
+
+.controls .volume {
+  grid-area: volume;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  max-width: 240px;
+  justify-self: end;
+}
+
+.controls .seek {
+  flex: 1;
+  min-width: 80px;
+}
+
+.controls .vol {
+  width: 100%;
+}
+
+/* WIDE */
+.controls.wide {
+  grid-template-columns: auto minmax(180px, 1fr) auto minmax(140px, 240px);
+  grid-template-areas: 'transport time modes volume';
+}
+
 /* MEDIUM / NARROW */
 .controls.medium,
-.controls.narrow{
-  grid-template-columns:1fr 1fr;
+.controls.narrow {
+  grid-template-columns: 1fr 1fr;
   grid-template-areas:
-    "transport time"
-    "modes     volume";
+    'transport time'
+    'modes volume';
 }
+
 /* ULTRA */
-.controls.ultra{
-  grid-template-columns:1fr;
+.controls.ultra {
+  grid-template-columns: 1fr;
   grid-template-areas:
-    "transport"
-    "time"
-    "modes"
-    "volume";
+    'transport'
+    'time'
+    'modes'
+    'volume';
 }
-.controls.ultra .volume{ max-width:none; justify-self:stretch; }
+
+.controls.ultra .volume {
+  max-width: none;
+  justify-self: stretch;
+}
+
 /* MICRO */
-.controls.micro{
-  grid-template-columns:1fr;
-  grid-template-areas:"transport";
+.controls.micro {
+  grid-template-columns: 1fr;
+  grid-template-areas: 'transport';
 }
-.controls.micro .transport{ gap:6px; }
-.controls.micro .transport .play{ height:32px; padding:0 12px; }
+
+.controls.micro .transport {
+  gap: 6px;
+}
+
+.controls.micro .transport .play {
+  height: 32px;
+  padding: 0 12px;
+}
+
 /* Hide time labels on tight layouts */
 .controls.narrow .time .mono,
-.controls.ultra  .time .mono,
-.controls.micro  .time .mono{ display:none; }
+.controls.ultra .time .mono,
+.controls.micro .time .mono {
+  display: none;
+}
 
 /* Buttons */
-.btn{
-  height:28px; padding:0 8px; border-radius:var(--radius-sm,6px);
-  border:1px solid var(--border,#555); background:var(--surface-2,#222);
-  color:var(--fg,#eee); cursor:pointer; transition:all .12s ease;
+.btn {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--border, #555);
+  background: var(--surface-2, #222);
+  color: var(--fg, #eee);
+  cursor: pointer;
+  transition: all 0.12s ease;
 }
-.btn:hover:not(:disabled){ background:var(--surface-3,#333); border-color:var(--accent,#4ea1ff); }
-.btn:disabled{ opacity:.4; cursor:not-allowed; }
-.btn.primary{ font-weight:700; }
-.btn.active{ border-color:var(--accent,#4ea1ff); box-shadow:0 0 0 1px var(--accent,#4ea1ff) inset; }
-.mono{ font-variant-numeric:tabular-nums; opacity:.8; }
+
+.btn:hover:not(:disabled) {
+  background: var(--surface-3, #333);
+  border-color: var(--accent, #4ea1ff);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn.primary {
+  font-weight: 700;
+}
+
+.btn.active {
+  border-color: var(--accent, #4ea1ff);
+  box-shadow: 0 0 0 1px var(--accent, #4ea1ff) inset;
+}
+
+.mono {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
 
 /* -------- Queue header -------- */
 .queue-header {
-  display:flex; align-items:center; justify-content:space-between;
-  margin-top:var(--space-sm,8px); padding:6px 8px;
-  border:1px solid var(--border,#555); border-radius:var(--radius-sm,6px);
-  background:var(--surface-1,#1a1a1a);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--space-sm, 8px);
+  padding: 6px 8px;
+  border: 1px solid var(--border, #555);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface-1, #1a1a1a);
 }
-.qh-left{ display:flex; align-items:baseline; gap:8px; }
-.qh-title{ cursor:text; }
-.qh-input{
-  height:24px; padding:0 6px; border-radius:4px;
-  border:1px solid var(--border,#555); background:var(--surface-2,#222); color:var(--fg,#eee);
+
+.qh-left {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
 }
-.qh-actions{ display:flex; gap:6px; }
-.qh-toggle{ width:22px; height:22px; display:inline-flex; align-items:center; justify-content:center; }
-.count{ opacity:.7; font-size:12px; }
+
+.qh-title {
+  cursor: text;
+}
+
+.qh-input {
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border, #555);
+  background: var(--surface-2, #222);
+  color: var(--fg, #eee);
+}
+
+.qh-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.qh-toggle {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.count {
+  opacity: 0.7;
+  font-size: 12px;
+}
 
 /* -------- Queue -------- */
-.queue { overflow-y: auto; overflow-x: hidden; }
-.row{
-  display:grid; grid-template-columns:36px 1fr 70px 40px;
-  align-items:center; gap:6px; padding:6px 8px;
-  border-top:1px solid rgba(255,255,255,.05);
+.queue {
+  overflow-y: auto;
+  overflow-x: hidden;
 }
-.row.header{ position:sticky; top:0; background:var(--surface-2,#222); font-weight:600; border-top:none; }
-.row.current{ background:rgba(78,161,255,.12); outline:1px solid var(--accent,#4ea1ff); outline-offset:-1px; }
-.row.missing .title{ opacity:.8; }
-.idx{ opacity:.6; }
-.title{ overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-.dur{ text-align:right; opacity:.8; }
-.act{ display:flex; justify-content:flex-end; }
 
-.icon-btn{
-  width:22px; height:22px; border-radius:4px;
-  border:1px solid var(--border,#555); background:var(--surface-2,#222);
-  color:var(--fg,#eee); cursor:pointer; transition:all .12s ease;
+.row {
+  display: grid;
+  grid-template-columns: 36px 1fr 70px 40px;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--surface-2, #222);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease;
 }
-.icon-btn:hover{ background:var(--surface-3,#333); border-color:var(--accent,#4ea1ff); }
+
+.row.header {
+  position: sticky;
+  top: 0;
+  background: var(--surface-2, #222);
+  font-weight: 600;
+  border-top: none;
+}
+
+.player-root.pressing .row:hover {
+  background: rgba(78, 161, 255, 0.12);
+  outline: 1px solid var(--accent, #4ea1ff);
+  outline-offset: -1px;
+}
+
+.idx {
+  opacity: 0.6;
+}
+
+.title {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.dur {
+  text-align: right;
+  opacity: 0.8;
+}
+
+.act {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.icon-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: 1px solid var(--border, #555);
+  background: var(--surface-2, #222);
+  color: var(--fg, #eee);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.icon-btn:hover {
+  background: var(--surface-3, #333);
+  border-color: var(--accent, #4ea1ff);
+}
 
 /* Micro/Ultra list simplification */
 .player-root.micro .queue .row.header,
-.player-root.ultra .queue .row.header { display:none !important; }
+.player-root.ultra .queue .row.header {
+  display: none !important;
+}
+
 .player-root.micro .queue .row,
-.player-root.ultra .queue .row { grid-template-columns: 1fr; }
+.player-root.ultra .queue .row {
+  grid-template-columns: 1fr;
+}
+
 .player-root.micro .queue .row .idx,
 .player-root.micro .queue .row .dur,
 .player-root.micro .queue .row .act,
 .player-root.ultra .queue .row .idx,
 .player-root.ultra .queue .row .dur,
-.player-root.ultra .queue .row .act { display:none !important; }
+.player-root.ultra .queue .row .act {
+  display: none !important;
+}
+
 .player-root.micro .queue .row .title,
-.player-root.ultra .queue .row .title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.player-root.ultra .queue .row .title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* Empty state */
-.empty{ margin:auto; text-align:center; opacity:.85; }
-.empty .btn{ margin-top:8px; }
+.empty {
+  margin: auto;
+  text-align: center;
+  opacity: 0.85;
+}
 
-.row.skipped { opacity: .7; filter: grayscale(0.2); }
-.skip-tag { opacity: .75; font-style: normal; }
+.empty .btn {
+  margin-top: 8px;
+}
 
+.row.skipped {
+  opacity: 0.7;
+  filter: grayscale(0.2);
+}
+
+.skip-tag {
+  opacity: 0.75;
+  font-style: normal;
+}
+
+/* Row dragging */
+.row {
+  cursor: grab;
+}
+
+.row:active {
+  cursor: grabbing;
+}
+
+.row.is-dragging {
+  border: 2px solid var(--accent, #4ea1ff);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  opacity: 1;
+}
+
+.player-root.dragging .row:hover {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+/* ===== Compact layout ===== */
+.compact {
+  position: relative;
+  overflow: visible;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.compact-title {
+  position: relative;
+  text-align: center;
+  font-weight: 600;
+  padding: 2px 36px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--surface-1, #1a1a1a);
+  border: 1px solid var(--border, #555);
+  border-radius: var(--radius-sm, 6px);
+}
+
+.compact-title .vol-in-title {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 22px;
+  padding: 0 6px;
+}
+
+.compact-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(44px, 1fr));
+  gap: var(--space-sm, 8px);
+  align-items: stretch;
+  justify-items: stretch;
+  width: max-content;
+  margin: 0 auto;
+}
+
+@media (pointer: coarse) {
+  .compact-controls {
+    grid-template-columns: repeat(3, minmax(52px, 1fr));
+  }
+}
+
+.pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.pair .btn {
+  height: auto;
+  padding: 0 6px;
+  line-height: 1;
+}
+
+.vol-pop.fixed {
+  position: fixed;
+  transform: translateX(-50%);
+  padding: 8px;
+  background: var(--surface-1, #1a1a1a);
+  border: 1px solid var(--border, #555);
+  border-radius: var(--radius-sm, 6px);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.3);
+  z-index: 9999;
+}
+
+.vol-vertical {
+  writing-mode: vertical-rl;
+  direction: ltr;
+  height: 120px;
+}
 </style>
