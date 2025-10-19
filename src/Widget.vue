@@ -177,11 +177,21 @@ let wasDragging = false
 const marqueeBox = ref<HTMLElement | null>(null)
 const marqueeCopy = ref<HTMLElement | null>(null)
 const marqueeOn    = ref(false)
-const marqueeDir   = computed(() => props.config?.marqueeDirection ?? 'left'); // 'left'|'right'
+const marqueeDir   = computed(() => props.config?.marqueeDirection ?? 'right'); // 'left'|'right'
 const marqueeSpeed = computed(() => Number(props.config?.marqueeSpeed ?? 35));  // px/sec (slower)
 
-
 let marqueeRO: ResizeObserver | null = null
+
+let lastBoxW = -1, lastCopyW = -1, lastNeeds = false, lastDir = '';
+
+const _cssCache = new WeakMap<HTMLElement, Record<string, string>>();
+function setVar(el: HTMLElement, name: string, val: string) {
+  const cache = _cssCache.get(el) || {};
+  if (cache[name] === val) return;         // no-op if unchanged
+  el.style.setProperty(name, val);
+  cache[name] = val;
+  _cssCache.set(el, cache);
+}
 
 // ---- DEBUG (drop-in) ----
 const DBG = false;
@@ -213,38 +223,58 @@ function updateMarquee() {
   const copy = marqueeCopy.value;
   if (!box || !copy) { marqueeOn.value = false; return; }
 
-  const boxW  = box.clientWidth;
-  const copyW = Math.ceil(copy.scrollWidth);
+  const dir   = marqueeDir.value;
+  const boxW  = Math.round(box.clientWidth);      // stable px
+  const copyW = Math.ceil(copy.scrollWidth);      // integer px, avoids shimmer
   const needs = copyW > boxW + 1;
+
+  // Set dir attribute early so CSS can pick frames, but only if changed
+  if (box.getAttribute('data-dir') !== dir) box.setAttribute('data-dir', dir);
+
+  // Bail out if nothing effectively changed (±1 px tolerance + same state)
+  const sameBox  = Math.abs(boxW  - lastBoxW)  <= 1;
+  const sameCopy = Math.abs(copyW - lastCopyW) <= 1;
+  const sameDir  = (dir === lastDir);
+  if (sameBox && sameCopy && sameDir && needs === lastNeeds) return;
+
   marqueeOn.value = needs;
 
-  // always set dir so CSS can swap keyframes
-  box.setAttribute('data-dir', marqueeDir.value);
-
   if (!needs) {
-    box.style.removeProperty('--gap');
-    box.style.removeProperty('--travel');
-    box.style.removeProperty('--marquee-dur');
-
-    // hard-stop: clear any in-flight animation & snap to 0
-    const track = box.querySelector('.marquee-track') as HTMLElement | null;
-    if (track) {
-      track.style.animation = 'none';
-      track.style.transform = 'translate3d(0,0,0)';
-      requestAnimationFrame(() => { if (track) track.style.animation = ''; });
+    // Transition from running → stopped (or still stopped)
+    // Only do the heavy reset when we *were* running.
+    if (lastNeeds) {
+      const track = box.querySelector('.marquee-track') as HTMLElement | null;
+      if (track) {
+        track.style.animation = 'none';
+        track.style.transform = 'translate3d(0,0,0)';
+        requestAnimationFrame(() => { if (track) track.style.animation = ''; });
+      }
+      // Clear vars only once (and only if we had set them before)
+      box.style.removeProperty('--gap');
+      box.style.removeProperty('--travel');
+      box.style.removeProperty('--marquee-dur');
+      _cssCache.delete(box);
     }
+    // update caches and leave
+    lastBoxW = boxW; lastCopyW = copyW; lastNeeds = needs; lastDir = dir;
     return;
   }
 
-  const GAP_PX = Math.max(28, boxW);
+  // Compute one-tile travel and duration
+  const GAP_PX = Math.round(Math.max(28, boxW));
   const travel = copyW + GAP_PX;
   const speed  = Math.max(10, Number(marqueeSpeed.value || 35));
   const durSec = travel / speed;
 
-  box.style.setProperty('--gap', `${GAP_PX}px`);
-  box.style.setProperty('--travel', `${travel}px`);
-  box.style.setProperty('--marquee-dur', `${durSec.toFixed(3)}s`);
+  // Only touch the DOM if a value actually changed
+  setVar(box, '--gap',         `${GAP_PX}px`);
+  setVar(box, '--travel',      `${travel}px`);
+  setVar(box, '--marquee-dur', `${durSec.toFixed(3)}s`);
+
+  // update caches
+  lastBoxW = boxW; lastCopyW = copyW; lastNeeds = needs; lastDir = dir;
 }
+
 
 
 
@@ -334,19 +364,41 @@ onMounted(async () => {
   marqueeRO = new ResizeObserver(() => {
     rafBatch(updateMarquee);
   });
+
+  watch(marqueeOn, (running) => {
+    const box  = marqueeBox.value;
+    const copy = marqueeCopy.value;
+    if (!marqueeRO || !box || !copy) return;
+
+    if (running) {
+      observeIfPossible(box);
+      observeIfPossible(copy);
+    } else {
+      // We’re not animating; no need to watch text/box resizes here.
+      unobserveIfPossible(box);
+      unobserveIfPossible(copy);
+    }
+  }, { flush: 'post', immediate: true });
+
   observeIfPossible(marqueeBox.value)
   observeIfPossible(marqueeCopy.value)
 
-  const registerAllRefs = () => {
-    const rows = document.querySelectorAll('.row.item')
-    rows.forEach(el => {
-      const trackId = el.getAttribute('data-track-id')
-      const track = queue.value.find(t => t.id === trackId)
-      if (track) dnd?.registerRef(track, el as HTMLElement)
-    })
-  }
+const registerAllRefs = () => {
+  if (!showQueue.value || !queueEl.value || !dnd) return;     // bail fast
+  const rows = queueEl.value.querySelectorAll('.row.item');   // scoped, not document-wide
+  rows.forEach(el => {
+    const trackId = el.getAttribute('data-track-id');
+    const track = queue.value.find(t => t.id === trackId);
+    if (track) dnd.registerRef(track, el as HTMLElement);
+  });
+};
 
-  watch(() => queue.value, registerAllRefs)
+  watch([() => queue.value.length, showQueue], async () => {
+    if (!showQueue.value) return;
+    await nextTick();      // ensure DOM nodes exist
+    registerAllRefs();
+  }, { flush: 'post' });
+
   watch(marqueeOn, (v) => dbg('marqueeOn ->', v), { flush: 'post' })
   dbg('prefers-reduced-motion?', window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
 
@@ -1193,8 +1245,8 @@ function setMarqueeCopy(el: Element | null) {
                 <!-- container is the ref we measure; it owns the clip and width -->
                 <span :ref="setMarqueeBox" class="marquee" :data-dir="marqueeDir" :class="{ run: marqueeOn }">
                   <span class="marquee-track">
-                    <span :ref="setMarqueeCopy" class="copy">{{ t.name }}</span>
-                    <span v-if="marqueeOn" class="copy" aria-hidden="true">{{ t.name }}</span> <!-- only when scrolling -->
+                    <span :ref="setMarqueeCopy" class="copy real">{{ t.name }}</span>
+                    <span class="copy twin" aria-hidden="true">{{ t.name }}</span>
                   </span>
               </span>
               </template>
@@ -1684,43 +1736,46 @@ function setMarqueeCopy(el: Element | null) {
 .row.current .idx::before { content: "▶ "; color: var(--accent, #4ea1ff); }
 
 /* Ensure the marquee container is clipped by the column */
-/* Marquee container clips the track */
+/* Marquee container (unchanged) */
 .marquee{
   position:relative; display:block; overflow:hidden;
   -webkit-mask-image:linear-gradient(90deg,transparent 0,#000 24px,#000 calc(100% - 24px),transparent 100%);
           mask-image:linear-gradient(90deg,transparent 0,#000 24px,#000 calc(100% - 24px),transparent 100%);
 }
 
-/* track: two copies + two gaps (the second via ::after) */
+/* Track: gap is always present so measurements and keyframes match from frame 0 */
 .marquee .marquee-track{
   display:flex;
   will-change: transform;
   transform: translate3d(0,0,0);
-  gap:0;                         /* off until we run */
-}
-.marquee.run .marquee-track{
-  gap: var(--gap,28px);          /* 1st gap (between the copies) */
-}
-.marquee.run .marquee-track::after{
-  content:"";                    /* 2nd gap (after the second copy) */
-  flex: 0 0 var(--gap,28px);
+  gap: var(--gap,28px);                 /* gap always on */
 }
 
+/* Only show the twin once we are actually running */
+.marquee .copy[aria-hidden="true"]{ visibility: hidden; }  /* occupies space, no flash */
+.marquee.run .copy[aria-hidden="true"]{ visibility: visible; }
+
+/* Copies */
 .marquee .copy{ flex:0 0 auto; min-width:max-content; }
 
-/* Hide the twin until we’re actually running */
-.marquee .copy[aria-hidden="true"]{ visibility:hidden; }
-.marquee.run .copy[aria-hidden="true"]{ visibility:visible; }
+/* Directions + animation (unchanged) */
+.marquee.run[data-dir="left"]  .marquee-track{
+  animation: slide-left var(--marquee-dur,12s) linear infinite both;
+}
+.marquee.run[data-dir="right"] .marquee-track{
+  flex-direction: row-reverse;          /* real title sits at x=0 */
+  animation: slide-right var(--marquee-dur,12s) linear infinite both;
+}
 
-/* pause affordance */
-.marquee:hover .marquee-track,
-.marquee:focus-within .marquee-track{ animation-play-state: paused; }
-
-/* already correct – keep these */
-@keyframes slide-left  { from { transform: translate3d(0,0,0); }
-                         to   { transform: translate3d(calc(-1 * var(--travel)),0,0); } }
-@keyframes slide-right { from { transform: translate3d(calc(-1 * var(--travel)),0,0); }
-                         to   { transform: translate3d(0,0,0); } }
+/* exact one-tile travel (copy + gap) */
+@keyframes slide-left  {
+  from { transform: translate3d(0,0,0); }
+  to   { transform: translate3d(calc(-1 * var(--travel,300px)),0,0); }
+}
+@keyframes slide-right {
+  from { transform: translate3d(calc(var(--travel,300px)),0,0); }
+  to   { transform: translate3d(0,0,0); }
+}
 
 .marquee.run[data-dir="left"]  .marquee-track { animation: slide-left  var(--marquee-dur) linear infinite; }
 .marquee.run[data-dir="right"] .marquee-track { animation: slide-right var(--marquee-dur) linear infinite; }
@@ -1734,11 +1789,6 @@ function setMarqueeCopy(el: Element | null) {
 .marquee:hover .marquee-track,
 .marquee:focus-within .marquee-track {
   animation-play-state: paused;
-}
-
-@keyframes gex-marquee {
-  from { transform: translate3d(0,0,0); }
-  to   { transform: translate3d(calc(-1 * var(--travel, 300px)), 0, 0); }
 }
 
 .row .title { display: block; min-width: 0; }  /* not inline */
