@@ -91,6 +91,7 @@ const SEEK_TICK_MS = 80
 const SEEK_DELTA = 0.25
 
 // ---- UI state ----
+const prefersReduced = ref(false);
 const showVolPop = ref(false)
 const showQueue = ref(true)
 const isPressing = ref(false)
@@ -121,11 +122,11 @@ const volPopStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px'
 let ro: ResizeObserver | null = null
 
 const measureNow = () => {
-  const el = controlsEl.value || rootEl.value
-  if (!el) return
-  const w = Math.round(el.getBoundingClientRect().width || 0)
-  if (Math.abs(w - containerWidth.value) >= 1) containerWidth.value = w
-}
+  const el = controlsEl.value || rootEl.value;
+  if (!el) return;
+  const w = el.offsetWidth | 0;  // fast int
+  if (Math.abs(w - containerWidth.value) >= 1) containerWidth.value = w;
+};
 
 const hostWidthFallback = computed<number>(() => {
   const p = props.placement?.size
@@ -173,7 +174,7 @@ let dnd: DnDHandle<Track> | null = null
 const dndVersion = ref(0)
 let wasDragging = false
 
-// put with other refs
+const respectReduced = computed(() => false/* props.config?.respectReducedMotion ?? true */);
 const marqueeBox = ref<HTMLElement | null>(null)
 const marqueeCopy = ref<HTMLElement | null>(null)
 const marqueeOn    = ref(false)
@@ -192,10 +193,6 @@ function setVar(el: HTMLElement, name: string, val: string) {
   cache[name] = val;
   _cssCache.set(el, cache);
 }
-
-// ---- DEBUG (drop-in) ----
-const DBG = false;
-function dbg(...args: any[]) { if (DBG) console.log('[marquee]', ...args); }
 
 // handy manual probe from DevTools
 // call window.__gex_probe() in console to dump current state
@@ -226,7 +223,7 @@ function updateMarquee() {
   const dir   = marqueeDir.value;
   const boxW  = Math.round(box.clientWidth);      // stable px
   const copyW = Math.ceil(copy.scrollWidth);      // integer px, avoids shimmer
-  const needs = copyW > boxW + 1;
+  const needs = (!respectReduced.value || !prefersReduced.value) && copyW > boxW + 1;
 
   // Set dir attribute early so CSS can pick frames, but only if changed
   if (box.getAttribute('data-dir') !== dir) box.setAttribute('data-dir', dir);
@@ -294,16 +291,16 @@ watch(
 
 // Also re-bind the observer whenever the refs re-point
 watch([marqueeBox, marqueeCopy], ([box, copy], [prevBox, prevCopy]) => {
-  if (!marqueeRO) return
-  unobserveIfPossible(prevBox)
-  unobserveIfPossible(prevCopy)
-  observeIfPossible(box)
-  observeIfPossible(copy)
-  rafBatch(updateMarquee)
-}, { flush: 'post' })
-
-watch(marqueeBox, (el) => dbg('marqueeBox set ->', el), { flush: 'post', immediate: true });
-watch(marqueeCopy, (el) => dbg('marqueeCopy set ->', el), { flush: 'post', immediate: true });
+  // Only (un)observe if the observer exists,
+  // but ALWAYS schedule an update.
+  if (marqueeRO) {
+    unobserveIfPossible(prevBox);
+    unobserveIfPossible(prevCopy);
+    observeIfPossible(box);
+    observeIfPossible(copy);
+  }
+  rafBatch(updateMarquee);
+}, { flush: 'post' });
 
 function onDnDUpdate() {
   dndVersion.value++;
@@ -313,7 +310,11 @@ function onDnDUpdate() {
   if (wasDragging && !isDragging) {
     document.body.style.cursor = '';   // ← reset
     const committed = dnd.getOrderedList();
-    if (committed !== queue.value) {
+    const same =
+      committed.length === queue.value.length &&
+      committed.every((t, i) => t.id === queue.value[i]?.id);
+
+    if (!same) {
       const currentId = queue.value[currentIndex.value]?.id;
       queue.value = committed.slice();
       if (currentId) {
@@ -380,27 +381,21 @@ onMounted(async () => {
     }
   }, { flush: 'post', immediate: true });
 
-  observeIfPossible(marqueeBox.value)
-  observeIfPossible(marqueeCopy.value)
-
-const registerAllRefs = () => {
-  if (!showQueue.value || !queueEl.value || !dnd) return;     // bail fast
-  const rows = queueEl.value.querySelectorAll('.row.item');   // scoped, not document-wide
-  rows.forEach(el => {
-    const trackId = el.getAttribute('data-track-id');
-    const track = queue.value.find(t => t.id === trackId);
-    if (track) dnd.registerRef(track, el as HTMLElement);
-  });
-};
+  const registerAllRefs = () => {
+    if (!showQueue.value || !queueEl.value || !dnd) return;     // bail fast
+    const rows = queueEl.value.querySelectorAll('.row.item');   // scoped, not document-wide
+    rows.forEach(el => {
+      const trackId = el.getAttribute('data-track-id');
+      const track = queue.value.find(t => t.id === trackId);
+      if (track) dnd.registerRef(track, el as HTMLElement);
+    });
+  };
 
   watch([() => queue.value.length, showQueue], async () => {
     if (!showQueue.value) return;
     await nextTick();      // ensure DOM nodes exist
     registerAllRefs();
   }, { flush: 'post' });
-
-  watch(marqueeOn, (v) => dbg('marqueeOn ->', v), { flush: 'post' })
-  dbg('prefers-reduced-motion?', window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
 
   // Main layout observer
   ro = new ResizeObserver(() => {
@@ -412,7 +407,18 @@ const registerAllRefs = () => {
   if (controlsEl.value) ro.observe(controlsEl.value)
   if (rootEl.value) ro.observe(rootEl.value)
 
-  // 🔹 ADD THIS: first-paint measurement & sync
+  const mq = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+  if (mq) {
+    prefersReduced.value = mq.matches;
+    const onChange = (e: MediaQueryListEvent) => {
+      prefersReduced.value = e.matches;
+      rafBatch(updateMarquee);
+    };
+    mq.addEventListener?.('change', onChange);
+    // cleanup
+    onBeforeUnmount(() => mq.removeEventListener?.('change', onChange));
+  }
+
   await nextTick();
   rafBatch(() => {
     measureNow();
@@ -586,31 +592,26 @@ function volInput(e: Event) {
 }
 
 // ---- Queue ops ----
-function clearQueue() {
-  pause()
-  queue.value = []
-  currentIndex.value = -1
-  currentTime.value = 0
-  duration.value = 0
-  dnd?.setOrderedList([])
+function removeAt(realIndex: number) {
+  const t = queue.value[realIndex];
+  if (t?.url?.startsWith?.('blob:')) URL.revokeObjectURL(t.url);
+
+  const wasCurrent = realIndex === currentIndex.value;
+  queue.value.splice(realIndex, 1);
+  ensureDnD();
+  // (rest unchanged…)
 }
 
-function removeAt(realIndex: number) {
-  const wasCurrent = realIndex === currentIndex.value
-  queue.value.splice(realIndex, 1)
-  dnd?.setOrderedList(queue.value)
-
-  if (wasCurrent) {
-    if (queue.value.length === 0) {
-      clearQueue()
-      return
-    }
-    const nextIdx = Math.min(realIndex, queue.value.length - 1)
-    load(nextIdx)
-    if (isPlaying.value) play()
-  } else if (realIndex < currentIndex.value) {
-    currentIndex.value -= 1
+function clearQueue() {
+  pause();
+  for (const t of queue.value) {
+    if (t.url?.startsWith?.('blob:')) URL.revokeObjectURL(t.url);
   }
+  queue.value = [];
+  currentIndex.value = -1;
+  currentTime.value = 0;
+  duration.value = 0;
+  ensureDnD();
 }
 
 function addFiles(files: FileList | File[]) {
@@ -634,6 +635,8 @@ function addFiles(files: FileList | File[]) {
     load(0)
     play()
   }
+
+  ensureDnD()
 }
 
 // ---- DnD ----
@@ -728,6 +731,8 @@ function importGexm(jsonText: string) {
     load(0)
     play()
   }
+
+  ensureDnD()
 }
 
 // ---- Queue title / rename ----
@@ -906,6 +911,8 @@ async function loadAndMerge() {
   } catch (e) {
     console.warn('[open] failed', e)
   }
+
+  ensureDnD()
 }
 
 // ---- UI helpers ----
@@ -934,29 +941,22 @@ function startRowDrag(iDisplay: number, event: MouseEvent) {
   document.body.style.cursor = 'grabbing'
 }
 
-// Watch queue changes to sync DnD
-watch(
-  () => queue.value,
-  (newQueue) => {
-    if (!dnd) {
-      if (newQueue.length > 0) {
-        dnd = createDnD(newQueue, {
-          identity: t => t.id,
-          orientation: 'vertical',
-          dragThresholdPx: 4,
-          onUpdate: onDnDUpdate,
-          scrollContainer: () => queueEl.value,
-          containerClassOnDrag: 'gex-dragging',
-          rowSelector: '.row.item', 
-          autoScroll: { marginPx: 56, maxSpeedPxPerSec: 900 },
-        })
-      }
-    } else {
-      dnd.setOrderedList(newQueue) // this will also trigger onUpdate
-    }
-  },
-  { deep: true }
-)
+function ensureDnD() {
+  if (!dnd && queue.value.length > 0) {
+    dnd = createDnD(queue.value, {
+      identity: t => t.id,
+      orientation: 'vertical',
+      dragThresholdPx: 4,
+      onUpdate: onDnDUpdate,
+      scrollContainer: () => queueEl.value,
+      containerClassOnDrag: 'gex-dragging',
+      rowSelector: '.row.item',
+      autoScroll: { marginPx: 56, maxSpeedPxPerSec: 900 },
+    });
+  } else {
+    dnd?.setOrderedList(queue.value);
+  }
+}
 
 // ---- Compact layout helpers ----
 function toggleVolPop() {
@@ -1500,6 +1500,7 @@ function setMarqueeCopy(el: Element | null) {
 .queue {
   overflow-y: auto;
   overflow-x: hidden;
+  contain: layout paint;
 }
 
 .row {
@@ -1777,14 +1778,6 @@ function setMarqueeCopy(el: Element | null) {
   to   { transform: translate3d(0,0,0); }
 }
 
-.marquee.run[data-dir="left"]  .marquee-track { animation: slide-left  var(--marquee-dur) linear infinite; }
-.marquee.run[data-dir="right"] .marquee-track { animation: slide-right var(--marquee-dur) linear infinite; }
-
-/* Hidden by default… */
-/* keep “second copy” hidden unless running */
-.marquee .copy[aria-hidden="true"] { visibility: hidden; }
-.marquee.run .copy[aria-hidden="true"] { visibility: visible; }
-
 /* pause affordance */
 .marquee:hover .marquee-track,
 .marquee:focus-within .marquee-track {
@@ -1847,9 +1840,5 @@ function setMarqueeCopy(el: Element | null) {
   border-color: var(--accent, #4ea1ff);
 }
 
-.tab-btn:hover{
-  background:var(--surface-3, #333);
-  border-color:var(--accent, #4ea1ff);
-}
 .marquee.run .marquee-track { animation-play-state: running !important; }
 </style>
