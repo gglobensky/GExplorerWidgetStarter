@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
+import { createDnD, type CreateDnDOptions, type DnDHandle } from '/src/widgets/dnd.ts'
 
 /**
  * NOTE ABOUT FILE PICKERS / SAVE DIALOGS
@@ -38,9 +39,7 @@ const hostLayout = computed<string>(() =>
 
 watch(() => hostLayout.value, () => {
   nextTick(() => {
-    // When layout changes, check if we need to reconnect observer
     if (hostLayout.value !== 'compact' && rootEl.value) {
-      // Observer should already be there, but force remeasure
       ro?.disconnect()
       containerWidth.value = 0
       measureNow()
@@ -49,6 +48,8 @@ watch(() => hostLayout.value, () => {
     }
   })
 })
+
+const queueEl = ref<HTMLElement | null>(null)
 
 // ---- Types ----
 type Track = {
@@ -156,26 +157,43 @@ const renaming = ref(false)
 const nameInput = ref<HTMLInputElement | null>(null)
 const draftQueueName = ref('')
 
-// ---- Row dragging ----
-const draggingIndex = ref<number | null>(null)
-const hoverIndex = ref<number | null>(null)
-const isRowDragging = ref(false)
-const draggingId = ref<string | null>(null)
+// ---- DnD Manager ----
+let dnd: DnDHandle<Track> | null = null
 
+const dndVersion = ref(0)
+let wasDragging = false
+
+function onDnDUpdate() {
+  dndVersion.value++;
+  if (!dnd) return;
+  const { isDragging } = dnd.getState();
+
+  if (wasDragging && !isDragging) {
+    document.body.style.cursor = '';   // ← reset
+    const committed = dnd.getOrderedList();
+    if (committed !== queue.value) {
+      const currentId = queue.value[currentIndex.value]?.id;
+      queue.value = committed.slice();
+      if (currentId) {
+        const newIdx = queue.value.findIndex(t => t.id === currentId);
+        if (newIdx >= 0) currentIndex.value = newIdx;
+      }
+    }
+  }
+  wasDragging = isDragging;
+}
+
+const dndState = computed(() =>
+  (void dndVersion.value, dnd?.getState() ?? { isDragging: false, draggingId: null, hoverIdx: null })
+)
+const displayQueue = computed<Track[]>(() =>
+  (void dndVersion.value, dnd?.getDisplayList() ?? [])
+)
 // ---- Computed ----
 const hasTracks = computed(() => queue.value.length > 0)
 const canPrev = computed(() => queue.value.length > 0)
 const canNext = computed(() => queue.value.length > 0)
 const current = computed(() => queue.value[currentIndex.value] || null)
-
-const displayQueue = computed<Track[]>(() => {
-  const arr = [...queue.value]
-  if (isRowDragging.value && draggingIndex.value !== null && hoverIndex.value !== null) {
-    const [dragged] = arr.splice(draggingIndex.value, 1)
-    arr.splice(hoverIndex.value, 0, dragged)
-  }
-  return arr
-})
 
 const playTooltip = computed(() => {
   const head = isPlaying.value ? 'Pause' : 'Play'
@@ -200,6 +218,17 @@ onMounted(async () => {
   document.addEventListener('pointercancel', onPointerUp)
   window.addEventListener('blur', onPointerUp)
 
+  const registerAllRefs = () => {
+    const rows = document.querySelectorAll('.row.item')
+    rows.forEach(el => {
+      const trackId = el.getAttribute('data-track-id')
+      const track = queue.value.find(t => t.id === trackId)
+      if (track) dnd?.registerRef(track, el as HTMLElement)
+    })
+  }
+
+  watch(() => queue.value, registerAllRefs)
+
   await nextTick()
   measureNow()
   if (!containerWidth.value && hostWidthFallback.value) {
@@ -214,8 +243,6 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   for (const t of queue.value) if (t.url?.startsWith?.('blob:')) URL.revokeObjectURL(t.url)
 
-  document.removeEventListener('mousemove', handleRowDrag)
-  document.removeEventListener('mouseup', stopRowDrag)
   document.removeEventListener('click', onDocClick)
   document.removeEventListener('keydown', onKeydown)
   clearLong()
@@ -226,6 +253,9 @@ onBeforeUnmount(() => {
 
   ro?.disconnect()
   ro = null
+
+  dnd?.destroy()
+  dnd = null
 })
 
 // ---- Format & volume ----
@@ -377,11 +407,14 @@ function clearQueue() {
   currentIndex.value = -1
   currentTime.value = 0
   duration.value = 0
+  dnd?.setOrderedList([])
 }
 
 function removeAt(realIndex: number) {
   const wasCurrent = realIndex === currentIndex.value
   queue.value.splice(realIndex, 1)
+  dnd?.setOrderedList(queue.value)
+
   if (wasCurrent) {
     if (queue.value.length === 0) {
       clearQueue()
@@ -410,6 +443,8 @@ function addFiles(files: FileList | File[]) {
   if (!tracks.length) return
   const startEmpty = queue.value.length === 0
   queue.value.push(...tracks)
+  dnd?.setOrderedList(queue.value)
+
   if (startEmpty) {
     load(0)
     play()
@@ -502,6 +537,8 @@ function importGexm(jsonText: string) {
 
   const startEmpty = queue.value.length === 0
   queue.value.push(...imported)
+  dnd?.setOrderedList(queue.value)
+
   if (startEmpty && queue.value.length) {
     load(0)
     play()
@@ -671,6 +708,8 @@ async function loadAndMerge() {
 
       const startEmpty = queue.value.length === 0
       queue.value.push(...toAdd, ...placeholders)
+      dnd?.setOrderedList(queue.value)
+
       if (startEmpty && toAdd.length) {
         load(0)
         play()
@@ -694,64 +733,45 @@ function toggleShuffle() {
 }
 
 function onRowDblClickDisplay(iDisplay: number) {
-  const real = displayToRealIndex(iDisplay)
-  if (real >= 0 && queue.value[real]?.url) play(real)
+  const item = displayQueue.value[iDisplay]
+  if (item?.url) {
+    const realIdx = queue.value.findIndex(t => t.id === item.id)
+    if (realIdx >= 0) play(realIdx)
+  }
 }
 
 // ---- Row dragging ----
-function displayToRealIndex(iDisplay: number): number {
-  const id = displayQueue.value[iDisplay]?.id
-  return id ? queue.value.findIndex(t => t.id === id) : -1
-}
-
 function startRowDrag(iDisplay: number, event: MouseEvent) {
   const target = event.target as HTMLElement
   if (target.closest('.icon-btn')) return
-  draggingIndex.value = iDisplay
-  hoverIndex.value = iDisplay
-  isRowDragging.value = false
-  draggingId.value = displayQueue.value[iDisplay]?.id ?? null
-  document.addEventListener('mousemove', handleRowDrag)
-  document.addEventListener('mouseup', stopRowDrag)
+  event.preventDefault() // stops text selection on initial down
+  dnd?.startDrag(iDisplay, event as PointerEvent)
   document.body.style.cursor = 'grabbing'
-  event.preventDefault()
 }
 
-function handleRowDrag(event: MouseEvent) {
-  if (draggingIndex.value === null) return
-  if (!isRowDragging.value) isRowDragging.value = true
-  const nodes = Array.from(
-    (rootEl.value as HTMLElement)?.querySelectorAll('.queue .row.item') ?? []
-  ) as HTMLElement[]
-  let newHover: number | null = null
-  nodes.forEach((el, idx) => {
-    const rect = el.getBoundingClientRect()
-    if (event.clientY >= rect.top && event.clientY <= rect.bottom) {
-      newHover = idx
+// Watch queue changes to sync DnD
+watch(
+  () => queue.value,
+  (newQueue) => {
+    if (!dnd) {
+      if (newQueue.length > 0) {
+        dnd = createDnD(newQueue, {
+          identity: t => t.id,
+          orientation: 'vertical',
+          dragThresholdPx: 4,
+          onUpdate: onDnDUpdate,
+          scrollContainer: () => queueEl.value,
+          containerClassOnDrag: 'gex-dragging',
+          rowSelector: '.row.item', 
+          autoScroll: { marginPx: 56, maxSpeedPxPerSec: 900 },
+        })
+      }
+    } else {
+      dnd.setOrderedList(newQueue) // this will also trigger onUpdate
     }
-  })
-  if (newHover !== null) hoverIndex.value = newHover
-}
-
-function stopRowDrag() {
-  if (draggingIndex.value === null) return
-  if (isRowDragging.value && hoverIndex.value !== null && hoverIndex.value !== draggingIndex.value) {
-    const newOrder = [...displayQueue.value]
-    const currentId = queue.value[currentIndex.value]?.id
-    queue.value = newOrder
-    if (currentId) {
-      const idx = queue.value.findIndex(t => t.id === currentId)
-      if (idx >= 0) currentIndex.value = idx
-    }
-  }
-  draggingIndex.value = null
-  hoverIndex.value = null
-  isRowDragging.value = false
-  draggingId.value = null
-  document.body.style.cursor = ''
-  document.removeEventListener('mousemove', handleRowDrag)
-  document.removeEventListener('mouseup', stopRowDrag)
-}
+  },
+  { deep: true }
+)
 
 // ---- Compact layout helpers ----
 function toggleVolPop() {
@@ -916,7 +936,7 @@ function onNextUp() {
   <template v-else>
     <div
       class="player-root"
-      :class="[hostContext, hostLayout, layoutClass, { 'drag-over': draggingOver, dragging: isRowDragging, pressing: isPressing }]"
+      :class="[hostContext, hostLayout, layoutClass, { 'drag-over': draggingOver, dragging: dndState.isDragging, pressing: isPressing }]"
       @pointerdown="onPointerDown"
       ref="rootEl"
       @dragenter="onDragEnter"
@@ -965,7 +985,7 @@ function onNextUp() {
       </div>
 
       <!-- Header -->
-      <div v-if="queue.length" class="queue-header">
+      <div v-if="queue.length && showQueue" class="queue-header">
         <div class="qh-left">
           <template v-if="!renaming">
             <strong class="qh-title" @dblclick="beginRename" :title="'Double-click to rename'">{{ queueName }}</strong>
@@ -999,18 +1019,18 @@ function onNextUp() {
       </div>
 
       <!-- List -->
-      <div v-if="queue.length && showQueue" class="queue">
+      <div v-if="queue.length && showQueue" class="queue" ref="queueEl">
         <div class="row header">
           <span>#</span><span>Title</span><span class="dur">Length</span><span class="act"></span>
         </div>
         <div
           v-for="(t, i) in displayQueue"
           :key="t.id"
+          :data-track-id="t.id"
           class="row item"
-          :class="{ skipped: t.missing, 'is-dragging': isRowDragging && draggingId === t.id }"
-          :title="t.missing ? (t.srcHint ? 'Unavailable: ' + t.srcHint : 'Unavailable') : ''"
+          :class="{ skipped: t.missing, 'is-dragging': dndState.isDragging && dndState.draggingId === t.id }"
           @dblclick="onRowDblClickDisplay(i)"
-          @mousedown="startRowDrag(i, $event)"
+          @pointerdown="startRowDrag(i, $event)"
         >
           <span class="idx">{{ i + 1 }}</span>
           <span class="title" :title="t.name">
@@ -1020,7 +1040,7 @@ function onNextUp() {
           <span class="dur mono" v-if="!t.missing && t.id === queue[currentIndex]?.id && duration">{{ fmtTime(duration) }}</span>
           <span class="dur mono" v-else>–</span>
           <span class="act">
-            <button class="icon-btn" title="Remove" @click="removeAt(displayToRealIndex(i))">✕</button>
+            <button class="icon-btn" title="Remove" @click="removeAt(queue.findIndex(track => track.id === t.id))">✕</button>
           </span>
         </div>
       </div>
@@ -1030,12 +1050,11 @@ function onNextUp() {
         <p>Drop audio files here or</p>
         <button class="btn" @click="clickPick">Add files…</button>
       </div>
-
     </div>
   </template>
-  
-      <!-- Audio element -->
-      <audio ref="audioEl" @loadedmetadata="onLoadedMeta" @timeupdate="onTimeUpdate" @ended="onEnded" preload="metadata" />
+
+  <!-- Audio element -->
+  <audio ref="audioEl" @loadedmetadata="onLoadedMeta" @timeupdate="onTimeUpdate" @ended="onEnded" preload="metadata" />
 </template>
 
 <style scoped>
@@ -1054,6 +1073,12 @@ function onNextUp() {
 .player-root.drag-over {
   outline: 2px dashed var(--accent, #4ea1ff);
   outline-offset: -2px;
+}
+
+.player-root.dragging,
+.player-root.dragging * {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* -------- Controls grid -------- */

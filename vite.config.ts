@@ -40,6 +40,9 @@ export default defineConfig({
     'process.env.NODE_ENV': JSON.stringify('production'),
     globalThis: 'window',
   },
+
+
+
   build: {
     target: 'es2020',
     sourcemap: sourceMap,
