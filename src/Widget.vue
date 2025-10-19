@@ -150,6 +150,7 @@ const lastNonZeroVolume = ref(0.9)
 const repeat = ref<'off' | 'one' | 'all'>('off')
 const shuffle = ref(false)
 const draggingOver = ref(false)
+const currentTitle = computed(() => queue.value[currentIndex.value]?.name || '')
 
 // ---- Queue title / rename ----
 const queueName = ref('Queue')
@@ -162,6 +163,109 @@ let dnd: DnDHandle<Track> | null = null
 
 const dndVersion = ref(0)
 let wasDragging = false
+
+// put with other refs
+const marqueeBox = ref<HTMLElement | null>(null)
+const marqueeCopy = ref<HTMLElement | null>(null)
+const marqueeOn    = ref(false)
+const marqueeDir   = computed(() => props.config?.marqueeDirection ?? 'left'); // 'left'|'right'
+const marqueeSpeed = computed(() => Number(props.config?.marqueeSpeed ?? 35));  // px/sec (slower)
+
+
+let marqueeRO: ResizeObserver | null = null
+
+// ---- DEBUG (drop-in) ----
+const DBG = false;
+function dbg(...args: any[]) { if (DBG) console.log('[marquee]', ...args); }
+
+// handy manual probe from DevTools
+// call window.__gex_probe() in console to dump current state
+// @ts-ignore
+(window as any).__gex_probe = function () {
+  const box = marqueeBox?.value as HTMLElement | null;
+  const copy = marqueeCopy?.value as HTMLElement | null;
+  const track = box?.querySelector('.marquee-track') as HTMLElement | null;
+  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  const animName = track ? getComputedStyle(track).animationName : '(no track)';
+
+  console.log('[probe] currentIndex:', currentIndex.value,
+              'currentTitle:', queue.value[currentIndex.value]?.name);
+  console.log('[probe] box:', box, 'copy:', copy, 'track:', track);
+  console.log('[probe] sizes -> box.clientWidth:', box?.clientWidth,
+              'copy.scrollWidth:', copy?.scrollWidth);
+  console.log('[probe] marqueeOn:', marqueeOn.value,
+              'has .run? ', box?.classList.contains('run'));
+  console.log('[probe] prefers-reduced-motion?', reduce,
+              'computed animationName:', animName);
+};
+
+function updateMarquee() {
+  const box  = marqueeBox.value;
+  const copy = marqueeCopy.value;
+  if (!box || !copy) { marqueeOn.value = false; return; }
+
+  const boxW  = box.clientWidth;
+  const copyW = Math.ceil(copy.scrollWidth);
+  const needs = copyW > boxW + 1;
+  marqueeOn.value = needs;
+
+  // always set dir so CSS can swap keyframes
+  box.setAttribute('data-dir', marqueeDir.value);
+
+  if (!needs) {
+    box.style.removeProperty('--gap');
+    box.style.removeProperty('--travel');
+    box.style.removeProperty('--marquee-dur');
+
+    // hard-stop: clear any in-flight animation & snap to 0
+    const track = box.querySelector('.marquee-track') as HTMLElement | null;
+    if (track) {
+      track.style.animation = 'none';
+      track.style.transform = 'translate3d(0,0,0)';
+      requestAnimationFrame(() => { if (track) track.style.animation = ''; });
+    }
+    return;
+  }
+
+  const GAP_PX = Math.max(28, boxW);
+  const travel = copyW + GAP_PX;
+  const speed  = Math.max(10, Number(marqueeSpeed.value || 35));
+  const durSec = travel / speed;
+
+  box.style.setProperty('--gap', `${GAP_PX}px`);
+  box.style.setProperty('--travel', `${travel}px`);
+  box.style.setProperty('--marquee-dur', `${durSec.toFixed(3)}s`);
+}
+
+
+
+function observeIfPossible(el: HTMLElement | null) {
+  if (el && marqueeRO) marqueeRO.observe(el)
+}
+function unobserveIfPossible(el: HTMLElement | null) {
+  if (el && marqueeRO) marqueeRO.unobserve(el)
+}
+
+// replace the previous watcher with this:
+watch(
+  [currentIndex, () => queue.value.length, () => layoutClass.value, currentTitle],
+  () => nextTick(updateMarquee),
+  { flush: 'post', immediate: true }
+)
+
+// Also re-bind the observer whenever the refs re-point
+watch([marqueeBox, marqueeCopy], ([box, copy], [prevBox, prevCopy]) => {
+  if (!marqueeRO) return
+  unobserveIfPossible(prevBox)
+  unobserveIfPossible(prevCopy)
+  observeIfPossible(box)
+  observeIfPossible(copy)
+  // also recompute immediately when the nodes swap
+  nextTick(updateMarquee)
+}, { flush: 'post' })
+
+watch(marqueeBox, (el) => dbg('marqueeBox set ->', el), { flush: 'post', immediate: true });
+watch(marqueeCopy, (el) => dbg('marqueeCopy set ->', el), { flush: 'post', immediate: true });
 
 function onDnDUpdate() {
   dndVersion.value++;
@@ -218,6 +322,13 @@ onMounted(async () => {
   document.addEventListener('pointercancel', onPointerUp)
   window.addEventListener('blur', onPointerUp)
 
+  marqueeRO = new ResizeObserver(() => {
+    dbg('ResizeObserver tick');
+    updateMarquee();
+  });
+  observeIfPossible(marqueeBox.value)
+  observeIfPossible(marqueeCopy.value)
+
   const registerAllRefs = () => {
     const rows = document.querySelectorAll('.row.item')
     rows.forEach(el => {
@@ -228,7 +339,8 @@ onMounted(async () => {
   }
 
   watch(() => queue.value, registerAllRefs)
-
+  watch(marqueeOn, (v) => dbg('marqueeOn ->', v), { flush: 'post' })
+  dbg('prefers-reduced-motion?', window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
   await nextTick()
   measureNow()
   if (!containerWidth.value && hostWidthFallback.value) {
@@ -256,6 +368,7 @@ onBeforeUnmount(() => {
 
   dnd?.destroy()
   dnd = null
+  marqueeRO?.disconnect()
 })
 
 // ---- Format & volume ----
@@ -853,6 +966,16 @@ function onNextUp() {
   clearSeek()
   if (!didLong) next()
 }
+
+// rock-solid setters for template ref callbacks
+function setMarqueeBox(el: Element | null) {
+  // accept either Element or null
+  marqueeBox.value = (el as HTMLElement) || null
+}
+function setMarqueeCopy(el: Element | null) {
+  marqueeCopy.value = (el as HTMLElement) || null
+}
+
 </script>
 
 <template>
@@ -984,8 +1107,16 @@ function onNextUp() {
         </div>
       </div>
 
+      
+      <!-- Compact inline volume for ultra/narrow/micro -->
+      <div class="volume-line"
+          v-if="layoutClass === 'micro'">
+        <input class="vol vol-line" type="range" min="0" max="1" step="0.01" :value="volume" @input="volInput" />
+      </div>
+
+
       <!-- Header -->
-      <div v-if="queue.length && showQueue" class="queue-header">
+      <div v-if="queue.length" class="queue-header">
         <div class="qh-left">
           <template v-if="!renaming">
             <strong class="qh-title" @dblclick="beginRename" :title="'Double-click to rename'">{{ queueName }}</strong>
@@ -1005,17 +1136,16 @@ function onNextUp() {
           <span class="count">{{ queue.length }}</span>
         </div>
         <div class="qh-actions">
-          <button class="icon-btn" title="Load / merge (.gexm, .m3u, audio…)" @click="loadAndMerge">⤒</button>
           <button class="icon-btn" title="Save playlist (.gexm)" @click="savePlaylistGexm">💾</button>
-          <button
-            class="qh-toggle icon-btn"
-            :aria-expanded="showQueue"
-            :title="showQueue ? 'Hide list' : 'Show list'"
-            @click="toggleQueue"
-          >
-            <span v-if="showQueue">▾</span><span v-else>▸</span>
-          </button>
         </div>
+      </div>
+
+      <!-- New centered collapse/expand control for all layouts -->
+      <div v-if="queue.length" class="queue-collapse-tab">
+        <button class="tab-btn" :aria-expanded="showQueue" @click="toggleQueue"
+                :title="showQueue ? 'Hide list' : 'Show list'">
+          <span v-if="showQueue">▾</span><span v-else>▸</span>
+        </button>
       </div>
 
       <!-- List -->
@@ -1024,25 +1154,44 @@ function onNextUp() {
           <span>#</span><span>Title</span><span class="dur">Length</span><span class="act"></span>
         </div>
         <div
-          v-for="(t, i) in displayQueue"
-          :key="t.id"
-          :data-track-id="t.id"
-          class="row item"
-          :class="{ skipped: t.missing, 'is-dragging': dndState.isDragging && dndState.draggingId === t.id }"
-          @dblclick="onRowDblClickDisplay(i)"
-          @pointerdown="startRowDrag(i, $event)"
-        >
-          <span class="idx">{{ i + 1 }}</span>
-          <span class="title" :title="t.name">
-            {{ t.name }}
-            <em v-if="t.missing" class="skip-tag"> (skipped)</em>
-          </span>
-          <span class="dur mono" v-if="!t.missing && t.id === queue[currentIndex]?.id && duration">{{ fmtTime(duration) }}</span>
-          <span class="dur mono" v-else>–</span>
-          <span class="act">
-            <button class="icon-btn" title="Remove" @click="removeAt(queue.findIndex(track => track.id === t.id))">✕</button>
-          </span>
-        </div>
+            v-for="(t, i) in displayQueue"
+            :key="t.id"
+            :data-track-id="t.id"
+            class="row item"
+            :class="{
+              skipped: t.missing,
+              'is-dragging': dndState.isDragging && dndState.draggingId === t.id,
+              current: t.id === queue[currentIndex]?.id
+            }"
+            @dblclick="onRowDblClickDisplay(i)"
+            @pointerdown="startRowDrag(i, $event)"
+          >
+            <span class="idx">{{ i + 1 }}</span>
+
+            <span class="title" :title="t.name">
+              <template v-if="t.id === queue[currentIndex]?.id">
+                <!-- container is the ref we measure; it owns the clip and width -->
+                <span :ref="setMarqueeBox" class="marquee" :data-dir="marqueeDir" :class="{ run: marqueeOn }">
+                  <span class="marquee-track">
+                    <span :ref="setMarqueeCopy" class="copy">{{ t.name }}</span>
+                    <span v-if="marqueeOn" class="copy" aria-hidden="true">{{ t.name }}</span> <!-- only when scrolling -->
+                  </span>
+              </span>
+              </template>
+              <template v-else>
+                {{ t.name }}
+              </template>
+
+              <em v-if="t.missing" class="skip-tag"> (skipped)</em>
+            </span>
+
+            <span class="dur mono" v-if="!t.missing && t.id === queue[currentIndex]?.id && duration">{{ fmtTime(duration) }}</span>
+            <span class="dur mono" v-else>–</span>
+
+            <span class="act">
+              <button class="icon-btn" title="Remove" @click="removeAt(queue.findIndex(track => track.id === t.id))">✕</button>
+            </span>
+          </div>
       </div>
 
       <!-- Empty -->
@@ -1331,10 +1480,21 @@ function onNextUp() {
   height: 22px;
   border-radius: 4px;
   border: 1px solid var(--border, #555);
+  display: grid;
+  place-items: center;
   background: var(--surface-2, #222);
   color: var(--fg, #eee);
   cursor: pointer;
   transition: all 0.12s ease;
+}
+
+.row.current .idx::before { content: "▶ "; color: var(--accent, #4ea1ff); }
+
+.modes .btn.active {
+  box-shadow: none;
+  border-color: var(--border, #555);
+  background: var(--surface-2, #222);
+  color: var(--accent, #4ea1ff);  /* simple, consistent highlight */
 }
 
 .icon-btn:hover {
@@ -1485,4 +1645,141 @@ function onNextUp() {
   direction: ltr;
   height: 120px;
 }
+
+/* Current row (distinct from drag) */
+.row.current {
+  position: relative;
+  background: linear-gradient(90deg, rgba(78,161,255,.10), transparent 60%);
+  box-shadow: inset 0 0 0 1px rgba(78,161,255,.28);
+}
+.row.current::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--accent, #4ea1ff);
+  border-radius: 2px;
+}
+.row.current .title { font-weight: 600; color: #d9ecff; } /* a touch brighter */
+.row.current .idx::before { content: "▶ "; color: var(--accent, #4ea1ff); }
+
+/* Ensure the marquee container is clipped by the column */
+/* Marquee container clips the track */
+.marquee{
+  position:relative; display:block; overflow:hidden;
+  -webkit-mask-image:linear-gradient(90deg,transparent 0,#000 24px,#000 calc(100% - 24px),transparent 100%);
+          mask-image:linear-gradient(90deg,transparent 0,#000 24px,#000 calc(100% - 24px),transparent 100%);
+}
+
+/* track: two copies + two gaps (the second via ::after) */
+.marquee .marquee-track{
+  display:flex;
+  will-change: transform;
+  transform: translate3d(0,0,0);
+  gap:0;                         /* off until we run */
+}
+.marquee.run .marquee-track{
+  gap: var(--gap,28px);          /* 1st gap (between the copies) */
+}
+.marquee.run .marquee-track::after{
+  content:"";                    /* 2nd gap (after the second copy) */
+  flex: 0 0 var(--gap,28px);
+}
+
+.marquee .copy{ flex:0 0 auto; min-width:max-content; }
+
+/* Hide the twin until we’re actually running */
+.marquee .copy[aria-hidden="true"]{ visibility:hidden; }
+.marquee.run .copy[aria-hidden="true"]{ visibility:visible; }
+
+/* pause affordance */
+.marquee:hover .marquee-track,
+.marquee:focus-within .marquee-track{ animation-play-state: paused; }
+
+/* already correct – keep these */
+@keyframes slide-left  { from { transform: translate3d(0,0,0); }
+                         to   { transform: translate3d(calc(-1 * var(--travel)),0,0); } }
+@keyframes slide-right { from { transform: translate3d(calc(-1 * var(--travel)),0,0); }
+                         to   { transform: translate3d(0,0,0); } }
+
+.marquee.run[data-dir="left"]  .marquee-track { animation: slide-left  var(--marquee-dur) linear infinite; }
+.marquee.run[data-dir="right"] .marquee-track { animation: slide-right var(--marquee-dur) linear infinite; }
+
+/* Hidden by default… */
+/* keep “second copy” hidden unless running */
+.marquee .copy[aria-hidden="true"] { visibility: hidden; }
+.marquee.run .copy[aria-hidden="true"] { visibility: visible; }
+
+/* pause affordance */
+.marquee:hover .marquee-track,
+.marquee:focus-within .marquee-track {
+  animation-play-state: paused;
+}
+
+@keyframes gex-marquee {
+  from { transform: translate3d(0,0,0); }
+  to   { transform: translate3d(calc(-1 * var(--travel, 300px)), 0, 0); }
+}
+
+.row .title { display: block; min-width: 0; }  /* not inline */
+
+.volume-line {
+  margin-top: 6px;
+  padding: 0 2px;
+}
+.volume-line .vol-line {
+  width: 100%;
+}
+
+ .queue-collapse-row {
+  display: flex;
+  justify-content: center;
+  margin: 2px 0 6px;        /* closer to header */
+}
+
+.queue-collapse-row .icon-btn.arrow {
+  min-width: 56px;          /* wider tab feel */
+  height: 16px;             /* thinner */
+  padding: 0 10px;
+  border-radius: 10px;      /* pill/tab look */
+  line-height: 16px;
+  opacity: 0.9;
+}
+
+.queue-collapse-row .icon-btn.arrow:hover {
+  opacity: 1;
+}
+/* Center the collapse tab (class name now matches the template) */
+.queue-collapse-tab {
+  display: flex;
+  justify-content: center;
+  margin: 2px 0 6px;
+}
+
+.tab-btn {
+  min-width: 44px;
+  height: 14px;
+  padding: 0 8px;
+  line-height: 14px;
+  border: 1px solid var(--border, #555);
+  border-top: none;
+  border-radius: 0 0 10px 10px;
+  background: var(--surface-1, #1a1a1a);
+  color: var(--fg, #eee);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all .12s ease;
+}
+.tab-btn:hover {
+  background: var(--surface-3, #333);
+  border-color: var(--accent, #4ea1ff);
+}
+
+.tab-btn:hover{
+  background:var(--surface-3, #333);
+  border-color:var(--accent, #4ea1ff);
+}
+.marquee.run .marquee-track { animation-play-state: running !important; }
 </style>
