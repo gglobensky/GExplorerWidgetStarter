@@ -11,6 +11,15 @@ import { createDnD, type CreateDnDOptions, type DnDHandle } from '/src/widgets/d
  * >>> and fsReadText/fsWriteText IPC once ready.
  */
 
+let rafId = 0;
+function rafBatch(fn: () => void) {
+  if (rafId) return;
+  rafId = requestAnimationFrame(() => {
+    rafId = 0;
+    fn();
+  });
+}
+
 // ---- Props ----
 const props = defineProps<{
   config?: Record<string, any>
@@ -249,9 +258,9 @@ function unobserveIfPossible(el: HTMLElement | null) {
 // replace the previous watcher with this:
 watch(
   [currentIndex, () => queue.value.length, () => layoutClass.value, currentTitle],
-  () => nextTick(updateMarquee),
+  () => rafBatch(updateMarquee),
   { flush: 'post', immediate: true }
-)
+);
 
 // Also re-bind the observer whenever the refs re-point
 watch([marqueeBox, marqueeCopy], ([box, copy], [prevBox, prevCopy]) => {
@@ -260,8 +269,7 @@ watch([marqueeBox, marqueeCopy], ([box, copy], [prevBox, prevCopy]) => {
   unobserveIfPossible(prevCopy)
   observeIfPossible(box)
   observeIfPossible(copy)
-  // also recompute immediately when the nodes swap
-  nextTick(updateMarquee)
+  rafBatch(updateMarquee)
 }, { flush: 'post' })
 
 watch(marqueeBox, (el) => dbg('marqueeBox set ->', el), { flush: 'post', immediate: true });
@@ -322,9 +330,9 @@ onMounted(async () => {
   document.addEventListener('pointercancel', onPointerUp)
   window.addEventListener('blur', onPointerUp)
 
+  // Marquee-size observer
   marqueeRO = new ResizeObserver(() => {
-    dbg('ResizeObserver tick');
-    updateMarquee();
+    rafBatch(updateMarquee);
   });
   observeIfPossible(marqueeBox.value)
   observeIfPossible(marqueeCopy.value)
@@ -341,16 +349,28 @@ onMounted(async () => {
   watch(() => queue.value, registerAllRefs)
   watch(marqueeOn, (v) => dbg('marqueeOn ->', v), { flush: 'post' })
   dbg('prefers-reduced-motion?', window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
-  await nextTick()
-  measureNow()
-  if (!containerWidth.value && hostWidthFallback.value) {
-    containerWidth.value = hostWidthFallback.value
-  }
 
-  ro = new ResizeObserver(() => measureNow())
+  // Main layout observer
+  ro = new ResizeObserver(() => {
+    rafBatch(() => {
+      measureNow();
+      updateMarquee(); // keep marquee in sync with width changes
+    });
+  });
   if (controlsEl.value) ro.observe(controlsEl.value)
   if (rootEl.value) ro.observe(rootEl.value)
-})
+
+  // 🔹 ADD THIS: first-paint measurement & sync
+  await nextTick();
+  rafBatch(() => {
+    measureNow();
+    if (!containerWidth.value && hostWidthFallback.value) {
+      containerWidth.value = hostWidthFallback.value;
+    }
+    updateMarquee();
+  });
+});
+
 
 onBeforeUnmount(() => {
   for (const t of queue.value) if (t.url?.startsWith?.('blob:')) URL.revokeObjectURL(t.url)
