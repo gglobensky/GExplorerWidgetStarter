@@ -20,12 +20,13 @@ const sourceMap =
   process.env.SOURCEMAP ? process.env.SOURCEMAP === 'true' : Boolean(cfg.sourcemap)
 
 // Helper: mark host-resolved imports as external
-function isHostExternal(id: string) {
+function isHostExternal(id) {
   return (
     id === 'vue' ||
     id === '/runtime/vue.js' ||
     id.startsWith('/src/') ||
-    id.startsWith('/runtime/')
+    id.startsWith('/runtime/') ||
+    id === 'gexplorer/widgets' 
   )
 }
 
@@ -63,6 +64,7 @@ export default defineConfig({
         // Re-map 'vue' to the host shim URL in case an author imports 'vue'
         paths: {
           vue: '/runtime/vue.js',
+          'gexplorer/widgets': '/src/widgets/sdk-shim.ts',
         },
       },
     },

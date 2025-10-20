@@ -6,11 +6,10 @@
     "strict": true,
     "jsx": "preserve",
     "skipLibCheck": true,
-    "types": [],
-	"baseUrl": ".",
+    "baseUrl": ".",
     "paths": {
-      "gexplorer/widgets": ["UserInterface/src/widgets/sdk-shim.ts"] 
+      "gexplorer/widgets": ["types/widgets-sdk.d.ts"]
     }
   },
-  "include": ["src", "tools"]
+  "include": ["src", "tools", "types"]
 }

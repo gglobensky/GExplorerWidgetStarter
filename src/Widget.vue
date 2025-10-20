@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
-import { createDnD, type CreateDnDOptions, type DnDHandle } from '/src/widgets/dnd.ts'
+import { createDnD, type DnDHandle } from 'gexplorer/widgets'
+import { useAudio, createLifecycle } from 'gexplorer/widgets'
+const { prime, acquireElement, playlists } = useAudio();
+
 
 /**
  * NOTE ABOUT FILE PICKERS / SAVE DIALOGS
@@ -11,14 +14,6 @@ import { createDnD, type CreateDnDOptions, type DnDHandle } from '/src/widgets/d
  * >>> and fsReadText/fsWriteText IPC once ready.
  */
 
-let rafId = 0;
-function rafBatch(fn: () => void) {
-  if (rafId) return;
-  rafId = requestAnimationFrame(() => {
-    rafId = 0;
-    fn();
-  });
-}
 
 // ---- Props ----
 const props = defineProps<{
@@ -34,8 +29,92 @@ const props = defineProps<{
   width?: number
   height?: number
   theme?: string
-  editMode?: boolean
+  editMode?: boolean,
+  sourceId: string
 }>()
+
+type RackIndexEvt = CustomEvent<{ listId: string; index: number; item: { id?: string; url?: string } | null }>
+
+const ownerId = props.sourceId; // one id to rule them all
+// One logical playlist for this widget instance:const ownerId = props.sourceId; // one id to rule them all
+const sel = { ownerId, category: 'music', key: 'local-player' };
+
+// Convert your queue -> playlist items (skip placeholders)
+const toItems = () =>
+  queue.value
+    .filter(t => !!t.url)
+    .map(t => ({ id: t.id, src: t.url, name: t.name, type: t.type }))
+
+let rafId = 0;
+function rafBatch(fn: () => void) {
+  if (rafId) return;
+  rafId = requestAnimationFrame(() => {
+    rafId = 0;
+    fn();
+  });
+}
+
+const life = createLifecycle(props.sourceId)
+
+const music = acquireElement({ ownerId, category: 'music', key: 'primary', persistent: true, keepOnSidebarCollapse: true, suspendPolicy: 'continue' });
+
+function prepare(index: number) {
+  if (index < 0 || index >= queue.value.length) return
+  currentIndex.value = index
+  const t = queue.value[index]
+  if (!t?.url) return
+  music.src = t.url
+  music.load()                  // just hydrate metadata while paused
+  currentTime.value = 0
+  duration.value = 0
+}
+
+const onRackIndex = (e: Event) => {
+  const { index, item } = (e as RackIndexEvt).detail
+  if (!item) return
+  // Prefer id match; fallback to url (handles duplicates poorly, but OK for now)
+  let real = -1
+  if (item.id) real = queue.value.findIndex(t => t.id === item.id)
+  if (real < 0 && item.url) real = queue.value.findIndex(t => t.url === item.url)
+  if (real >= 0) currentIndex.value = real
+}
+
+async function play(index?: number) {
+  await prime()
+  if (typeof index === 'number') {
+    // Play a specific row:
+    if (index >= 0 && index < queue.value.length && queue.value[index]?.url) {
+      await playlists.playIndex(sel, index, music)
+      isPlaying.value = true
+    }
+    return
+  }
+  // Fallback: if nothing selected, start from first playable
+  if (currentIndex.value === -1) {
+    const first = queue.value.findIndex(t => !!t.url)
+    if (first >= 0) {
+      await playlists.playIndex(sel, first, music)
+      isPlaying.value = true
+      return
+    }
+  }
+  // Otherwise just play current handle (e.g., after pause)
+  try { await music.play(); isPlaying.value = true } catch { isPlaying.value = false }
+}
+
+function pause() {
+  music.pause()
+  isPlaying.value = false
+}
+
+function seek(e: Event) {
+  if (!duration.value) return
+  const v = parseFloat((e.target as HTMLInputElement).value)
+  music.currentTime = v * duration.value
+}
+life.onSuspend(() => {
+  // pause timers/raf; audio continues
+})
 
 // ---- Computed host context ----
 const hostContext = computed<'grid' | 'sidebar' | 'embedded'>(() =>
@@ -93,7 +172,7 @@ const SEEK_DELTA = 0.25
 // ---- UI state ----
 const prefersReduced = ref(false);
 const showVolPop = ref(false)
-const showQueue = ref(true)
+const showQueue          = life.cell<boolean>('ui.showQueue', true)
 const isPressing = ref(false)
 let longTimer: number | undefined
 let seekTimer: number | undefined
@@ -149,21 +228,25 @@ const layoutClass = computed(() => {
 })
 
 // ---- Player state ----
-const audioEl = ref<HTMLAudioElement | null>(null)
-const queue = ref<Track[]>([])
-const currentIndex = ref<number>(-1)
+const queue              = life.persistRef<Track[]>('queue', [])
+const currentIndex       = life.cell<number>('currentIndex', -1)
 const isPlaying = ref(false)
+
 const currentTime = ref(0)
 const duration = ref(0)
 const volume = ref(0.9)
-const lastNonZeroVolume = ref(0.9)
-const repeat = ref<'off' | 'one' | 'all'>('off')
-const shuffle = ref(false)
+life.bindRef('ui.isPlaying',  isPlaying)        // harmless hint; media events will correct it
+life.bindRef('ui.currentTime', currentTime)
+life.bindRef('ui.duration',    duration)
+
+const lastNonZeroVolume  = life.cell<number>('ui.lastNonZeroVol', 0.9)
+const repeat             = life.cell<'off'|'one'|'all'>('repeat', 'off')
+const shuffle            = life.cell<boolean>('shuffle', false)
 const draggingOver = ref(false)
 const currentTitle = computed(() => queue.value[currentIndex.value]?.name || '')
 
 // ---- Queue title / rename ----
-const queueName = ref('Queue')
+const queueName          = life.cell<string>('queueName', 'Queue')
 const renaming = ref(false)
 const nameInput = ref<HTMLInputElement | null>(null)
 const draftQueueName = ref('')
@@ -302,13 +385,19 @@ watch([marqueeBox, marqueeCopy], ([box, copy], [prevBox, prevCopy]) => {
   rafBatch(updateMarquee);
 }, { flush: 'post' });
 
+watch(
+  () => queue.value.map(t => t.id).join('|'),
+  ensureDnD,
+  { immediate: true }
+)
+
 function onDnDUpdate() {
   dndVersion.value++;
   if (!dnd) return;
   const { isDragging } = dnd.getState();
 
   if (wasDragging && !isDragging) {
-    document.body.style.cursor = '';   // ← reset
+    document.body.style.cursor = '';
     const committed = dnd.getOrderedList();
     const same =
       committed.length === queue.value.length &&
@@ -321,6 +410,8 @@ function onDnDUpdate() {
         const newIdx = queue.value.findIndex(t => t.id === currentId);
         if (newIdx >= 0) currentIndex.value = newIdx;
       }
+      // 🔹 Sync playlist order with the rack:
+      playlists.setItems(sel, toItems());
     }
   }
   wasDragging = isDragging;
@@ -351,15 +442,58 @@ const addTooltip = computed(() => {
   return name ? `Add files…\n${name}\n${timeLine}` : 'Add files…'
 })
 
+const onMediaPlay   = () => { isPlaying.value = true }
+const onMediaPause  = () => { isPlaying.value = false }
+const onTimeUpdate  = () => { currentTime.value = music.currentTime || 0 }
+
+let lastSrc = ''
+const onLoadedMeta = (e: Event) => {
+  const t = e.target as HTMLMediaElement | null
+  const d = (t?.duration ?? (music as any)?.duration)
+  duration.value = Number.isFinite(d) ? d : 0
+
+  const src = (t?.currentSrc || music.src) || ''
+  if (src && src !== lastSrc) {
+    lastSrc = src
+    const idx = queue.value.findIndex(q => q.url === src)
+    if (idx >= 0) currentIndex.value = idx
+  }
+}
+
+function hydrateFromHandle() {
+  // read from the persistent element
+  console.log('Music volume read from elem: ', music.volume)
+  volume.value = music.volume
+  if (volume.value > 0) lastNonZeroVolume.value = volume.value
+
+  isPlaying.value   = !music.paused
+  currentTime.value = music.currentTime || 0
+  duration.value    = music.duration || 0
+}
+
+const onVolumeChange = () => {
+  // mirror element -> UI without writing back
+  const v = music.volume
+  if (v !== volume.value) {
+    volume.value = v
+    if (v > 0) lastNonZeroVolume.value = v
+  }
+}
+
 // ---- Lifecycle ----
 onMounted(async () => {
-  if (audioEl.value) audioEl.value.volume = volume.value
+  music.addEventListener('play',           onMediaPlay)
+  music.addEventListener('pause',          onMediaPause)
+  music.addEventListener('timeupdate',     onTimeUpdate)
+  music.addEventListener('loadedmetadata', onLoadedMeta as any)
+  music.addEventListener('volumechange', onVolumeChange)
 
   document.addEventListener('click', onDocClick)
   document.addEventListener('keydown', onKeydown)
   document.addEventListener('pointerup', onPointerUp)
   document.addEventListener('pointercancel', onPointerUp)
   window.addEventListener('blur', onPointerUp)
+  music.addEventListener('rack:playlistindex', onRackIndex as EventListener)
 
   // Marquee-size observer
   marqueeRO = new ResizeObserver(() => {
@@ -419,6 +553,15 @@ onMounted(async () => {
     onBeforeUnmount(() => mq.removeEventListener?.('change', onChange));
   }
 
+  playlists.register(sel, toItems(), {
+    autoNext: 'linear',
+    repeat: repeat.value,
+    shuffle: shuffle.value,
+    dedupe: false,
+  })
+  playlists.setItems(sel, toItems(), { keepCurrent: true })
+  playlists.bindToHandle(sel, music)
+
   await nextTick();
   rafBatch(() => {
     measureNow();
@@ -427,11 +570,14 @@ onMounted(async () => {
     }
     updateMarquee();
   });
+
+  // measure & marquee as you had…
+  hydrateFromHandle()
 });
 
 
 onBeforeUnmount(() => {
-  for (const t of queue.value) if (t.url?.startsWith?.('blob:')) URL.revokeObjectURL(t.url)
+  //for (const t of queue.value) if (t.url?.startsWith?.('blob:')) URL.revokeObjectURL(t.url)
 
   document.removeEventListener('click', onDocClick)
   document.removeEventListener('keydown', onKeydown)
@@ -441,11 +587,20 @@ onBeforeUnmount(() => {
   document.removeEventListener('pointercancel', onPointerUp)
   window.removeEventListener('blur', onPointerUp)
 
+  music.removeEventListener('play',           onMediaPlay)
+  music.removeEventListener('pause',          onMediaPause)
+  music.removeEventListener('timeupdate',     onTimeUpdate)
+  music.removeEventListener('loadedmetadata', onLoadedMeta as any)
+  music.removeEventListener('volumechange', onVolumeChange)
+  music.removeEventListener('rack:playlistindex', onRackIndex as EventListener)
+
   ro?.disconnect()
   ro = null
 
   dnd?.destroy()
   dnd = null
+
+  playlists.unbind(sel)
   marqueeRO?.disconnect()
 })
 
@@ -461,7 +616,7 @@ function setVolume(v: number) {
   const clamped = Math.min(1, Math.max(0, v))
   volume.value = clamped
   if (clamped > 0) lastNonZeroVolume.value = clamped
-  if (audioEl.value) audioEl.value.volume = clamped
+  music.volume = clamped                // <-- write only here (user intent)
 }
 
 function toggleMute() {
@@ -469,138 +624,59 @@ function toggleMute() {
 }
 
 // ---- Player controls ----
-function load(index: number) {
-  if (index < 0 || index >= queue.value.length) return
-  currentIndex.value = index
-  const t = queue.value[index]
-  const a = audioEl.value!
-  if (!t.url) return
-  a.src = t.url
-  a.load()
-  currentTime.value = 0
-  duration.value = 0
-}
-
-async function play(index?: number) {
-  if (!audioEl.value) return
-  if (typeof index === 'number') {
-    load(index)
-  } else if (currentIndex.value === -1 && queue.value.length) {
-    const firstPlayable = queue.value.findIndex(t => !!t.url)
-    if (firstPlayable >= 0) load(firstPlayable)
-  }
-  try {
-    if (audioEl.value?.src) {
-      await audioEl.value.play()
-      isPlaying.value = true
-    }
-  } catch {
-    isPlaying.value = false
-  }
-}
-
-function pause() {
-  audioEl.value?.pause()
-  isPlaying.value = false
-}
-
 function togglePlay() {
   if (!hasTracks.value) return
   isPlaying.value ? pause() : play()
 }
 
+// next/prev buttons:
 function next() {
-  if (!queue.value.length) return
-  if (repeat.value === 'one') {
-    play(currentIndex.value)
-    return
-  }
-  if (shuffle.value) {
-    let n = currentIndex.value
-    if (queue.value.length > 1) {
-      while (n === currentIndex.value) n = Math.floor(Math.random() * queue.value.length)
-    }
-    load(n)
-    play()
-    return
-  }
-  let n = currentIndex.value + 1
-  if (n >= queue.value.length) {
-    if (repeat.value === 'all') n = 0
-    else {
-      pause()
-      return
-    }
-  }
-  const start = n
-  while (n !== currentIndex.value) {
-    if (queue.value[n]?.url) break
-    n = (n + 1) % queue.value.length
-    if (n === start) break
-  }
-  load(n)
-  play()
+  playlists.next(sel, music).then(idx => {
+    if (idx >= 0) currentIndex.value = idx;
+    else pause(); // hit end with repeat=off
+  });
+}
+function prev() {
+  playlists.prev(sel, music).then(idx => {
+    if (idx >= 0) currentIndex.value = idx;
+  });
 }
 
-function prev() {
-  if (!queue.value.length) return
-  if (audioEl.value && currentTime.value > 2) {
-    audioEl.value.currentTime = 0
-    return
-  }
-  let p = currentIndex.value - 1
-  if (p < 0) {
-    if (repeat.value === 'all') p = queue.value.length - 1
-    else {
-      pause()
-      return
-    }
-  }
-  const start = p
-  while (p !== currentIndex.value) {
-    if (queue.value[p]?.url) break
-    p = (p - 1 + queue.value.length) % queue.value.length
-    if (p === start) break
-  }
-  load(p)
-  play()
-}
 
 // ---- Audio events ----
-function onTimeUpdate() {
-  if (audioEl.value) currentTime.value = audioEl.value.currentTime
-}
-
-function onLoadedMeta() {
-  if (audioEl.value) duration.value = audioEl.value.duration || 0
-}
-
-function onEnded() {
-  next()
-}
-
-function seek(e: Event) {
-  if (!audioEl.value || !duration.value) return
-  const t = e.target as HTMLInputElement
-  const v = parseFloat(t.value)
-  audioEl.value.currentTime = v * duration.value
-}
-
 function volInput(e: Event) {
-  const t = e.target as HTMLInputElement
-  setVolume(parseFloat(t.value))
+  setVolume(parseFloat((e.target as HTMLInputElement).value))
 }
 
 // ---- Queue ops ----
-function removeAt(realIndex: number) {
+async function removeAt(realIndex: number) {
   const t = queue.value[realIndex];
   if (t?.url?.startsWith?.('blob:')) URL.revokeObjectURL(t.url);
 
   const wasCurrent = realIndex === currentIndex.value;
   queue.value.splice(realIndex, 1);
+
+  if (queue.value.length === 0) {
+    clearQueue();
+    return;
+  }
+
+  if (wasCurrent) {
+    const nextIdx = Math.min(realIndex, queue.value.length - 1);
+    if (isPlaying.value) {
+      const idx = await playlists.playIndex(sel, nextIdx, music);
+      if (idx >= 0) currentIndex.value = idx;
+    } else {
+      prepare(nextIdx); // select + load metadata, stay paused
+    }
+  } else if (realIndex < currentIndex.value) {
+    currentIndex.value -= 1;
+  }
+
   ensureDnD();
-  // (rest unchanged…)
+  playlists.setItems(sel, toItems(), { keepCurrent: true });
 }
+
 
 function clearQueue() {
   pause();
@@ -612,11 +688,13 @@ function clearQueue() {
   currentTime.value = 0;
   duration.value = 0;
   ensureDnD();
+  playlists.setItems(sel, toItems(), { keepCurrent: true });
 }
 
-function addFiles(files: FileList | File[]) {
+// was: function addFiles(files: FileList | File[]) {
+async function addFiles(files: FileList | File[] | Iterable<File>): Promise<void> {
   const tracks: Track[] = []
-  for (const f of Array.from(files)) {
+  for (const f of Array.from(files as any)) {
     const name = f.name || ''
     const isAudio =
       ACCEPTED_MIMES.includes(f.type) ||
@@ -627,16 +705,19 @@ function addFiles(files: FileList | File[]) {
     tracks.push({ id, name, url, type: f.type, srcHint: '', missing: false })
   }
   if (!tracks.length) return
+
   const startEmpty = queue.value.length === 0
   queue.value.push(...tracks)
   dnd?.setOrderedList(queue.value)
 
-  if (startEmpty) {
-    load(0)
-    play()
-  }
-
   ensureDnD()
+  playlists.setItems(sel, toItems())
+
+  // If queue was empty, start with the first playable via the rack
+  if (startEmpty) {
+    const idx = await playlists.playIndex(sel, 0, music)
+    if (idx >= 0) { currentIndex.value = idx; isPlaying.value = true }
+  }
 }
 
 // ---- DnD ----
@@ -659,10 +740,12 @@ function onDragLeave(e: DragEvent) {
   draggingOver.value = false
 }
 
-function onDrop(e: DragEvent) {
+async function onDrop(e: DragEvent) {
   prevent(e)
   draggingOver.value = false
-  if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files)
+  if (e.dataTransfer?.files?.length) {
+    await addFiles(e.dataTransfer.files)
+  }
 }
 
 // ---- File picker ----
@@ -672,6 +755,7 @@ function clickPick() {
   fileInput.value?.click()
 }
 
+// already async; just await addFiles
 async function onFileInput(e: Event) {
   const input = e.target as HTMLInputElement
   const files = input.files ? Array.from(input.files) : []
@@ -686,7 +770,7 @@ async function onFileInput(e: Event) {
     else audios.push(f)
   }
 
-  if (audios.length) addFiles(audios)
+  if (audios.length) await addFiles(audios)     // ⬅ await now
   for (const pf of playlists) {
     try {
       const text = await pf.text()
@@ -697,7 +781,8 @@ async function onFileInput(e: Event) {
   }
 }
 
-function importGexm(jsonText: string) {
+
+async function importGexm(jsonText: string) {
   let data: any
   try {
     data = JSON.parse(jsonText)
@@ -728,8 +813,8 @@ function importGexm(jsonText: string) {
   dnd?.setOrderedList(queue.value)
 
   if (startEmpty && queue.value.length) {
-    load(0)
-    play()
+    const idx = await playlists.playIndex(sel, 0, music);
+    if (idx >= 0) { currentIndex.value = idx; isPlaying.value = true; }
   }
 
   ensureDnD()
@@ -901,9 +986,10 @@ async function loadAndMerge() {
       dnd?.setOrderedList(queue.value)
 
       if (startEmpty && toAdd.length) {
-        load(0)
-        play()
+        const idx = await playlists.playIndex(sel, 0, music);
+        if (idx >= 0) { currentIndex.value = idx; isPlaying.value = true; }
       }
+
       return
     }
 
@@ -918,19 +1004,24 @@ async function loadAndMerge() {
 // ---- UI helpers ----
 function toggleRepeat() {
   repeat.value = repeat.value === 'off' ? 'all' : repeat.value === 'all' ? 'one' : 'off'
+  playlists.setOptions(sel, { repeat: repeat.value })
 }
 
+// shuffle toggle:
 function toggleShuffle() {
-  shuffle.value = !shuffle.value
+  shuffle.value = !shuffle.value;
+  playlists.setOptions(sel, { shuffle: shuffle.value });
 }
 
-function onRowDblClickDisplay(iDisplay: number) {
-  const item = displayQueue.value[iDisplay]
-  if (item?.url) {
-    const realIdx = queue.value.findIndex(t => t.id === item.id)
-    if (realIdx >= 0) play(realIdx)
-  }
+// double-click row:
+async function onRowDblClickDisplay(iDisplay: number) {
+  const item = displayQueue.value[iDisplay];
+  if (!item) return;
+  const realIdx = queue.value.findIndex(t => t.id === item.id);
+  const idx = await playlists.playIndex(sel, realIdx, music);
+  if (idx >= 0) currentIndex.value = idx;
 }
+
 
 // ---- Row dragging ----
 function startRowDrag(iDisplay: number, event: MouseEvent) {
@@ -990,14 +1081,14 @@ function onKeydown(e: KeyboardEvent) {
 
 // ---- Long-press seek ----
 function startSeek(dir: 1 | -1) {
-  if (!audioEl.value || !duration.value) return
+  if (!duration.value) return
   seekTimer = window.setInterval(() => {
-    if (!audioEl.value || !duration.value) return
-    const next = Math.max(
-      0,
-      Math.min(duration.value, (audioEl.value.currentTime || 0) + dir * SEEK_DELTA)
-    )
-    audioEl.value.currentTime = next
+    if (!duration.value) return
+    const next = Math.max(0, Math.min(
+      duration.value,
+      (music.currentTime || 0) + dir * SEEK_DELTA 
+    ))
+    music.currentTime = next
   }, SEEK_TICK_MS)
 }
 
@@ -1273,9 +1364,6 @@ function setMarqueeCopy(el: Element | null) {
       </div>
     </div>
   </template>
-
-  <!-- Audio element -->
-  <audio ref="audioEl" @loadedmetadata="onLoadedMeta" @timeupdate="onTimeUpdate" @ended="onEnded" preload="metadata" />
 </template>
 
 <style scoped>
