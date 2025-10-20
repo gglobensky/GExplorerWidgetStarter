@@ -22,6 +22,8 @@ const props = defineProps<{
     context: 'grid' | 'sidebar' | 'embedded'
     layout: string
     size?: any
+    resizing: boolean,
+    resizePhase?: 'active' | 'idle',
   }
   runAction?: (a: any) => void
   context?: 'sidebar' | 'grid'
@@ -46,7 +48,8 @@ const toItems = () =>
     .map(t => ({ id: t.id, src: t.url, name: t.name, type: t.type }))
 
 let rafId = 0;
-function rafBatch(fn: () => void) {
+function rafBatchIfIdle(fn: () => void) {
+  if (props.placement?.resizePhase === 'active') return
   if (rafId) return;
   rafId = requestAnimationFrame(() => {
     rafId = 0;
@@ -128,11 +131,8 @@ const hostLayout = computed<string>(() =>
 watch(() => hostLayout.value, () => {
   nextTick(() => {
     if (hostLayout.value !== 'compact' && rootEl.value) {
-      ro?.disconnect()
       containerWidth.value = 0
       measureNow()
-      ro = new ResizeObserver(() => measureNow())
-      ro.observe(rootEl.value)
     }
   })
 })
@@ -197,8 +197,6 @@ const controlsEl = ref<HTMLElement | null>(null)
 const containerWidth = ref(0)
 const volBtnEl = ref<HTMLElement | null>(null)
 const volPopStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' })
-
-let ro: ResizeObserver | null = null
 
 const measureNow = () => {
   const el = controlsEl.value || rootEl.value;
@@ -299,6 +297,8 @@ function setVar(el: HTMLElement, name: string, val: string) {
 };
 
 function updateMarquee() {
+  if (props.placement?.resizePhase === 'active') return
+
   const box  = marqueeBox.value;
   const copy = marqueeCopy.value;
   if (!box || !copy) { marqueeOn.value = false; return; }
@@ -355,9 +355,6 @@ function updateMarquee() {
   lastBoxW = boxW; lastCopyW = copyW; lastNeeds = needs; lastDir = dir;
 }
 
-
-
-
 function observeIfPossible(el: HTMLElement | null) {
   if (el && marqueeRO) marqueeRO.observe(el)
 }
@@ -365,12 +362,20 @@ function unobserveIfPossible(el: HTMLElement | null) {
   if (el && marqueeRO) marqueeRO.unobserve(el)
 }
 
+watch(() => props.placement?.resizePhase, phase => {
+  if (phase === 'active') {
+    marqueeOn.value = false            // ⬅️ drop the .run class immediately
+  } else {
+    rafBatchIfIdle(updateMarquee)            // ⬅️ one recompute on mouseup
+  }
+})
+
 // replace the previous watcher with this:
 watch(
   [currentIndex, () => queue.value.length, () => layoutClass.value, currentTitle],
-  () => rafBatch(updateMarquee),
+  () => { rafBatchIfIdle(updateMarquee) },
   { flush: 'post', immediate: true }
-);
+)
 
 // Also re-bind the observer whenever the refs re-point
 watch([marqueeBox, marqueeCopy], ([box, copy], [prevBox, prevCopy]) => {
@@ -382,7 +387,7 @@ watch([marqueeBox, marqueeCopy], ([box, copy], [prevBox, prevCopy]) => {
     observeIfPossible(box);
     observeIfPossible(copy);
   }
-  rafBatch(updateMarquee);
+  rafBatchIfIdle(updateMarquee);
 }, { flush: 'post' });
 
 watch(
@@ -397,7 +402,6 @@ function onDnDUpdate() {
   const { isDragging } = dnd.getState();
 
   if (wasDragging && !isDragging) {
-    document.body.style.cursor = '';
     const committed = dnd.getOrderedList();
     const same =
       committed.length === queue.value.length &&
@@ -497,23 +501,21 @@ onMounted(async () => {
 
   // Marquee-size observer
   marqueeRO = new ResizeObserver(() => {
-    rafBatch(updateMarquee);
+    rafBatchIfIdle(updateMarquee);
   });
 
   watch(marqueeOn, (running) => {
-    const box  = marqueeBox.value;
-    const copy = marqueeCopy.value;
-    if (!marqueeRO || !box || !copy) return;
+    const box  = marqueeBox.value, copy = marqueeCopy.value
+    if (!marqueeRO || !box || !copy) return
 
-    if (running) {
-      observeIfPossible(box);
-      observeIfPossible(copy);
-    } else {
-      // We’re not animating; no need to watch text/box resizes here.
-      unobserveIfPossible(box);
-      unobserveIfPossible(copy);
+    if (props.placement?.resizePhase === 'active') {
+      unobserveIfPossible(box); unobserveIfPossible(copy);  // ⬅️ don't listen during drag
+      return
     }
-  }, { flush: 'post', immediate: true });
+    running ? (observeIfPossible(box), observeIfPossible(copy))
+            : (unobserveIfPossible(box), unobserveIfPossible(copy))
+  }, { flush: 'post', immediate: true })
+
 
   const registerAllRefs = () => {
     if (!showQueue.value || !queueEl.value || !dnd) return;     // bail fast
@@ -531,22 +533,12 @@ onMounted(async () => {
     registerAllRefs();
   }, { flush: 'post' });
 
-  // Main layout observer
-  ro = new ResizeObserver(() => {
-    rafBatch(() => {
-      measureNow();
-      updateMarquee(); // keep marquee in sync with width changes
-    });
-  });
-  if (controlsEl.value) ro.observe(controlsEl.value)
-  if (rootEl.value) ro.observe(rootEl.value)
-
   const mq = window.matchMedia?.('(prefers-reduced-motion: reduce)');
   if (mq) {
     prefersReduced.value = mq.matches;
     const onChange = (e: MediaQueryListEvent) => {
       prefersReduced.value = e.matches;
-      rafBatch(updateMarquee);
+      rafBatchIfIdle(updateMarquee);
     };
     mq.addEventListener?.('change', onChange);
     // cleanup
@@ -563,7 +555,7 @@ onMounted(async () => {
   playlists.bindToHandle(sel, music)
 
   await nextTick();
-  rafBatch(() => {
+  rafBatchIfIdle(() => {
     measureNow();
     if (!containerWidth.value && hostWidthFallback.value) {
       containerWidth.value = hostWidthFallback.value;
@@ -593,9 +585,6 @@ onBeforeUnmount(() => {
   music.removeEventListener('loadedmetadata', onLoadedMeta as any)
   music.removeEventListener('volumechange', onVolumeChange)
   music.removeEventListener('rack:playlistindex', onRackIndex as EventListener)
-
-  ro?.disconnect()
-  ro = null
 
   dnd?.destroy()
   dnd = null
@@ -1029,7 +1018,6 @@ function startRowDrag(iDisplay: number, event: MouseEvent) {
   if (target.closest('.icon-btn')) return
   event.preventDefault() // stops text selection on initial down
   dnd?.startDrag(iDisplay, event as PointerEvent)
-  document.body.style.cursor = 'grabbing'
 }
 
 function ensureDnD() {
@@ -1043,6 +1031,7 @@ function ensureDnD() {
       containerClassOnDrag: 'gex-dragging',
       rowSelector: '.row.item',
       autoScroll: { marginPx: 56, maxSpeedPxPerSec: 900 },
+      globalCursor: 'grabbing'
     });
   } else {
     dnd?.setOrderedList(queue.value);
@@ -1334,7 +1323,10 @@ function setMarqueeCopy(el: Element | null) {
             <span class="title" :title="t.name">
               <template v-if="t.id === queue[currentIndex]?.id">
                 <!-- container is the ref we measure; it owns the clip and width -->
-                <span :ref="setMarqueeBox" class="marquee" :data-dir="marqueeDir" :class="{ run: marqueeOn }">
+                <span :ref="setMarqueeBox"
+                  class="marquee"
+                  :data-dir="marqueeDir"
+                  :class="{ run: marqueeOn && props.placement?.resizePhase !== 'active', suspend: props.placement?.resizePhase === 'active' }">
                   <span class="marquee-track">
                     <span :ref="setMarqueeCopy" class="copy real">{{ t.name }}</span>
                     <span class="copy twin" aria-hidden="true">{{ t.name }}</span>
@@ -1870,6 +1862,11 @@ function setMarqueeCopy(el: Element | null) {
 .marquee:hover .marquee-track,
 .marquee:focus-within .marquee-track {
   animation-play-state: paused;
+}
+
+.marquee.suspend .marquee-track {
+  animation: none !important;
+  transform: translate3d(0,0,0) !important;
 }
 
 .row .title { display: block; min-width: 0; }  /* not inline */
