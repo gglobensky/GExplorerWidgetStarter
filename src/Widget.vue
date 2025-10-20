@@ -2,8 +2,8 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { createDnD, type DnDHandle } from 'gexplorer/widgets'
 import { useAudio, createLifecycle } from 'gexplorer/widgets'
+import { createTipDirective } from 'gexplorer/widgets'
 const { prime, acquireElement, playlists } = useAudio();
-
 
 /**
  * NOTE ABOUT FILE PICKERS / SAVE DIALOGS
@@ -35,6 +35,7 @@ const props = defineProps<{
   sourceId: string
 }>()
 
+const vTip = createTipDirective({ force: true });
 type RackIndexEvt = CustomEvent<{ listId: string; index: number; item: { id?: string; url?: string } | null }>
 
 const ownerId = props.sourceId; // one id to rule them all
@@ -136,6 +137,8 @@ watch(() => hostLayout.value, () => {
     }
   })
 })
+
+const playTitle = computed(() => (isPlaying.value ? 'Pause' : 'Play'))
 
 const queueEl = ref<HTMLElement | null>(null)
 
@@ -440,6 +443,10 @@ const playTooltip = computed(() => {
   return name ? `${head}\n${name}\n${timeLine}` : head
 })
 
+const seekTooltip = computed(() =>
+  fmtTime(currentTime.value) + ' / ' + fmtTime(duration.value || 0)
+)
+
 const addTooltip = computed(() => {
   const name = queue.value[currentIndex.value]?.name
   const timeLine = `${fmtTime(currentTime.value)} / ${fmtTime(duration.value || 0)}`
@@ -473,6 +480,11 @@ function hydrateFromHandle() {
   isPlaying.value   = !music.paused
   currentTime.value = music.currentTime || 0
   duration.value    = music.duration || 0
+
+  const src = (music.currentSrc || music.src || '').trim()
+  if (!src) return
+  const idx = queue.value.findIndex(t => t.url === src)
+  if (idx >= 0) currentIndex.value = idx
 }
 
 const onVolumeChange = () => {
@@ -563,7 +575,6 @@ onMounted(async () => {
     updateMarquee();
   });
 
-  // measure & marquee as you had…
   hydrateFromHandle()
 });
 
@@ -1184,12 +1195,7 @@ function setMarqueeCopy(el: Element | null) {
           ◀
         </button>
         <div class="pair">
-          <button
-            class="btn"
-            :title="playTooltip"
-            :disabled="!hasTracks"
-            @click="togglePlay"
-          >
+          <button class="btn" v-tip="playTooltip" :disabled="!hasTracks" @click="togglePlay">
             <span v-if="isPlaying">⏸</span><span v-else>▶</span>
           </button>
           <button class="btn" title="Add files…" @click="clickPick">⏏</button>
@@ -1223,7 +1229,13 @@ function setMarqueeCopy(el: Element | null) {
       <div class="controls" :class="layoutClass" ref="controlsEl">
         <div class="transport">
           <button v-if="layoutClass !== 'micro'" class="btn prev" title="Previous" :disabled="!canPrev" @click="prev">⏮</button>
-          <button class="btn primary play" :title="playTooltip" :disabled="!hasTracks" @click="togglePlay">
+          <button
+            class="btn primary play"
+            :aria-label="isPlaying ? 'Pause' : 'Play'"
+            v-tip="playTooltip"
+            :disabled="!hasTracks"
+            @click="togglePlay"
+          >
             <span v-if="isPlaying">⏸</span><span v-else>▶</span>
           </button>
           <button v-if="layoutClass === 'micro'" class="btn add" :title="addTooltip" @click="clickPick">⏏</button>
@@ -1231,17 +1243,22 @@ function setMarqueeCopy(el: Element | null) {
         </div>
         <div class="time" v-if="layoutClass !== 'micro'">
           <span class="mono left">{{ fmtTime(currentTime) }}</span>
-          <input
-            class="seek"
-            type="range"
-            min="0"
-            max="1"
-            step="0.001"
-            :value="duration ? currentTime / duration : 0"
-            :disabled="!hasTracks || !duration"
-            @input="seek"
-            :title="fmtTime(currentTime) + ' / ' + fmtTime(duration || 0)"
+
+          <!-- Seek -->
+          <div class="seek-wrap" v-tip="seekTooltip">
+            <input
+              class="seek"
+              type="range"
+              min="0"
+              max="1"
+              step="0.001"
+              :value="duration ? currentTime / duration : 0"
+              :disabled="!hasTracks || !duration"
+              @input="seek"
+              :aria-label="'Seek ' + seekTooltip"
           />
+          </div>
+
           <span class="mono right">-{{ fmtTime(Math.max(0, (duration || 0) - currentTime)) }}</span>
         </div>
         <div class="modes" v-if="layoutClass !== 'micro'">
@@ -1926,4 +1943,9 @@ function setMarqueeCopy(el: Element | null) {
 }
 
 .marquee.run .marquee-track { animation-play-state: running !important; }
+
+.seek-wrap { position: relative; flex: 1; display: flex; align-items: center; }
+.seek-wrap .seek { width: 100%; }
+
+
 </style>
