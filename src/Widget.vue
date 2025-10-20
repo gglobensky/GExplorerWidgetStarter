@@ -367,9 +367,14 @@ function unobserveIfPossible(el: HTMLElement | null) {
 
 watch(() => props.placement?.resizePhase, phase => {
   if (phase === 'active') {
-    marqueeOn.value = false            // ⬅️ drop the .run class immediately
+    marqueeOn.value = false
+    // break the “nothing changed” fast-path on resume
+    lastBoxW = -1
+    lastCopyW = -1
+    lastDir = ''
+    lastNeeds = !lastNeeds  // or set to a sentinel if you prefer
   } else {
-    rafBatchIfIdle(updateMarquee)            // ⬅️ one recompute on mouseup
+    rafBatchIfIdle(updateMarquee)
   }
 })
 
@@ -1313,7 +1318,7 @@ function setMarqueeCopy(el: Element | null) {
       <div v-if="queue.length" class="queue-collapse-tab">
         <button class="tab-btn" :aria-expanded="showQueue" @click="toggleQueue"
                 :title="showQueue ? 'Hide list' : 'Show list'">
-          <span v-if="showQueue">▾</span><span v-else>▸</span>
+          <span v-if="showQueue">▴</span><span v-else>▾</span>
         </button>
       </div>
 
