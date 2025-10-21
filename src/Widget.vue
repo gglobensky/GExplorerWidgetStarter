@@ -1,29 +1,21 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
-import { createDnD, type DnDHandle } from 'gexplorer/widgets'
-import { useAudio, createLifecycle } from 'gexplorer/widgets'
-import { createTipDirective } from 'gexplorer/widgets'
-const { prime, acquireElement, playlists } = useAudio();
+import { usePlayerState } from './usePlayerState'
+import { usePlaylist, INPUT_ACCEPT } from './usePlaylist'
+import { useMarquee } from './useMarquee'
+import { useDnD } from './useDnD'
+import { useKeyboardNav } from './useKeyboardNav'
+import CompactLayout from './CompactLayout.vue'
+import ExpandedLayout from './ExpandedLayout.vue'
 
-/**
- * NOTE ABOUT FILE PICKERS / SAVE DIALOGS
- * We currently call the File System Access API directly from the widget.
- * THIS BYPASSES your auth/ticket layer.
- *
- * >>> TODO(GEX): Replace these calls with your audited Items-powered pickers
- * >>> and fsReadText/fsWriteText IPC once ready.
- */
-
-
-// ---- Props ----
 const props = defineProps<{
   config?: Record<string, any>
   placement?: {
     context: 'grid' | 'sidebar' | 'embedded'
     layout: string
     size?: any
-    resizing: boolean,
-    resizePhase?: 'active' | 'idle',
+    resizing: boolean
+    resizePhase?: 'active' | 'idle'
   }
   runAction?: (a: any) => void
   context?: 'sidebar' | 'grid'
@@ -31,96 +23,41 @@ const props = defineProps<{
   width?: number
   height?: number
   theme?: string
-  editMode?: boolean,
+  editMode?: boolean
   sourceId: string
 }>()
 
-const vTip = createTipDirective({ force: true });
-type RackIndexEvt = CustomEvent<{ listId: string; index: number; item: { id?: string; url?: string } | null }>
+const onMediaError = (e: Event) => {
+  const t = e.target as HTMLMediaElement
+  console.error('[Widget] Media error:', {
+    src: t.currentSrc || t.src,
+    error: t.error?.code,
+    errorMessage: t.error?.message,
+    currentTrack: state.current.value?.name,
+    currentIndex: state.currentIndex.value
+  })
+}
 
-const ownerId = props.sourceId; // one id to rule them all
-// One logical playlist for this widget instance:const ownerId = props.sourceId; // one id to rule them all
-const sel = { ownerId, category: 'music', key: 'local-player' };
+const expandedLayoutRef = ref<InstanceType<typeof ExpandedLayout> | null>(null)
 
-// Convert your queue -> playlist items (skip placeholders)
-const toItems = () =>
-  queue.value
-    .filter(t => !!t.url)
-    .map(t => ({ id: t.id, src: t.url, name: t.name, type: t.type }))
-
-let rafId = 0;
+// RAF batching (like original)
+let rafId = 0
 function rafBatchIfIdle(fn: () => void) {
   if (props.placement?.resizePhase === 'active') return
-  if (rafId) return;
+  if (rafId) return
   rafId = requestAnimationFrame(() => {
-    rafId = 0;
-    fn();
-  });
+    rafId = 0
+    fn()
+  })
 }
 
-const life = createLifecycle(props.sourceId)
+// ===== PLAYER STATE =====
+const state = usePlayerState(props.sourceId)
 
-const music = acquireElement({ ownerId, category: 'music', key: 'primary', persistent: true, keepOnSidebarCollapse: true, suspendPolicy: 'continue' });
+// ===== LAYOUT (before everything, needed by composables) =====
+const widgetRootEl = ref<HTMLElement | null>(null)
+const containerWidth = ref(0)
 
-function prepare(index: number) {
-  if (index < 0 || index >= queue.value.length) return
-  currentIndex.value = index
-  const t = queue.value[index]
-  if (!t?.url) return
-  music.src = t.url
-  music.load()                  // just hydrate metadata while paused
-  currentTime.value = 0
-  duration.value = 0
-}
-
-const onRackIndex = (e: Event) => {
-  const { index, item } = (e as RackIndexEvt).detail
-  if (!item) return
-  // Prefer id match; fallback to url (handles duplicates poorly, but OK for now)
-  let real = -1
-  if (item.id) real = queue.value.findIndex(t => t.id === item.id)
-  if (real < 0 && item.url) real = queue.value.findIndex(t => t.url === item.url)
-  if (real >= 0) currentIndex.value = real
-}
-
-async function play(index?: number) {
-  await prime()
-  if (typeof index === 'number') {
-    // Play a specific row:
-    if (index >= 0 && index < queue.value.length && queue.value[index]?.url) {
-      await playlists.playIndex(sel, index, music)
-      isPlaying.value = true
-    }
-    return
-  }
-  // Fallback: if nothing selected, start from first playable
-  if (currentIndex.value === -1) {
-    const first = queue.value.findIndex(t => !!t.url)
-    if (first >= 0) {
-      await playlists.playIndex(sel, first, music)
-      isPlaying.value = true
-      return
-    }
-  }
-  // Otherwise just play current handle (e.g., after pause)
-  try { await music.play(); isPlaying.value = true } catch { isPlaying.value = false }
-}
-
-function pause() {
-  music.pause()
-  isPlaying.value = false
-}
-
-function seek(e: Event) {
-  if (!duration.value) return
-  const v = parseFloat((e.target as HTMLInputElement).value)
-  music.currentTime = v * duration.value
-}
-life.onSuspend(() => {
-  // pause timers/raf; audio continues
-})
-
-// ---- Computed host context ----
 const hostContext = computed<'grid' | 'sidebar' | 'embedded'>(() =>
   props.placement?.context ?? props.context ?? 'sidebar'
 )
@@ -128,85 +65,6 @@ const hostContext = computed<'grid' | 'sidebar' | 'embedded'>(() =>
 const hostLayout = computed<string>(() =>
   props.placement?.layout ?? props.variant ?? 'expanded'
 )
-
-watch(() => hostLayout.value, () => {
-  nextTick(() => {
-    if (hostLayout.value !== 'compact' && rootEl.value) {
-      containerWidth.value = 0
-      measureNow()
-    }
-  })
-})
-
-const playTitle = computed(() => (isPlaying.value ? 'Pause' : 'Play'))
-
-const queueEl = ref<HTMLElement | null>(null)
-
-// ---- Types ----
-type Track = {
-  id: string
-  name: string
-  url: string
-  type?: string
-  artist?: string
-  album?: string
-  coverUrl?: string
-  duration?: number
-  missing?: boolean
-  srcHint?: string
-}
-
-// ---- Constants ----
-const ACCEPTED_MIMES = [
-  'audio/mpeg', 'audio/mp3', 'audio/ogg', 'audio/oga',
-  'audio/aac', 'audio/x-m4a', 'audio/flac', 'audio/wav', 'audio/webm'
-]
-
-const ACCEPTED_EXTS = [
-  '.mp3', '.ogg', '.oga', '.aac', '.m4a', '.flac', '.wav', '.webm', '.gexm'
-]
-
-const INPUT_ACCEPT = [...ACCEPTED_MIMES, ...ACCEPTED_EXTS].join(',')
-
-const LONG_PRESS_MS = 400
-const SEEK_TICK_MS = 80
-const SEEK_DELTA = 0.25
-
-// ---- UI state ----
-const prefersReduced = ref(false);
-const showVolPop = ref(false)
-const showQueue          = life.cell<boolean>('ui.showQueue', true)
-const isPressing = ref(false)
-let longTimer: number | undefined
-let seekTimer: number | undefined
-
-function onPointerDown(e: PointerEvent) {
-  if (e.button !== 0) return
-  const t = e.target as HTMLElement
-  if (t.closest('.queue')) isPressing.value = true
-}
-
-function onPointerUp() {
-  isPressing.value = false
-}
-
-function toggleQueue() {
-  showQueue.value = !showQueue.value
-}
-
-// ---- Adaptive layout measurement ----
-const rootEl = ref<HTMLElement | null>(null)
-const controlsEl = ref<HTMLElement | null>(null)
-const containerWidth = ref(0)
-const volBtnEl = ref<HTMLElement | null>(null)
-const volPopStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' })
-
-const measureNow = () => {
-  const el = controlsEl.value || rootEl.value;
-  if (!el) return;
-  const w = el.offsetWidth | 0;  // fast int
-  if (Math.abs(w - containerWidth.value) >= 1) containerWidth.value = w;
-};
 
 const hostWidthFallback = computed<number>(() => {
   const p = props.placement?.size
@@ -221,511 +79,264 @@ const hostWidthFallback = computed<number>(() => {
 
 const layoutClass = computed(() => {
   const w = containerWidth.value || hostWidthFallback.value || 0
-  if (w <= 200) return 'micro'
-  if (w <= 280) return 'ultra'
-  if (w <= 360) return 'narrow'
-  if (w <= 520) return 'medium'
+  if (w <= 160) return 'micro'
+  if (w <= 260) return 'ultra'
+  if (w <= 320) return 'narrow'
+  if (w <= 400) return 'medium'
   return 'wide'
 })
 
-// ---- Player state ----
-const queue              = life.persistRef<Track[]>('queue', [])
-const currentIndex       = life.cell<number>('currentIndex', -1)
-const isPlaying = ref(false)
-
-const currentTime = ref(0)
-const duration = ref(0)
-const volume = ref(0.9)
-life.bindRef('ui.isPlaying',  isPlaying)        // harmless hint; media events will correct it
-life.bindRef('ui.currentTime', currentTime)
-life.bindRef('ui.duration',    duration)
-
-const lastNonZeroVolume  = life.cell<number>('ui.lastNonZeroVol', 0.9)
-const repeat             = life.cell<'off'|'one'|'all'>('repeat', 'off')
-const shuffle            = life.cell<boolean>('shuffle', false)
-const draggingOver = ref(false)
-const currentTitle = computed(() => queue.value[currentIndex.value]?.name || '')
-
-// ---- Queue title / rename ----
-const queueName          = life.cell<string>('queueName', 'Queue')
-const renaming = ref(false)
-const nameInput = ref<HTMLInputElement | null>(null)
-const draftQueueName = ref('')
-
-// ---- DnD Manager ----
-let dnd: DnDHandle<Track> | null = null
-
-const dndVersion = ref(0)
-let wasDragging = false
-
-const respectReduced = computed(() => false/* props.config?.respectReducedMotion ?? true */);
-const marqueeBox = ref<HTMLElement | null>(null)
-const marqueeCopy = ref<HTMLElement | null>(null)
-const marqueeOn    = ref(false)
-const marqueeDir   = computed(() => props.config?.marqueeDirection ?? 'right'); // 'left'|'right'
-const marqueeSpeed = computed(() => Number(props.config?.marqueeSpeed ?? 35));  // px/sec (slower)
-
-let marqueeRO: ResizeObserver | null = null
-
-let lastBoxW = -1, lastCopyW = -1, lastNeeds = false, lastDir = '';
-
-const _cssCache = new WeakMap<HTMLElement, Record<string, string>>();
-function setVar(el: HTMLElement, name: string, val: string) {
-  const cache = _cssCache.get(el) || {};
-  if (cache[name] === val) return;         // no-op if unchanged
-  el.style.setProperty(name, val);
-  cache[name] = val;
-  _cssCache.set(el, cache);
+const measureNow = () => {
+  const el = widgetRootEl.value
+  console.log('el?', !!el, 'width:', el?.offsetWidth);
+  if (!el) return
+  const w = el.offsetWidth | 0
+  console.log('measureNow: current:', containerWidth.value, 'new:', w, 'diff:', Math.abs(w - containerWidth.value))
+  if (Math.abs(w - containerWidth.value) >= 1) {
+    containerWidth.value = w
+    console.log('Updated containerWidth to:', w)
+  }
 }
 
-// handy manual probe from DevTools
-// call window.__gex_probe() in console to dump current state
-// @ts-ignore
-(window as any).__gex_probe = function () {
-  const box = marqueeBox?.value as HTMLElement | null;
-  const copy = marqueeCopy?.value as HTMLElement | null;
-  const track = box?.querySelector('.marquee-track') as HTMLElement | null;
-  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-  const animName = track ? getComputedStyle(track).animationName : '(no track)';
-
-  console.log('[probe] currentIndex:', currentIndex.value,
-              'currentTitle:', queue.value[currentIndex.value]?.name);
-  console.log('[probe] box:', box, 'copy:', copy, 'track:', track);
-  console.log('[probe] sizes -> box.clientWidth:', box?.clientWidth,
-              'copy.scrollWidth:', copy?.scrollWidth);
-  console.log('[probe] marqueeOn:', marqueeOn.value,
-              'has .run? ', box?.classList.contains('run'));
-  console.log('[probe] prefers-reduced-motion?', reduce,
-              'computed animationName:', animName);
-};
-
-function updateMarquee() {
-  if (props.placement?.resizePhase === 'active') return
-
-  const box  = marqueeBox.value;
-  const copy = marqueeCopy.value;
-  if (!box || !copy) { marqueeOn.value = false; return; }
-
-  const dir   = marqueeDir.value;
-  const boxW  = Math.round(box.clientWidth);      // stable px
-  const copyW = Math.ceil(copy.scrollWidth);      // integer px, avoids shimmer
-  const needs = (!respectReduced.value || !prefersReduced.value) && copyW > boxW + 1;
-
-  // Set dir attribute early so CSS can pick frames, but only if changed
-  if (box.getAttribute('data-dir') !== dir) box.setAttribute('data-dir', dir);
-
-  // Bail out if nothing effectively changed (±1 px tolerance + same state)
-  const sameBox  = Math.abs(boxW  - lastBoxW)  <= 1;
-  const sameCopy = Math.abs(copyW - lastCopyW) <= 1;
-  const sameDir  = (dir === lastDir);
-  if (sameBox && sameCopy && sameDir && needs === lastNeeds) return;
-
-  marqueeOn.value = needs;
-
-  if (!needs) {
-    // Transition from running → stopped (or still stopped)
-    // Only do the heavy reset when we *were* running.
-    if (lastNeeds) {
-      const track = box.querySelector('.marquee-track') as HTMLElement | null;
-      if (track) {
-        track.style.animation = 'none';
-        track.style.transform = 'translate3d(0,0,0)';
-        requestAnimationFrame(() => { if (track) track.style.animation = ''; });
-      }
-      // Clear vars only once (and only if we had set them before)
-      box.style.removeProperty('--gap');
-      box.style.removeProperty('--travel');
-      box.style.removeProperty('--marquee-dur');
-      _cssCache.delete(box);
+// Watch hostLayout to trigger measurement (like original)
+watch(() => hostLayout.value, () => {
+  nextTick(() => {
+    if (hostLayout.value !== 'compact' && widgetRootEl.value) {
+      containerWidth.value = 0
+      measureNow()
     }
-    // update caches and leave
-    lastBoxW = boxW; lastCopyW = copyW; lastNeeds = needs; lastDir = dir;
-    return;
-  }
-
-  // Compute one-tile travel and duration
-  const GAP_PX = Math.round(Math.max(28, boxW));
-  const travel = copyW + GAP_PX;
-  const speed  = Math.max(10, Number(marqueeSpeed.value || 35));
-  const durSec = travel / speed;
-
-  // Only touch the DOM if a value actually changed
-  setVar(box, '--gap',         `${GAP_PX}px`);
-  setVar(box, '--travel',      `${travel}px`);
-  setVar(box, '--marquee-dur', `${durSec.toFixed(3)}s`);
-
-  // update caches
-  lastBoxW = boxW; lastCopyW = copyW; lastNeeds = needs; lastDir = dir;
-}
-
-function observeIfPossible(el: HTMLElement | null) {
-  if (el && marqueeRO) marqueeRO.observe(el)
-}
-function unobserveIfPossible(el: HTMLElement | null) {
-  if (el && marqueeRO) marqueeRO.unobserve(el)
-}
-
-watch(() => props.placement?.resizePhase, phase => {
-  if (phase === 'active') {
-    marqueeOn.value = false
-    // break the “nothing changed” fast-path on resume
-    lastBoxW = -1
-    lastCopyW = -1
-    lastDir = ''
-    lastNeeds = !lastNeeds  // or set to a sentinel if you prefer
-  } else {
-    rafBatchIfIdle(updateMarquee)
-  }
+  })
 })
 
-// replace the previous watcher with this:
-watch(
-  [currentIndex, () => queue.value.length, () => layoutClass.value, currentTitle],
-  () => { rafBatchIfIdle(updateMarquee) },
-  { flush: 'post', immediate: true }
+// ===== DND =====
+const queueEl = ref<HTMLElement | null>(null)
+const showQueue = state.life.cell<boolean>('ui.showQueue', true)
+const dnd = useDnD(
+  state.queue,
+  state.currentIndex,
+  showQueue,
+  () => expandedLayoutRef.value?.queueEl || null,  // ← Pass a getter
+  state.toPlaylistItems,
+  state.playlists,
+  state.sel
 )
 
-// Also re-bind the observer whenever the refs re-point
-watch([marqueeBox, marqueeCopy], ([box, copy], [prevBox, prevCopy]) => {
-  // Only (un)observe if the observer exists,
-  // but ALWAYS schedule an update.
-  if (marqueeRO) {
-    unobserveIfPossible(prevBox);
-    unobserveIfPossible(prevCopy);
-    observeIfPossible(box);
-    observeIfPossible(copy);
+// ===== PLAYLIST OPS =====
+const fileInput = ref<HTMLInputElement | null>(null)
+const playlist = usePlaylist(
+  state.queue,
+  state.currentIndex,
+  state.queueName,
+  state.isPlaying,
+  state.music,
+  state.playlists,
+  state.sel,
+  state.toPlaylistItems,
+  () => dnd.ensureDnD()
+)
+
+// ===== KEYBOARD NAV =====
+const keyboard = useKeyboardNav(
+  state.queue,
+  state.selectedIndex,
+  state.hasTracks,
+  play
+)
+
+// ===== MARQUEE (needs layoutClass, so comes after) =====
+const marquee = useMarquee(
+  state.currentTitle,
+  layoutClass,
+  computed(() => props.placement?.resizePhase),
+  computed(() => props.config)
+)
+
+// Add this type at the top
+type RackIndexEvt = CustomEvent<{
+  listId: string
+  index?: number
+  item?: { id?: string; url?: string } | null
+}>
+
+// Add the listener function (around line 50 or so, near other media event handlers)
+const onRackIndex = (e: Event) => {
+  const d = (e as CustomEvent<{ listId?: string; index?: number; item?: { id?: string; url?: string } | null }>).detail
+  console.log('[rack:playlistindex]', d, 'sel.key =', state.sel?.key)
+
+  // Accept for now; if you confirm the field name, re-add a guard:
+  // if (d.listId && state.sel?.key && d.listId !== state.sel.key) return
+
+  let real = typeof d.index === 'number' ? d.index : -1
+  if (real < 0 && d.item) {
+    const { id, url } = d.item
+    if (id) real = state.queue.value.findIndex(t => t.id === id)
+    if (real < 0 && url) real = state.queue.value.findIndex(t => t.url === url)
   }
-  rafBatchIfIdle(updateMarquee);
-}, { flush: 'post' });
 
-watch(
-  () => queue.value.map(t => t.id).join('|'),
-  ensureDnD,
-  { immediate: true }
-)
+  if (real >= 0) {
+    if (state.currentIndex.value !== real) state.currentIndex.value = real
+    if (state.selectedIndex.value !== real) state.selectedIndex.value = real
+  }
+}
 
-function onDnDUpdate() {
-  dndVersion.value++;
-  if (!dnd) return;
-  const { isDragging } = dnd.getState();
 
-  if (wasDragging && !isDragging) {
-    const committed = dnd.getOrderedList();
-    const same =
-      committed.length === queue.value.length &&
-      committed.every((t, i) => t.id === queue.value[i]?.id);
+// ===== PLAYER CONTROLS =====
+async function play(index?: number) {
+  await state.prime()
+  state.isLoading.value = true
 
-    if (!same) {
-      const currentId = queue.value[currentIndex.value]?.id;
-      queue.value = committed.slice();
-      if (currentId) {
-        const newIdx = queue.value.findIndex(t => t.id === currentId);
-        if (newIdx >= 0) currentIndex.value = newIdx;
+  if (typeof index === 'number') {
+    if (index >= 0 && index < state.queue.value.length && state.queue.value[index]?.url) {
+      const idx = await state.playlists.playIndex(state.sel, index, state.music)
+      if (idx >= 0) {
+        state.currentIndex.value = idx
+        state.selectedIndex.value = idx
+        state.isPlaying.value = true
       }
-      // 🔹 Sync playlist order with the rack:
-      playlists.setItems(sel, toItems());
     }
+    state.isLoading.value = false
+    return
   }
-  wasDragging = isDragging;
-}
 
-const dndState = computed(() =>
-  (void dndVersion.value, dnd?.getState() ?? { isDragging: false, draggingId: null, hoverIdx: null })
-)
-const displayQueue = computed<Track[]>(() =>
-  (void dndVersion.value, dnd?.getDisplayList() ?? [])
-)
-// ---- Computed ----
-const hasTracks = computed(() => queue.value.length > 0)
-const canPrev = computed(() => queue.value.length > 0)
-const canNext = computed(() => queue.value.length > 0)
-const current = computed(() => queue.value[currentIndex.value] || null)
-
-const playTooltip = computed(() => {
-  const head = isPlaying.value ? 'Pause' : 'Play'
-  const name = queue.value[currentIndex.value]?.name
-  const timeLine = `${fmtTime(currentTime.value)} / ${fmtTime(duration.value || 0)}`
-  return name ? `${head}\n${name}\n${timeLine}` : head
-})
-
-const seekTooltip = computed(() =>
-  fmtTime(currentTime.value) + ' / ' + fmtTime(duration.value || 0)
-)
-
-const addTooltip = computed(() => {
-  const name = queue.value[currentIndex.value]?.name
-  const timeLine = `${fmtTime(currentTime.value)} / ${fmtTime(duration.value || 0)}`
-  return name ? `Add files…\n${name}\n${timeLine}` : 'Add files…'
-})
-
-const onMediaPlay   = () => { isPlaying.value = true }
-const onMediaPause  = () => { isPlaying.value = false }
-const onTimeUpdate  = () => { currentTime.value = music.currentTime || 0 }
-
-let lastSrc = ''
-const onLoadedMeta = (e: Event) => {
-  const t = e.target as HTMLMediaElement | null
-  const d = (t?.duration ?? (music as any)?.duration)
-  duration.value = Number.isFinite(d) ? d : 0
-
-  const src = (t?.currentSrc || music.src) || ''
-  if (src && src !== lastSrc) {
-    lastSrc = src
-    const idx = queue.value.findIndex(q => q.url === src)
-    if (idx >= 0) currentIndex.value = idx
-  }
-}
-
-function hydrateFromHandle() {
-  // read from the persistent element
-  console.log('Music volume read from elem: ', music.volume)
-  volume.value = music.volume
-  if (volume.value > 0) lastNonZeroVolume.value = volume.value
-
-  isPlaying.value   = !music.paused
-  currentTime.value = music.currentTime || 0
-  duration.value    = music.duration || 0
-
-  const src = (music.currentSrc || music.src || '').trim()
-  if (!src) return
-  const idx = queue.value.findIndex(t => t.url === src)
-  if (idx >= 0) currentIndex.value = idx
-}
-
-const onVolumeChange = () => {
-  // mirror element -> UI without writing back
-  const v = music.volume
-  if (v !== volume.value) {
-    volume.value = v
-    if (v > 0) lastNonZeroVolume.value = v
-  }
-}
-
-// ---- Lifecycle ----
-onMounted(async () => {
-  music.addEventListener('play',           onMediaPlay)
-  music.addEventListener('pause',          onMediaPause)
-  music.addEventListener('timeupdate',     onTimeUpdate)
-  music.addEventListener('loadedmetadata', onLoadedMeta as any)
-  music.addEventListener('volumechange', onVolumeChange)
-
-  document.addEventListener('click', onDocClick)
-  document.addEventListener('keydown', onKeydown)
-  document.addEventListener('pointerup', onPointerUp)
-  document.addEventListener('pointercancel', onPointerUp)
-  window.addEventListener('blur', onPointerUp)
-  music.addEventListener('rack:playlistindex', onRackIndex as EventListener)
-
-  // Marquee-size observer
-  marqueeRO = new ResizeObserver(() => {
-    rafBatchIfIdle(updateMarquee);
-  });
-
-  watch(marqueeOn, (running) => {
-    const box  = marqueeBox.value, copy = marqueeCopy.value
-    if (!marqueeRO || !box || !copy) return
-
-    if (props.placement?.resizePhase === 'active') {
-      unobserveIfPossible(box); unobserveIfPossible(copy);  // ⬅️ don't listen during drag
+  // existing fallback
+  if (state.currentIndex.value === -1) {
+    const first = state.queue.value.findIndex(t => !!t.url)
+    if (first >= 0) {
+      const idx = await state.playlists.playIndex(state.sel, first, state.music)
+      if (idx >= 0) {
+        state.currentIndex.value = idx
+        state.selectedIndex.value = idx
+        state.isPlaying.value = true
+      }
+      state.isLoading.value = false
       return
     }
-    running ? (observeIfPossible(box), observeIfPossible(copy))
-            : (unobserveIfPossible(box), unobserveIfPossible(copy))
-  }, { flush: 'post', immediate: true })
-
-
-  const registerAllRefs = () => {
-    if (!showQueue.value || !queueEl.value || !dnd) return;     // bail fast
-    const rows = queueEl.value.querySelectorAll('.row.item');   // scoped, not document-wide
-    rows.forEach(el => {
-      const trackId = el.getAttribute('data-track-id');
-      const track = queue.value.find(t => t.id === trackId);
-      if (track) dnd.registerRef(track, el as HTMLElement);
-    });
-  };
-
-  watch([() => queue.value.length, showQueue], async () => {
-    if (!showQueue.value) return;
-    await nextTick();      // ensure DOM nodes exist
-    registerAllRefs();
-  }, { flush: 'post' });
-
-  const mq = window.matchMedia?.('(prefers-reduced-motion: reduce)');
-  if (mq) {
-    prefersReduced.value = mq.matches;
-    const onChange = (e: MediaQueryListEvent) => {
-      prefersReduced.value = e.matches;
-      rafBatchIfIdle(updateMarquee);
-    };
-    mq.addEventListener?.('change', onChange);
-    // cleanup
-    onBeforeUnmount(() => mq.removeEventListener?.('change', onChange));
   }
 
-  playlists.register(sel, toItems(), {
-    autoNext: 'linear',
-    repeat: repeat.value,
-    shuffle: shuffle.value,
-    dedupe: false,
-  })
-  playlists.setItems(sel, toItems(), { keepCurrent: true })
-  playlists.bindToHandle(sel, music)
+  try { await state.music.play(); state.isPlaying.value = true } catch { state.isPlaying.value = false }
+  setTimeout(() => { state.isLoading.value = false }, 300)
+}
 
-  await nextTick();
-  rafBatchIfIdle(() => {
-    measureNow();
-    if (!containerWidth.value && hostWidthFallback.value) {
-      containerWidth.value = hostWidthFallback.value;
+function pause() {
+  state.music.pause()
+  state.isPlaying.value = false
+}
+
+function togglePlay() {
+  if (!state.hasTracks.value) return
+  state.isPlaying.value ? pause() : play()
+}
+
+function next() {
+  state.playlists.next(state.sel, state.music).then((idx: number) => {
+    if (idx >= 0) {
+      state.currentIndex.value = idx
+      state.selectedIndex.value = idx
+    } else {
+      pause()
     }
-    updateMarquee();
-  });
+  })
+}
 
-  hydrateFromHandle()
-});
+function prev() {
+  state.playlists.prev(state.sel, state.music).then((idx: number) => {
+    if (idx >= 0) {
+      state.currentIndex.value = idx
+      state.selectedIndex.value = idx
+    } else {
+      pause()
+    }
+  })
+}
 
+function seek(e: Event) {
+  if (!state.duration.value) return
+  const v = parseFloat((e.target as HTMLInputElement).value)
+  state.music.currentTime = v * state.duration.value
+}
 
-onBeforeUnmount(() => {
-  //for (const t of queue.value) if (t.url?.startsWith?.('blob:')) URL.revokeObjectURL(t.url)
-
-  document.removeEventListener('click', onDocClick)
-  document.removeEventListener('keydown', onKeydown)
-  clearLong()
-  clearSeek()
-  document.removeEventListener('pointerup', onPointerUp)
-  document.removeEventListener('pointercancel', onPointerUp)
-  window.removeEventListener('blur', onPointerUp)
-
-  music.removeEventListener('play',           onMediaPlay)
-  music.removeEventListener('pause',          onMediaPause)
-  music.removeEventListener('timeupdate',     onTimeUpdate)
-  music.removeEventListener('loadedmetadata', onLoadedMeta as any)
-  music.removeEventListener('volumechange', onVolumeChange)
-  music.removeEventListener('rack:playlistindex', onRackIndex as EventListener)
-
-  dnd?.destroy()
-  dnd = null
-
-  playlists.unbind(sel)
-  marqueeRO?.disconnect()
-})
-
-// ---- Format & volume ----
-function fmtTime(sec: number) {
-  if (!isFinite(sec)) return '0:00'
-  const s = Math.floor(sec % 60)
-  const m = Math.floor(sec / 60)
-  return `${m}:${s.toString().padStart(2, '0')}`
+function adjustSpeed(delta: number) {
+  const newRate = Math.max(0.25, Math.min(3.0, state.playbackRate.value + delta))
+  state.playbackRate.value = newRate
+  state.music.playbackRate = newRate
 }
 
 function setVolume(v: number) {
   const clamped = Math.min(1, Math.max(0, v))
-  volume.value = clamped
-  if (clamped > 0) lastNonZeroVolume.value = clamped
-  music.volume = clamped                // <-- write only here (user intent)
+  state.volume.value = clamped
+  if (clamped > 0) state.lastNonZeroVolume.value = clamped
+  state.music.volume = clamped
 }
 
 function toggleMute() {
-  setVolume(volume.value > 0 ? 0 : lastNonZeroVolume.value || 0.5)
+  setVolume(state.volume.value > 0 ? 0 : state.lastNonZeroVolume.value || 0.5)
 }
 
-// ---- Player controls ----
-function togglePlay() {
-  if (!hasTracks.value) return
-  isPlaying.value ? pause() : play()
+function volInput(v: number) {
+  setVolume(v)
 }
 
-// next/prev buttons:
-function next() {
-  playlists.next(sel, music).then(idx => {
-    if (idx >= 0) currentIndex.value = idx;
-    else pause(); // hit end with repeat=off
-  });
-}
-function prev() {
-  playlists.prev(sel, music).then(idx => {
-    if (idx >= 0) currentIndex.value = idx;
-  });
+function toggleShuffle() {
+  state.shuffle.value = !state.shuffle.value
+  state.playlists.setOptions(state.sel, { shuffle: state.shuffle.value })
 }
 
-
-// ---- Audio events ----
-function volInput(e: Event) {
-  setVolume(parseFloat((e.target as HTMLInputElement).value))
+function toggleRepeat() {
+  state.repeat.value = state.repeat.value === 'off' ? 'all' : state.repeat.value === 'all' ? 'one' : 'off'
+  state.playlists.setOptions(state.sel, { repeat: state.repeat.value })
 }
 
-// ---- Queue ops ----
-async function removeAt(realIndex: number) {
-  const t = queue.value[realIndex];
-  if (t?.url?.startsWith?.('blob:')) URL.revokeObjectURL(t.url);
-
-  const wasCurrent = realIndex === currentIndex.value;
-  queue.value.splice(realIndex, 1);
-
-  if (queue.value.length === 0) {
-    clearQueue();
-    return;
-  }
-
-  if (wasCurrent) {
-    const nextIdx = Math.min(realIndex, queue.value.length - 1);
-    if (isPlaying.value) {
-      const idx = await playlists.playIndex(sel, nextIdx, music);
-      if (idx >= 0) currentIndex.value = idx;
-    } else {
-      prepare(nextIdx); // select + load metadata, stay paused
-    }
-  } else if (realIndex < currentIndex.value) {
-    currentIndex.value -= 1;
-  }
-
-  ensureDnD();
-  playlists.setItems(sel, toItems(), { keepCurrent: true });
+function clickPick() {
+  fileInput.value?.click()
 }
 
-
-function clearQueue() {
-  pause();
-  for (const t of queue.value) {
-    if (t.url?.startsWith?.('blob:')) URL.revokeObjectURL(t.url);
-  }
-  queue.value = [];
-  currentIndex.value = -1;
-  currentTime.value = 0;
-  duration.value = 0;
-  ensureDnD();
-  playlists.setItems(sel, toItems(), { keepCurrent: true });
+function toggleQueue() {
+  console.log('showQueue.value: ', showQueue.value)
+  showQueue.value = !showQueue.value
 }
 
-// was: function addFiles(files: FileList | File[]) {
-async function addFiles(files: FileList | File[] | Iterable<File>): Promise<void> {
-  const tracks: Track[] = []
-  for (const f of Array.from(files as any)) {
-    const name = f.name || ''
-    const isAudio =
-      ACCEPTED_MIMES.includes(f.type) ||
-      /\.(mp3|ogg|oga|aac|m4a|flac|wav|webm)$/i.test(name)
-    if (!isAudio) continue
-    const id = `${name}-${f.size}-${f.lastModified}-${Math.random().toString(36).slice(2)}`
-    const url = URL.createObjectURL(f)
-    tracks.push({ id, name, url, type: f.type, srcHint: '', missing: false })
-  }
-  if (!tracks.length) return
+// ===== QUEUE RENAME =====
+const renaming = ref(false)
+const draftQueueName = ref('')
+const nameInput = ref<HTMLInputElement | null>(null)
 
-  const startEmpty = queue.value.length === 0
-  queue.value.push(...tracks)
-  dnd?.setOrderedList(queue.value)
+function beginRename() {
+  draftQueueName.value = state.queueName.value
+  renaming.value = true
+  nextTick(() => {
+    nameInput.value?.focus()
+    nameInput.value?.select()
+  })
+}
 
-  ensureDnD()
-  playlists.setItems(sel, toItems())
+function cancelRename() {
+  renaming.value = false
+}
 
-  // If queue was empty, start with the first playable via the rack
-  if (startEmpty) {
-    const idx = await playlists.playIndex(sel, 0, music)
-    if (idx >= 0) { currentIndex.value = idx; isPlaying.value = true }
+function commitRename() {
+  const v = draftQueueName.value.trim()
+  if (v) state.queueName.value = v
+  renaming.value = false
+}
+
+// ===== ROW INTERACTIONS =====
+async function onRowDblClick(track: any) {
+  if (dnd.dndState.value.isDragging) return
+  const realIdx = state.queue.value.findIndex(t => t.id === track.id)
+  const idx = await state.playlists.playIndex(state.sel, realIdx, state.music)
+  if (idx >= 0) {
+    state.currentIndex.value = idx
+    state.selectedIndex.value = idx
   }
 }
 
-// ---- DnD ----
+function onRowClick(index: number) {
+  keyboard.selectRow(index)
+}
+
+// ===== DRAG & DROP (FILES) =====
+const draggingOver = ref(false)
+
 function prevent(e: Event) {
   e.preventDefault()
   e.stopPropagation()
@@ -749,1208 +360,178 @@ async function onDrop(e: DragEvent) {
   prevent(e)
   draggingOver.value = false
   if (e.dataTransfer?.files?.length) {
-    await addFiles(e.dataTransfer.files)
+    await playlist.addFiles(e.dataTransfer.files)
   }
 }
 
-// ---- File picker ----
-const fileInput = ref<HTMLInputElement | null>(null)
+// ===== MEDIA EVENTS =====
+const onMediaPlay = () => { state.isPlaying.value = true }
+const onMediaPause = () => { state.isPlaying.value = false }
+const onTimeUpdate = () => { state.currentTime.value = state.music.currentTime || 0 }
 
-function clickPick() {
-  fileInput.value?.click()
+const onLoadedMeta = (e: Event) => {
+  const t = e.target as HTMLMediaElement | null
+  const d = t?.duration ?? state.music.duration
+  state.duration.value = Number.isFinite(d) ? d : 0
 }
 
-// already async; just await addFiles
-async function onFileInput(e: Event) {
-  const input = e.target as HTMLInputElement
-  const files = input.files ? Array.from(input.files) : []
-  input.value = ''
-  if (!files.length) return
-
-  const playlists: File[] = []
-  const audios: File[] = []
-  for (const f of files) {
-    const lname = (f.name || '').toLowerCase()
-    if (lname.endsWith('.gexm')) playlists.push(f)
-    else audios.push(f)
-  }
-
-  if (audios.length) await addFiles(audios)     // ⬅ await now
-  for (const pf of playlists) {
-    try {
-      const text = await pf.text()
-      importGexm(text)
-    } catch (err) {
-      console.warn('[gexm] failed to read:', pf.name, err)
-    }
+const onVolumeChange = () => {
+  const v = state.music.volume
+  if (v !== state.volume.value) {
+    state.volume.value = v
+    if (v > 0) state.lastNonZeroVolume.value = v
   }
 }
 
-
-async function importGexm(jsonText: string) {
-  let data: any
-  try {
-    data = JSON.parse(jsonText)
-  } catch {
-    return
-  }
-  if (!data || data.kind !== 'gexm.playlist' || !Array.isArray(data.items)) return
-
-  const imported: Track[] = []
-  for (const it of data.items as Array<any>) {
-    const name = String(it?.name ?? 'Unknown')
-    const href = String(it?.href ?? '')
-    const type = typeof it?.type === 'string' ? it.type : ''
-    const id = `${name}-${Math.random().toString(36).slice(2)}`
-    const hrefLower = href.toLowerCase()
-    const looksPlayableNow =
-      hrefLower.startsWith('http://') || hrefLower.startsWith('https://')
-
-    if (looksPlayableNow) {
-      imported.push({ id, name, url: href, type, srcHint: href, missing: false })
-    } else {
-      imported.push({ id, name, url: '', type, srcHint: href, missing: true })
-    }
-  }
-
-  const startEmpty = queue.value.length === 0
-  queue.value.push(...imported)
-  dnd?.setOrderedList(queue.value)
-
-  if (startEmpty && queue.value.length) {
-    const idx = await playlists.playIndex(sel, 0, music);
-    if (idx >= 0) { currentIndex.value = idx; isPlaying.value = true; }
-  }
-
-  ensureDnD()
+function hydrateFromHandle() {
+  state.volume.value = state.music.volume
+  if (state.volume.value > 0) state.lastNonZeroVolume.value = state.volume.value
+  
+  state.isPlaying.value = !state.music.paused
+  state.currentTime.value = state.music.currentTime || 0
+  state.duration.value = state.music.duration || 0
 }
 
-// ---- Queue title / rename ----
-function beginRename() {
-  draftQueueName.value = queueName.value
-  renaming.value = true
-  nextTick(() => {
-    nameInput.value?.focus()
-    nameInput.value?.select()
+// ===== LIFECYCLE =====
+let resizeObserver: ResizeObserver | null = null
+onMounted(async () => {
+  state.music.addEventListener('play', onMediaPlay)
+  state.music.addEventListener('pause', onMediaPause)
+  state.music.addEventListener('timeupdate', onTimeUpdate)
+  state.music.addEventListener('loadedmetadata', onLoadedMeta as any)
+  state.music.addEventListener('volumechange', onVolumeChange)
+  state.music.addEventListener('error', onMediaError)
+  state.music.addEventListener('rack:playlistindex', onRackIndex as EventListener)
+  
+  state.playlists.register(state.sel, state.toPlaylistItems(), {
+    autoNext: 'linear',
+    repeat: state.repeat.value,
+    shuffle: state.shuffle.value,
+    dedupe: false
   })
-}
-
-function cancelRename() {
-  renaming.value = false
-}
-
-function commitRename() {
-  const v = draftQueueName.value.trim()
-  if (v) queueName.value = v
-  renaming.value = false
-}
-
-// ---- Save/Load playlist ----
-async function savePlaylistGexm() {
-  try {
-    const payload = {
-      kind: 'gexm.playlist',
-      version: 1,
-      name: queueName.value,
-      items: queue.value.map(t => ({
-        name: t.name,
-        href: t.url || '',
-        type: t.type || '',
-        srcHint: t.srcHint || '',
-        missing: !!t.missing
-      }))
-    }
-    const text = JSON.stringify(payload, null, 2)
-
-    // @ts-ignore
-    if ('showSaveFilePicker' in window) {
-      // @ts-ignore
-      const handle = await window.showSaveFilePicker({
-        suggestedName: `${queueName.value || 'Playlist'}.gexm`,
-        types: [
-          {
-            description: 'GExplorer Music Playlist',
-            accept: { 'application/json': ['.gexm'] }
-          }
-        ]
-      })
-      const writable = await handle.createWritable()
-      await writable.write(new Blob([text], { type: 'application/json' }))
-      await writable.close()
-      return
-    }
-
-    const blob = new Blob([text], { type: 'application/json' })
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = `${queueName.value || 'Playlist'}.gexm`
-    a.click()
-    URL.revokeObjectURL(a.href)
-  } catch (e) {
-    console.warn('[gexm:save] failed', e)
+  
+  state.playlists.setItems(state.sel, state.toPlaylistItems(), { keepCurrent: true })
+  state.playlists.bindToHandle(state.sel, state.music)
+  
+  await nextTick()
+  measureNow()
+  if (!containerWidth.value && hostWidthFallback.value) {
+    containerWidth.value = hostWidthFallback.value
   }
-}
-
-async function loadAndMerge() {
-  try {
-    // @ts-ignore
-    if ('showOpenFilePicker' in window) {
-      // @ts-ignore
-      const handles: FileSystemFileHandle[] = await window.showOpenFilePicker({
-        multiple: true,
-        types: [
-          {
-            description: 'Audio',
-            accept: { 'audio/*': ['.mp3', '.ogg', '.oga', '.aac', '.m4a', '.flac', '.wav', '.webm'] }
-          },
-          {
-            description: 'GExplorer Playlist',
-            accept: { 'application/json': ['.gexm'] }
-          },
-          {
-            description: 'M3U Playlist',
-            accept: { 'audio/x-mpegurl': ['.m3u', '.m3u8'] }
-          }
-        ]
-      })
-
-      const toAdd: Track[] = []
-      const placeholders: Track[] = []
-
-      for (const h of handles) {
-        const file = await h.getFile()
-        const nameLower = file.name.toLowerCase()
-
-        if (nameLower.endsWith('.gexm')) {
-          try {
-            const txt = await file.text()
-            const j = JSON.parse(txt)
-            if (j?.items && Array.isArray(j.items)) {
-              for (const it of j.items) {
-                if (!it.href || String(it.href).startsWith('blob:')) {
-                  placeholders.push({
-                    id: `missing-${Math.random().toString(36).slice(2)}`,
-                    name: it.name || '(unknown)',
-                    url: '',
-                    missing: true,
-                    srcHint: it.srcHint || it.href || it.name || '',
-                    type: it.type || ''
-                  })
-                } else {
-                  const id = `ext-${Math.random().toString(36).slice(2)}`
-                  toAdd.push({
-                    id,
-                    name: it.name || it.href,
-                    url: String(it.href),
-                    type: it.type || ''
-                  })
-                }
-              }
-            }
-          } catch (e) {
-            console.warn('[gexm:open] parse failed', e)
-          }
-          continue
-        }
-
-        if (nameLower.endsWith('.m3u') || nameLower.endsWith('.m3u8')) {
-          try {
-            const txt = await file.text()
-            const lines = txt
-              .split(/\r?\n/)
-              .map(s => s.trim())
-              .filter(Boolean)
-            for (const line of lines) {
-              if (line.startsWith('#')) continue
-              placeholders.push({
-                id: `m3u-${Math.random().toString(36).slice(2)}`,
-                name: line.split(/[\\/]/).pop() || line,
-                url: '',
-                missing: true,
-                srcHint: line
-              })
-            }
-          } catch (e) {
-            console.warn('[m3u:open] parse failed', e)
-          }
-          continue
-        }
-
-        if (
-          ACCEPTED_MIMES.includes(file.type) ||
-          /\.(mp3|ogg|oga|aac|m4a|flac|wav|webm)$/i.test(file.name)
-        ) {
-          const id = `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2)}`
-          const url = URL.createObjectURL(file)
-          toAdd.push({ id, name: file.name, url, type: file.type })
-        }
-      }
-
-      const startEmpty = queue.value.length === 0
-      queue.value.push(...toAdd, ...placeholders)
-      dnd?.setOrderedList(queue.value)
-
-      if (startEmpty && toAdd.length) {
-        const idx = await playlists.playIndex(sel, 0, music);
-        if (idx >= 0) { currentIndex.value = idx; isPlaying.value = true; }
-      }
-
-      return
-    }
-
-    clickPick()
-  } catch (e) {
-    console.warn('[open] failed', e)
-  }
-
-  ensureDnD()
-}
-
-// ---- UI helpers ----
-function toggleRepeat() {
-  repeat.value = repeat.value === 'off' ? 'all' : repeat.value === 'all' ? 'one' : 'off'
-  playlists.setOptions(sel, { repeat: repeat.value })
-}
-
-// shuffle toggle:
-function toggleShuffle() {
-  shuffle.value = !shuffle.value;
-  playlists.setOptions(sel, { shuffle: shuffle.value });
-}
-
-// double-click row:
-async function onRowDblClickDisplay(iDisplay: number) {
-  const item = displayQueue.value[iDisplay];
-  if (!item) return;
-  const realIdx = queue.value.findIndex(t => t.id === item.id);
-  const idx = await playlists.playIndex(sel, realIdx, music);
-  if (idx >= 0) currentIndex.value = idx;
-}
-
-
-// ---- Row dragging ----
-function startRowDrag(iDisplay: number, event: MouseEvent) {
-  const target = event.target as HTMLElement
-  if (target.closest('.icon-btn')) return
-  event.preventDefault() // stops text selection on initial down
-  dnd?.startDrag(iDisplay, event as PointerEvent)
-}
-
-function ensureDnD() {
-  if (!dnd && queue.value.length > 0) {
-    dnd = createDnD(queue.value, {
-      identity: t => t.id,
-      orientation: 'vertical',
-      dragThresholdPx: 4,
-      onUpdate: onDnDUpdate,
-      scrollContainer: () => queueEl.value,
-      containerClassOnDrag: 'gex-dragging',
-      rowSelector: '.row.item',
-      autoScroll: { marginPx: 56, maxSpeedPxPerSec: 900 },
-      globalCursor: 'grabbing'
-    });
+  
+  resizeObserver = new ResizeObserver(() => {
+    measureNow()
+  })
+  
+  // Observe the widget root
+  if (widgetRootEl.value) {
+    console.log('[Widget] Observing widgetRootEl')
+    resizeObserver.observe(widgetRootEl.value)
   } else {
-    dnd?.setOrderedList(queue.value);
+    console.warn('[Widget] widgetRootEl is null, cannot observe')
   }
-}
+  
+  hydrateFromHandle()
+})
 
-// ---- Compact layout helpers ----
-function toggleVolPop() {
-  if (showVolPop.value) {
-    showVolPop.value = false
-    return
-  }
-  const btn = volBtnEl.value
-  if (!btn) return
-  const r = btn.getBoundingClientRect()
-  volPopStyle.value = {
-    left: `${Math.round(r.left + r.width / 2)}px`,
-    top: `${Math.round(r.bottom + 8)}px`
-  }
-  showVolPop.value = true
-}
+onBeforeUnmount(() => {
+  state.music.removeEventListener('play', onMediaPlay)
+  state.music.removeEventListener('pause', onMediaPause)
+  state.music.removeEventListener('timeupdate', onTimeUpdate)
+  state.music.removeEventListener('loadedmetadata', onLoadedMeta as any)
+  state.music.removeEventListener('volumechange', onVolumeChange)
+  state.music.removeEventListener('error', onMediaError)
+  state.music.removeEventListener('rack:playlistindex', onRackIndex as EventListener)
 
-function closeVolPop() {
-  showVolPop.value = false
-}
-
-function onDocClick(e: MouseEvent) {
-  if (!showVolPop.value) return
-  const t = e.target as HTMLElement
-  if (!t.closest('.vol-pop') && !t.closest('[data-vol-btn]')) closeVolPop()
-}
-
-function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') closeVolPop()
-}
-
-// ---- Long-press seek ----
-function startSeek(dir: 1 | -1) {
-  if (!duration.value) return
-  seekTimer = window.setInterval(() => {
-    if (!duration.value) return
-    const next = Math.max(0, Math.min(
-      duration.value,
-      (music.currentTime || 0) + dir * SEEK_DELTA 
-    ))
-    music.currentTime = next
-  }, SEEK_TICK_MS)
-}
-
-function clearSeek() {
-  if (seekTimer) {
-    clearInterval(seekTimer)
-    seekTimer = undefined
-  }
-}
-
-function clearLong() {
-  if (longTimer) {
-    clearTimeout(longTimer)
-    longTimer = undefined
-  }
-}
-
-function onPrevDown() {
-  clearLong()
-  longTimer = window.setTimeout(() => startSeek(-1), LONG_PRESS_MS)
-}
-
-function onPrevUp() {
-  const didLong = !!seekTimer
-  clearLong()
-  clearSeek()
-  if (!didLong) prev()
-}
-
-function onNextDown() {
-  clearLong()
-  longTimer = window.setTimeout(() => startSeek(1), LONG_PRESS_MS)
-}
-
-function onNextUp() {
-  const didLong = !!seekTimer
-  clearLong()
-  clearSeek()
-  if (!didLong) next()
-}
-
-// rock-solid setters for template ref callbacks
-function setMarqueeBox(el: Element | null) {
-  // accept either Element or null
-  marqueeBox.value = (el as HTMLElement) || null
-}
-function setMarqueeCopy(el: Element | null) {
-  marqueeCopy.value = (el as HTMLElement) || null
-}
-
+  state.playlists.unbind(state.sel)
+  dnd.dnd?.destroy()
+  resizeObserver?.disconnect()
+})
 </script>
 
 <template>
-  <!-- Hidden input used by both layouts -->
-  <input
-    ref="fileInput"
-    type="file"
-    multiple
-    :accept="INPUT_ACCEPT"
-    style="display: none"
-    @change="onFileInput"
-  />
+  <div ref="widgetRootEl" class="widget-root">
+    <!-- Hidden file input -->
+    <input
+      ref="fileInput"
+      type="file"
+      multiple
+      :accept="INPUT_ACCEPT"
+      style="display: none"
+      @change="(e) => playlist.onFileInput(e, fileInput!)"
+    />
 
-  <!-- COMPACT VARIANT -->
-  <template v-if="hostLayout === 'compact'">
-    <div class="compact">
-      <!-- Title strip with volume button at right -->
-      <div class="compact-title" :title="playTooltip">
-        <span class="title-text">{{ current?.name || 'No track' }}</span>
-        <button
-          ref="volBtnEl"
-          class="btn vol-in-title"
-          data-vol-btn
-          :class="{ active: volume === 0 }"
-          title="Volume"
-          @click.stop="toggleVolPop"
-        >
-          🔊
-        </button>
-      </div>
+    <!-- Compact Layout -->
+    <CompactLayout
+      v-if="hostLayout === 'compact'"
+      :current="state.current.value"
+      :has-tracks="state.hasTracks.value"
+      :is-playing="state.isPlaying.value"
+      :volume="state.volume.value"
+      :volume-icon="state.volumeIcon.value"
+      :play-tooltip="`${state.isPlaying.value ? 'Pause' : 'Play'}${state.current.value ? '\n' + state.current.value.name : ''}`"
+      @toggle-play="togglePlay"
+      @click-pick="clickPick"
+      @vol-input="volInput"
+    />
 
-      <!-- fixed overlay popover so it never clips -->
-      <div v-if="showVolPop" class="vol-pop fixed" :style="volPopStyle" @click.stop>
-        <input
-          class="vol-vertical"
-          type="range"
-          min="0"
-          max="1"
-          step="0.01"
-          :value="volume"
-          @input="volInput"
-        />
-      </div>
-
-      <!-- Single-row controls, centered; play/open share a slot -->
-      <div class="compact-controls">
-        <button
-          class="btn"
-          :disabled="!canPrev"
-          @pointerdown.prevent="onPrevDown"
-          @pointerup.prevent="onPrevUp"
-          @pointercancel.prevent="onPrevUp"
-        >
-          ◀
-        </button>
-        <div class="pair">
-          <button class="btn" v-tip="playTooltip" :disabled="!hasTracks" @click="togglePlay">
-            <span v-if="isPlaying">⏸</span><span v-else>▶</span>
-          </button>
-          <button class="btn" title="Add files…" @click="clickPick">⏏</button>
-        </div>
-        <button
-          class="btn"
-          :disabled="!canNext"
-          @pointerdown.prevent="onNextDown"
-          @pointerup.prevent="onNextUp"
-          @pointercancel.prevent="onNextUp"
-        >
-          ▶
-        </button>
-      </div>
-    </div>
-  </template>
-
-  <!-- EXPANDED VARIANT -->
-  <template v-else>
-    <div
-      class="player-root"
-      :class="[hostContext, hostLayout, layoutClass, { 'drag-over': draggingOver, dragging: dndState.isDragging, pressing: isPressing }]"
-      @pointerdown="onPointerDown"
-      ref="rootEl"
-      @dragenter="onDragEnter"
-      @dragover="onDragOver"
-      @dragleave="onDragLeave"
+    <!-- Expanded Layout -->
+    <ExpandedLayout
+      v-else
+      ref="expandedLayoutRef"
+      :queue="state.queue.value"
+      :display-queue="dnd.displayQueue.value"
+      :current-index="state.currentIndex.value"
+      :selected-index="state.selectedIndex.value"
+      :current="state.current.value"
+      :has-tracks="state.hasTracks.value"
+      :can-prev="state.canPrev.value"
+      :can-next="state.canNext.value"
+      :is-playing="state.isPlaying.value"
+      :is-loading="state.isLoading.value"
+      :current-time="state.currentTime.value"
+      :duration="state.duration.value"
+      :volume="state.volume.value"
+      :repeat="state.repeat.value"
+      :shuffle="state.shuffle.value"
+      :queue-name="state.queueName.value"
+      :volume-icon="state.volumeIcon.value"
+      :playback-rate="state.playbackRate.value"
+      :playback-rate-label="state.playbackRateLabel.value"
+      :dnd-state="dnd.dndState.value"
+      :layout-class="layoutClass"
+      :show-queue="showQueue"
+      :renaming="renaming"
+      :draft-queue-name="draftQueueName"
+      :marquee-on="marquee.marqueeOn.value"
+      :marquee-dir="marquee.marqueeDir.value"
+      :resize-phase="props.placement?.resizePhase"
+      :set-marquee-box="marquee.setMarqueeBox"
+      :set-marquee-copy="marquee.setMarqueeCopy"
+      @toggle-play="togglePlay"
+      @prev="prev"
+      @next="next"
+      @seek="seek"
+      @adjust-speed="adjustSpeed"
+      @toggle-shuffle="toggleShuffle"
+      @toggle-repeat="toggleRepeat"
+      @click-pick="clickPick"
+      @toggle-mute="toggleMute"
+      @vol-input="volInput"
+      @toggle-queue="toggleQueue"
+      @begin-rename="beginRename"
+      @cancel-rename="cancelRename"
+      @commit-rename="commitRename"
+      @update:draft-queue-name="(v) => draftQueueName = v"
+      @save-playlist="playlist.savePlaylistGexm"
+      @row-dblclick="onRowDblClick"
+      @row-click="onRowClick"
+      @start-row-drag="dnd.startRowDrag"
+      @remove-at="playlist.removeAt"
+      @drag-enter="onDragEnter"
+      @drag-over="onDragOver"
+      @drag-leave="onDragLeave"
       @drop="onDrop"
-    >
-      <!-- Controls (observed for width adaptivity) -->
-      <div class="controls" :class="layoutClass" ref="controlsEl">
-        <div class="transport">
-          <button v-if="layoutClass !== 'micro'" class="btn prev" title="Previous" :disabled="!canPrev" @click="prev">⏮</button>
-          <button
-            class="btn primary play"
-            :aria-label="isPlaying ? 'Pause' : 'Play'"
-            v-tip="playTooltip"
-            :disabled="!hasTracks"
-            @click="togglePlay"
-          >
-            <span v-if="isPlaying">⏸</span><span v-else>▶</span>
-          </button>
-          <button v-if="layoutClass === 'micro'" class="btn add" :title="addTooltip" @click="clickPick">⏏</button>
-          <button v-if="layoutClass !== 'micro'" class="btn next" title="Next" :disabled="!canNext" @click="next">⏭</button>
-        </div>
-        <div class="time" v-if="layoutClass !== 'micro'">
-          <span class="mono left">{{ fmtTime(currentTime) }}</span>
-
-          <!-- Seek -->
-          <div class="seek-wrap" v-tip="seekTooltip">
-            <input
-              class="seek"
-              type="range"
-              min="0"
-              max="1"
-              step="0.001"
-              :value="duration ? currentTime / duration : 0"
-              :disabled="!hasTracks || !duration"
-              @input="seek"
-              :aria-label="'Seek ' + seekTooltip"
-          />
-          </div>
-
-          <span class="mono right">-{{ fmtTime(Math.max(0, (duration || 0) - currentTime)) }}</span>
-        </div>
-        <div class="modes" v-if="layoutClass !== 'micro'">
-          <button class="btn" :class="{ active: shuffle }" title="Shuffle" @click="toggleShuffle">🔀</button>
-          <button class="btn" :class="{ active: repeat !== 'off' }" title="Repeat (off/all/one)" @click="toggleRepeat">
-            <span v-if="repeat === 'off'">🔁</span>
-            <span v-else-if="repeat === 'all'">🔂</span>
-            <span v-else>🔂1</span>
-          </button>
-          <button class="btn" title="Add files…" @click="clickPick">⏏</button>
-        </div>
-        <div class="volume" v-if="layoutClass !== 'micro'">
-          <button class="btn mute" :class="{ active: volume === 0 }" title="Mute/Unmute" @click="toggleMute">🔊</button>
-          <input class="vol" type="range" min="0" max="1" step="0.01" :value="volume" @input="volInput" />
-        </div>
-      </div>
-
-      
-      <!-- Compact inline volume for ultra/narrow/micro -->
-      <div class="volume-line"
-          v-if="layoutClass === 'micro'">
-        <input class="vol vol-line" type="range" min="0" max="1" step="0.01" :value="volume" @input="volInput" />
-      </div>
-
-
-      <!-- Header -->
-      <div v-if="queue.length" class="queue-header">
-        <div class="qh-left">
-          <template v-if="!renaming">
-            <strong class="qh-title" @dblclick="beginRename" :title="'Double-click to rename'">{{ queueName }}</strong>
-          </template>
-          <template v-else>
-            <input
-              ref="nameInput"
-              class="qh-input"
-              v-model="draftQueueName"
-              @keydown.enter.prevent="commitRename"
-              @keydown.esc.prevent="cancelRename"
-              @blur="commitRename"
-            />
-            <button class="icon-btn" title="Save name" @mousedown.prevent @click="commitRename">✔</button>
-            <button class="icon-btn" title="Cancel" @mousedown.prevent @click="cancelRename">✕</button>
-          </template>
-          <span class="count">{{ queue.length }}</span>
-        </div>
-        <div class="qh-actions">
-          <button class="icon-btn" title="Save playlist (.gexm)" @click="savePlaylistGexm">💾</button>
-        </div>
-      </div>
-
-      <!-- New centered collapse/expand control for all layouts -->
-      <div v-if="queue.length" class="queue-collapse-tab">
-        <button class="tab-btn" :aria-expanded="showQueue" @click="toggleQueue"
-                :title="showQueue ? 'Hide list' : 'Show list'">
-          <span v-if="showQueue">▴</span><span v-else>▾</span>
-        </button>
-      </div>
-
-      <!-- List -->
-      <div v-if="queue.length && showQueue" class="queue" ref="queueEl">
-        <div class="row header">
-          <span>#</span><span>Title</span><span class="dur">Length</span><span class="act"></span>
-        </div>
-        <div
-            v-for="(t, i) in displayQueue"
-            :key="t.id"
-            :data-track-id="t.id"
-            class="row item"
-            :class="{
-              skipped: t.missing,
-              'is-dragging': dndState.isDragging && dndState.draggingId === t.id,
-              current: t.id === queue[currentIndex]?.id
-            }"
-            @dblclick="onRowDblClickDisplay(i)"
-            @pointerdown="startRowDrag(i, $event)"
-          >
-            <span class="idx">{{ i + 1 }}</span>
-
-            <span class="title" :title="t.name">
-              <template v-if="t.id === queue[currentIndex]?.id">
-                <!-- container is the ref we measure; it owns the clip and width -->
-                <span :ref="setMarqueeBox"
-                  class="marquee"
-                  :data-dir="marqueeDir"
-                  :class="{ run: marqueeOn && props.placement?.resizePhase !== 'active', suspend: props.placement?.resizePhase === 'active' }">
-                  <span class="marquee-track">
-                    <span :ref="setMarqueeCopy" class="copy real">{{ t.name }}</span>
-                    <span class="copy twin" aria-hidden="true">{{ t.name }}</span>
-                  </span>
-              </span>
-              </template>
-              <template v-else>
-                {{ t.name }}
-              </template>
-
-              <em v-if="t.missing" class="skip-tag"> (skipped)</em>
-            </span>
-
-            <span class="dur mono" v-if="!t.missing && t.id === queue[currentIndex]?.id && duration">{{ fmtTime(duration) }}</span>
-            <span class="dur mono" v-else>–</span>
-
-            <span class="act">
-              <button class="icon-btn" title="Remove" @click="removeAt(queue.findIndex(track => track.id === t.id))">✕</button>
-            </span>
-          </div>
-      </div>
-
-      <!-- Empty -->
-      <div v-if="queue.length === 0" class="empty">
-        <p>Drop audio files here or</p>
-        <button class="btn" @click="clickPick">Add files…</button>
-      </div>
-    </div>
-  </template>
+    />
+  </div>
 </template>
-
-<style scoped>
-.player-root {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  background: var(--surface-2, #222);
-  color: var(--fg, #eee);
-  border: 1px solid var(--border, #555);
-  border-radius: var(--radius-md, 8px);
-  padding: var(--space-sm, 8px);
-  box-sizing: border-box;
-}
-
-.player-root.drag-over {
-  outline: 2px dashed var(--accent, #4ea1ff);
-  outline-offset: -2px;
-}
-
-.player-root.dragging,
-.player-root.dragging * {
-  -webkit-user-select: none;
-  user-select: none;
-}
-
-/* -------- Controls grid -------- */
-.controls {
-  display: grid;
-  gap: var(--space-sm, 8px);
-  align-items: center;
-  justify-items: center;
-  padding: var(--space-xs, 6px) var(--space-sm, 8px);
-  background: var(--surface-1, #1a1a1a);
-  border: 1px solid var(--border, #555);
-  border-radius: var(--radius-sm, 6px);
-  box-sizing: border-box;
-  overflow: hidden;
-}
-
-.controls .transport {
-  grid-area: transport;
-  display: flex;
-  gap: var(--space-sm, 8px);
-  align-items: center;
-  justify-content: center;
-}
-
-.controls .time {
-  grid-area: time;
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm, 8px);
-  min-width: 0;
-  justify-self: stretch;
-}
-
-.controls .modes {
-  grid-area: modes;
-  display: flex;
-  gap: var(--space-sm, 8px);
-  align-items: center;
-}
-
-.controls .volume {
-  grid-area: volume;
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  width: 100%;
-  max-width: 240px;
-  justify-self: end;
-}
-
-.controls .seek {
-  flex: 1;
-  min-width: 80px;
-}
-
-.controls .vol {
-  width: 100%;
-}
-
-/* WIDE */
-.controls.wide {
-  grid-template-columns: auto minmax(180px, 1fr) auto minmax(140px, 240px);
-  grid-template-areas: 'transport time modes volume';
-}
-
-/* MEDIUM / NARROW */
-.controls.medium,
-.controls.narrow {
-  grid-template-columns: 1fr 1fr;
-  grid-template-areas:
-    'transport time'
-    'modes volume';
-}
-
-/* ULTRA */
-.controls.ultra {
-  grid-template-columns: 1fr;
-  grid-template-areas:
-    'transport'
-    'time'
-    'modes'
-    'volume';
-}
-
-.controls.ultra .volume {
-  max-width: none;
-  justify-self: stretch;
-}
-
-/* MICRO */
-.controls.micro {
-  grid-template-columns: 1fr;
-  grid-template-areas: 'transport';
-}
-
-.controls.micro .transport {
-  gap: 6px;
-}
-
-.controls.micro .transport .play {
-  height: 32px;
-  padding: 0 12px;
-}
-
-/* Hide time labels on tight layouts */
-.controls.narrow .time .mono,
-.controls.ultra .time .mono,
-.controls.micro .time .mono {
-  display: none;
-}
-
-/* Buttons */
-.btn {
-  height: 28px;
-  padding: 0 8px;
-  border-radius: var(--radius-sm, 6px);
-  border: 1px solid var(--border, #555);
-  background: var(--surface-2, #222);
-  color: var(--fg, #eee);
-  cursor: pointer;
-  transition: all 0.12s ease;
-}
-
-.btn:hover:not(:disabled) {
-  background: var(--surface-3, #333);
-  border-color: var(--accent, #4ea1ff);
-}
-
-.btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.btn.primary {
-  font-weight: 700;
-}
-
-.btn.active {
-  border-color: var(--accent, #4ea1ff);
-  box-shadow: 0 0 0 1px var(--accent, #4ea1ff) inset;
-}
-
-.mono {
-  font-variant-numeric: tabular-nums;
-  opacity: 0.8;
-}
-
-/* -------- Queue header -------- */
-.queue-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: var(--space-sm, 8px);
-  padding: 6px 8px;
-  border: 1px solid var(--border, #555);
-  border-radius: var(--radius-sm, 6px);
-  background: var(--surface-1, #1a1a1a);
-}
-
-.qh-left {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.qh-title {
-  cursor: text;
-}
-
-.qh-input {
-  height: 24px;
-  padding: 0 6px;
-  border-radius: 4px;
-  border: 1px solid var(--border, #555);
-  background: var(--surface-2, #222);
-  color: var(--fg, #eee);
-}
-
-.qh-actions {
-  display: flex;
-  gap: 6px;
-}
-
-.qh-toggle {
-  width: 22px;
-  height: 22px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.count {
-  opacity: 0.7;
-  font-size: 12px;
-}
-
-/* -------- Queue -------- */
-.queue {
-  overflow-y: auto;
-  overflow-x: hidden;
-  contain: layout paint;
-}
-
-.row {
-  display: grid;
-  grid-template-columns: 36px 1fr 70px 40px;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
-  background: var(--surface-2, #222);
-  transition: border-color 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease;
-}
-
-.row.header {
-  position: sticky;
-  top: 0;
-  background: var(--surface-2, #222);
-  font-weight: 600;
-  border-top: none;
-}
-
-.player-root.pressing .row:hover {
-  background: rgba(78, 161, 255, 0.12);
-  outline: 1px solid var(--accent, #4ea1ff);
-  outline-offset: -1px;
-}
-
-.idx {
-  opacity: 0.6;
-}
-
-.title {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.dur {
-  text-align: right;
-  opacity: 0.8;
-}
-
-.act {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.icon-btn {
-  width: 22px;
-  height: 22px;
-  border-radius: 4px;
-  border: 1px solid var(--border, #555);
-  display: grid;
-  place-items: center;
-  background: var(--surface-2, #222);
-  color: var(--fg, #eee);
-  cursor: pointer;
-  transition: all 0.12s ease;
-}
-
-.row.current .idx::before { content: "▶ "; color: var(--accent, #4ea1ff); }
-
-.modes .btn.active {
-  box-shadow: none;
-  border-color: var(--border, #555);
-  background: var(--surface-2, #222);
-  color: var(--accent, #4ea1ff);  /* simple, consistent highlight */
-}
-
-.icon-btn:hover {
-  background: var(--surface-3, #333);
-  border-color: var(--accent, #4ea1ff);
-}
-
-/* Micro/Ultra list simplification */
-.player-root.micro .queue .row.header,
-.player-root.ultra .queue .row.header {
-  display: none !important;
-}
-
-.player-root.micro .queue .row,
-.player-root.ultra .queue .row {
-  grid-template-columns: 1fr;
-}
-
-.player-root.micro .queue .row .idx,
-.player-root.micro .queue .row .dur,
-.player-root.micro .queue .row .act,
-.player-root.ultra .queue .row .idx,
-.player-root.ultra .queue .row .dur,
-.player-root.ultra .queue .row .act {
-  display: none !important;
-}
-
-.player-root.micro .queue .row .title,
-.player-root.ultra .queue .row .title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Empty state */
-.empty {
-  margin: auto;
-  text-align: center;
-  opacity: 0.85;
-}
-
-.empty .btn {
-  margin-top: 8px;
-}
-
-.row.skipped {
-  opacity: 0.7;
-  filter: grayscale(0.2);
-}
-
-.skip-tag {
-  opacity: 0.75;
-  font-style: normal;
-}
-
-/* Row dragging */
-.row {
-  cursor: grab;
-}
-
-.row:active {
-  cursor: grabbing;
-}
-
-.row.is-dragging {
-  border: 2px solid var(--accent, #4ea1ff);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
-  opacity: 1;
-}
-
-.player-root.dragging .row:hover {
-  border-color: transparent;
-  box-shadow: none;
-}
-
-/* ===== Compact layout ===== */
-.compact {
-  position: relative;
-  overflow: visible;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.compact-title {
-  position: relative;
-  text-align: center;
-  font-weight: 600;
-  padding: 2px 36px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  background: var(--surface-1, #1a1a1a);
-  border: 1px solid var(--border, #555);
-  border-radius: var(--radius-sm, 6px);
-}
-
-.compact-title .vol-in-title {
-  position: absolute;
-  right: 6px;
-  top: 50%;
-  transform: translateY(-50%);
-  height: 22px;
-  padding: 0 6px;
-}
-
-.compact-controls {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(44px, 1fr));
-  gap: var(--space-sm, 8px);
-  align-items: stretch;
-  justify-items: stretch;
-  width: max-content;
-  margin: 0 auto;
-}
-
-@media (pointer: coarse) {
-  .compact-controls {
-    grid-template-columns: repeat(3, minmax(52px, 1fr));
-  }
-}
-
-.pair {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
-}
-
-.pair .btn {
-  height: auto;
-  padding: 0 6px;
-  line-height: 1;
-}
-
-.vol-pop.fixed {
-  position: fixed;
-  transform: translateX(-50%);
-  padding: 8px;
-  background: var(--surface-1, #1a1a1a);
-  border: 1px solid var(--border, #555);
-  border-radius: var(--radius-sm, 6px);
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.3);
-  z-index: 9999;
-}
-
-.vol-vertical {
-  writing-mode: vertical-rl;
-  direction: ltr;
-  height: 120px;
-}
-
-/* Current row (distinct from drag) */
-.row.current {
-  position: relative;
-  background: linear-gradient(90deg, rgba(78,161,255,.10), transparent 60%);
-  box-shadow: inset 0 0 0 1px rgba(78,161,255,.28);
-}
-.row.current::before {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-  background: var(--accent, #4ea1ff);
-  border-radius: 2px;
-}
-.row.current .title { font-weight: 600; color: #d9ecff; } /* a touch brighter */
-.row.current .idx::before { content: "▶ "; color: var(--accent, #4ea1ff); }
-
-/* Ensure the marquee container is clipped by the column */
-/* Marquee container (unchanged) */
-.marquee{
-  position:relative; display:block; overflow:hidden;
-  -webkit-mask-image:linear-gradient(90deg,transparent 0,#000 24px,#000 calc(100% - 24px),transparent 100%);
-          mask-image:linear-gradient(90deg,transparent 0,#000 24px,#000 calc(100% - 24px),transparent 100%);
-}
-
-/* Track: gap is always present so measurements and keyframes match from frame 0 */
-.marquee .marquee-track{
-  display:flex;
-  will-change: transform;
-  transform: translate3d(0,0,0);
-  gap: var(--gap,28px);                 /* gap always on */
-}
-
-/* Only show the twin once we are actually running */
-.marquee .copy[aria-hidden="true"]{ visibility: hidden; }  /* occupies space, no flash */
-.marquee.run .copy[aria-hidden="true"]{ visibility: visible; }
-
-/* Copies */
-.marquee .copy{ flex:0 0 auto; min-width:max-content; }
-
-/* Directions + animation (unchanged) */
-.marquee.run[data-dir="left"]  .marquee-track{
-  animation: slide-left var(--marquee-dur,12s) linear infinite both;
-}
-.marquee.run[data-dir="right"] .marquee-track{
-  flex-direction: row-reverse;          /* real title sits at x=0 */
-  animation: slide-right var(--marquee-dur,12s) linear infinite both;
-}
-
-/* exact one-tile travel (copy + gap) */
-@keyframes slide-left  {
-  from { transform: translate3d(0,0,0); }
-  to   { transform: translate3d(calc(-1 * var(--travel,300px)),0,0); }
-}
-@keyframes slide-right {
-  from { transform: translate3d(calc(var(--travel,300px)),0,0); }
-  to   { transform: translate3d(0,0,0); }
-}
-
-/* pause affordance */
-.marquee:hover .marquee-track,
-.marquee:focus-within .marquee-track {
-  animation-play-state: paused;
-}
-
-.marquee.suspend .marquee-track {
-  animation: none !important;
-  transform: translate3d(0,0,0) !important;
-}
-
-.row .title { display: block; min-width: 0; }  /* not inline */
-
-.volume-line {
-  margin-top: 6px;
-  padding: 0 2px;
-}
-.volume-line .vol-line {
-  width: 100%;
-}
-
- .queue-collapse-row {
-  display: flex;
-  justify-content: center;
-  margin: 2px 0 6px;        /* closer to header */
-}
-
-.queue-collapse-row .icon-btn.arrow {
-  min-width: 56px;          /* wider tab feel */
-  height: 16px;             /* thinner */
-  padding: 0 10px;
-  border-radius: 10px;      /* pill/tab look */
-  line-height: 16px;
-  opacity: 0.9;
-}
-
-.queue-collapse-row .icon-btn.arrow:hover {
-  opacity: 1;
-}
-/* Center the collapse tab (class name now matches the template) */
-.queue-collapse-tab {
-  display: flex;
-  justify-content: center;
-  margin: 2px 0 6px;
-}
-
-.tab-btn {
-  min-width: 44px;
-  height: 14px;
-  padding: 0 8px;
-  line-height: 14px;
-  border: 1px solid var(--border, #555);
-  border-top: none;
-  border-radius: 0 0 10px 10px;
-  background: var(--surface-1, #1a1a1a);
-  color: var(--fg, #eee);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all .12s ease;
-}
-.tab-btn:hover {
-  background: var(--surface-3, #333);
-  border-color: var(--accent, #4ea1ff);
-}
-
-.marquee.run .marquee-track { animation-play-state: running !important; }
-
-.seek-wrap { position: relative; flex: 1; display: flex; align-items: center; }
-.seek-wrap .seek { width: 100%; }
-
-
-</style>
