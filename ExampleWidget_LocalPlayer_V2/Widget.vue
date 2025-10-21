@@ -40,55 +40,22 @@ const onMediaError = (e: Event) => {
 
 const expandedLayoutRef = ref<InstanceType<typeof ExpandedLayout> | null>(null)
 
-// ===== PLAYER STATE =====
-const state = usePlayerState(props.sourceId)
-
-// ===== LAYOUT =====
-const widgetRootEl = ref<HTMLElement | null>(null)
-const containerWidth = ref(0)
-
-// rAF + idle-gated width pipeline ------------------------------------------
-let pendingWidth: number | null = null
-let rafForWidth = 0
-
-function commitWidth(w: number) {
-  if (Math.abs(w - containerWidth.value) < 1) return // 1px hysteresis
-  containerWidth.value = w | 0
-}
-
-// replace your scheduleWidth with this:
-function scheduleWidth(w: number, src: 'host' | 'ro' = 'ro') {
-  pendingWidth = w | 0
-
-  // Defer RO commits while dragging, but allow host commits live.
-  if (props.placement?.resizePhase === 'active' && src === 'ro') return
-
-  if (rafForWidth) return
-  rafForWidth = requestAnimationFrame(() => {
-    rafForWidth = 0
-    if (pendingWidth != null) {
-      commitWidth(pendingWidth)
-      pendingWidth = null
-    }
+// RAF batching (like original)
+let rafId = 0
+function rafBatch(fn: () => void) {
+  if (rafId) return
+  rafId = requestAnimationFrame(() => {
+    rafId = 0
+    fn()
   })
 }
 
-function seedMeasureNow() {
-  const el = widgetRootEl.value
-  if (!el) return
-  // Only used once to seed; after that we rely on RO’s contentRect.
-  const w = Math.round(el.getBoundingClientRect().width || 0)
-  if (w) scheduleWidth(w)
-}
+// ===== PLAYER STATE =====
+const state = usePlayerState(props.sourceId)
 
-// When host says "idle", flush any pending width
-watch(() => props.placement?.resizePhase, (phase) => {
-  if (phase === 'idle' && pendingWidth != null) {
-    commitWidth(pendingWidth)
-    pendingWidth = null
-  }
-})
-// ---------------------------------------------------------------------------
+// ===== LAYOUT (before everything, needed by composables) =====
+const widgetRootEl = ref<HTMLElement | null>(null)
+const containerWidth = ref(0)
 
 const hostContext = computed<'grid' | 'sidebar' | 'embedded'>(() =>
   props.placement?.context ?? props.context ?? 'sidebar'
@@ -98,20 +65,19 @@ const hostLayout = computed<string>(() =>
   props.placement?.layout ?? props.variant ?? 'expanded'
 )
 
-// If the host reports its own size, coalesce that too.
-const hostWidth = computed(() => {
+const hostWidthFallback = computed<number>(() => {
   const p = props.placement?.size
-  return typeof p?.width === 'number' && p.width > 0
-    ? p.width
-    : typeof props.width === 'number' && props.width > 0
-      ? props.width
-      : 0
+  const w =
+    typeof p?.width === 'number' && p.width > 0
+      ? p.width
+      : typeof props.width === 'number' && props.width > 0
+        ? props.width
+        : 0
+  return w
 })
-watch(hostWidth, (w) => {
-  if (w > 0) scheduleWidth(Math.round(w), 'host')   // ← live during drag
-})
+
 const layoutClass = computed(() => {
-  const w = containerWidth.value || hostWidth.value || 0
+  const w = containerWidth.value || hostWidthFallback.value || 0
   if (w <= 160) return 'micro'
   if (w <= 260) return 'ultra'
   if (w <= 320) return 'narrow'
@@ -119,11 +85,33 @@ const layoutClass = computed(() => {
   return 'wide'
 })
 
-// Recompute once after layout switch (seed; RO will take over)
+const measureNow = () => {
+  const el = widgetRootEl.value
+  if (!el) return
+  const w = el.offsetWidth | 0
+  if (Math.abs(w - containerWidth.value) >= 1) {
+    containerWidth.value = w
+  }
+}
+
+// Watch hostLayout to trigger measurement (like original)
 watch(() => hostLayout.value, () => {
   nextTick(() => {
-    if (hostLayout.value !== 'compact') seedMeasureNow()
+    if (hostLayout.value !== 'compact' && widgetRootEl.value) {
+      containerWidth.value = 0
+      rafBatch(measureNow)
+    }
   })
+})
+
+let needsFinalMeasure = false
+watch(() => props.placement?.resizePhase, (phase) => {
+  if (phase === 'active') {
+    needsFinalMeasure = true
+  } else if (needsFinalMeasure) {
+    needsFinalMeasure = false
+    rafBatch(measureNow)
+  }
 })
 
 // ===== DND =====
@@ -133,7 +121,7 @@ const dnd = useDnD(
   state.queue,
   state.currentIndex,
   showQueue,
-  () => expandedLayoutRef.value?.queueEl || null,
+  () => expandedLayoutRef.value?.queueEl || null,  // ← Pass a getter
   state.toPlaylistItems,
   state.playlists,
   state.sel
@@ -161,7 +149,7 @@ const keyboard = useKeyboardNav(
   play
 )
 
-// ===== MARQUEE =====
+// ===== MARQUEE (needs layoutClass, so comes after) =====
 const marquee = useMarquee(
   state.currentTitle,
   layoutClass,
@@ -169,25 +157,34 @@ const marquee = useMarquee(
   computed(() => props.config)
 )
 
-// Rack index → sync current/selected
+// Add this type at the top
 type RackIndexEvt = CustomEvent<{
   listId: string
   index?: number
   item?: { id?: string; url?: string } | null
 }>
+
+// Add the listener function (around line 50 or so, near other media event handlers)
 const onRackIndex = (e: Event) => {
-  const d = (e as RackIndexEvt).detail
+  const d = (e as CustomEvent<{ listId?: string; index?: number; item?: { id?: string; url?: string } | null }>).detail
+  console.log('[rack:playlistindex]', d, 'sel.key =', state.sel?.key)
+
+  // Accept for now; if you confirm the field name, re-add a guard:
+  // if (d.listId && state.sel?.key && d.listId !== state.sel.key) return
+
   let real = typeof d.index === 'number' ? d.index : -1
   if (real < 0 && d.item) {
     const { id, url } = d.item
     if (id) real = state.queue.value.findIndex(t => t.id === id)
     if (real < 0 && url) real = state.queue.value.findIndex(t => t.url === url)
   }
+
   if (real >= 0) {
     if (state.currentIndex.value !== real) state.currentIndex.value = real
     if (state.selectedIndex.value !== real) state.selectedIndex.value = real
   }
 }
+
 
 // ===== PLAYER CONTROLS =====
 async function play(index?: number) {
@@ -207,6 +204,7 @@ async function play(index?: number) {
     return
   }
 
+  // existing fallback
   if (state.currentIndex.value === -1) {
     const first = state.queue.value.findIndex(t => !!t.url)
     if (first >= 0) {
@@ -299,6 +297,7 @@ function clickPick() {
 }
 
 function toggleQueue() {
+  console.log('showQueue.value: ', showQueue.value)
   showQueue.value = !showQueue.value
 }
 
@@ -344,13 +343,31 @@ function onRowClick(index: number) {
 // ===== DRAG & DROP (FILES) =====
 const draggingOver = ref(false)
 
-function prevent(e: Event) { e.preventDefault(); e.stopPropagation() }
-function onDragEnter(e: DragEvent) { prevent(e); draggingOver.value = true }
-function onDragOver(e: DragEvent) { prevent(e) }
-function onDragLeave(e: DragEvent) { prevent(e); draggingOver.value = false }
+function prevent(e: Event) {
+  e.preventDefault()
+  e.stopPropagation()
+}
+
+function onDragEnter(e: DragEvent) {
+  prevent(e)
+  draggingOver.value = true
+}
+
+function onDragOver(e: DragEvent) {
+  prevent(e)
+}
+
+function onDragLeave(e: DragEvent) {
+  prevent(e)
+  draggingOver.value = false
+}
+
 async function onDrop(e: DragEvent) {
-  prevent(e); draggingOver.value = false
-  if (e.dataTransfer?.files?.length) await playlist.addFiles(e.dataTransfer.files)
+  prevent(e)
+  draggingOver.value = false
+  if (e.dataTransfer?.files?.length) {
+    await playlist.addFiles(e.dataTransfer.files)
+  }
 }
 
 // ===== MEDIA EVENTS =====
@@ -375,6 +392,7 @@ const onVolumeChange = () => {
 function hydrateFromHandle() {
   state.volume.value = state.music.volume
   if (state.volume.value > 0) state.lastNonZeroVolume.value = state.volume.value
+  
   state.isPlaying.value = !state.music.paused
   state.currentTime.value = state.music.currentTime || 0
   state.duration.value = state.music.duration || 0
@@ -382,7 +400,6 @@ function hydrateFromHandle() {
 
 // ===== LIFECYCLE =====
 let resizeObserver: ResizeObserver | null = null
-
 onMounted(async () => {
   state.music.addEventListener('play', onMediaPlay)
   state.music.addEventListener('pause', onMediaPause)
@@ -391,36 +408,33 @@ onMounted(async () => {
   state.music.addEventListener('volumechange', onVolumeChange)
   state.music.addEventListener('error', onMediaError)
   state.music.addEventListener('rack:playlistindex', onRackIndex as EventListener)
-
+  
   state.playlists.register(state.sel, state.toPlaylistItems(), {
     autoNext: 'linear',
     repeat: state.repeat.value,
     shuffle: state.shuffle.value,
     dedupe: false
   })
+  
   state.playlists.setItems(state.sel, state.toPlaylistItems(), { keepCurrent: true })
   state.playlists.bindToHandle(state.sel, state.music)
+  
+    await nextTick()
+  rafBatch(measureNow)
+  if (!containerWidth.value && hostWidthFallback.value) {
+    containerWidth.value = hostWidthFallback.value
+  }
 
-  await nextTick()
-  // 1) seed once
-  seedMeasureNow()
-  // 2) start RO and use contentRect → scheduleWidth (no forced layout)
-resizeObserver = new ResizeObserver((entries) => {
-  const e = entries[0]
-  const w = 'contentBoxSize' in e && e.contentBoxSize
-    ? (Array.isArray(e.contentBoxSize) ? e.contentBoxSize[0].inlineSize : e.contentBoxSize.inlineSize)
-    : e.contentRect.width
-  scheduleWidth(Math.round(w), 'ro')
-})
+  resizeObserver = new ResizeObserver(() => {
+    // Always schedule during active; RAF coalesces to 1/frame → smooth
+    rafBatch(measureNow)
+  })
   if (widgetRootEl.value) resizeObserver.observe(widgetRootEl.value)
 
   hydrateFromHandle()
 })
 
 onBeforeUnmount(() => {
-  if (rafForWidth) cancelAnimationFrame(rafForWidth)
-  resizeObserver?.disconnect()
-
   state.music.removeEventListener('play', onMediaPlay)
   state.music.removeEventListener('pause', onMediaPause)
   state.music.removeEventListener('timeupdate', onTimeUpdate)
@@ -431,14 +445,12 @@ onBeforeUnmount(() => {
 
   state.playlists.unbind(state.sel)
   dnd.dnd?.destroy()
+  resizeObserver?.disconnect()
 })
 </script>
 
-
 <template>
-<div ref="widgetRootEl"
-     class="widget-root"
-     :style="{ '--widget-w': (containerWidth || hostWidth) + 'px' }">
+  <div ref="widgetRootEl" class="widget-root">
     <!-- Hidden file input -->
     <input
       ref="fileInput"
