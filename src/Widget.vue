@@ -7,6 +7,12 @@ import { useDnD } from './useDnD'
 import { useKeyboardNav } from './useKeyboardNav'
 import CompactLayout from './CompactLayout.vue'
 import ExpandedLayout from './ExpandedLayout.vue'
+import { 
+  extractGexPayload, 
+  hasGexPayload, 
+  authorizeFileRefs 
+} from '@/widgets/dnd/receiver'
+import { fileRefsToFiles } from '@/widgets/dnd/utils'
 
 const props = defineProps<{
   config?: Record<string, any>
@@ -349,8 +355,60 @@ function onDragEnter(e: DragEvent) { prevent(e); draggingOver.value = true }
 function onDragOver(e: DragEvent) { prevent(e) }
 function onDragLeave(e: DragEvent) { prevent(e); draggingOver.value = false }
 async function onDrop(e: DragEvent) {
-  prevent(e); draggingOver.value = false
-  if (e.dataTransfer?.files?.length) await playlist.addFiles(e.dataTransfer.files)
+  prevent(e)
+  draggingOver.value = false
+  
+  // 1) Priority: Inter-widget GExplorer drops
+  if (hasGexPayload(e)) {
+    const payload = extractGexPayload(e)
+    if (!payload) return
+    
+    console.log('[Music] Received GEx payload:', payload)
+    
+    if (payload.type === 'gex/file-refs') {
+      // 2) Authorize file access
+      const authResult = await authorizeFileRefs(
+        'local-player',
+        props.sourceId,
+        payload,
+        {
+          requiredCaps: ['Read']
+          // customValidators can be added here in the future
+        }
+      )
+      
+      if (!authResult.ok) {
+        console.warn('[Music] Drop denied:', authResult.reason)
+        // TODO: Show toast notification to user
+        return
+      }
+      
+      // 3) Convert file paths → File objects
+      console.log('[Music] Converting file refs to File objects...')
+      const files = await fileRefsToFiles(
+        payload.data,
+        'local-player',
+        props.sourceId
+      )
+      
+      // 4) Add to playlist (reuse existing addFiles logic)
+      if (files.length) {
+        await playlist.addFiles(files)
+        console.log(`[Music] Added ${files.length} tracks from Items widget`)
+      }
+      
+      return
+    }
+    
+    // Future: handle other payload types
+    console.log('[Music] Unsupported GEx payload type:', payload.type)
+    return
+  }
+  
+  // 2) Fallback: Native OS file drop (existing behavior)
+  if (e.dataTransfer?.files?.length) {
+    await playlist.addFiles(e.dataTransfer.files)
+  }
 }
 
 // ===== MEDIA EVENTS =====

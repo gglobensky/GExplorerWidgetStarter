@@ -90,34 +90,14 @@ const volPopStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px'
 const isPressing = ref(false)
 const draggingOver = ref(false)
 
-
-// robust attach/detach when the queue element re-renders
-let lastQueueEl: HTMLElement | null = null
-function attachQueueScrollListener() {
-  if (lastQueueEl) lastQueueEl.removeEventListener('scroll', updateOverflowState)
-  lastQueueEl = queueEl.value
-  lastQueueEl?.addEventListener('scroll', updateOverflowState, { passive: true })
-  nextTick(updateOverflowState)
-}
-
-function updateOverflowFlags() {
-  const el = queueEl.value
-  if (!el) { atTop.value = true; atBottom.value = false; hasOverflow.value = false; return }
-  const st = el.scrollTop
-  const h = el.clientHeight
-  const sh = el.scrollHeight
-  atTop.value = st <= 0
-  atBottom.value = Math.ceil(st + h) >= sh - 1
-  hasOverflow.value = sh > h + 1
-}
-
 let scrollScheduled = false
 function onQueueScroll() {
+  // rAF-throttled overflow calc
   if (scrollScheduled) return
   scrollScheduled = true
   requestAnimationFrame(() => {
     scrollScheduled = false
-    updateOverflowFlags()
+    updateOverflowState()
   })
 }
 
@@ -138,12 +118,9 @@ const queueStyle = computed(() => ({
 const seekTooltip = computed(() =>
   fmtTime(props.currentTime) + ' / ' + fmtTime(props.duration || 0)
 )
+watch(() => props.displayQueue.length, () => requestAnimationFrame(updateOverflowState))
+watch(() => props.showQueue, v => { if (v) nextTick(() => { measureQueueMetrics(); updateOverflowState() }) })
 
-watch(() => queueEl.value, attachQueueScrollListener)
-watch(() => props.displayQueue.length, () => {
-  requestAnimationFrame(updateOverflowFlags)
-})
-watch(() => props.showQueue, (v) => { if (v) nextTick(measureQueueMetrics) })
 watch(
   [() => props.displayQueue.length, () => props.showQueue, rowHeight, maxRows],
   () => nextTick(() => {
@@ -287,21 +264,16 @@ onMounted(() => {
   document.addEventListener('pointercancel', onPointerUp)
   window.addEventListener('blur', onPointerUp)
   document.addEventListener('click', onDocClick, true)
-  attachQueueScrollListener()
 
   nextTick(() => {
     const sample = queueEl.value?.querySelector('.row.item') as HTMLElement | null
     rowHeight.value = Math.max(28, Math.round(sample?.getBoundingClientRect().height || 32))
     measureQueueMetrics()
 
-    queueEl.value?.addEventListener('scroll', updateOverflowState)
   })
-
-  requestAnimationFrame(updateOverflowFlags)
 })
 
 onBeforeUnmount(() => {
-  if (lastQueueEl) lastQueueEl.removeEventListener('scroll', updateOverflowState)
   document.removeEventListener('pointerup', onPointerUp)
   document.removeEventListener('pointercancel', onPointerUp)
   window.removeEventListener('blur', onPointerUp)
@@ -541,73 +513,83 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
     </div>
     
     <!-- Queue List -->
-    <div v-if="queue.length && showQueue" class="queue" ref="queueEl" :style="queueStyle">
-      <div class="row header">
+    <div
+    v-if="queue.length && showQueue"
+    class="queue"
+    ref="queueEl"
+    :style="queueStyle"
+    @scroll="onQueueScroll"
+    >
+    <div class="row header">
         <span>#</span><span>Title</span><span class="dur">Length</span><span class="act"></span>
-      </div>
-      <div
+    </div>
+
+    <div
         v-for="(t, i) in displayQueue"
         :key="t.id"
         :data-track-id="t.id"
         class="row item"
         :class="{
-            skipped: t.missing,
-            'is-dragging': dndState.isDragging && dndState.draggingId === t.id,
-            current: t.id === queue[currentIndex]?.id,
-            selected: t.id === queue[selectedIndex]?.id
+        skipped: t.missing,
+        'is-dragging': dndState.isDragging && dndState.draggingId === t.id,
+        current: t.id === queue[currentIndex]?.id,
+        selected: t.id === queue[selectedIndex]?.id
         }"
         @dblclick="emit('row-dblclick', t)"
         @click="onRowClick(i, $event)"
         @pointerdown="emit('start-row-drag', i, $event)"
-        >
+    >
         <span class="idx">{{ i + 1 }}</span>
-        
+
         <span class="title" :title="t.name">
-          <template v-if="t.id === queue[currentIndex]?.id">
+        <template v-if="t.id === queue[currentIndex]?.id">
             <span
-              :ref="setMarqueeBox"
-              class="marquee"
-              :data-dir="marqueeDir"
-              :class="{ run: marqueeOn && resizePhase !== 'active', suspend: resizePhase === 'active' }"
+            :ref="setMarqueeBox"
+            class="marquee"
+            :data-dir="marqueeDir"
+            :class="{ run: marqueeOn && resizePhase !== 'active', suspend: resizePhase === 'active' }"
             >
-              <span class="marquee-track">
+            <span class="marquee-track">
                 <span :ref="setMarqueeCopy" class="copy real">{{ t.name }}</span>
                 <span class="copy twin" aria-hidden="true">{{ t.name }}</span>
-              </span>
             </span>
-          </template>
-          <template v-else>
+            </span>
+        </template>
+        <template v-else>
             {{ t.name }}
-          </template>
-          <em v-if="t.missing" class="skip-tag"> (skipped)</em>
+        </template>
+        <em v-if="t.missing" class="skip-tag"> (skipped)</em>
         </span>
-        
+
         <span class="dur mono" v-if="!t.missing && t.id === queue[currentIndex]?.id && duration">
-          {{ fmtTime(duration) }}
+        {{ fmtTime(duration) }}
         </span>
         <span class="dur mono" v-else>—</span>
-        
+
         <span class="act">
-          <button
+        <button
             class="icon-btn"
             title="Remove"
             @click.stop="emit('remove-at', queue.findIndex(track => track.id === t.id))"
-          >
+        >
             ✕
-          </button>
+        </button>
         </span>
-      </div>
     </div>
-   <div v-if="queue.length && showQueue"
-     class="queue"
-     ref="queueEl"
-     :style="queueStyle"
-     @scroll="onQueueScroll">
-        <!-- show a down chevron if there’s more below; else show a short line -->
-        <svg v-show="hasOverflow && !atBottom" width="24" height="10" viewBox="0 0 24 10">
-            <path d="M3,2 L12,8 L21,2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>
-        <div v-show="!hasOverflow || atBottom" class="handle-line"></div>
+    </div>
+
+    <!-- Bottom resize/overflow indicator -->
+    <div
+    v-if="queue.length && showQueue"
+    class="queue-resize-handle"
+    @mousedown="onStartResize"
+    title="Drag to resize list height"
+    >
+    <!-- down chevron when more below; line when at end -->
+    <svg v-if="hasOverflow && !atBottom" width="24" height="10" viewBox="0 0 24 10">
+        <path d="M3,2 L12,8 L21,2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+    </svg>
+    <div v-else class="handle-line"></div>
     </div>
     <!-- Empty State -->
     <div v-if="queue.length === 0" class="empty">
