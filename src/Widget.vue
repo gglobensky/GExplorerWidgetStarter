@@ -1,583 +1,1253 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
-import { usePlayerState } from './usePlayerState'
-import { usePlaylist, INPUT_ACCEPT } from './usePlaylist'
-import { useMarquee } from './useMarquee'
-import { useDnD } from './useDnD'
-import { useKeyboardNav } from './useKeyboardNav'
-import CompactLayout from './CompactLayout.vue'
-import ExpandedLayout from './ExpandedLayout.vue'
-import { 
-  extractGexPayload, 
-  hasGexPayload, 
-  authorizeFileRefs 
-} from '@/widgets/dnd/receiver'
-import { fileRefsToFiles } from '@/widgets/dnd/utils'
+/* -----------------------------------------------
+   Imports
+------------------------------------------------ */
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from '/runtime/vue.js'
+import { fsListDir, fsValidate, fsListDirWithAuth, shortcutsProbe } from '/src/bridge/ipc.ts'
+import { loadIconPack, iconFor, ensureIconsFor } from '/src/icons/index.ts'
+import { ensureConsent } from '/src/consent/service'
+import { createGexPayload, setGexPayload, createDragPreview } from 'gexplorer/widgets'
+
+/* -----------------------------------------------
+   Types
+------------------------------------------------ */
+type HostAction =
+  | { type: 'nav'; to: string; replace?: boolean; sourceId?: string }
+  | { type: 'open'; path: string }
 
 const props = defineProps<{
-  config?: Record<string, any>
+  sourceId: string
+  config?: { data?: any; view?: any }
+  theme?: Record<string, string>
+  runAction?: (a: HostAction) => void
   placement?: {
     context: 'grid' | 'sidebar' | 'embedded'
-    layout: string
-    size?: any
-    resizing: boolean
-    resizePhase?: 'active' | 'idle'
+    size: { cols?: number; rows?: number; width?: number; height?: number }
   }
-  runAction?: (a: any) => void
-  context?: 'sidebar' | 'grid'
-  variant?: 'compact' | 'expanded' | 'collapsed'
-  width?: number
-  height?: number
-  theme?: string
   editMode?: boolean
-  sourceId: string
 }>()
 
-const onMediaError = (e: Event) => {
-  const t = e.target as HTMLMediaElement
-  console.error('[Widget] Media error:', {
-    src: t.currentSrc || t.src,
-    error: t.error?.code,
-    errorMessage: t.error?.message,
-    currentTrack: state.current.value?.name,
-    currentIndex: state.currentIndex.value
+const emit = defineEmits<{ (e: 'updateConfig', config: any): void }>()
+
+// put this near your other constants
+const MIN_MOD_PX = 150; // min width for "Modified" col
+
+/* -----------------------------------------------
+   Selection marquee with rAF autoscroll
+   Rules:
+   - Do NOT scroll while pointer is inside the scroll rect.
+   - When pointer is outside, scroll speed grows with distance
+     (quadratic), capped at MAX_SPEED.
+   - Speed tuned ~1.75× previous value.
+   - Click on empty space (no drag) clears selection.
+------------------------------------------------ */
+const scrollEl = ref<HTMLElement | null>(null)
+const selected = ref<Set<string>>(new Set())
+const headerH = ref(36)
+const bodyEl = ref<HTMLElement | null>(null)
+
+// --- Column widths now include NAME so each divider moves the column under it ---
+type DetailCols = { name: number; ext: number; size: number; mod: number }
+const defaultCols: DetailCols = { name: 420, ext: 110, size: 130, mod: 220 }
+
+// read saved widths if you have them in config.view.detailCols
+const colW = ref<DetailCols>({
+  name: props.config?.view?.detailCols?.name ?? defaultCols.name,
+  ext:  props.config?.view?.detailCols?.ext  ?? defaultCols.ext,
+  size: props.config?.view?.detailCols?.size ?? defaultCols.size,
+  mod:  props.config?.view?.detailCols?.mod  ?? defaultCols.mod,
+})
+
+// computed CSS value for details grid
+const detailsCols = computed(() =>
+  `${Math.max(140, colW.value.name)}px ` +
+  `${Math.max(70,  colW.value.ext)}px ` +
+  `${Math.max(90,  colW.value.size)}px ` +
+  `minmax(${MIN_MOD_PX}px, 1fr)` // ← anchored at the right, absorbs leftover
+)
+
+const anchorIndex = ref<number | null>(null)   // selection anchor for Shift-range
+const focusIndex  = ref<number | null>(null)    // keyboard "caret" row
+
+// Show box only after a tiny movement to avoid accidental drags
+const DRAG_THRESHOLD_PX = 6
+
+// Autoscroll tuning
+const BASE_SPEED = 2400               // previous “feel”
+const SPEED_MULT   = 1.75             // requested 1.75× faster
+const MAX_SPEED    = BASE_SPEED * SPEED_MULT // 4200 px/s
+const MAX_DIST_PX  = 240              // distance outside edge to reach MAX_SPEED
+
+// Marquee state (kept in content space)
+type Marquee = { visible: boolean; startX: number; startY: number; x: number; y: number; w: number; h: number }
+const marquee = ref<Marquee>({ visible: false, startX: 0, startY: 0, x: 0, y: 0, w: 0, h: 0 })
+const marqueeing = computed(() => marquee.value.visible)
+
+// Press & last pointer positions (client space)
+const pressClientX = ref(0)
+const pressClientY = ref(0)
+const lastClientX  = ref(0)
+const lastClientY  = ref(0)
+
+// “Click on empty” bookkeeping
+let pendingEmptyClick = false
+
+// =========================
+// Click / Double-click (Windows-like)
+// =========================
+// --- Focus management: keep focus on the scroller so rows don't show the white ring
+function refocusScrollerAfterEvent(ev?: Event) {
+  const t = (ev?.currentTarget as HTMLElement | null)
+  // blur the clicked button first (prevents UA ring from sticking)
+  t?.blur?.()
+  // then return focus to the scroll area on the next frame
+  requestAnimationFrame(() => {
+    scrollEl.value?.focus?.({ preventScroll: true })
   })
 }
 
-const expandedLayoutRef = ref<InstanceType<typeof ExpandedLayout> | null>(null)
-
-// ===== PLAYER STATE =====
-const state = usePlayerState(props.sourceId)
-
-// ===== LAYOUT =====
-const widgetRootEl = ref<HTMLElement | null>(null)
-const containerWidth = ref(0)
-
-// rAF + idle-gated width pipeline ------------------------------------------
-let pendingWidth: number | null = null
-let rafForWidth = 0
-
-function commitWidth(w: number) {
-  if (Math.abs(w - containerWidth.value) < 1) return // 1px hysteresis
-  containerWidth.value = w | 0
+function selectOnly(idx: number) {
+  const path = sortedEntries.value[idx]?.FullPath
+  if (!path) return
+  selected.value = new Set([path])
+  focusIndex.value = idx
+  anchorIndex.value = idx
 }
 
-// replace your scheduleWidth with this:
-function scheduleWidth(w: number, src: 'host' | 'ro' = 'ro') {
-  pendingWidth = w | 0
-
-  // Defer RO commits while dragging, but allow host commits live.
-  if (props.placement?.resizePhase === 'active' && src === 'ro') return
-
-  if (rafForWidth) return
-  rafForWidth = requestAnimationFrame(() => {
-    rafForWidth = 0
-    if (pendingWidth != null) {
-      commitWidth(pendingWidth)
-      pendingWidth = null
-    }
-  })
+function toggleSelect(idx: number) {
+  const path = sortedEntries.value[idx]?.FullPath
+  if (!path) return
+  
+  const next = new Set(selected.value)
+  if (next.has(path)) next.delete(path); else next.add(path)
+  selected.value = next
+  focusIndex.value = idx
+  anchorIndex.value = idx
 }
 
-function seedMeasureNow() {
-  const el = widgetRootEl.value
+function rangeSelect(toIdx: number) {
+  const arr = sortedEntries.value
+  if (!arr.length) return
+  const fromIdx = anchorIndex.value ?? (focusIndex.value ?? toIdx)
+  const [a, b] = fromIdx <= toIdx ? [fromIdx, toIdx] : [toIdx, fromIdx]
+  const next = new Set<string>()
+  for (let i = a; i <= b; i++) next.add(arr[i].FullPath)
+  selected.value = next
+  focusIndex.value = toIdx
+}
+
+function pathIndexByPath(path: string) {
+  return sortedEntries.value.findIndex(e => e.FullPath === path)
+}
+
+function ensureFocusIndex() {
+  // prefer the first selected row; else 0 if list not empty
+  if (focusIndex.value != null) return
+  const sel = [...selected.value]
+  if (sel.length) {
+    const i = pathIndexByPath(sel[0])
+    if (i >= 0) { focusIndex.value = i; anchorIndex.value = i; return }
+  }
+  focusIndex.value = sortedEntries.value.length ? 0 : null
+  anchorIndex.value = focusIndex.value
+}
+
+// --- Handlers used by the template ---
+function onSurfaceScroll() {
+  if (!marquee.value.visible) return
+  recalcFromClient(lastClientX.value, lastClientY.value)
+}
+
+function onRowClick(ev: MouseEvent, idx: number) {
+  ensureFocusIndex()
+  const isCtrl = ev.ctrlKey || ev.metaKey
+  if (ev.shiftKey) {
+    // extend from anchor
+    rangeSelect(idx)
+  } else if (isCtrl) {
+    // toggle this item
+    toggleSelect(idx)
+  } else {
+    // single select
+    selectOnly(idx)
+  }
+  refocusScrollerAfterEvent(ev)
+}
+
+function onRowDblClick(e: { FullPath: string }, idx: number, ev?: MouseEvent) {
+  selectOnly(idx)
+  refocusScrollerAfterEvent(ev)
+  openEntry(e.FullPath)
+}
+
+// =========================
+// Keyboard navigation
+// =========================
+function clampIndex(i: number) {
+  const max = Math.max(0, sortedEntries.value.length - 1)
+  return Math.min(Math.max(i, 0), max)
+}
+
+function scrollRowIntoView(idx: number) {
+  const el = scroller()
   if (!el) return
-  // Only used once to seed; after that we rely on RO’s contentRect.
-  const w = Math.round(el.getBoundingClientRect().width || 0)
-  if (w) scheduleWidth(w)
-}
 
-// When host says "idle", flush any pending width
-watch(() => props.placement?.resizePhase, (phase) => {
-  if (phase === 'idle' && pendingWidth != null) {
-    commitWidth(pendingWidth)
-    pendingWidth = null
-  }
-})
-// ---------------------------------------------------------------------------
+  const rows = el.querySelectorAll<HTMLElement>('.row[data-path]')
+  const row = rows[idx]
+  if (!row) return
 
-const hostContext = computed<'grid' | 'sidebar' | 'embedded'>(() =>
-  props.placement?.context ?? props.context ?? 'sidebar'
-)
+  const cr = el.getBoundingClientRect()
+  const rr = row.getBoundingClientRect()
 
-const hostLayout = computed<string>(() =>
-  props.placement?.layout ?? props.variant ?? 'expanded'
-)
+  // In Details, header is outside the body scroller, so stickyTop is 0.
+  const stickyTopPx = (merged.value.layout === 'details') ? 0 : headerH.value
 
-// If the host reports its own size, coalesce that too.
-const hostWidth = computed(() => {
-  const p = props.placement?.size
-  return typeof p?.width === 'number' && p.width > 0
-    ? p.width
-    : typeof props.width === 'number' && props.width > 0
-      ? props.width
-      : 0
-})
-watch(hostWidth, (w) => {
-  if (w > 0) scheduleWidth(Math.round(w), 'host')   // ← live during drag
-})
-const layoutClass = computed(() => {
-  const w = containerWidth.value || hostWidth.value || 0
-  if (w <= 160) return 'micro'
-  if (w <= 260) return 'ultra'
-  if (w <= 320) return 'narrow'
-  if (w <= 400) return 'medium'
-  return 'wide'
-})
-
-// Recompute once after layout switch (seed; RO will take over)
-watch(() => hostLayout.value, () => {
-  nextTick(() => {
-    if (hostLayout.value !== 'compact') seedMeasureNow()
-  })
-})
-
-// ===== DND =====
-const queueEl = ref<HTMLElement | null>(null)
-const showQueue = state.life.cell<boolean>('ui.showQueue', true)
-const dnd = useDnD(
-  state.queue,
-  state.currentIndex,
-  showQueue,
-  () => expandedLayoutRef.value?.queueEl || null,
-  state.toPlaylistItems,
-  state.playlists,
-  state.sel
-)
-
-// ===== PLAYLIST OPS =====
-const fileInput = ref<HTMLInputElement | null>(null)
-const playlist = usePlaylist(
-  state.queue,
-  state.currentIndex,
-  state.queueName,
-  state.isPlaying,
-  state.music,
-  state.playlists,
-  state.sel,
-  state.toPlaylistItems,
-  () => dnd.ensureDnD()
-)
-
-// ===== KEYBOARD NAV =====
-const keyboard = useKeyboardNav(
-  state.queue,
-  state.selectedIndex,
-  state.hasTracks,
-  play
-)
-
-// ===== MARQUEE =====
-const marquee = useMarquee(
-  state.currentTitle,
-  layoutClass,
-  computed(() => props.placement?.resizePhase),
-  computed(() => props.config)
-)
-
-// Rack index → sync current/selected
-type RackIndexEvt = CustomEvent<{
-  listId: string
-  index?: number
-  item?: { id?: string; url?: string } | null
-}>
-const onRackIndex = (e: Event) => {
-  const d = (e as RackIndexEvt).detail
-  let real = typeof d.index === 'number' ? d.index : -1
-  if (real < 0 && d.item) {
-    const { id, url } = d.item
-    if (id) real = state.queue.value.findIndex(t => t.id === id)
-    if (real < 0 && url) real = state.queue.value.findIndex(t => t.url === url)
-  }
-  if (real >= 0) {
-    if (state.currentIndex.value !== real) state.currentIndex.value = real
-    if (state.selectedIndex.value !== real) state.selectedIndex.value = real
+  if (rr.top < cr.top + stickyTopPx) {
+    el.scrollTop -= (cr.top + stickyTopPx - rr.top)
+  } else if (rr.bottom > cr.bottom) {
+    el.scrollTop += (rr.bottom - cr.bottom)
   }
 }
 
-// ===== PLAYER CONTROLS =====
-async function play(index?: number) {
-  await state.prime()
-  state.isLoading.value = true
 
-  if (typeof index === 'number') {
-    if (index >= 0 && index < state.queue.value.length && state.queue.value[index]?.url) {
-      const idx = await state.playlists.playIndex(state.sel, index, state.music)
-      if (idx >= 0) {
-        state.currentIndex.value = idx
-        state.selectedIndex.value = idx
-        state.isPlaying.value = true
-      }
+function onKeyDown(ev: KeyboardEvent) {
+  if (!sortedEntries.value.length) return
+
+  ensureFocusIndex()
+  const current = focusIndex.value ?? 0
+
+  let next = current
+  const isCtrl = ev.ctrlKey || ev.metaKey
+  const isShift = ev.shiftKey
+
+  switch (ev.key) {
+    case 'ArrowDown': next = clampIndex(current + 1); break
+    case 'ArrowUp':   next = clampIndex(current - 1); break
+    case 'Home':      next = 0; break
+    case 'End':       next = Math.max(0, sortedEntries.value.length - 1); break
+    default: return // let other keys bubble
+  }
+
+  // Prevent page from scrolling
+  ev.preventDefault()
+  ev.stopPropagation()
+
+  if (isShift) {
+    // extend range from anchor
+    if (anchorIndex.value == null) anchorIndex.value = current
+    rangeSelect(next)
+  } else if (isCtrl) {
+    // toggle behavior as you asked (move and toggle)
+    toggleSelect(next)
+  } else {
+    // single select
+    selectOnly(next)
+  }
+
+  scrollRowIntoView(next)
+}
+
+// Autoscroll velocity (px/s) and rAF
+const vX = ref(0)
+const vY = ref(0)
+let rafId = 0
+let lastTs = 0
+
+const marqueeStyle = computed(() => {
+  if (!marquee.value.visible) return {}
+  const m = marquee.value
+  return {
+    position: 'absolute',
+    left: `${m.x}px`,
+    top: `${m.y}px`,
+    width: `${m.w}px`,
+    height: `${m.h}px`,
+  }
+})
+
+function startAutoScroll() {
+  if (rafId) return
+  lastTs = 0
+  rafId = requestAnimationFrame(tick)
+}
+
+function stopAutoScroll() {
+  if (rafId) cancelAnimationFrame(rafId)
+  rafId = 0
+  lastTs = 0
+  vX.value = 0
+  vY.value = 0
+}
+
+function tick(ts: number) {
+  const el = scroller()
+  if (!el || !marquee.value.visible) { stopAutoScroll(); return }
+  if (!lastTs) lastTs = ts
+  const dt = Math.min(0.04, (ts - lastTs) / 1000)
+  lastTs = ts
+
+  if (vY.value) {
+    const maxTop = Math.max(0, el.scrollHeight - el.clientHeight)
+    const nextTop = Math.min(maxTop, Math.max(0, el.scrollTop + vY.value * dt))
+    el.scrollTop = nextTop
+
+    // stop pushing when we hit the edge
+    if ((nextTop === 0 && vY.value < 0) || (nextTop === maxTop && vY.value > 0)) {
+      vY.value = 0
     }
-    state.isLoading.value = false
-    return
+
+    // keep rect in sync
+    recalcFromClient(lastClientX.value, lastClientY.value)
+  }
+  rafId = requestAnimationFrame(tick)
+}
+
+
+/** Update autoscroll velocity based on pointer distance OUTSIDE the rect.
+ *  - No scroll while inside.
+ *  - Quadratic growth, capped at MAX_SPEED.
+ */
+function updateVelFromPointer(cx: number, cy: number) {
+  const el = scroller()
+  const r = el.getBoundingClientRect()
+
+  // the content viewport starts just under the sticky header
+  const top = r.top + headerH.value
+  const bottom = r.bottom
+
+  const ease = (d: number) => {
+    const x = Math.min(Math.max(d, 0), MAX_DIST_PX) / MAX_DIST_PX
+    return x * x
   }
 
-  if (state.currentIndex.value === -1) {
-    const first = state.queue.value.findIndex(t => !!t.url)
-    if (first >= 0) {
-      const idx = await state.playlists.playIndex(state.sel, first, state.music)
-      if (idx >= 0) {
-        state.currentIndex.value = idx
-        state.selectedIndex.value = idx
-        state.isPlaying.value = true
-      }
-      state.isLoading.value = false
-      return
-    }
-  }
+  // no horizontal autoscroll
+  vX.value = 0
 
-  try { await state.music.play(); state.isPlaying.value = true } catch { state.isPlaying.value = false }
-  setTimeout(() => { state.isLoading.value = false }, 300)
+  // vertical only, and only when outside the content viewport
+  if (cy < top)         vY.value = -MAX_SPEED * ease(top - cy)
+  else if (cy > bottom) vY.value =  MAX_SPEED * ease(cy - bottom)
+  else                  vY.value =  0
+
+  if (vY.value) startAutoScroll()
 }
 
-function pause() {
-  state.music.pause()
-  state.isPlaying.value = false
+// Use the inner body as the scroller in Details, otherwise the outer container.
+function scroller(): HTMLElement {
+  return (merged.value.layout === 'details' && bodyEl.value) ? bodyEl.value : (scrollEl.value as HTMLElement)
 }
 
-function togglePlay() {
-  if (!state.hasTracks.value) return
-  state.isPlaying.value ? pause() : play()
+/** Keep rect glued to pointer on native wheel scroll too */
+function recalcFromClient(cx: number, cy: number) {
+  const el = scroller()
+  const r = el.getBoundingClientRect()
+  const originTop = r.top + headerH.value  // content viewport top (client coords)
+
+  const contentW = el.scrollWidth
+  const contentH = Math.max(0, el.scrollHeight - headerH.value)
+
+  // convert to content-space (0,0) == first row’s top-left, i.e. just under the header
+  let curX = cx - r.left     + el.scrollLeft
+  let curY = cy - originTop  + el.scrollTop
+
+  // clamp to the content viewport
+  curX = Math.max(0, Math.min(curX, contentW))
+  curY = Math.max(0, Math.min(curY, contentH))
+
+  const { startX: sx, startY: sy } = marquee.value
+
+  const x = Math.min(sx, curX)
+  const y = Math.min(sy, curY)
+  const w = Math.abs(curX - sx)
+  const h = Math.abs(curY - sy)
+
+  marquee.value = { ...marquee.value, x, y, w, h }
+  updateSelectionByMarquee()
 }
 
-function next() {
-  state.playlists.next(state.sel, state.music).then((idx: number) => {
-    if (idx >= 0) {
-      state.currentIndex.value = idx
-      state.selectedIndex.value = idx
-    } else {
-      pause()
-    }
-  })
-}
-
-function prev() {
-  state.playlists.prev(state.sel, state.music).then((idx: number) => {
-    if (idx >= 0) {
-      state.currentIndex.value = idx
-      state.selectedIndex.value = idx
-    } else {
-      pause()
-    }
-  })
-}
-
-function seek(e: Event) {
-  if (!state.duration.value) return
-  const v = parseFloat((e.target as HTMLInputElement).value)
-  state.music.currentTime = v * state.duration.value
-}
-
-function adjustSpeed(delta: number) {
-  const newRate = Math.max(0.25, Math.min(3.0, state.playbackRate.value + delta))
-  state.playbackRate.value = newRate
-  state.music.playbackRate = newRate
-}
-
-function setVolume(v: number) {
-  const clamped = Math.min(1, Math.max(0, v))
-  state.volume.value = clamped
-  if (clamped > 0) state.lastNonZeroVolume.value = clamped
-  state.music.volume = clamped
-}
-
-function toggleMute() {
-  setVolume(state.volume.value > 0 ? 0 : state.lastNonZeroVolume.value || 0.5)
-}
-
-function volInput(v: number) {
-  setVolume(v)
-}
-
-function toggleShuffle() {
-  state.shuffle.value = !state.shuffle.value
-  state.playlists.setOptions(state.sel, { shuffle: state.shuffle.value })
-}
-
-function toggleRepeat() {
-  state.repeat.value = state.repeat.value === 'off' ? 'all' : state.repeat.value === 'all' ? 'one' : 'off'
-  state.playlists.setOptions(state.sel, { repeat: state.repeat.value })
-}
-
-function clickPick() {
-  fileInput.value?.click()
-}
-
-function toggleQueue() {
-  showQueue.value = !showQueue.value
-}
-
-// ===== QUEUE RENAME =====
-const renaming = ref(false)
-const draftQueueName = ref('')
-const nameInput = ref<HTMLInputElement | null>(null)
-
-function beginRename() {
-  draftQueueName.value = state.queueName.value
-  renaming.value = true
-  nextTick(() => {
-    nameInput.value?.focus()
-    nameInput.value?.select()
-  })
-}
-
-function cancelRename() {
-  renaming.value = false
-}
-
-function commitRename() {
-  const v = draftQueueName.value.trim()
-  if (v) state.queueName.value = v
-  renaming.value = false
-}
-
-// ===== ROW INTERACTIONS =====
-async function onRowDblClick(track: any) {
-  if (dnd.dndState.value.isDragging) return
-  const realIdx = state.queue.value.findIndex(t => t.id === track.id)
-  const idx = await state.playlists.playIndex(state.sel, realIdx, state.music)
-  if (idx >= 0) {
-    state.currentIndex.value = idx
-    state.selectedIndex.value = idx
-  }
-}
-
-function onRowClick(index: number) {
-  keyboard.selectRow(index)
-}
-
-// ===== DRAG & DROP (FILES) =====
-const draggingOver = ref(false)
-
-function prevent(e: Event) { e.preventDefault(); e.stopPropagation() }
-function onDragEnter(e: DragEvent) { prevent(e); draggingOver.value = true }
-function onDragOver(e: DragEvent) { prevent(e) }
-function onDragLeave(e: DragEvent) { prevent(e); draggingOver.value = false }
-async function onDrop(e: DragEvent) {
-  prevent(e)
-  draggingOver.value = false
+function onSurfacePointerDown(ev: PointerEvent) {
+  if (merged.value.layout !== 'details') return;  // <-- add this
+  if (ev.button !== 0) return;
   
-  // 1) Priority: Inter-widget GExplorer drops
-  if (hasGexPayload(e)) {
-    const payload = extractGexPayload(e)
-    if (!payload) return
-    
-    console.log('[Music] Received GEx payload:', payload)
-    
-    if (payload.type === 'gex/file-refs') {
-      // 2) Authorize file access
-      const authResult = await authorizeFileRefs(
-        'local-player',
-        props.sourceId,
-        payload,
-        {
-          requiredCaps: ['Read']
-          // customValidators can be added here in the future
+  const el = scroller()
+  const r = el.getBoundingClientRect()
+  const headerTop = r.top + headerH.value
+
+  // ignore presses in the sticky header area
+  if (ev.clientY < headerTop) return
+
+  const onRow = !!(ev.target as HTMLElement).closest('.row')
+
+  // empty click (not on row, no modifiers) → clear on pointerup
+  pendingEmptyClick = !onRow && !ev.shiftKey && !ev.altKey
+
+  // allow Shift/Alt to force marquee even if down on a row
+  if (onRow && !(ev.shiftKey || ev.altKey)) return
+
+  // record press position
+  pressClientX.value = ev.clientX
+  pressClientY.value = ev.clientY
+  lastClientX.value  = ev.clientX
+  lastClientY.value  = ev.clientY
+
+  // convert to content-space; Y is rebased under the header
+  const sx = ev.clientX - r.left    + el.scrollLeft
+  const sy = ev.clientY - headerTop + el.scrollTop
+
+  marquee.value = { visible: false, startX: Math.max(0, sx), startY: Math.max(0, sy), x: sx, y: sy, w: 0, h: 0 }
+
+  ;(ev.target as Element).setPointerCapture?.(ev.pointerId)
+
+  el.addEventListener('scroll', onSurfaceScroll, { passive: true })
+  window.addEventListener('pointermove', onSurfacePointerMove)
+  window.addEventListener('pointerup', onSurfacePointerUp, { once: true })
+
+  updateVelFromPointer(ev.clientX, ev.clientY)
+  startAutoScroll()
+  ev.preventDefault()
+}
+
+
+function onSurfacePointerMove(ev: PointerEvent) {
+  lastClientX.value = ev.clientX
+  lastClientY.value = ev.clientY
+
+  // Show the marquee only after a small movement (from the press point)
+  if (!marquee.value.visible) {
+    const moved = Math.hypot(
+      ev.clientX - pressClientX.value,
+      ev.clientY - pressClientY.value
+    )
+    if (moved >= DRAG_THRESHOLD_PX) {
+      marquee.value.visible = true
+    }
+  }
+
+  updateVelFromPointer(ev.clientX, ev.clientY)
+  recalcFromClient(ev.clientX, ev.clientY)
+}
+
+function onSurfacePointerUp() {
+  const el = scroller()
+  if (el) el.removeEventListener('scroll', onSurfaceScroll)
+
+  window.removeEventListener('pointermove', onSurfacePointerMove)
+
+  // If it was a pure click on empty (no drag), clear selection
+  if (!marquee.value.visible && pendingEmptyClick) {
+    selected.value = new Set()
+  }
+  pendingEmptyClick = false
+
+  marquee.value.visible = false
+  stopAutoScroll()
+}
+
+/** Rectangle intersection test against rows (operate in content space) */
+function updateSelectionByMarquee() {
+  const el = scroller()!
+  const { x, y, w, h } = marquee.value
+  const rect = { left: x, top: y, right: x + w, bottom: y + h }
+
+  const r = el.getBoundingClientRect()
+  const originTop = r.top + headerH.value
+
+  const next = new Set<string>()
+  el.querySelectorAll<HTMLElement>('.row[data-path]').forEach(row => {
+    const rr = row.getBoundingClientRect()
+    const left   = rr.left - r.left    + el.scrollLeft
+    const top    = rr.top  - originTop + el.scrollTop
+    const right  = left + rr.width
+    const bottom = top  + rr.height
+
+    const hit = !(right < rect.left || left > rect.right || bottom < rect.top || top > rect.bottom)
+    if (hit) next.add(row.dataset.path!)
+  })
+
+  selected.value = next
+}
+
+function scrollerContentWidth(): number {
+  const el = scroller()
+  if (!el) return 0
+  const cs = getComputedStyle(el)
+  const pl = parseFloat(cs.paddingLeft) || 0
+  const pr = parseFloat(cs.paddingRight) || 0
+  return el.clientWidth - pl - pr
+}
+
+/* -----------------------------------------------
+   Data / sorting / UI (unchanged)
+------------------------------------------------ */
+type SortKey = 'name' | 'kind' | 'ext' | 'size' | 'modified'
+type SortDir = 'asc' | 'desc'
+
+const sortKey = ref<SortKey>((props.config?.view?.sortKey as SortKey) || 'name')
+const sortDir = ref<SortDir>((props.config?.view?.sortDir as SortDir) || 'asc')
+
+const iconsTick = ref(0)
+void loadIconPack()
+
+function iconText(e: any) {
+  return iconFor({ kind: e?.Kind, ext: e?.Ext, iconKey: e?.IconKey }, 32)
+}
+function iconIsImg(e: any) {
+  const v = iconFor({ kind: e?.Kind, ext: e?.Ext, iconKey: e?.IconKey }, 32)
+  return typeof v === 'string' && v.startsWith('data:image/')
+}
+function iconSrc(e: any) {
+  return iconFor({ kind: e?.Kind, ext: e?.Ext, iconKey: e?.IconKey }, 32)
+}
+
+function sizeParts(bytes?: number | null): { num: string; unit: string } {
+  if (bytes == null || bytes < 0) return { num: '', unit: '' }
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+  let n = bytes
+  let i = 0
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++ }
+  const num = i === 0
+    ? Math.round(n).toString()
+    : (n < 10 ? n.toFixed(1) : Math.round(n).toString())
+  return { num, unit: units[i] }
+}
+
+const hour12Pref = new Intl.DateTimeFormat().resolvedOptions().hour12 ?? false
+const FMT_DATE = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' })
+const FMT_TIME = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: hour12Pref })
+function modParts(ms?: number | null): { date: string; time: string } {
+  if (ms == null || ms <= 0) return { date: '', time: '' }
+  const d = new Date(ms)
+  return { date: FMT_DATE.format(d), time: FMT_TIME.format(d) }
+}
+
+function sizeTokens(Size?: string) {
+  const s = (Size || 'md').toLowerCase()
+  if (s === 'sm') return { padY: 8, padX: 10, radius: 8, gap: 6, font: 0.95, title: 600 }
+  if (s === 'lg') return { padY: 14, padX: 14, radius: 12, gap: 10, font: 1.05, title: 650 }
+  return { padY: 10, padX: 12, radius: 10, gap: 8, font: 1.0, title: 600 }
+}
+
+const cfg = computed(() => ({
+  data: props.config?.data ?? {},
+  view: props.config?.view ?? {},
+}))
+
+const autoColumns = computed(() => {
+  if (props.placement?.context === 'sidebar') return 1
+  const gridCols = props.placement?.size?.cols || 4
+  if (gridCols <= 2) return 1
+  if (gridCols <= 3) return 2
+  if (gridCols <= 5) return 3
+  if (gridCols <= 8) return 4
+  return 5
+})
+
+const autoItemSize = computed(() => {
+  const gridCols = props.placement?.size?.cols || 4
+  if (gridCols <= 3) return 'sm'
+  if (gridCols <= 6) return 'md'
+  return 'lg'
+})
+
+const merged = computed(() => ({
+  rpath: String(cfg.value.data.rpath ?? ''),
+  layout: String(cfg.value.view.layout ?? 'list'),
+  columns: cfg.value.view.columns || autoColumns.value,
+  itemSize: cfg.value.view.itemSize || autoItemSize.value,
+  showHidden: !!(cfg.value.view.showHidden ?? false),
+  navigateMode: String(cfg.value.view.navigateMode ?? 'internal').toLowerCase(),
+}))
+
+const cwd = ref<string>('')
+
+const entries = ref<Array<{
+  Name: string; FullPath: string; Kind?: string; Ext?: string; Size?: number; ModifiedAt?: number; IconKey?: string
+}>>([])
+
+const loading = ref(false)
+const error = ref('')
+
+async function loadDir(path: string) {
+  if (!path) { entries.value = []; return }
+  loading.value = true
+  error.value = ''
+
+  try {
+    let res = await fsListDir(path)
+
+    if (!res?.ok) {
+      const raw = String(res?.error || '')
+      const msg = raw.toLowerCase()
+      const accessDenied =
+        msg.includes('access denied') ||
+        msg.includes('unauthorized') ||
+        msg.includes('e_access_denied') ||
+        /access.*denied/.test(msg) ||
+        /denied/.test(msg)
+
+      if (accessDenied) {
+        const granted = await ensureConsent('items', props.sourceId, path, ['Read', 'Metadata'], { afterDenied: true })
+        if (!granted) throw new Error('Permission not granted')
+
+        res = await fsListDirWithAuth('items', props.sourceId, path)
+        if (!res?.ok) throw new Error(res?.error || 'list failed after consent')
+      } else {
+        throw new Error(res?.error || 'list failed')
+      }
+    }
+
+    let list = Array.isArray((res as any).entries) ? (res as any).entries : []
+    if (!merged.value.showHidden) list = list.filter((e: any) => !String(e?.Name || '').startsWith('.'))
+
+    entries.value = list.sort((a: any, b: any) =>
+      String(a?.Name ?? '').localeCompare(String(b?.Name ?? ''), undefined, { numeric: true, sensitivity: 'base' })
+    )
+
+    const lnks = entries.value
+      .filter(e => e?.Kind === 'link' && e?.Ext === '.lnk' && (!e.IconKey || !String(e.IconKey).startsWith('link:')))
+      .map(e => e.FullPath)
+
+    if (lnks.length) {
+      try {
+        const r = await shortcutsProbe(lnks)
+        const arr = (r?.results ?? []) as Array<{ path: string; IconKey: string }>
+        if (arr.length) {
+          const map = new Map(arr.map(x => [x.path, x.IconKey]))
+          for (const e of entries.value) {
+            const k = map.get(e.FullPath)
+            if (k) e.IconKey = k
+          }
         }
-      )
-      
-      if (!authResult.ok) {
-        console.warn('[Music] Drop denied:', authResult.reason)
-        // TODO: Show toast notification to user
-        return
-      }
-      
-      // 3) Convert file paths → File objects
-      console.log('[Music] Converting file refs to File objects...')
-      const files = await fileRefsToFiles(
-        payload.data,
-        'local-player',
-        props.sourceId
-      )
-      
-      // 4) Add to playlist (reuse existing addFiles logic)
-      if (files.length) {
-        await playlist.addFiles(files)
-        console.log(`[Music] Added ${files.length} tracks from Items widget`)
-      }
-      
+      } catch { /* ignore */ }
+    }
+
+    const n = await ensureIconsFor(entries.value.map(e => ({ iconKey: e.IconKey })), 32)
+    if (n > 0) iconsTick.value++
+
+  } catch (e: any) {
+    error.value = String(e?.message ?? e ?? 'Error')
+    entries.value = []
+  } finally {
+    loading.value = false
+  }
+}
+
+async function openEntry(FullPath: string) {
+  if (!FullPath) return
+  try {
+    const v = await fsValidate(FullPath)
+    const isDir = !!v?.isDir
+    const preferTab =
+      merged.value.navigateMode === 'tab' ||
+      (merged.value.navigateMode !== 'internal' && typeof props.runAction === 'function')
+
+    if (isDir) {
+      if (preferTab) props.runAction?.({ type: 'nav', to: FullPath })
+      else { cwd.value = FullPath; await loadDir(cwd.value) }
       return
     }
-    
-    // Future: handle other payload types
-    console.log('[Music] Unsupported GEx payload type:', payload.type)
-    return
-  }
-  
-  // 2) Fallback: Native OS file drop (existing behavior)
-  if (e.dataTransfer?.files?.length) {
-    await playlist.addFiles(e.dataTransfer.files)
+    props.runAction?.({ type: 'open', path: FullPath })
+  } catch (err) {
+    console.error('[items] openEntry failed:', err)
   }
 }
 
-// ===== MEDIA EVENTS =====
-const onMediaPlay = () => { state.isPlaying.value = true }
-const onMediaPause = () => { state.isPlaying.value = false }
-const onTimeUpdate = () => { state.currentTime.value = state.music.currentTime || 0 }
-
-const onLoadedMeta = (e: Event) => {
-  const t = e.target as HTMLMediaElement | null
-  const d = t?.duration ?? state.music.duration
-  state.duration.value = Number.isFinite(d) ? d : 0
-}
-
-const onVolumeChange = () => {
-  const v = state.music.volume
-  if (v !== state.volume.value) {
-    state.volume.value = v
-    if (v > 0) state.lastNonZeroVolume.value = v
-  }
-}
-
-function hydrateFromHandle() {
-  state.volume.value = state.music.volume
-  if (state.volume.value > 0) state.lastNonZeroVolume.value = state.volume.value
-  state.isPlaying.value = !state.music.paused
-  state.currentTime.value = state.music.currentTime || 0
-  state.duration.value = state.music.duration || 0
-}
-
-// ===== LIFECYCLE =====
-let resizeObserver: ResizeObserver | null = null
-
-onMounted(async () => {
-  state.music.addEventListener('play', onMediaPlay)
-  state.music.addEventListener('pause', onMediaPause)
-  state.music.addEventListener('timeupdate', onTimeUpdate)
-  state.music.addEventListener('loadedmetadata', onLoadedMeta as any)
-  state.music.addEventListener('volumechange', onVolumeChange)
-  state.music.addEventListener('error', onMediaError)
-  state.music.addEventListener('rack:playlistindex', onRackIndex as EventListener)
-
-  state.playlists.register(state.sel, state.toPlaylistItems(), {
-    autoNext: 'linear',
-    repeat: state.repeat.value,
-    shuffle: state.shuffle.value,
-    dedupe: false
+// persist on change (optional)
+watch(colW, (w) => {
+  emit('updateConfig', {
+    ...props.config,
+    view: { ...props.config?.view, detailCols: { ...w } }
   })
-  state.playlists.setItems(state.sel, state.toPlaylistItems(), { keepCurrent: true })
-  state.playlists.bindToHandle(state.sel, state.music)
+}, { deep: true })
 
-  await nextTick()
-  // 1) seed once
-  seedMeasureNow()
-  // 2) start RO and use contentRect → scheduleWidth (no forced layout)
-resizeObserver = new ResizeObserver((entries) => {
-  const e = entries[0]
-  const w = 'contentBoxSize' in e && e.contentBoxSize
-    ? (Array.isArray(e.contentBoxSize) ? e.contentBoxSize[0].inlineSize : e.contentBoxSize.inlineSize)
-    : e.contentRect.width
-  scheduleWidth(Math.round(w), 'ro')
+watch(
+  () => merged.value.rpath,
+  (next) => { if (next && next !== cwd.value) { cwd.value = next; loadDir(next) } },
+  { immediate: true }
+)
+
+watch(
+  () => [props.config?.view?.sortKey, props.config?.view?.sortDir],
+  ([k, d]) => {
+    if (k && ['name', 'kind', 'ext', 'size', 'modified'].includes(k as string)) sortKey.value = k as SortKey
+    if (d && (d === 'asc' || d === 'desc')) sortDir.value = d
+  }
+)
+
+const S = computed(() => sizeTokens(merged.value.itemSize))
+
+const sortedEntries = computed(() => {
+  const data = entries.value.slice()
+  const k = sortKey.value
+  const dir = sortDir.value === 'asc' ? 1 : -1
+  const cmp = (a: string, b: string) =>
+    String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' })
+
+  data.sort((A, B) => {
+    if (k === 'name')     return cmp(A?.Name || '', B?.Name || '') * dir
+    if (k === 'ext')      { const c = cmp(A?.Ext || '', B?.Ext || ''); return (c || cmp(A?.Name || '', B?.Name || '')) * dir }
+    if (k === 'size')     { const sa = (A?.Size ?? 0), sb = (B?.Size ?? 0); const c = sa === sb ? 0 : (sa < sb ? -1 : 1); return (c || cmp(A?.Name || '', B?.Name || '')) * dir }
+    if (k === 'modified') { const ta = A?.ModifiedAt ? +new Date(A.ModifiedAt) : 0; const tb = B?.ModifiedAt ? +new Date(B.ModifiedAt) : 0; const c = ta === tb ? 0 : (ta < tb ? -1 : 1); return (c || cmp(A?.Name || '', B?.Name || '')) * dir }
+    return 0
+  })
+  return data
 })
-  if (widgetRootEl.value) resizeObserver.observe(widgetRootEl.value)
 
-  hydrateFromHandle()
-})
+// ----- Resizer drag -----
+type ResCol = keyof DetailCols
+let resizing: { col: ResCol; startX: number; startW: number } | null = null
+const isResizing = ref(false)
 
-onBeforeUnmount(() => {
-  if (rafForWidth) cancelAnimationFrame(rafForWidth)
-  resizeObserver?.disconnect()
 
-  state.music.removeEventListener('play', onMediaPlay)
-  state.music.removeEventListener('pause', onMediaPause)
-  state.music.removeEventListener('timeupdate', onTimeUpdate)
-  state.music.removeEventListener('loadedmetadata', onLoadedMeta as any)
-  state.music.removeEventListener('volumechange', onVolumeChange)
-  state.music.removeEventListener('error', onMediaError)
-  state.music.removeEventListener('rack:playlistindex', onRackIndex as EventListener)
+function startResize(col: ResCol, ev: PointerEvent) {
+  const target = ev.currentTarget as HTMLElement
+  target.setPointerCapture?.(ev.pointerId)
+  resizing = { col, startX: ev.clientX, startW: colW.value[col] }
+  isResizing.value = true
+  window.addEventListener('pointermove', onResizeMove)
+  window.addEventListener('pointerup', onResizeEnd, { once: true })
+  ev.preventDefault()
+  ev.stopPropagation() // don't let header click fire
+}
 
-  state.playlists.unbind(state.sel)
-  dnd.dnd?.destroy()
+function onResizeMove(ev: PointerEvent) {
+  if (!resizing) return
+  const dx = ev.clientX - resizing.startX
+  const next = Math.round(resizing.startW + dx)
+
+  const minByCol: Record<ResCol, number> = { name: 140, ext: 70, size: 90, mod: 150 }
+  const containerW = scrollerContentWidth()
+
+  const otherSum = (Object.entries(colW.value) as [ResCol, number][])
+    .filter(([k]) => k !== resizing!.col)
+    .reduce((s, [, v]) => s + v, 0)
+
+  const hardMax = containerW ? Math.max(minByCol[resizing.col], containerW - otherSum) : Infinity
+  colW.value = { ...colW.value, [resizing.col]: Math.min(Math.max(next, minByCol[resizing.col]), hardMax) }
+}
+
+
+function onResizeEnd() {
+  window.removeEventListener('pointermove', onResizeMove)
+  isResizing.value = false
+  resizing = null
+}
+
+// swap your onHeaderClickSafe with this:
+function onHeaderClickFiltered(nextKey: SortKey, ev: MouseEvent) {
+  // if the click started on a resizer (or inside it), ignore
+  const t = ev.target as HTMLElement | null
+  if (t && t.closest('.resize-handle')) return
+  onHeaderClick(nextKey)
+}
+
+function sizeLabel(e: any) {
+  const p = sizeParts(e?.Size)
+  if (!p.num) return ''
+  return `${p.num} ${p.unit}`
+}
+function modLabel(e: any) {
+  const p = modParts(e?.ModifiedAt)
+  if (!p.date && !p.time) return ''
+  return `${p.date} ${p.time}`
+}
+
+function onHeaderClick(nextKey: SortKey) {
+  if (sortKey.value === nextKey) sortDir.value = (sortDir.value === 'asc' ? 'desc' : 'asc')
+  else { sortKey.value = nextKey; sortDir.value = 'asc' }
+}
+
+const hostVars = computed(() => ({
+  '--items-border':     props.theme?.border    || 'var(--border, #555)',
+  '--items-fg':         props.theme?.fg        || 'var(--fg, #eee)',
+  '--items-bg':         props.theme?.bg        || 'var(--surface-2, transparent)',
+  '--items-header-sep': props.theme?.headerSep || 'rgba(255,255,255,.22)',
+}) as Record<string, string>)
+
+/* -----------------------------------------------
+   Drag & drop (unchanged; suppress when marqueeing)
+------------------------------------------------ */
+const isDragging = ref(false)
+
+function onItemDragStart(e: any, event: DragEvent) {
+  if (!event.dataTransfer) return
+  if (marquee.value.visible) { event.preventDefault(); return }
+
+  isDragging.value = true
+  try {
+    const paths = (selected.value.size > 0 ? [...selected.value] : [e.FullPath])
+
+    const payload = createGexPayload(
+      'gex/file-refs',
+      paths.map(p => ({
+        path: p,
+        name: (p === e.FullPath ? e.Name : (entries.value.find(x => x.FullPath === p)?.Name || p)),
+        size: (p === e.FullPath ? e.Size : (entries.value.find(x => x.FullPath === p)?.Size)),
+        mimeType: guessMimeType((p === e.FullPath ? e.Name : (entries.value.find(x => x.FullPath === p)?.Name || ''))),
+        isDirectory: (p === e.FullPath ? e.Kind === 'dir' : entries.value.find(x => x.FullPath === p)?.Kind === 'dir')
+      })),
+      { widgetType: 'items', widgetId: props.sourceId }
+    )
+
+    setGexPayload(event.dataTransfer, payload)
+
+    const preview = createDragPreview({
+      label: (selected.value.size > 1 ? `${paths.length} items` : e.Name),
+      icon: e.Kind === 'dir' ? '📁' : '📄',
+      count: paths.length
+    })
+    event.dataTransfer.setDragImage(preview, 0, 0)
+    setTimeout(() => preview.remove(), 0)
+  } catch (err) {
+    console.error('[Items] drag failed:', err)
+  }
+}
+
+function onItemDragEnd() { isDragging.value = false }
+
+function guessMimeType(filename: string): string {
+  const ext = filename.toLowerCase().split('.').pop() || ''
+  const map: Record<string, string> = {
+    mp3: 'audio/mpeg', ogg: 'audio/ogg', oga: 'audio/ogg', wav: 'audio/wav',
+    flac: 'audio/flac', m4a: 'audio/mp4', aac: 'audio/aac', webm: 'audio/webm', opus: 'audio/opus',
+    mp4: 'video/mp4', mkv: 'video/x-matroska',
+    jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp',
+    txt: 'text/plain', json: 'application/json', pdf: 'application/pdf'
+  }
+  return map[ext] || 'application/octet-stream'
+}
+
+/* -----------------------------------------------
+   Lifecycle: tidy up rAF if the component unmounts
+------------------------------------------------ */
+onBeforeUnmount(() => stopAutoScroll())
+
+/* -----------------------------------------------
+   Edit helpers (unchanged)
+------------------------------------------------ */
+function updateColumns(delta: number) {
+  if (!props.editMode) return
+  const current = merged.value.columns
+  const next = Math.max(1, Math.min(8, current + delta))
+  emit('updateConfig', { ...props.config, view: { ...props.config?.view, columns: next } })
+}
+
+function cycleItemSize() {
+  if (!props.editMode) return
+  const sizes = ['sm', 'md', 'lg']
+  const i = sizes.indexOf(merged.value.itemSize)
+  emit('updateConfig', { ...props.config, view: { ...props.config?.view, itemSize: sizes[(i + 1) % sizes.length] } })
+}
+
+function cycleLayout() {
+  if (!props.editMode) return
+  const layouts = ['list', 'grid', 'details']
+  const i = layouts.indexOf(merged.value.layout)
+  emit('updateConfig', { ...props.config, view: { ...props.config?.view, layout: layouts[(i + 1) % layouts.length] } })
+}
+
+onMounted(() => {
+  const el = scrollEl.value
+  if (!el) return
+  el.setAttribute('tabindex', el.getAttribute('tabindex') ?? '0')
 })
 </script>
 
-
 <template>
-<div ref="widgetRootEl"
-     class="widget-root"
-     :style="{ '--widget-w': (containerWidth || hostWidth) + 'px' }">
-    <!-- Hidden file input -->
-    <input
-      ref="fileInput"
-      type="file"
-      multiple
-      :accept="INPUT_ACCEPT"
-      style="display: none"
-      @change="(e) => playlist.onFileInput(e, fileInput!)"
-    />
+  <div class="items-root" :style="hostVars" :class="{ dragging: isDragging, marqueeing: marqueeing }">
+    <!-- Edit mode toolbar -->
+    <div
+      v-if="editMode"
+      class="edit-toolbar"
+      @pointerdown.stop
+    >
+      <div class="edit-group">
+        <span class="edit-label">Layout:</span>
+        <button class="edit-btn" @click.stop="cycleLayout" :title="`Current: ${merged.layout}`">
+          {{ merged.layout === 'list' ? '☰' : merged.layout === 'grid' ? '▦' : '▤' }}
+        </button>
+      </div>
 
-    <!-- Compact Layout -->
-    <CompactLayout
-      v-if="hostLayout === 'compact'"
-      :current="state.current.value"
-      :has-tracks="state.hasTracks.value"
-      :is-playing="state.isPlaying.value"
-      :volume="state.volume.value"
-      :volume-icon="state.volumeIcon.value"
-      :play-tooltip="`${state.isPlaying.value ? 'Pause' : 'Play'}${state.current.value ? '\n' + state.current.value.name : ''}`"
-      @toggle-play="togglePlay"
-      @click-pick="clickPick"
-      @vol-input="volInput"
-    />
+      <div v-if="merged.layout === 'grid'" class="edit-group">
+        <span class="edit-label">Columns:</span>
+        <button class="edit-btn" @click.stop="updateColumns(-1)" :disabled="merged.columns <= 1">−</button>
+        <span class="edit-value">{{ merged.columns }}</span>
+        <button class="edit-btn" @click.stop="updateColumns(1)" :disabled="merged.columns >= 8">+</button>
+      </div>
 
-    <!-- Expanded Layout -->
-    <ExpandedLayout
-      v-else
-      ref="expandedLayoutRef"
-      :queue="state.queue.value"
-      :display-queue="dnd.displayQueue.value"
-      :current-index="state.currentIndex.value"
-      :selected-index="state.selectedIndex.value"
-      :current="state.current.value"
-      :has-tracks="state.hasTracks.value"
-      :can-prev="state.canPrev.value"
-      :can-next="state.canNext.value"
-      :is-playing="state.isPlaying.value"
-      :is-loading="state.isLoading.value"
-      :current-time="state.currentTime.value"
-      :duration="state.duration.value"
-      :volume="state.volume.value"
-      :repeat="state.repeat.value"
-      :shuffle="state.shuffle.value"
-      :queue-name="state.queueName.value"
-      :volume-icon="state.volumeIcon.value"
-      :playback-rate="state.playbackRate.value"
-      :playback-rate-label="state.playbackRateLabel.value"
-      :dnd-state="dnd.dndState.value"
-      :layout-class="layoutClass"
-      :show-queue="showQueue"
-      :renaming="renaming"
-      :draft-queue-name="draftQueueName"
-      :marquee-on="marquee.marqueeOn.value"
-      :marquee-dir="marquee.marqueeDir.value"
-      :resize-phase="props.placement?.resizePhase"
-      :set-marquee-box="marquee.setMarqueeBox"
-      :set-marquee-copy="marquee.setMarqueeCopy"
-      @toggle-play="togglePlay"
-      @prev="prev"
-      @next="next"
-      @seek="seek"
-      @adjust-speed="adjustSpeed"
-      @toggle-shuffle="toggleShuffle"
-      @toggle-repeat="toggleRepeat"
-      @click-pick="clickPick"
-      @toggle-mute="toggleMute"
-      @vol-input="volInput"
-      @toggle-queue="toggleQueue"
-      @begin-rename="beginRename"
-      @cancel-rename="cancelRename"
-      @commit-rename="commitRename"
-      @update:draft-queue-name="(v) => draftQueueName = v"
-      @save-playlist="playlist.savePlaylistGexm"
-      @row-dblclick="onRowDblClick"
-      @row-click="onRowClick"
-      @start-row-drag="dnd.startRowDrag"
-      @remove-at="playlist.removeAt"
-      @drag-enter="onDragEnter"
-      @drag-over="onDragOver"
-      @drag-leave="onDragLeave"
-      @drop="onDrop"
-    />
+      <div class="edit-group">
+        <span class="edit-label">Size:</span>
+        <button class="edit-btn" @click.stop="cycleItemSize" :title="`Current: ${merged.itemSize}`">
+          {{ merged.itemSize.toUpperCase() }}
+        </button>
+      </div>
+    </div>
+
+    <!-- Make the scroller focusable + capture keyboard -->
+    <div
+      class="items-scroll-container"
+      ref="scrollEl"
+      tabindex="0"
+      @keydown="onKeyDown"
+      @pointerdown="onSurfacePointerDown"
+    >
+      <div v-if="loading" class="msg">Loading…</div>
+      <div v-else-if="error" class="err">{{ error }}</div>
+      <div v-else-if="!merged.rpath" class="msg">(no path)</div>
+
+      <!-- DETAILS VIEW -->
+      <div
+        v-else-if="merged.layout === 'details'"
+        class="details-root"
+        :data-icons="iconsTick"
+        :style="{ '--cols': detailsCols, '--hdrH': headerH + 'px' }"
+      >
+        <!-- Sticky header (no inline gridTemplateColumns here) -->
+        <div class="details-header">
+        <button class="th th-name" @click="onHeaderClickFiltered('name', $event)">
+          <span class="th-label">Name</span>
+          <span v-if="sortKey==='name'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+          <span
+            class="resize-handle"
+            @pointerdown.stop.prevent="startResize('name', $event)"
+            @click.stop.prevent
+          />
+        </button>
+
+        <button class="th th-ext" @click="onHeaderClickFiltered('ext', $event)">
+          <span class="th-label">Ext</span>
+          <span v-if="sortKey==='ext'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+          <span
+            class="resize-handle"
+            @pointerdown.stop.prevent="startResize('ext', $event)"
+            @click.stop.prevent
+          />
+        </button>
+
+        <button class="th th-size" @click="onHeaderClickFiltered('size', $event)">
+          <span class="th-label">Size</span>
+          <span v-if="sortKey==='size'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+          <span
+            class="resize-handle"
+            @pointerdown.stop.prevent="startResize('size', $event)"
+            @click.stop.prevent
+          />
+        </button>
+
+        <button class="th th-mod" @click="onHeaderClickFiltered('modified', $event)">
+          <span class="th-label">Modified</span>
+          <span v-if="sortKey==='modified'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+          <!-- no handle on the last column -->
+        </button>
+      </div>
+
+
+        <!-- Rows (no inline gridTemplateColumns here) -->
+        <div class="details-body">
+        <button
+          v-for="(e, i) in sortedEntries"
+          :key="e.FullPath"
+          class="row"
+          :data-path="e.FullPath"
+          :class="{ selected: selected.has(e.FullPath) }"
+          draggable="true"
+          @click.stop.prevent="onRowClick($event, i)"
+          @dblclick.stop.prevent="onRowDblClick(e, i, $event)"
+          @dragstart="onItemDragStart(e, $event)"
+          @dragend="onItemDragEnd"
+        >
+          <div class="td td-name" :title="e.Name || e.FullPath">
+            <span class="icon">
+              <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
+              <span v-else>{{ iconText(e) }}</span>
+            </span>
+            <span class="name">{{ e.Name || e.FullPath }}</span>
+          </div>
+
+          <div class="td td-ext" :title="e.Ext || ''">{{ e.Ext || '' }}</div>
+
+          <div class="td td-size" :title="sizeLabel(e)">
+            <span class="num">{{ sizeParts(e?.Size).num }}</span>
+            <span class="unit">{{ sizeParts(e?.Size).unit }}</span>
+          </div>
+
+          <div class="td td-mod" :title="modLabel(e)">
+            <span class="date">{{ modLabel(e).split(' ')[0] }}</span>
+            <span class="time">{{ modParts(e?.ModifiedAt).time }}</span>
+          </div>
+        </button>
+      </div>
+    </div>
+
+      <!-- LIST VIEW -->
+      <div v-else-if="merged.layout === 'list'" class="list-root" :data-icons="iconsTick">
+        <button
+          v-for="(e,i) in sortedEntries"
+          :key="e.FullPath"
+          class="row"
+          :data-path="e.FullPath"
+          :class="{ selected: selected.has(e.FullPath) }"
+          draggable="true"
+          @click.stop.prevent="onRowClick($event, i)"
+          @dblclick.stop.prevent="onRowDblClick(e, i)"
+          @dragstart="onItemDragStart(e, $event)"
+          @dragend="onItemDragEnd"
+        >
+          <div class="icon">
+            <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
+            <span v-else>{{ iconText(e) }}</span>
+          </div>
+          <div class="name">{{ e.Name || e.FullPath }}</div>
+        </button>
+      </div>
+
+      <!-- GRID VIEW -->
+      <div
+        v-else-if="merged.layout === 'grid'"
+        class="grid-root"
+        :data-icons="iconsTick"
+        :style="{
+          display: 'grid',
+          gap: S.gap + 'px',
+          padding: S.gap + 'px',
+          gridTemplateColumns: `repeat(${Math.max(1, merged.columns)}, minmax(0, 1fr))`
+        }"
+      >
+        <button
+          v-for="(e,i) in sortedEntries"
+          :key="e.FullPath"
+          class="row"
+          :data-path="e.FullPath"
+          :class="{ selected: selected.has(e.FullPath) }"
+          draggable="true"
+          @click.stop.prevent="onRowClick($event, i)"
+          @dblclick.stop.prevent="onRowDblClick(e, i)"
+          @dragstart="onItemDragStart(e, $event)"
+          @dragend="onItemDragEnd"
+        >
+          <div class="icon">
+            <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
+            <span v-else>{{ iconText(e) }}</span>
+          </div>
+          <div class="name">{{ e.Name || e.FullPath }}</div>
+        </button>
+      </div>
+
+      <!-- Marquee overlay -->
+      <div v-if="marquee.visible" class="marquee" :style="marqueeStyle"></div>
+    </div>
   </div>
 </template>
+
+<style scoped>
+/* ================= THEME / ROOT ================= */
+.items-root{
+  font-size:var(--font-md);
+  color:var(--items-fg);
+  --local-font-sm:calc(1em * .85);
+  --local-font-md:1em;
+  --local-font-lg:calc(1em * 1.15);
+  --local-spacing:var(--space-sm);
+  --local-radius:var(--radius-md);
+
+  /* gutters for marquee space inside the scroller */
+  --items-gutter-left: 5%;
+  --items-gutter-right: 5%;
+  --items-pad-block: 6px;
+
+  /* column separator color */
+  --items-col-sep: color-mix(in oklab, var(--fg, #fff) 12%, transparent);
+
+  height:100%;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+  box-sizing:border-box;
+  position:relative;
+}
+
+/* Scroller: focusable, with left/right gutters */
+.items-scroll-container{
+  flex:1;
+  overflow-y:auto;
+  overflow-x:hidden;
+  position:relative;
+  padding-block: var(--items-pad-block, 6px);
+  padding-inline: var(--items-gutter-left, 5%) var(--items-gutter-right, 5%);
+  z-index:1;
+  outline:none;
+}
+.items-scroll-container:hover{ overscroll-behavior:contain; }
+
+/* ================ MARQUEE ================ */
+.marquee{
+  border:1px solid var(--accent,#4ea1ff);
+  background:color-mix(in oklab, var(--accent,#4ea1ff) 18%, transparent);
+  pointer-events:none;
+  border-radius:4px;
+  z-index:2;
+}
+
+.items-root.dragging{ user-select:none; }
+
+/* ================ EDIT TOOLBAR ================ */
+.edit-toolbar{
+  display:flex; gap:var(--space-md); padding:var(--space-sm);
+  background:var(--surface-1,#1a1a1a); border-bottom:1px solid var(--border,#555);
+  align-items:center; flex-shrink:0; font-size:var(--font-sm);
+  position:sticky; top:0; z-index:5; pointer-events:auto;
+}
+.edit-label{ font-size:var(--local-font-sm);opacity:.7;font-weight:500; }
+.edit-value{ font-size:var(--local-font-md);font-weight:600;min-width:20px;text-align:center; }
+.edit-btn{
+  padding:var(--space-xs) var(--space-sm); border-radius:var(--radius-sm);
+  border:1px solid var(--border,#555); background:var(--surface-2,#222); color:var(--fg,#eee);
+  cursor:pointer; font-size:var(--local-font-sm); transition:all .15s ease; min-width:28px;text-align:center;
+}
+
+/* ================ GENERIC ROW (List/Grid base) ================ */
+.row{
+  border:1px solid var(--items-border); background:var(--items-bg); color:inherit;
+  border-radius:var(--local-radius);
+  display:flex; flex-direction:row; gap:var(--local-spacing); align-items:center;
+  min-height:calc(var(--base-font-size) * 2.4); padding:var(--space-xs) var(--space-sm);
+  box-sizing:border-box; font-size:var(--local-font-md);
+}
+.row:focus, .row:focus-visible{ outline: none !important; box-shadow: none !important; }
+.row[draggable="true"]{ cursor:grab; }
+.row[draggable="true"]:active{ cursor:grabbing; }
+.row.selected{ outline:none; box-shadow: inset 0 0 0 2px var(--accent,#4ea1ff); }
+
+/* Base icon size for LIST/GRID (scoped to those layouts only) */
+.list-root .icon,
+.grid-root .icon{
+  width:calc(var(--base-font-size) * 1.4);
+  height:calc(var(--base-font-size) * 1.4);
+  flex:0 0 calc(var(--base-font-size) * 1.4);
+  display:flex; align-items:center; justify-content:center;
+}
+.list-root .icon img,
+.grid-root .icon img{ width:100%; height:100%; object-fit:contain; }
+
+.name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* ================ DETAILS VIEW ONLY ================ */
+.details-root{
+  /* grid column template is passed via --cols */
+  --padX: var(--space-sm);
+  --padY: var(--space-xs);
+  --gap:  var(--space-xs);
+
+  /* Details icon size derived from font size (1em of the row) */
+  --iconW: calc(1em * 1.4);
+
+  /* Fixed header height token (keeps JS simple) */
+  --hdrH: 36px;
+
+  position:relative;
+  display:flex;
+  flex-direction:column;
+  height:100%;
+}
+
+/* ===== HEADER OVERLAY (true overlay, not sticky) ===== */
+.details-header{
+  position:absolute;
+  top:0; left:0; right:0;
+  height:var(--hdrH);
+  z-index:3;
+  display:grid;
+  grid-template-columns: var(--cols);
+  gap:var(--gap);
+  align-items:center;
+
+  background: var(--items-header-bg, var(--surface-2,#222));
+  border-radius: var(--local-radius);
+  isolation:isolate;
+}
+
+/* Slight extend to hide any peeking rows while scrolling */
+.details-header::before{
+  content:"";
+  position:absolute; inset:-4px 0 -2px 0;
+  background: var(--items-header-bg, var(--surface-2,#222));
+  border-radius: inherit;
+  z-index:-1;
+}
+
+/* Header cells */
+.th{
+  position: relative;
+  display: inline-flex; align-items: center; gap: var(--space-xs);
+  padding-inline: var(--space-xs);
+  background: transparent; border: 0; color: inherit; cursor: pointer; font-weight: 600;
+}
+.th-size,.th-mod{ justify-content:flex-end; text-align:right; }
+
+/* Column separators */
+:root, :host{ --items-col-sep: color-mix(in oklab, var(--fg,#fff) 18%, transparent); }
+.details-header > .th + .th{ border-left: 1px solid var(--items-col-sep); }
+.details-body   .row > .td + .td{ border-left: 1px solid var(--items-col-sep); padding-left: var(--space-xs); }
+
+/* Resizer handles (not on last column) */
+.resize-handle{
+  position:absolute; top:0; right:-6px; width:12px; height:100%; cursor:col-resize;
+}
+.resize-handle::after{
+  content:""; position:absolute; top:0; bottom:0; left:50%;
+  transform:translateX(-0.5px);
+  width:1px; background: color-mix(in oklab, var(--fg,#fff) 28%, transparent);
+}
+.th:hover .resize-handle::after{ background: color-mix(in oklab, var(--accent,#4ea1ff) 55%, transparent); }
+
+/* ----- INTERACTIVE PLANE (rows + marquee) lives BELOW the header ----- */
+.details-body{
+  flex:1;
+  overflow-y:auto;
+  overflow-x:hidden;
+
+  /* Start below the overlay header */
+  margin-top: var(--hdrH);
+  padding-top: var(--space-xs);
+
+  display:grid;
+  gap:var(--space-xs);
+  outline:none;
+}
+
+/* Details rows align with header grid */
+.details-body .row{
+  display:grid; grid-template-columns: var(--cols); gap: var(--gap); align-items:center;
+  border:1px solid var(--items-border); background: var(--items-bg); border-radius: var(--local-radius);
+  min-height: calc(var(--base-font-size) * 2.4); padding: var(--padY) var(--padX);
+  box-sizing:border-box; cursor:pointer; font-size: var(--local-font-md);
+}
+
+/* Cells */
+.td-name{ display:inline-flex; align-items:center; gap:var(--space-sm); min-width:0; }
+.td-ext, .td-size, .td-mod{
+  opacity:.9; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:var(--local-font-sm);
+}
+
+/* Numeric alignment */
+.td-size, .td-mod{ font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1; }
+.td-size{ display:flex; justify-content:flex-end; gap:var(--space-xs); }
+.td-mod{ display:flex; justify-content:flex-end; gap:var(--space-sm); }
+
+/* Details icon size (scoped!) */
+.details-body .td-name .icon{
+  width:var(--iconW);
+  height:var(--iconW);
+  flex:0 0 var(--iconW);
+  display:flex; align-items:center; justify-content:center; text-align:center;
+}
+.details-body .td-name .icon img{ width:100%; height:100%; object-fit:contain; }
+
+/* ================ LIST / GRID CONTAINERS ================ */
+.list-root{ display:grid; gap:var(--space-xs); }
+.grid-root{ /* inline style sets the grid */ }
+
+/* ================ Messages ================ */
+.msg,.err{ padding:var(--space-md); font-size:var(--local-font-md); }
+.err{ color:#f77; }
+
+</style>

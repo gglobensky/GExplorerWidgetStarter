@@ -233,3 +233,124 @@ export interface Lifecycle {
 
   export function createDnD<T>(items: T[], options: CreateDnDOptions<T>): DnDHandle<T>;
 }
+
+/* ====================== INTER-WIDGET DND ====================== */
+
+/**
+ * Standard GExplorer DnD payload types for inter-widget drops
+ */
+export type GexDnDType = 
+  | 'gex/file-refs'      // File paths (need auth to access)
+  | 'gex/text'           // Plain text
+  | 'gex/url'            // Single URL
+  | 'gex/custom'         // Widget-specific data
+
+/**
+ * Base DnD payload structure
+ */
+export interface GexDnDPayload<T = any> {
+  type: GexDnDType | string
+  data: T
+  source: {
+    widgetType: string
+    widgetId: string
+  }
+  metadata?: Record<string, any>
+}
+
+/**
+ * File reference payload (most common for file-based widgets)
+ */
+export interface FileRefData {
+  path: string
+  name: string
+  size?: number
+  mimeType?: string
+  isDirectory?: boolean
+}
+
+/* ---- SENDER API (for dragging items out) ---- */
+
+/**
+ * Create a GExplorer inter-widget DnD payload
+ */
+export function createGexPayload<T>(
+  type: GexDnDType | string,
+  data: T,
+  source: { widgetType: string; widgetId: string },
+  metadata?: Record<string, any>
+): GexDnDPayload<T>
+
+/**
+ * Serialize payload to dataTransfer (sets custom MIME type)
+ */
+export function setGexPayload(
+  dataTransfer: DataTransfer,
+  payload: GexDnDPayload
+): void
+
+/**
+ * Create a drag preview element with custom styling
+ */
+export function createDragPreview(options: {
+  label: string
+  icon?: string
+  count?: number
+}): HTMLElement
+
+/* ---- RECEIVER API (for accepting drops) ---- */
+
+/**
+ * Extract GExplorer payload from drop event
+ */
+export function extractGexPayload(e: DragEvent): GexDnDPayload | null
+
+/**
+ * Check if drop event contains GExplorer data
+ */
+export function hasGexPayload(e: DragEvent): boolean
+
+/**
+ * Custom validator function for advanced permission checks
+ */
+export type DnDValidator = (
+  payload: GexDnDPayload,
+  context: { widgetType: string; widgetId: string }
+) => Promise<{ ok: boolean; reason?: string }>
+
+/**
+ * Validate and authorize file access (for file-ref payloads)
+ * Supports custom validators for extensibility
+ */
+export function authorizeFileRefs(
+  widgetType: string,
+  widgetId: string,
+  payload: GexDnDPayload,
+  options?: {
+    requiredCaps?: string[]
+    customValidators?: DnDValidator[]
+  }
+): Promise<{ ok: boolean; reason?: string }>
+
+/**
+ * Generic authorization for any payload type
+ * Allows widgets to implement custom permission logic
+ */
+export function authorizeDrop(
+  widgetType: string,
+  widgetId: string,
+  payload: GexDnDPayload,
+  validator: DnDValidator
+): Promise<{ ok: boolean; reason?: string }>
+
+/* ---- UTILITIES ---- */
+
+/**
+ * Convert file-ref payload to File objects (via backend data URLs)
+ * Requires Read permission for the paths
+ */
+export function fileRefsToFiles(
+  fileRefs: FileRefData[],
+  widgetType: string,
+  widgetId: string
+): Promise<File[]>
