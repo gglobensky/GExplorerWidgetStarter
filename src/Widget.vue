@@ -29,6 +29,9 @@ const props = defineProps<{
 
 const emit = defineEmits<{ (e: 'updateConfig', config: any): void }>()
 
+const NAME_MIN = 140
+const EXT_MIN  = 70
+const SIZE_MIN = 90
 // put this near your other constants
 const MIN_MOD_PX = 150; // min width for "Modified" col
 const SELECTION_FPS = 30;
@@ -68,23 +71,44 @@ function planeEl(): HTMLElement {
 }
 
 // --- Column widths now include NAME so each divider moves the column under it ---
-type DetailCols = { name: number; ext: number; size: number; mod: number }
-const defaultCols: DetailCols = { name: 420, ext: 110, size: 130, mod: 220 }
+type DetailWeights = { name: number; ext: number; size: number; mod: number }
+const defaultPx = { name: 420, ext: 110, size: 130, mod: 220 }
 
-// read saved widths if you have them in config.view.detailCols
-const colW = ref<DetailCols>({
-  name: props.config?.view?.detailCols?.name ?? defaultCols.name,
-  ext:  props.config?.view?.detailCols?.ext  ?? defaultCols.ext,
-  size: props.config?.view?.detailCols?.size ?? defaultCols.size,
-  mod:  props.config?.view?.detailCols?.mod  ?? defaultCols.mod,
-})
+// Normalize any numbers to a nice total (100) for persistence/readability.
+function normalizeWeights<T extends Record<string, number>>(o: T): DetailWeights {
+  const sum = Math.max(
+    1,
+    (o.name ?? 0) + (o.ext ?? 0) + (o.size ?? 0) + (o.mod ?? 0)
+  )
+  const scale = 100 / sum
+  return {
+    name: (o.name ?? 0) * scale,
+    ext:  (o.ext  ?? 0) * scale,
+    size: (o.size ?? 0) * scale,
+    mod:  (o.mod  ?? 0) * scale,
+  }
+}
+
+// One-time migration: prefer saved weights; else derive from old px (detailCols); else defaults.
+function initialWeights(): DetailWeights {
+  const saved = props.config?.view?.detailWeights as Partial<DetailWeights> | undefined
+  if (saved && typeof saved.name === 'number') return normalizeWeights(saved as any)
+
+  const oldPx = props.config?.view?.detailCols as Partial<Record<keyof DetailWeights, number>> | undefined
+  if (oldPx && typeof oldPx.name === 'number') return normalizeWeights(oldPx as any)
+
+  return normalizeWeights(defaultPx)
+}
+
+// Our reactive weights
+const colW = ref<DetailWeights>(initialWeights())
 
 // computed CSS value for details grid
 const detailsCols = computed(() =>
-  `${Math.max(140, colW.value.name)}px ` +
-  `${Math.max(70,  colW.value.ext)}px ` +
-  `${Math.max(90,  colW.value.size)}px ` +
-  `minmax(${MIN_MOD_PX}px, 1fr)` // ← anchored at the right, absorbs leftover
+  `minmax(${NAME_MIN}px, ${colW.value.name}fr) ` +
+  `minmax(${EXT_MIN }px, ${colW.value.ext }fr) ` +
+  `minmax(${SIZE_MIN}px, ${colW.value.size}fr) ` +
+  `minmax(${MIN_MOD_PX}px, ${colW.value.mod }fr)`
 )
 
 const anchorIndex = ref<number | null>(null)   // selection anchor for Shift-range
@@ -705,7 +729,12 @@ watch(
 watch(colW, (w) => {
   emit('updateConfig', {
     ...props.config,
-    view: { ...props.config?.view, detailCols: { ...w } }
+    view: {
+      ...props.config?.view,
+      // Save the ratios going forward
+      detailWeights: { ...normalizeWeights(w) },
+      // (Optional) you can drop detailCols entirely once you no longer need backward compat
+    }
   })
 }, { deep: true })
 
@@ -743,42 +772,107 @@ const sortedEntries = computed(() => {
 })
 
 // ----- Resizer drag -----
-type ResCol = keyof DetailCols
-let resizing: { col: ResCol; startX: number; startW: number } | null = null
 const isResizing = ref(false)
 
+type ResCol = keyof DetailWeights
+
+// Helper: which pair does this handle separate?
+function pairForHandle(col: ResCol): [ResCol, ResCol] {
+  if (col === 'name') return ['name', 'ext']
+  if (col === 'ext')  return ['ext',  'size']
+  if (col === 'size') return ['size', 'mod']
+  // 'mod' has no right-side handle
+  return ['mod', 'mod']
+}
+
+// Helper: current header cell widths (px)
+function measureHeaderColsPx() {
+  const root = headerEl.value?.querySelector<HTMLElement>('.details-header-inner')
+  if (!root) return { name: 0, ext: 0, size: 0, mod: 0 }
+  const q = (sel: string) => root.querySelector<HTMLElement>(sel)?.getBoundingClientRect().width || 0
+  return {
+    name: q('.th-name'),
+    ext:  q('.th-ext'),
+    size: q('.th-size'),
+    mod:  q('.th-mod'),
+  }
+}
+
+let resizing: null | {
+  left: ResCol
+  right: ResCol
+  startX: number
+  // px at drag start
+  startLeftPx: number
+  startRightPx: number
+  pairPx: number
+  // weights at drag start
+  startLeftW: number
+  startRightW: number
+  pairW: number
+} = null
 
 function startResize(col: ResCol, ev: PointerEvent) {
+  const [left, right] = pairForHandle(col)
+  if (left === 'mod' && right === 'mod') return
+
+  const px = measureHeaderColsPx()
+
+  const startLeftPx  = px[left]
+  const startRightPx = px[right]
+  const pairPx = Math.max(1, startLeftPx + startRightPx) // avoid div-by-zero
+
+  const startLeftW  = colW.value[left]
+  const startRightW = colW.value[right]
+  const pairW = Math.max(0.0001, startLeftW + startRightW)
+
   const target = ev.currentTarget as HTMLElement
   target.setPointerCapture?.(ev.pointerId)
-  resizing = { col, startX: ev.clientX, startW: colW.value[col] }
+
+  resizing = {
+    left, right, startX: ev.clientX,
+    startLeftPx, startRightPx, pairPx,
+    startLeftW, startRightW, pairW
+  }
   isResizing.value = true
   window.addEventListener('pointermove', onResizeMove)
   window.addEventListener('pointerup', onResizeEnd, { once: true })
   ev.preventDefault()
-  ev.stopPropagation() // don't let header click fire
+  ev.stopPropagation()
 }
 
 function onResizeMove(ev: PointerEvent) {
   if (!resizing) return
   const dx = ev.clientX - resizing.startX
-  const next = Math.round(resizing.startW + dx)
 
-  const minByCol: Record<ResCol, number> = { name: 140, ext: 70, size: 90, mod: 150 }
-  const containerW = scrollerContentWidth()
+  // pixel mins for the pair
+  const minBy: Record<ResCol, number> = {
+    name: NAME_MIN, ext: EXT_MIN, size: SIZE_MIN, mod: MIN_MOD_PX
+  }
 
-  const otherSum = (Object.entries(colW.value) as [ResCol, number][])
-    .filter(([k]) => k !== resizing!.col)
-    .reduce((s, [, v]) => s + v, 0)
-      
-  const hardMax = Math.max(minByCol[resizing.col], contentGridWidth() - otherSum)
-  colW.value = { ...colW.value, [resizing.col]: Math.min(Math.max(next, minByCol[resizing.col]), hardMax) }
+  // desired new left px, clamped so both columns respect their mins
+  const minLeft  = minBy[resizing.left]
+  const minRight = minBy[resizing.right]
+  const maxLeft  = Math.max(minLeft, resizing.pairPx - minRight)
+  const newLeftPx = Math.min(Math.max(resizing.startLeftPx + dx, minLeft), maxLeft)
+
+  // Convert px back to weights using the pair’s px↔weight ratio captured at drag start
+  const k = resizing.pairW / resizing.pairPx // weight per pixel within the pair at drag-start
+  const newLeftW  = newLeftPx * k
+  const newRightW = resizing.pairW - newLeftW
+
+  colW.value = {
+    ...colW.value,
+    [resizing.left]:  newLeftW,
+    [resizing.right]: newRightW,
+  } as DetailWeights
 }
-
 
 function onResizeEnd() {
   window.removeEventListener('pointermove', onResizeMove)
   isResizing.value = false
+  // Optional: normalize so the saved numbers are tidy
+  if (colW.value) colW.value = normalizeWeights(colW.value)
   resizing = null
 }
 
