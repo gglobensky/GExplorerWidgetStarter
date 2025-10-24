@@ -176,13 +176,12 @@ function refocusScrollerAfterEvent(ev?: Event) {
 
 function measureScrollbarWidth() {
   const el = detailsScrollEl.value
-  if (!el) return
-  // When no scroll, width is 0 (thanks to scrollbar-gutter: stable)
-  sbw.value = el.offsetWidth - el.clientWidth
-  // expose to CSS
-  (headerEl.value as HTMLElement | null)?.style.setProperty('--sbw', `${sbw.value}px`)
+  const host = detailsRootEl.value
+  if (!el || !host) return
+  const width = el.offsetWidth - el.clientWidth
+  sbw.value = width
+  host.style.setProperty('--sbw', `${width}px`)
 }
-
 
 function selectOnly(idx: number) {
   const path = sortedEntries.value[idx]?.FullPath
@@ -218,6 +217,20 @@ function pathIndexByPath(path: string) {
   return sortedEntries.value.findIndex(e => e.FullPath === path)
 }
 
+function contentGridWidth(): number {
+  const hdrInner = headerEl.value?.querySelector<HTMLElement>('.details-header-inner')
+  if (hdrInner) return hdrInner.clientWidth
+  const pad = padEl.value
+  if (pad) {
+    const cs = getComputedStyle(pad)
+    const pl = parseFloat(cs.paddingLeft) || 0
+    const pr = parseFloat(cs.paddingRight) || 0
+    return pad.clientWidth - pl - pr
+  }
+  const el = planeEl()
+  return el ? el.clientWidth : 0
+}
+
 function ensureFocusIndex() {
   // prefer the first selected row; else 0 if list not empty
   if (focusIndex.value != null) return
@@ -237,6 +250,7 @@ function onSurfaceScroll() {
 }
 
 function onRowClick(ev: MouseEvent, idx: number) {
+  console.log('rowclick')
   ensureFocusIndex()
   const isCtrl = ev.ctrlKey || ev.metaKey
   if (ev.shiftKey) {
@@ -582,6 +596,7 @@ const entries = ref<Array<{
   Name: string; FullPath: string; Kind?: string; Ext?: string; Size?: number; ModifiedAt?: number; IconKey?: string
 }>>([])
 
+const detailsRootEl = ref<HTMLElement|null>(null)
 const loading = ref(false)
 const error = ref('')
 
@@ -670,6 +685,22 @@ async function openEntry(FullPath: string) {
   }
 }
 
+watch(
+  detailsScrollEl,
+  (el, _prev, onCleanup) => {
+    if (!el || !detailsRootEl.value) return
+
+    // Measure once, right now (post-flush so DOM exists)
+    measureScrollbarWidth()
+
+    // Keep up to date if the scroller’s box changes
+    const ro = new ResizeObserver(() => measureScrollbarWidth())
+    ro.observe(el)
+    onCleanup(() => ro.disconnect())
+  },
+  { flush: 'post' }
+)
+
 // persist on change (optional)
 watch(colW, (w) => {
   emit('updateConfig', {
@@ -739,8 +770,8 @@ function onResizeMove(ev: PointerEvent) {
   const otherSum = (Object.entries(colW.value) as [ResCol, number][])
     .filter(([k]) => k !== resizing!.col)
     .reduce((s, [, v]) => s + v, 0)
-
-  const hardMax = containerW ? Math.max(minByCol[resizing.col], containerW - otherSum) : Infinity
+      
+  const hardMax = Math.max(minByCol[resizing.col], contentGridWidth() - otherSum)
   colW.value = { ...colW.value, [resizing.col]: Math.min(Math.max(next, minByCol[resizing.col]), hardMax) }
 }
 
@@ -790,9 +821,6 @@ const isDragging = ref(false)
 function onItemDragStart(e: any, event: DragEvent) {
   if (!event.dataTransfer) return
   if (marquee.value.visible) { event.preventDefault(); return }
-  if (!selected.value.has(e.FullPath)) {
-    selected.value = new Set([e.FullPath])
-  }
 
   isDragging.value = true
   try {
@@ -867,12 +895,16 @@ function cycleLayout() {
   emit('updateConfig', { ...props.config, view: { ...props.config?.view, layout: layouts[(i + 1) % layouts.length] } })
 }
 
-onMounted(() => {
-  measureScrollbarWidth()
+onMounted(async () => {
   const ro = new ResizeObserver(() => measureScrollbarWidth())
   detailsScrollEl.value && ro.observe(detailsScrollEl.value)
   // optional: re-measure on font/theme changes after icons load in
   window.addEventListener('resize', measureScrollbarWidth)
+
+  await nextTick();                          // wait for Vue to paint this tick
+  requestAnimationFrame(() => {              // then wait for the browser to layout
+    measureScrollbarWidth();
+  });
 })
 onBeforeUnmount(() => window.removeEventListener('resize', measureScrollbarWidth))
 </script>
@@ -926,6 +958,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureScrollbarWidth
         class="details-root"
         :data-icons="iconsTick"
         :style="{ '--cols': detailsCols, '--hdrH': headerH + 'px' }"
+        ref="detailsRootEl"
       >
         <!-- Header OUTSIDE the scroll container -->
         <div class="details-header" ref="headerEl">
@@ -977,7 +1010,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureScrollbarWidth
                 :data-path="e.FullPath"
                 :class="{ selected: selected.has(e.FullPath) }"
                 draggable="true"
-                @click.stop.prevent="onRowClick($event, i)"
+                @pointerdown="onRowClick($event, i)"
                 @dblclick.stop.prevent="onRowDblClick(e, i, $event)"
                 @dragstart="onItemDragStart(e, $event)"
                 @dragend="onItemDragEnd"
@@ -1019,7 +1052,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureScrollbarWidth
           :data-path="e.FullPath"
           :class="{ selected: selected.has(e.FullPath) }"
           draggable="true"
-          @click.stop.prevent="onRowClick($event, i)"
+          @pointerdown="onRowClick($event, i)"
           @dblclick.stop.prevent="onRowDblClick(e, i)"
           @dragstart="onItemDragStart(e, $event)"
           @dragend="onItemDragEnd"
@@ -1051,7 +1084,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureScrollbarWidth
           :data-path="e.FullPath"
           :class="{ selected: selected.has(e.FullPath) }"
           draggable="true"
-          @click.stop.prevent="onRowClick($event, i)"
+          @pointerdown="onRowClick($event, i)"
           @dblclick.stop.prevent="onRowDblClick(e, i)"
           @dragstart="onItemDragStart(e, $event)"
           @dragend="onItemDragEnd"
@@ -1205,7 +1238,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureScrollbarWidth
   --padX: var(--space-sm);
   --padY: var(--space-xs);
   --gap:  var(--space-xs);
-
+  --sbw: 0px;
   /* Details icon size derived from font size (1em of the row) */
   --iconW: calc(1em * 1.4);
 
@@ -1225,10 +1258,9 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureScrollbarWidth
   height: var(--hdrH);
   z-index: 3;
   background: transparent;
-
+  
   /* same gutter model as rows, plus --sbw only here */
-  padding-inline: var(--items-gutter-left, 5%)
-                  calc(var(--items-gutter-right, 5%) + var(--sbw, 0px));
+  padding-inline: var(--items-gutter-left, 5%) calc(var(--items-gutter-right, 5%) + var(--sbw, 0px));
 }
 
 .details-header::before{ display:none; }
@@ -1255,7 +1287,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureScrollbarWidth
 .th{
   position: relative;
   display: inline-flex; align-items: center; gap: var(--space-xs);
-  padding-inline: var(--space-xs);
+
   background: transparent; border: 0; color: inherit; cursor: pointer; font-weight: 600;
 }
 .th-size,.th-mod{ justify-content:flex-end; text-align:right; }
