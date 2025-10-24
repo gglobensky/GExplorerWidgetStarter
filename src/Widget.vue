@@ -199,12 +199,24 @@ function refocusScrollerAfterEvent(ev?: Event) {
 }
 
 function measureScrollbarWidth() {
-  const el = detailsScrollEl.value
-  const host = detailsRootEl.value
-  if (!el || !host) return
-  const width = el.offsetWidth - el.clientWidth
-  sbw.value = width
-  host.style.setProperty('--sbw', `${width}px`)
+  const el = detailsScrollEl.value;
+  const host = detailsRootEl.value;
+  if (!el || !host) return;
+
+  // What the browser is actually reserving for the end gutter / scrollbar.
+  const raw = Math.max(0, el.offsetWidth - el.clientWidth);
+
+  // If we’re basically at the minimum possible grid width, don’t add extra header padding.
+  // This avoids the “compensates twice when there’s no room left” look.
+  const minSum = NAME_MIN + EXT_MIN + SIZE_MIN + MIN_MOD_PX;     // track mins
+  const gap =  (parseFloat(getComputedStyle(host).getPropertyValue('--space-xs')) || 6) * 3; // 3 gaps
+  const padX = (parseFloat(getComputedStyle(host).getPropertyValue('--space-sm')) || 8) * 2; // left+right
+  const contentW = contentGridWidth();                            // your helper (header/rows width)
+  const atMinish = contentW <= (minSum + gap + padX + 1);
+
+  const width = atMinish ? 0 : raw;
+  sbw.value = width;
+  host.style.setProperty('--sbw', `${width}px`);
 }
 
 function selectOnly(idx: number) {
@@ -1257,13 +1269,15 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureScrollbarWidth
   padding-inline: var(--items-gutter-left, 5%) var(--items-gutter-right, 5%);
 }
 
-/* ADD: full-width scroll; no side padding here */
+
+/* The scrollport: full height, stable end gutter only */
 .details-scroll{
+  flex: 1;
+  min-height: 0;
   position: relative;
-  height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
-  scrollbar-gutter: stable; /* prevents content width jitter */
+  scrollbar-gutter: stable;      /* reserve space only on the end side */
 }
 
 /* ADD: the inner pad holds the side gutters + header spacing */
@@ -1328,92 +1342,103 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureScrollbarWidth
 
 /* ================ DETAILS VIEW ONLY ================ */
 .details-root{
-  /* grid column template is passed via --cols */
   --padX: var(--space-sm);
   --padY: var(--space-xs);
   --gap:  var(--space-xs);
-  --sbw: 0px;
-  /* Details icon size derived from font size (1em of the row) */
   --iconW: calc(1em * 1.4);
-
-  /* Fixed header height token (keeps JS simple) */
   --hdrH: 36px;
-
-  position:relative;
-  display:flex;
-  flex-direction:column;
-  height:100%;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                 /* makes inner scroller size correctly */
 }
 
 /* Header with outer gutters only */
 .details-header{
   position: sticky;
   top: 0;
+  z-index: 4;
   height: var(--hdrH);
-  z-index: 3;
+
+  /* same gutters as rows, PLUS measured scrollbar width on the right */
+  padding-inline: var(--items-gutter-left, 5%)
+                  calc(var(--items-gutter-right, 5%) + var(--sbw, 0px));
+
   background: transparent;
-  
-  /* same gutter model as rows, plus --sbw only here */
-  padding-inline: var(--items-gutter-left, 5%) calc(var(--items-gutter-right, 5%) + var(--sbw, 0px));
+  border-radius: var(--local-radius);
+  box-sizing: border-box;
 }
 
 .details-header::before{ display:none; }
 
 /* Grid lives inside */
 .details-header-inner{
+  position: relative;
   height: 100%;
   display: grid;
   grid-template-columns: var(--cols);
   gap: var(--gap);
   align-items: center;
   padding: 0 var(--padX);
-  margin-inline: 0;                           /* was margin-inline: var(--items-gutter-*) */
-
-  /* keep original styling */
+  min-width: 0;
   background: var(--items-header-bg, var(--surface-2,#222));
   border-radius: var(--local-radius);
-  box-sizing: border-box;
+  overflow: visible;
 }
 
-.details-header-inner > .th + .th{ border-left: 1px solid var(--items-col-sep); }
+/* Separators between header cells */
+.details-header-inner > .th + .th{
+  border-left: 1px solid var(--items-col-sep);
+  padding-left: var(--space-xs);
+}
 
-/* Header cells */
+/* Header cells - NOW WITH BACKGROUND */
 .th{
   position: relative;
-  display: inline-flex; align-items: center; gap: var(--space-xs);
-
-  background: transparent; border: 0; color: inherit; cursor: pointer; font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--padY) 0;        /* side padding comes from header-inner */
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font-weight: 600;
+  min-width: 0;                  /* labels can ellipsize */
 }
+
+.th .th-label{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .th-size,.th-mod{ justify-content:flex-end; text-align:right; }
+
+
 
 /* Column separators */
 :root, :host{ --items-col-sep: color-mix(in oklab, var(--fg,#fff) 18%, transparent); }
 .details-grid   .row > .td + .td{ border-left: 1px solid var(--items-col-sep); padding-left: var(--space-xs); }
 
 /* Resizer handles (not on last column) */
+/* Resize handle stays on top and on the actual track edge */
 .resize-handle{
-  position:absolute; top:0; right:-6px; width:12px; height:100%; cursor:col-resize;
+  position:absolute; top:0; right:-6px; width:12px; height:100%;
+  cursor:col-resize; z-index:2;
 }
 .resize-handle::after{
   content:""; position:absolute; top:0; bottom:0; left:50%;
   transform:translateX(-0.5px);
   width:1px; background: color-mix(in oklab, var(--fg,#fff) 28%, transparent);
 }
-.th:hover .resize-handle::after{ background: color-mix(in oklab, var(--accent,#4ea1ff) 55%, transparent); }
-
-/* ----- INTERACTIVE PLANE (rows + marquee) lives BELOW the header ----- */
-.details-grid{
-  display: grid;
-  gap: var(--space-xs);
+.th:hover .resize-handle::after{
+  background: color-mix(in oklab, var(--accent,#4ea1ff) 55%, transparent);
 }
 
-/* Details rows align with header grid */
+/* ----- INTERACTIVE PLANE (rows + marquee) lives BELOW the header ----- */
+/* Rows (unchanged, just here for context) */
+.details-grid{ display: grid; gap: var(--space-xs); }
 .details-grid .row{
   display:grid;
   grid-template-columns: var(--cols);
   gap: var(--gap);
   align-items:center;
-
   border:1px solid var(--items-border);
   background: var(--items-bg);
   border-radius: var(--local-radius);
@@ -1436,10 +1461,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', measureScrollbarWidth
 .td-mod{ display:flex; justify-content:flex-end; gap:var(--space-sm); }
 
 /* Details icon size (scoped!) */
-.details-grid .row > .td + .td{
-  border-left: 1px solid var(--items-col-sep);
-  padding-left: var(--space-xs);
-}
+.details-grid .row > .td + .td{ border-left: 1px solid var(--items-col-sep); padding-left: var(--space-xs); }
 
 /* icon sizing scoped to details */
 .details-grid .td-name .icon{
