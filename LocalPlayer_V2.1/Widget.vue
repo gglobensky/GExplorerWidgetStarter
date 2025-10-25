@@ -12,7 +12,7 @@ import {
   extractGexPayload, 
   hasGexPayload, 
   authorizeFileRefs,
-  fileRefsToFiles 
+  FileRefData 
 } from 'gexplorer/widgets'
 
 const props = defineProps<{
