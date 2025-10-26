@@ -8,7 +8,7 @@ import { fileRefsToPlaylistItems  } from '/src/widgets/dnd/utils'
 import { useKeyboardNav } from './useKeyboardNav'
 import CompactLayout from './CompactLayout.vue'
 import ExpandedLayout from './ExpandedLayout.vue'
-import { ensureConsent } from '/src/consent/service'
+
 import { 
   extractGexPayload, 
   hasGexPayload, 

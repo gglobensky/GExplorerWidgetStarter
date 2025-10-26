@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from '/runtime/vue.js'
 import { useDrivesStore } from '/src/stores/drives'
+import { fsDriveStats } from '/src/widgets/fs' 
 
 type HostAction = { type: 'nav'; to: string }
 
@@ -65,17 +66,16 @@ const S = computed(() => sizeTokens(cfg.value.itemSize))
 
 // Load drive stats
 async function refreshStats() {
-  const { send } = await import('/src/bridge/ipc.ts')
   const roots = (ds.drives || [])
     .map(d => d.Root || d.root || d.Name || d.name)
     .filter(Boolean)
-  
+
   if (!roots.length) return
-  
+
   try {
-    const resp = await send('fs:driveStats', { roots })
-    const list = resp?.payload?.stats || resp?.stats || []
-    const m = new Map()
+    const list = await fsDriveStats(roots)
+    // /src/bridge/ipc.fsDriveStats returns { root, total, free, used, ... }
+    const m = new Map<string, any>()
     for (const s of list) m.set(s.root, s)
     stats.value = m
   } catch (err) {

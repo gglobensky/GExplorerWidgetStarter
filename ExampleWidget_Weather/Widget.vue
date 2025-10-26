@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, computed } from '/runtime/vue.js'
-import { networkFetch } from '/src/bridge/network.ts'
+import { networkFetch } from '/src/widgets/net'
 
 const props = defineProps<{
+  sourceId: string
   config?: { data?: any; view?: any }
   theme?: Record<string, string>
   placement?: {  // ← NEW
@@ -32,8 +33,8 @@ async function fetchWeather() {
   try {
     const location = props.config?.data?.location || 'TOP/31,80'
     const url = `https://api.weather.gov/gridpoints/${location}/forecast`
+    const response = await networkFetch('weather', props.sourceId, url) // widgetType, widgetId
     
-    const response = await networkFetch('weather', 'weather', url)
     const data = await response.json()
     
     if (data.properties && data.properties.periods) {
