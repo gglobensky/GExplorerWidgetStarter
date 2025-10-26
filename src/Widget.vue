@@ -242,10 +242,9 @@ const driver = createMarqueeDriver(
   },
   {
     rectChanged: (r) => {
-      // ADD: map to host space so the visual aligns with the cursor
       if (r) {
-        const { ox, oy } = hostRectsOffset();
-        marqueeRect.value = { x: r.x + ox, y: r.y + oy, w: r.w, h: r.h };
+        const st = detailsScrollEl.value?.scrollTop ?? 0; // current scrollTop of .details-scroll
+        marqueeRect.value = { x: r.x, y: r.y + st, w: r.w, h: r.h };
         squelchNextPlaneClick = (r.w > 0 || r.h > 0);
       } else {
         marqueeRect.value = null;
@@ -461,6 +460,21 @@ function onSurfacePointerDown(ev: PointerEvent) {
   ev.preventDefault();
 }
 
+function isInsideScrollRect(cx: number, cy: number) {
+  const sc = detailsScrollEl.value;
+  if (!sc) return false;
+  const r = sc.getBoundingClientRect();
+  return cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom;
+}
+
+function isOverSelectedRowAtPoint(cx: number, cy: number) {
+  const el = document.elementFromPoint(cx, cy) as HTMLElement | null;
+  const row = el?.closest('.row[data-path]') as HTMLElement | null;
+  if (!row) return false;
+  const id = row.dataset.path!;
+  return selected.value.has(id);
+}
+
 function onPlaneScroll() {
   if (!marqueeActive.value) return;
   const sc = detailsScrollEl.value!;
@@ -477,9 +491,29 @@ function onSurfacePointerMove(ev: PointerEvent) {
 }
 
 function onSurfacePointerUp(ev: PointerEvent) {
+  const wasMarquee = marqueeActive.value; // snapshot before driver clears it
+
+  if (wasMarquee) {
+    const sc = detailsScrollEl.value!;
+    const dy = sc.scrollTop - lastScrollTopForDrag;
+    if (dy) {
+      driver.adjustForScroll(dy);
+      lastScrollTopForDrag = sc.scrollTop;
+      driver.recomputeNow('plane:flush-before-up'); // optional
+    }
+  }
+
   driver.pointerUp(ev);
   window.removeEventListener('pointerup', onSurfacePointerUp);
-  // click-to-clear squelch is handled by rectChanged when a non-zero rect was drawn
+
+  // Only treat as a "click" if no marquee was shown
+  if (!wasMarquee) {
+    const inside = isInsideScrollRect(ev.clientX, ev.clientY);
+    const overSelected = isOverSelectedRowAtPoint(ev.clientX, ev.clientY);
+    if (inside && !overSelected) {
+      engine.replaceSelection([], { reason: 'plane:click-up-outside' });
+    }
+  }
 }
 
 function onSurfaceClick(ev: MouseEvent) {
@@ -1016,18 +1050,19 @@ onBeforeUnmount(() => {
             </div>
             
           </div>
+          
+          <div
+            v-if="marqueeRect"
+            class="marquee"
+            :style="{
+              left:  marqueeRect.x + 'px',
+              top:   marqueeRect.y + 'px',
+              width: marqueeRect.w + 'px',
+              height: marqueeRect.h + 'px'
+            }"
+          />
         </div>
         
-            <div
-              v-if="marqueeRect"
-              class="marquee"
-              :style="{
-                left:  marqueeRect.x + 'px',
-                top:   marqueeRect.y + 'px',
-                width: marqueeRect.w + 'px',
-                height: marqueeRect.h + 'px'
-              }"
-            />
       </div>
 
       <!-- LIST VIEW -->
