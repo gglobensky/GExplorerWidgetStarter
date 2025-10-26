@@ -3,7 +3,8 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { usePlayerState } from './usePlayerState'
 import { usePlaylist, INPUT_ACCEPT } from './usePlaylist'
 import { useMarquee } from './useMarquee'
-import { useDnD } from './useDnD'
+import { useDnD  } from './useDnD'
+import { fileRefsToPlaylistItems  } from '/src/widgets/dnd/utils'
 import { useKeyboardNav } from './useKeyboardNav'
 import CompactLayout from './CompactLayout.vue'
 import ExpandedLayout from './ExpandedLayout.vue'
@@ -45,6 +46,13 @@ const onMediaError = (e: Event) => {
   })
 }
 
+type Track = {
+  id: string
+  url: string
+  name: string
+  type?: string
+}
+
 const expandedLayoutRef = ref<InstanceType<typeof ExpandedLayout> | null>(null)
 
 // ===== PLAYER STATE =====
@@ -69,6 +77,29 @@ function commonDir(paths: string[]) {
   return shared.endsWith(':') ? shared + '/' : shared || '/'
 }
 
+// Convert file-refs → streaming playlist items (gex://) → Tracks
+async function refsToTracks(
+  refs: FileRefData[],
+  receiverWidgetType: string,
+  receiverWidgetId: string
+): Promise<Track[]> {
+  const items = await fileRefsToPlaylistItems(refs, receiverWidgetType, receiverWidgetId)
+  return items.map(it => ({
+    id: it.id || it.src,       // stable identity for DnD + selection
+    url: it.src,               // what the player actually plays
+    name: it.name || it.src.split(/[\\/]/).pop() || 'track',
+    type: it.type
+  }))
+}
+
+// Push tracks into queue and sync the underlying playlists engine
+async function appendTracks(tracks: Track[]) {
+  if (!tracks.length) return
+  // append
+  state.queue.value = state.queue.value.concat(tracks)
+  // reflect the queue → playlists (keeps current if playing)
+  state.playlists.setItems(state.sel, state.toPlaylistItems(), { keepCurrent: true })
+}
 
 // rAF + idle-gated width pipeline ------------------------------------------
 let pendingWidth: number | null = null
@@ -371,6 +402,7 @@ function prevent(e: Event) { e.preventDefault(); e.stopPropagation() }
 function onDragEnter(e: DragEvent) { prevent(e); draggingOver.value = true }
 function onDragOver(e: DragEvent) { prevent(e) }
 function onDragLeave(e: DragEvent) { prevent(e); draggingOver.value = false }
+
 async function onDrop(e: DragEvent) {
   prevent(e)
   draggingOver.value = false
@@ -379,28 +411,30 @@ async function onDrop(e: DragEvent) {
     const payload = extractGexPayload(e)
     if (!payload) return
 
-    if (payload.type === 'gex/file-refs') {
+  if (payload.type === 'gex/file-refs') {
       // 1) Authorize THE PLAYER (receiver)
       const auth = await authorizeFileRefs(
-        'local-player',       // <- the player's widgetType (must exist in registry)
-        props.sourceId,       // <- the player's widgetId
+        'local-player',            // receiver widgetType
+        props.sourceId,            // receiver widgetId
         payload,
-        { requiredCaps: ['Read'] }
+        { requiredCaps: ['Read'] } // Metadata is allowed by backend; Read is sufficient here
       )
-      if (!auth.ok) {
-        // show your snackbar etc.
-        return
-      }
+      if (!auth.ok) return
 
-      // 2) Convert refs to File objects AS THE PLAYER
-      const files = await fileRefsToFiles(
-        payload.data,
-        'local-player',       // <- receiver type (player)
-        props.sourceId        // <- receiver id
+      // 2) Convert refs → gex:// URLs → Tracks (no blobs)
+      const tracks = await refsToTracks(
+        payload.data as FileRefData[],
+        'local-player',
+        props.sourceId
       )
 
-      if (files.length) {
-        await playlist.addFiles(files)
+      // 3) Append to queue and sync playlists
+      await appendTracks(tracks)
+
+      // 4) Auto-start if player was empty
+      if (state.queue.value.length === tracks.length && tracks.length) {
+        // was previously empty; play first track
+        await play(0)
       }
       return
     }
@@ -415,7 +449,9 @@ async function onDrop(e: DragEvent) {
 // ===== MEDIA EVENTS =====
 const onMediaPlay = () => { state.isPlaying.value = true }
 const onMediaPause = () => { state.isPlaying.value = false }
-const onTimeUpdate = () => { state.currentTime.value = state.music.currentTime || 0 }
+const onTimeUpdate = async () => {
+  state.currentTime.value = state.music.currentTime || 0
+}
 
 const onLoadedMeta = (e: Event) => {
   const t = e.target as HTMLMediaElement | null

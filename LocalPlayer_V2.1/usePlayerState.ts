@@ -1,6 +1,8 @@
 // usePlayerState.ts - Core player state and audio rack integration
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useAudio, createLifecycle } from 'gexplorer/widgets'
+import { renewStreamForSource  } from '/src/widgets/dnd/utils'
+import { fsMintStreamHttp } from '/src/bridge/ipc'
 export type Track = {
     id: string
     name: string
@@ -95,4 +97,12 @@ export function usePlayerState(sourceId: string) {
         // Helpers
         toPlaylistItems
     }
+
+    onMounted(() => 
+        {
+            const audio = useAudio()
+            audio.setRenewProvider(({ ownerId, sourcePath, mimeHint }) =>
+                fsMintStreamHttp(sourcePath, 'local-player', ownerId, mimeHint)
+        )
+    })
 }

@@ -1,620 +1,1360 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
-import { usePlayerState } from './usePlayerState'
-import { usePlaylist, INPUT_ACCEPT } from './usePlaylist'
-import { useMarquee } from './useMarquee'
-import { useDnD  } from './useDnD'
-import { fileRefsToPlaylistItems  } from '/src/widgets/dnd/utils'
-import { useKeyboardNav } from './useKeyboardNav'
-import CompactLayout from './CompactLayout.vue'
-import ExpandedLayout from './ExpandedLayout.vue'
+/* -----------------------------------------------
+   Imports
+------------------------------------------------ */
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from '/runtime/vue.js'
+import { fsListDir, fsValidate, fsListDirWithAuth, shortcutsProbe } from '/src/bridge/ipc.ts'
+import { loadIconPack, iconFor, ensureIconsFor } from '/src/icons/index.ts'
 import { ensureConsent } from '/src/consent/service'
-import { 
-  extractGexPayload, 
-  hasGexPayload, 
-  authorizeFileRefs,
-  FileRefData 
-} from 'gexplorer/widgets'
+import { createSelectionEngine, type ItemsAdapter, type Mods } from '/src/widgets/selection/selection-engine'
+import { createMarqueeDriver, type GeometryAdapter, type ScrollerAdapter, type Rect } from '/src/widgets/selection/marquee-driver';
+import { createGexPayload, setGexPayload, createDragPreview } from 'gexplorer/widgets'
+
+/* -----------------------------------------------
+   Types
+------------------------------------------------ */
+type HostAction =
+  | { type: 'nav'; to: string; replace?: boolean; sourceId?: string }
+  | { type: 'open'; path: string }
+
+  
+type ResCol = keyof DetailWeights
 
 const props = defineProps<{
-  config?: Record<string, any>
+  sourceId: string
+  config?: { data?: any; view?: any }
+  theme?: Record<string, string>
+  runAction?: (a: HostAction) => void
   placement?: {
     context: 'grid' | 'sidebar' | 'embedded'
-    layout: string
-    size?: any
-    resizing: boolean
-    resizePhase?: 'active' | 'idle'
+    size: { cols?: number; rows?: number; width?: number; height?: number }
   }
-  runAction?: (a: any) => void
-  context?: 'sidebar' | 'grid'
-  variant?: 'compact' | 'expanded' | 'collapsed'
-  width?: number
-  height?: number
-  theme?: string
   editMode?: boolean
-  sourceId: string
 }>()
 
-const onMediaError = (e: Event) => {
-  const t = e.target as HTMLMediaElement
-  console.error('[Widget] Media error:', {
-    src: t.currentSrc || t.src,
-    error: t.error?.code,
-    errorMessage: t.error?.message,
-    currentTrack: state.current.value?.name,
-    currentIndex: state.currentIndex.value
+const emit = defineEmits<{ (e: 'updateConfig', config: any): void }>()
+
+
+type SortKey = 'name' | 'kind' | 'ext' | 'size' | 'modified'
+type SortDir = 'asc' | 'desc'
+
+const sortKey = ref<SortKey>((props.config?.view?.sortKey as SortKey) || 'name')
+const sortDir = ref<SortDir>((props.config?.view?.sortDir as SortDir) || 'asc')
+
+const iconsTick = ref(0)
+
+const NAME_MIN = 140
+const EXT_MIN  = 70
+const SIZE_MIN = 90
+// put this near your other constants
+const MIN_MOD_PX = 150; // min width for "Modified" col
+
+/* -----------------------------------------------
+   Selection marquee with rAF autoscroll
+   Rules:
+   - Do NOT scroll while pointer is inside the scroll rect.
+   - When pointer is outside, scroll speed grows with distance
+     (quadratic), capped at MAX_SPEED.
+   - Speed tuned ~1.75× previous value.
+   - Click on empty space (no drag) clears selection.
+------------------------------------------------ */
+const scrollEl = ref<HTMLElement | null>(null)
+
+// tie driver to the engine you already created
+const marqueeRect = ref<Rect | null>(null);
+
+let squelchNextPlaneClick = false;
+let lastScrollTopForDrag = 0;
+
+const selected = ref<Set<string>>(new Set());   // now driven by engine
+const focusIndex = ref<number | null>(null);
+
+const headerH = ref(36)
+const detailsScrollEl = ref<HTMLElement | null>(null)
+const headerEl = ref<HTMLElement|null>(null)
+const padEl    = ref<HTMLElement|null>(null)
+const sbw = ref(0)
+
+const selectedMap = computed<Record<string, true>>(() => {
+  const m: Record<string, true> = {};
+  for (const id of selected.value) m[id] = true;
+  return m;
+});
+
+const marqueeActive = computed(() => {
+  const r = marqueeRect.value;
+  return !!r && (r.w > 0 || r.h > 0);
+});
+
+const detailsRootEl = ref<HTMLElement|null>(null)
+const loading = ref(false)
+const error = ref('')
+
+const S = computed(() => sizeTokens(merged.value.itemSize))
+
+const sortedEntries = computed(() => {
+  const data = entries.value.slice()
+  const k = sortKey.value
+  const dir = sortDir.value === 'asc' ? 1 : -1
+  const cmp = (a: string, b: string) =>
+    String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' })
+
+  data.sort((A, B) => {
+    if (k === 'name')     return cmp(A?.Name || '', B?.Name || '') * dir
+    if (k === 'ext')      { const c = cmp(A?.Ext || '', B?.Ext || ''); return (c || cmp(A?.Name || '', B?.Name || '')) * dir }
+    if (k === 'size')     { const sa = (A?.Size ?? 0), sb = (B?.Size ?? 0); const c = sa === sb ? 0 : (sa < sb ? -1 : 1); return (c || cmp(A?.Name || '', B?.Name || '')) * dir }
+    if (k === 'modified') { const ta = A?.ModifiedAt ? +new Date(A.ModifiedAt) : 0; const tb = B?.ModifiedAt ? +new Date(B.ModifiedAt) : 0; const c = ta === tb ? 0 : (ta < tb ? -1 : 1); return (c || cmp(A?.Name || '', B?.Name || '')) * dir }
+    return 0
   })
+  return data
+})
+
+const cfg = computed(() => ({
+  data: props.config?.data ?? {},
+  view: props.config?.view ?? {},
+}))
+
+const autoColumns = computed(() => {
+  if (props.placement?.context === 'sidebar') return 1
+  const gridCols = props.placement?.size?.cols || 4
+  if (gridCols <= 2) return 1
+  if (gridCols <= 3) return 2
+  if (gridCols <= 5) return 3
+  if (gridCols <= 8) return 4
+  return 5
+})
+
+const autoItemSize = computed(() => {
+  const gridCols = props.placement?.size?.cols || 4
+  if (gridCols <= 3) return 'sm'
+  if (gridCols <= 6) return 'md'
+  return 'lg'
+})
+
+const merged = computed(() => ({
+  rpath: String(cfg.value.data.rpath ?? ''),
+  layout: String(cfg.value.view.layout ?? 'list'),
+  columns: cfg.value.view.columns || autoColumns.value,
+  itemSize: cfg.value.view.itemSize || autoItemSize.value,
+  showHidden: !!(cfg.value.view.showHidden ?? false),
+  navigateMode: String(cfg.value.view.navigateMode ?? 'internal').toLowerCase(),
+}))
+
+const cwd = ref<string>('')
+
+const entries = ref<Array<{
+  Name: string; FullPath: string; Kind?: string; Ext?: string; Size?: number; ModifiedAt?: number; IconKey?: string
+}>>([])
+
+// ----- Resizer drag -----
+const isResizing = ref(false)
+
+let mDownX = 0, mDownY = 0;
+let mDownMods: Mods | null = null;
+
+const MARQUEE_START_PX = 6; // same as your startThreshold
+function distExceedsThreshold(x: number, y: number) {
+  const dx = x - mDownX, dy = y - mDownY;
+  return (dx*dx + dy*dy) >= (MARQUEE_START_PX * MARQUEE_START_PX);
 }
 
-type Track = {
-  id: string
-  url: string
-  name: string
-  type?: string
+// Adapters
+const geo: GeometryAdapter = {
+  // Viewport rect in scroller-viewport space
+  contentRect() {
+    const sc = detailsScrollEl.value!;
+    return { x: 0, y: 0, w: sc.clientWidth, h: sc.clientHeight };
+  },
+
+  // Item rects in the same scroller-viewport space
+  itemRects() {
+    const sc = detailsScrollEl.value!;
+    const scR = sc.getBoundingClientRect();
+    const root = padEl.value ?? sc;
+    const rows = root.querySelectorAll<HTMLElement>('.row[data-path]');
+    const arr: Array<{ id: string; rect: Rect }> = [];
+    rows.forEach(row => {
+      const rr = row.getBoundingClientRect();
+      arr.push({
+        id: row.dataset.path!,
+        rect: {
+          x: rr.left - scR.left,
+          y: rr.top  - scR.top,
+          w: rr.width,
+          h: rr.height,
+        },
+      });
+    });
+    return arr;
+  },
+
+  // Pointer in the same scroller-viewport space
+  pointFromClient(clientX, clientY) {
+    const sc = detailsScrollEl.value!;
+    const scR = sc.getBoundingClientRect();
+    return { x: clientX - scR.left, y: clientY - scR.top };
+  },
+};
+
+const scroller: ScrollerAdapter = {
+  scrollTop() { return (detailsScrollEl.value ?? scrollEl.value)!.scrollTop; },
+  maxScrollTop() {
+    const el = (detailsScrollEl.value ?? scrollEl.value)!;
+    return Math.max(0, el.scrollHeight - el.clientHeight);
+  },
+  scrollBy(dy) {
+    // Only allow when the pointer is truly outside the viewport,
+    // measured in the same coordinate space (pad-space) as the driver.
+    const outside = !pointerInsideViewportFromClient(lastClientX, lastClientY);
+    if (!outside) return;
+    (detailsScrollEl.value ?? scrollEl.value)!.scrollTop += dy;
+  },
+};
+
+let lastClientX = 0, lastClientY = 0;
+
+// Reuse the adapter's math so we're 100% consistent with pad-space
+function pointerInsideViewportFromClient(cx: number, cy: number) {
+  const cr = geo.contentRect();
+  const p  = geo.pointFromClient(cx, cy);
+  return p.x >= cr.x && p.x <= cr.x + cr.w && p.y >= cr.y && p.y <= cr.y + cr.h;
 }
 
-const expandedLayoutRef = ref<InstanceType<typeof ExpandedLayout> | null>(null)
+function hostRectsOffset() {
+  const sc  = detailsScrollEl.value;
+  // If you render <div class="marquee"> inside .details-root, host = detailsRootEl;
+  // If you move it under .items-scroll-container instead, host = scrollEl.
+  const host = (detailsRootEl.value ?? scrollEl.value) as HTMLElement | null;
 
-// ===== PLAYER STATE =====
-const state = usePlayerState(props.sourceId)
+  if (!sc || !host) return { ox: 0, oy: 0 };
 
-// ===== LAYOUT =====
-const widgetRootEl = ref<HTMLElement | null>(null)
-const containerWidth = ref(0)
+  const scR   = sc.getBoundingClientRect();
+  const hostR = host.getBoundingClientRect();
+  return { ox: scR.left - hostR.left, oy: scR.top - hostR.top };
+}
 
-
-// utility: common parent dir
-function commonDir(paths: string[]) {
-  const parts = paths.map(p => p.replace(/\\/g,'/').split('/'))
-  let i = 0
-  while (true) {
-    const seg = parts[0][i]
-    if (!seg) break
-    if (!parts.every(a => a[i] === seg)) break
-    i++
+const driver = createMarqueeDriver(
+  {
+    enabled: true,
+    startThresholdPx: 6,
+    fps: 30,                   // ← your SELECTION_FPS
+    guardTopPx: 0,             // set to header height if needed
+    autoscroll: { enabled: true, baseSpeed: 2400, speedMultiplier: 1.75, maxDistancePx: 240 },
+    combine: 'auto',           // Shift→add, Ctrl/Cmd→toggle, else replace
+    policy: /Mac/i.test(navigator.platform) ? 'mac' : 'windows',
+  },
+  geo,
+  scroller,
+  {
+    replaceSelection: (...args) => engine.replaceSelection(...args as any),
+    getSelected: () => engine.getSelected(),
+  },
+  {
+    rectChanged: (r) => {
+      // ADD: map to host space so the visual aligns with the cursor
+      if (r) {
+        const { ox, oy } = hostRectsOffset();
+        marqueeRect.value = { x: r.x + ox, y: r.y + oy, w: r.w, h: r.h };
+        squelchNextPlaneClick = (r.w > 0 || r.h > 0);
+      } else {
+        marqueeRect.value = null;
+      }
+    },
+    log: (e) => console.debug('[marquee]', e),
   }
-  const shared = parts[0].slice(0, i).join('/')
-  return shared.endsWith(':') ? shared + '/' : shared || '/'
+);
+
+function sizeTokens(Size?: string) {
+  const s = (Size || 'md').toLowerCase()
+  if (s === 'sm') return { padY: 8, padX: 10, radius: 8, gap: 6, font: 0.95, title: 600 }
+  if (s === 'lg') return { padY: 14, padX: 14, radius: 12, gap: 10, font: 1.05, title: 650 }
+  return { padY: 10, padX: 12, radius: 10, gap: 8, font: 1.0, title: 600 }
 }
 
-// Convert file-refs → streaming playlist items (gex://) → Tracks
-async function refsToTracks(
-  refs: FileRefData[],
-  receiverWidgetType: string,
-  receiverWidgetId: string
-): Promise<Track[]> {
-  const items = await fileRefsToPlaylistItems(refs, receiverWidgetType, receiverWidgetId)
-  return items.map(it => ({
-    id: it.id || it.src,       // stable identity for DnD + selection
-    url: it.src,               // what the player actually plays
-    name: it.name || it.src.split(/[\\/]/).pop() || 'track',
-    type: it.type
-  }))
+// helper to package modifiers
+function modsFromEvent(e: PointerEvent | MouseEvent | KeyboardEvent) {
+  return { ctrl: e.ctrlKey || false, meta: (e as any).metaKey || false, shift: e.shiftKey || false, alt: e.altKey || false };
+}
+// Engine
+const itemsAdapter: ItemsAdapter = {
+  orderedIds() {
+    // strictly order by the current DOM rows; no layout needed
+    const root = padEl.value ?? detailsScrollEl.value ?? scrollEl.value;
+    if (!root) return [];
+    const rows = root.querySelectorAll<HTMLElement>('.row[data-path]');
+    return Array.from(rows).map(r => r.dataset.path!).filter(Boolean);
+  }
+};
+
+const engine = createSelectionEngine(
+  {
+    dragThresholdPx: 6,
+    policy: /Mac/i.test(navigator.platform) ? 'mac' : 'windows'
+  },
+  itemsAdapter,
+  {
+    selectionChanged: (set) => { selected.value = new Set(set); },
+    focusChanged: (i) => { focusIndex.value = i; },
+    //log: (e) => console.debug('[sel]', e.reason, e.selected, e),
+  }
+);
+
+watch(focusIndex, (idx) => {
+  if (idx != null) scrollRowIntoView(idx);
+});
+
+function planeEl(): HTMLElement {
+  return (merged.value.layout === 'details' && detailsScrollEl.value)
+    ? detailsScrollEl.value
+    : (scrollEl.value as HTMLElement)
 }
 
-// Push tracks into queue and sync the underlying playlists engine
-async function appendTracks(tracks: Track[]) {
-  if (!tracks.length) return
-  // append
-  state.queue.value = state.queue.value.concat(tracks)
-  // reflect the queue → playlists (keeps current if playing)
-  state.playlists.setItems(state.sel, state.toPlaylistItems(), { keepCurrent: true })
+// --- Column widths now include NAME so each divider moves the column under it ---
+type DetailWeights = { name: number; ext: number; size: number; mod: number }
+const defaultPx = { name: 420, ext: 110, size: 130, mod: 220 }
+
+// Normalize any numbers to a nice total (100) for persistence/readability.
+function normalizeWeights<T extends Record<string, number>>(o: T): DetailWeights {
+  const sum = Math.max(
+    1,
+    (o.name ?? 0) + (o.ext ?? 0) + (o.size ?? 0) + (o.mod ?? 0)
+  )
+  const scale = 100 / sum
+  return {
+    name: (o.name ?? 0) * scale,
+    ext:  (o.ext  ?? 0) * scale,
+    size: (o.size ?? 0) * scale,
+    mod:  (o.mod  ?? 0) * scale,
+  }
 }
 
-// rAF + idle-gated width pipeline ------------------------------------------
-let pendingWidth: number | null = null
-let rafForWidth = 0
+// One-time migration: prefer saved weights; else derive from old px (detailCols); else defaults.
+function initialWeights(): DetailWeights {
+  const saved = props.config?.view?.detailWeights as Partial<DetailWeights> | undefined
+  if (saved && typeof saved.name === 'number') return normalizeWeights(saved as any)
 
-function commitWidth(w: number) {
-  if (Math.abs(w - containerWidth.value) < 1) return // 1px hysteresis
-  containerWidth.value = w | 0
+  const oldPx = props.config?.view?.detailCols as Partial<Record<keyof DetailWeights, number>> | undefined
+  if (oldPx && typeof oldPx.name === 'number') return normalizeWeights(oldPx as any)
+
+  return normalizeWeights(defaultPx)
 }
 
-// replace your scheduleWidth with this:
-function scheduleWidth(w: number, src: 'host' | 'ro' = 'ro') {
-  pendingWidth = w | 0
+// Our reactive weights
+const colW = ref<DetailWeights>(initialWeights())
 
-  // Defer RO commits while dragging, but allow host commits live.
-  if (props.placement?.resizePhase === 'active' && src === 'ro') return
+// computed CSS value for details grid
+const detailsCols = computed(() =>
+  `minmax(${NAME_MIN}px, ${colW.value.name}fr) ` +
+  `minmax(${EXT_MIN }px, ${colW.value.ext }fr) ` +
+  `minmax(${SIZE_MIN}px, ${colW.value.size}fr) ` +
+  `minmax(${MIN_MOD_PX}px, ${colW.value.mod }fr)`
+)
 
-  if (rafForWidth) return
-  rafForWidth = requestAnimationFrame(() => {
-    rafForWidth = 0
-    if (pendingWidth != null) {
-      commitWidth(pendingWidth)
-      pendingWidth = null
-    }
+const anchorIndex = ref<number | null>(null)   // selection anchor for Shift-range
+
+// --- Focus management: keep focus on the scroller so rows don't show the white ring
+function refocusScrollerAfterEvent(ev?: Event) {
+  const t = (ev?.currentTarget as HTMLElement | null)
+  // blur the clicked button first (prevents UA ring from sticking)
+  t?.blur?.()
+  // then return focus to the scroll area on the next frame
+  requestAnimationFrame(() => {
+    scrollEl.value?.focus?.({ preventScroll: true })
   })
 }
 
-function seedMeasureNow() {
-  const el = widgetRootEl.value
+function measureScrollbarWidth() {
+  const el = detailsScrollEl.value;
+  const host = detailsRootEl.value;
+  if (!el || !host) return;
+
+  // What the browser is actually reserving for the end gutter / scrollbar.
+  const raw = Math.max(0, el.offsetWidth - el.clientWidth);
+
+  // If we’re basically at the minimum possible grid width, don’t add extra header padding.
+  // This avoids the “compensates twice when there’s no room left” look.
+  const minSum = NAME_MIN + EXT_MIN + SIZE_MIN + MIN_MOD_PX;     // track mins
+  const gap =  (parseFloat(getComputedStyle(host).getPropertyValue('--space-xs')) || 6) * 3; // 3 gaps
+  const padX = (parseFloat(getComputedStyle(host).getPropertyValue('--space-sm')) || 8) * 2; // left+right
+  const contentW = contentGridWidth();                            // your helper (header/rows width)
+  const atMinish = contentW <= (minSum + gap + padX + 1);
+
+  const width = atMinish ? 0 : raw;
+  sbw.value = width;
+  host.style.setProperty('--sbw', `${width}px`);
+}
+
+function selectOnly(idx: number) {
+  const path = sortedEntries.value[idx]?.FullPath
+  if (!path) return
+  selected.value = new Set([path])
+  focusIndex.value = idx
+  anchorIndex.value = idx
+}
+
+function contentGridWidth(): number {
+  const hdrInner = headerEl.value?.querySelector<HTMLElement>('.details-header-inner')
+  if (hdrInner) return hdrInner.clientWidth
+  const pad = padEl.value
+  if (pad) {
+    const cs = getComputedStyle(pad)
+    const pl = parseFloat(cs.paddingLeft) || 0
+    const pr = parseFloat(cs.paddingRight) || 0
+    return pad.clientWidth - pl - pr
+  }
+  const el = planeEl()
+  return el ? el.clientWidth : 0
+}
+
+function onRowDblClick(e: { FullPath: string }, idx: number, ev?: MouseEvent) {
+  selectOnly(idx)
+  refocusScrollerAfterEvent(ev)
+  openEntry(e.FullPath)
+}
+
+// =========================
+// Keyboard navigation
+// =========================
+function scrollRowIntoView(idx: number) {
+  const el = planeEl()
   if (!el) return
-  // Only used once to seed; after that we rely on RO’s contentRect.
-  const w = Math.round(el.getBoundingClientRect().width || 0)
-  if (w) scheduleWidth(w)
+  const rows = el.querySelectorAll<HTMLElement>('.row[data-path]')
+  const row = rows[idx]
+  if (!row) return
+
+  const cr = el.getBoundingClientRect()
+  const rr = row.getBoundingClientRect()
+
+  // Header lives inside the same scroller, so sticky top is 0 here.
+  const stickyTopPx = 0
+
+  if (rr.top < cr.top + stickyTopPx) el.scrollTop -= (cr.top + stickyTopPx - rr.top)
+  else if (rr.bottom > cr.bottom)    el.scrollTop += (rr.bottom - cr.bottom)
 }
 
-// When host says "idle", flush any pending width
-watch(() => props.placement?.resizePhase, (phase) => {
-  if (phase === 'idle' && pendingWidth != null) {
-    commitWidth(pendingWidth)
-    pendingWidth = null
-  }
-})
-// ---------------------------------------------------------------------------
+function onKeyDown(ev: KeyboardEvent) {
+  if (!sortedEntries.value.length) return
+  const key =
+    ev.key === 'ArrowDown' ? 'Down' :
+    ev.key === 'ArrowUp'   ? 'Up'   :
+    ev.key === 'Home'      ? 'Home' :
+    ev.key === 'End'       ? 'End'  : null
+  if (!key) return
 
-const hostContext = computed<'grid' | 'sidebar' | 'embedded'>(() =>
-  props.placement?.context ?? props.context ?? 'sidebar'
-)
+  ev.preventDefault()
+  ev.stopPropagation()
+  engine.kbd(key as any, modsFromEvent(ev))
+}
 
-const hostLayout = computed<string>(() =>
-  props.placement?.layout ?? props.variant ?? 'expanded'
-)
+function isOnScrollbar(el: HTMLElement, ev: PointerEvent) {
+  const r = el.getBoundingClientRect();
+  const sb = sbw.value || 0;             // you already measure this
+  // treat the last sb px on the end as the scrollbar gutter
+  return ev.clientX >= (r.right - sb - 1);
+}
 
-// If the host reports its own size, coalesce that too.
-const hostWidth = computed(() => {
-  const p = props.placement?.size
-  return typeof p?.width === 'number' && p.width > 0
-    ? p.width
-    : typeof props.width === 'number' && props.width > 0
-      ? props.width
-      : 0
-})
-watch(hostWidth, (w) => {
-  if (w > 0) scheduleWidth(Math.round(w), 'host')   // ← live during drag
-})
-const layoutClass = computed(() => {
-  const w = containerWidth.value || hostWidth.value || 0
-  if (w <= 160) return 'micro'
-  if (w <= 260) return 'ultra'
-  if (w <= 320) return 'narrow'
-  if (w <= 400) return 'medium'
-  return 'wide'
-})
+function onSurfacePointerDown(ev: PointerEvent) {
+  if (merged.value.layout !== 'details' || ev.button !== 0) return;
+  const t = ev.target as HTMLElement | null;
+  const plane = detailsScrollEl.value!;
+  if (t?.closest('.row[data-path], [draggable="true"]')) return;
+  if (isOnScrollbar(plane, ev)) return;
 
-// Recompute once after layout switch (seed; RO will take over)
-watch(() => hostLayout.value, () => {
-  nextTick(() => {
-    if (hostLayout.value !== 'compact') seedMeasureNow()
-  })
-})
+  (ev.currentTarget as Element)?.setPointerCapture?.(ev.pointerId);
 
-// ===== DND =====
-const queueEl = ref<HTMLElement | null>(null)
-const showQueue = state.life.cell<boolean>('ui.showQueue', true)
-const dnd = useDnD(
-  state.queue,
-  state.currentIndex,
-  showQueue,
-  () => expandedLayoutRef.value?.queueEl || null,
-  state.toPlaylistItems,
-  state.playlists,
-  state.sel
-)
+  lastClientX = ev.clientX; lastClientY = ev.clientY;
+  lastScrollTopForDrag = detailsScrollEl.value!.scrollTop;  // add this
+  driver.pointerDown(ev, modsFromEvent(ev));
 
-// ===== PLAYLIST OPS =====
-const fileInput = ref<HTMLInputElement | null>(null)
-const playlist = usePlaylist(
-  state.queue,
-  state.currentIndex,
-  state.queueName,
-  state.isPlaying,
-  state.music,
-  state.playlists,
-  state.sel,
-  state.toPlaylistItems,
-  () => dnd.ensureDnD()
-)
+  window.addEventListener('pointerup', onSurfacePointerUp, { once: true });
+  ev.preventDefault();
+}
 
-// ===== KEYBOARD NAV =====
-const keyboard = useKeyboardNav(
-  state.queue,
-  state.selectedIndex,
-  state.hasTracks,
-  play
-)
-
-// ===== MARQUEE =====
-const marquee = useMarquee(
-  state.currentTitle,
-  layoutClass,
-  computed(() => props.placement?.resizePhase),
-  computed(() => props.config)
-)
-
-// Rack index → sync current/selected
-type RackIndexEvt = CustomEvent<{
-  listId: string
-  index?: number
-  item?: { id?: string; url?: string } | null
-}>
-const onRackIndex = (e: Event) => {
-  const d = (e as RackIndexEvt).detail
-  let real = typeof d.index === 'number' ? d.index : -1
-  if (real < 0 && d.item) {
-    const { id, url } = d.item
-    if (id) real = state.queue.value.findIndex(t => t.id === id)
-    if (real < 0 && url) real = state.queue.value.findIndex(t => t.url === url)
-  }
-  if (real >= 0) {
-    if (state.currentIndex.value !== real) state.currentIndex.value = real
-    if (state.selectedIndex.value !== real) state.selectedIndex.value = real
+function onPlaneScroll() {
+  if (!marqueeActive.value) return;
+  const sc = detailsScrollEl.value!;
+  const dy = sc.scrollTop - lastScrollTopForDrag;
+  if (dy) {
+    driver.adjustForScroll(dy);
+    lastScrollTopForDrag = sc.scrollTop;
   }
 }
 
-// ===== PLAYER CONTROLS =====
-async function play(index?: number) {
-  await state.prime()
-  state.isLoading.value = true
+function onSurfacePointerMove(ev: PointerEvent) {
+  lastClientX = ev.clientX; lastClientY = ev.clientY;   // keep coords
+  driver.pointerMove(ev);
+}
 
-  if (typeof index === 'number') {
-    if (index >= 0 && index < state.queue.value.length && state.queue.value[index]?.url) {
-      const idx = await state.playlists.playIndex(state.sel, index, state.music)
-      if (idx >= 0) {
-        state.currentIndex.value = idx
-        state.selectedIndex.value = idx
-        state.isPlaying.value = true
+function onSurfacePointerUp(ev: PointerEvent) {
+  driver.pointerUp(ev);
+  window.removeEventListener('pointerup', onSurfacePointerUp);
+  // click-to-clear squelch is handled by rectChanged when a non-zero rect was drawn
+}
+
+function onSurfaceClick(ev: MouseEvent) {
+  if (squelchNextPlaneClick) return;
+  const t = ev.target as HTMLElement | null;
+  if (!t?.closest('.row[data-path]')) {
+    engine.replaceSelection([], { reason: 'plane:clear' });
+  }
+}
+
+/* -----------------------------------------------
+   Data / sorting / UI (unchanged)
+------------------------------------------------ */
+void loadIconPack()
+
+function iconText(e: any) {
+  return iconFor({ kind: e?.Kind, ext: e?.Ext, iconKey: e?.IconKey }, 32)
+}
+function iconIsImg(e: any) {
+  const v = iconFor({ kind: e?.Kind, ext: e?.Ext, iconKey: e?.IconKey }, 32)
+  return typeof v === 'string' && v.startsWith('data:image/')
+}
+function iconSrc(e: any) {
+  return iconFor({ kind: e?.Kind, ext: e?.Ext, iconKey: e?.IconKey }, 32)
+}
+
+function sizeParts(bytes?: number | null): { num: string; unit: string } {
+  if (bytes == null || bytes < 0) return { num: '', unit: '' }
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+  let n = bytes
+  let i = 0
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++ }
+  const num = i === 0
+    ? Math.round(n).toString()
+    : (n < 10 ? n.toFixed(1) : Math.round(n).toString())
+  return { num, unit: units[i] }
+}
+
+const hour12Pref = new Intl.DateTimeFormat().resolvedOptions().hour12 ?? false
+const FMT_DATE = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' })
+const FMT_TIME = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: hour12Pref })
+function modParts(ms?: number | null): { date: string; time: string } {
+  if (ms == null || ms <= 0) return { date: '', time: '' }
+  const d = new Date(ms)
+  return { date: FMT_DATE.format(d), time: FMT_TIME.format(d) }
+}
+async function loadDir(path: string) {
+  if (!path) { entries.value = []; return }
+  loading.value = true
+  error.value = ''
+
+  try {
+    let res = await fsListDir(path)
+
+    if (!res?.ok) {
+      const raw = String(res?.error || '')
+      const msg = raw.toLowerCase()
+      const accessDenied =
+        msg.includes('access denied') ||
+        msg.includes('unauthorized') ||
+        msg.includes('e_access_denied') ||
+        /access.*denied/.test(msg) ||
+        /denied/.test(msg)
+
+      if (accessDenied) {
+        const granted = await ensureConsent('items', props.sourceId, path, ['Read', 'Metadata'], { afterDenied: true })
+        if (!granted) throw new Error('Permission not granted')
+
+        res = await fsListDirWithAuth('items', props.sourceId, path)
+        if (!res?.ok) throw new Error(res?.error || 'list failed after consent')
+      } else {
+        throw new Error(res?.error || 'list failed')
       }
     }
-    state.isLoading.value = false
-    return
-  }
 
-  if (state.currentIndex.value === -1) {
-    const first = state.queue.value.findIndex(t => !!t.url)
-    if (first >= 0) {
-      const idx = await state.playlists.playIndex(state.sel, first, state.music)
-      if (idx >= 0) {
-        state.currentIndex.value = idx
-        state.selectedIndex.value = idx
-        state.isPlaying.value = true
-      }
-      state.isLoading.value = false
+    let list = Array.isArray((res as any).entries) ? (res as any).entries : []
+    if (!merged.value.showHidden) list = list.filter((e: any) => !String(e?.Name || '').startsWith('.'))
+
+    entries.value = list.sort((a: any, b: any) =>
+      String(a?.Name ?? '').localeCompare(String(b?.Name ?? ''), undefined, { numeric: true, sensitivity: 'base' })
+    )
+
+    const lnks = entries.value
+      .filter(e => e?.Kind === 'link' && e?.Ext === '.lnk' && (!e.IconKey || !String(e.IconKey).startsWith('link:')))
+      .map(e => e.FullPath)
+
+    if (lnks.length) {
+      try {
+        const r = await shortcutsProbe(lnks)
+        const arr = (r?.results ?? []) as Array<{ path: string; IconKey: string }>
+        if (arr.length) {
+          const map = new Map(arr.map(x => [x.path, x.IconKey]))
+          for (const e of entries.value) {
+            const k = map.get(e.FullPath)
+            if (k) e.IconKey = k
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
+    const n = await ensureIconsFor(entries.value.map(e => ({ iconKey: e.IconKey })), 32)
+    if (n > 0) iconsTick.value++
+
+  } catch (e: any) {
+    error.value = String(e?.message ?? e ?? 'Error')
+    entries.value = []
+  } finally {
+    loading.value = false
+  }
+}
+
+async function openEntry(FullPath: string) {
+  if (!FullPath) return
+  try {
+    const v = await fsValidate(FullPath)
+    const isDir = !!v?.isDir
+    const preferTab =
+      merged.value.navigateMode === 'tab' ||
+      (merged.value.navigateMode !== 'internal' && typeof props.runAction === 'function')
+
+    if (isDir) {
+      if (preferTab) props.runAction?.({ type: 'nav', to: FullPath })
+      else { cwd.value = FullPath; await loadDir(cwd.value) }
       return
     }
+    props.runAction?.({ type: 'open', path: FullPath })
+  } catch (err) {
+    console.error('[items] openEntry failed:', err)
   }
-
-  try { await state.music.play(); state.isPlaying.value = true } catch { state.isPlaying.value = false }
-  setTimeout(() => { state.isLoading.value = false }, 300)
 }
 
-function pause() {
-  state.music.pause()
-  state.isPlaying.value = false
-}
+watch(
+  detailsScrollEl,
+  (el, _prev, onCleanup) => {
+    if (!el || !detailsRootEl.value) return
 
-function togglePlay() {
-  if (!state.hasTracks.value) return
-  state.isPlaying.value ? pause() : play()
-}
+    // Measure once, right now (post-flush so DOM exists)
+    measureScrollbarWidth()
 
-function next() {
-  state.playlists.next(state.sel, state.music).then((idx: number) => {
-    if (idx >= 0) {
-      state.currentIndex.value = idx
-      state.selectedIndex.value = idx
-    } else {
-      pause()
+    // Keep up to date if the scroller’s box changes
+    const ro = new ResizeObserver(() => measureScrollbarWidth())
+    ro.observe(el)
+    onCleanup(() => ro.disconnect())
+  },
+  { flush: 'post' }
+)
+
+// persist on change (optional)
+watch(colW, (w) => {
+  emit('updateConfig', {
+    ...props.config,
+    view: {
+      ...props.config?.view,
+      // Save the ratios going forward
+      detailWeights: { ...normalizeWeights(w) },
+      // (Optional) you can drop detailCols entirely once you no longer need backward compat
     }
   })
+}, { deep: true })
+
+watch(
+  () => merged.value.rpath,
+  (next) => { if (next && next !== cwd.value) { cwd.value = next; loadDir(next) } },
+  { immediate: true }
+)
+
+watch(
+  () => [props.config?.view?.sortKey, props.config?.view?.sortDir],
+  ([k, d]) => {
+    if (k && ['name', 'kind', 'ext', 'size', 'modified'].includes(k as string)) sortKey.value = k as SortKey
+    if (d && (d === 'asc' || d === 'desc')) sortDir.value = d
+  }
+)
+
+// Helper: which pair does this handle separate?
+function pairForHandle(col: ResCol): [ResCol, ResCol] {
+  if (col === 'name') return ['name', 'ext']
+  if (col === 'ext')  return ['ext',  'size']
+  if (col === 'size') return ['size', 'mod']
+  // 'mod' has no right-side handle
+  return ['mod', 'mod']
 }
 
-function prev() {
-  state.playlists.prev(state.sel, state.music).then((idx: number) => {
-    if (idx >= 0) {
-      state.currentIndex.value = idx
-      state.selectedIndex.value = idx
-    } else {
-      pause()
-    }
-  })
-}
-
-function seek(e: Event) {
-  if (!state.duration.value) return
-  const v = parseFloat((e.target as HTMLInputElement).value)
-  state.music.currentTime = v * state.duration.value
-}
-
-function adjustSpeed(delta: number) {
-  const newRate = Math.max(0.25, Math.min(3.0, state.playbackRate.value + delta))
-  state.playbackRate.value = newRate
-  state.music.playbackRate = newRate
-}
-
-function setVolume(v: number) {
-  const clamped = Math.min(1, Math.max(0, v))
-  state.volume.value = clamped
-  if (clamped > 0) state.lastNonZeroVolume.value = clamped
-  state.music.volume = clamped
-}
-
-function toggleMute() {
-  setVolume(state.volume.value > 0 ? 0 : state.lastNonZeroVolume.value || 0.5)
-}
-
-function volInput(v: number) {
-  setVolume(v)
-}
-
-function toggleShuffle() {
-  state.shuffle.value = !state.shuffle.value
-  state.playlists.setOptions(state.sel, { shuffle: state.shuffle.value })
-}
-
-function toggleRepeat() {
-  state.repeat.value = state.repeat.value === 'off' ? 'all' : state.repeat.value === 'all' ? 'one' : 'off'
-  state.playlists.setOptions(state.sel, { repeat: state.repeat.value })
-}
-
-function clickPick() {
-  fileInput.value?.click()
-}
-
-function toggleQueue() {
-  showQueue.value = !showQueue.value
-}
-
-// ===== QUEUE RENAME =====
-const renaming = ref(false)
-const draftQueueName = ref('')
-const nameInput = ref<HTMLInputElement | null>(null)
-
-function beginRename() {
-  draftQueueName.value = state.queueName.value
-  renaming.value = true
-  nextTick(() => {
-    nameInput.value?.focus()
-    nameInput.value?.select()
-  })
-}
-
-function cancelRename() {
-  renaming.value = false
-}
-
-function commitRename() {
-  const v = draftQueueName.value.trim()
-  if (v) state.queueName.value = v
-  renaming.value = false
-}
-
-// ===== ROW INTERACTIONS =====
-async function onRowDblClick(track: any) {
-  if (dnd.dndState.value.isDragging) return
-  const realIdx = state.queue.value.findIndex(t => t.id === track.id)
-  const idx = await state.playlists.playIndex(state.sel, realIdx, state.music)
-  if (idx >= 0) {
-    state.currentIndex.value = idx
-    state.selectedIndex.value = idx
+// Helper: current header cell widths (px)
+function measureHeaderColsPx() {
+  const root = headerEl.value?.querySelector<HTMLElement>('.details-header-inner')
+  if (!root) return { name: 0, ext: 0, size: 0, mod: 0 }
+  const q = (sel: string) => root.querySelector<HTMLElement>(sel)?.getBoundingClientRect().width || 0
+  return {
+    name: q('.th-name'),
+    ext:  q('.th-ext'),
+    size: q('.th-size'),
+    mod:  q('.th-mod'),
   }
 }
 
-function onRowClick(index: number) {
-  keyboard.selectRow(index)
+let resizing: null | {
+  left: ResCol
+  right: ResCol
+  startX: number
+  // px at drag start
+  startLeftPx: number
+  startRightPx: number
+  pairPx: number
+  // weights at drag start
+  startLeftW: number
+  startRightW: number
+  pairW: number
+} = null
+
+function startResize(col: ResCol, ev: PointerEvent) {
+  const [left, right] = pairForHandle(col)
+  if (left === 'mod' && right === 'mod') return
+
+  const px = measureHeaderColsPx()
+
+  const startLeftPx  = px[left]
+  const startRightPx = px[right]
+  const pairPx = Math.max(1, startLeftPx + startRightPx) // avoid div-by-zero
+
+  const startLeftW  = colW.value[left]
+  const startRightW = colW.value[right]
+  const pairW = Math.max(0.0001, startLeftW + startRightW)
+
+  const target = ev.currentTarget as HTMLElement
+  target.setPointerCapture?.(ev.pointerId)
+
+  resizing = {
+    left, right, startX: ev.clientX,
+    startLeftPx, startRightPx, pairPx,
+    startLeftW, startRightW, pairW
+  }
+  isResizing.value = true
+  window.addEventListener('pointermove', onResizeMove)
+  window.addEventListener('pointerup', onResizeEnd, { once: true })
+  ev.preventDefault()
+  ev.stopPropagation()
 }
 
-// ===== DRAG & DROP (FILES) =====
-const draggingOver = ref(false)
+function onResizeMove(ev: PointerEvent) {
+  if (!resizing) return
+  const dx = ev.clientX - resizing.startX
 
-function prevent(e: Event) { e.preventDefault(); e.stopPropagation() }
-function onDragEnter(e: DragEvent) { prevent(e); draggingOver.value = true }
-function onDragOver(e: DragEvent) { prevent(e) }
-function onDragLeave(e: DragEvent) { prevent(e); draggingOver.value = false }
-
-async function onDrop(e: DragEvent) {
-  prevent(e)
-  draggingOver.value = false
-
-  if (hasGexPayload(e)) {
-    const payload = extractGexPayload(e)
-    if (!payload) return
-
-  if (payload.type === 'gex/file-refs') {
-      // 1) Authorize THE PLAYER (receiver)
-      const auth = await authorizeFileRefs(
-        'local-player',            // receiver widgetType
-        props.sourceId,            // receiver widgetId
-        payload,
-        { requiredCaps: ['Read'] } // Metadata is allowed by backend; Read is sufficient here
-      )
-      if (!auth.ok) return
-
-      // 2) Convert refs → gex:// URLs → Tracks (no blobs)
-      const tracks = await refsToTracks(
-        payload.data as FileRefData[],
-        'local-player',
-        props.sourceId
-      )
-
-      // 3) Append to queue and sync playlists
-      await appendTracks(tracks)
-
-      // 4) Auto-start if player was empty
-      if (state.queue.value.length === tracks.length && tracks.length) {
-        // was previously empty; play first track
-        await play(0)
-      }
-      return
-    }
+  // pixel mins for the pair
+  const minBy: Record<ResCol, number> = {
+    name: NAME_MIN, ext: EXT_MIN, size: SIZE_MIN, mod: MIN_MOD_PX
   }
 
-  // Native OS drop
-  if (e.dataTransfer?.files?.length) {
-    await playlist.addFiles(e.dataTransfer.files)
+  // desired new left px, clamped so both columns respect their mins
+  const minLeft  = minBy[resizing.left]
+  const minRight = minBy[resizing.right]
+  const maxLeft  = Math.max(minLeft, resizing.pairPx - minRight)
+  const newLeftPx = Math.min(Math.max(resizing.startLeftPx + dx, minLeft), maxLeft)
+
+  // Convert px back to weights using the pair’s px↔weight ratio captured at drag start
+  const k = resizing.pairW / resizing.pairPx // weight per pixel within the pair at drag-start
+  const newLeftW  = newLeftPx * k
+  const newRightW = resizing.pairW - newLeftW
+
+  colW.value = {
+    ...colW.value,
+    [resizing.left]:  newLeftW,
+    [resizing.right]: newRightW,
+  } as DetailWeights
+}
+
+function onResizeEnd() {
+  window.removeEventListener('pointermove', onResizeMove)
+  isResizing.value = false
+  // Optional: normalize so the saved numbers are tidy
+  if (colW.value) colW.value = normalizeWeights(colW.value)
+  resizing = null
+}
+
+// swap your onHeaderClickSafe with this:
+function onHeaderClickFiltered(nextKey: SortKey, ev: MouseEvent) {
+  // if the click started on a resizer (or inside it), ignore
+  const t = ev.target as HTMLElement | null
+  if (t && t.closest('.resize-handle')) return
+  onHeaderClick(nextKey)
+}
+
+function sizeLabel(e: any) {
+  const p = sizeParts(e?.Size)
+  if (!p.num) return ''
+  return `${p.num} ${p.unit}`
+}
+function modLabel(e: any) {
+  const p = modParts(e?.ModifiedAt)
+  if (!p.date && !p.time) return ''
+  return `${p.date} ${p.time}`
+}
+
+function onHeaderClick(nextKey: SortKey) {
+  if (sortKey.value === nextKey) sortDir.value = (sortDir.value === 'asc' ? 'desc' : 'asc')
+  else { sortKey.value = nextKey; sortDir.value = 'asc' }
+}
+
+const hostVars = computed(() => ({
+  '--items-border':     props.theme?.border    || 'var(--border, #555)',
+  '--items-fg':         props.theme?.fg        || 'var(--fg, #eee)',
+  '--items-bg':         props.theme?.bg        || 'var(--surface-2, transparent)',
+  '--items-header-sep': props.theme?.headerSep || 'rgba(255,255,255,.22)',
+}) as Record<string, string>)
+
+/* -----------------------------------------------
+   Drag & drop (unchanged; suppress when marqueeing)
+------------------------------------------------ */
+const isDragging = ref(false)
+
+
+function onItemDragStart(e: any, event: DragEvent) {
+  if (!event.dataTransfer) return;
+  if (marqueeActive.value) { event.preventDefault(); return; } // ← replace old check
+
+  isDragging.value = true;
+
+  try {
+    const paths = (selected.value.size > 0 ? [...selected.value] : [e.FullPath]);
+
+    const payload = createGexPayload(
+      'gex/file-refs',
+      paths.map(p => ({
+        path: p,
+        name: (p === e.FullPath ? e.Name : (entries.value.find(x => x.FullPath === p)?.Name || p)),
+        size: (p === e.FullPath ? e.Size : (entries.value.find(x => x.FullPath === p)?.Size)),
+        mimeType: guessMimeType((p === e.FullPath ? e.Name : (entries.value.find(x => x.FullPath === p)?.Name || ''))),
+        isDirectory: (p === e.FullPath ? e.Kind === 'dir' : entries.value.find(x => x.FullPath === p)?.Kind === 'dir')
+      })),
+      { widgetType: 'items', widgetId: props.sourceId }
+    );
+
+    setGexPayload(event.dataTransfer, payload);
+
+    const preview = createDragPreview({
+      label: (selected.value.size > 1 ? `${paths.length} items` : e.Name),
+      icon: e.Kind === 'dir' ? '📁' : '📄',
+      count: paths.length
+    });
+    event.dataTransfer.setDragImage(preview, 0, 0);
+    setTimeout(() => preview.remove(), 0);
+  } catch (err) {
+    console.error('[Items] drag failed:', err);
   }
 }
 
-// ===== MEDIA EVENTS =====
-const onMediaPlay = () => { state.isPlaying.value = true }
-const onMediaPause = () => { state.isPlaying.value = false }
-const onTimeUpdate = async () => {
-  state.currentTime.value = state.music.currentTime || 0
-}
+function onItemDragEnd() { isDragging.value = false; }
 
-const onLoadedMeta = (e: Event) => {
-  const t = e.target as HTMLMediaElement | null
-  const d = t?.duration ?? state.music.duration
-  state.duration.value = Number.isFinite(d) ? d : 0
-}
-
-const onVolumeChange = () => {
-  const v = state.music.volume
-  if (v !== state.volume.value) {
-    state.volume.value = v
-    if (v > 0) state.lastNonZeroVolume.value = v
+function guessMimeType(filename: string): string {
+  const ext = filename.toLowerCase().split('.').pop() || ''
+  const map: Record<string, string> = {
+    mp3: 'audio/mpeg', ogg: 'audio/ogg', oga: 'audio/ogg', wav: 'audio/wav',
+    flac: 'audio/flac', m4a: 'audio/mp4', aac: 'audio/aac', webm: 'audio/webm', opus: 'audio/opus',
+    mp4: 'video/mp4', mkv: 'video/x-matroska',
+    jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp',
+    txt: 'text/plain', json: 'application/json', pdf: 'application/pdf'
   }
+  return map[ext] || 'application/octet-stream'
 }
 
-function hydrateFromHandle() {
-  state.volume.value = state.music.volume
-  if (state.volume.value > 0) state.lastNonZeroVolume.value = state.volume.value
-  state.isPlaying.value = !state.music.paused
-  state.currentTime.value = state.music.currentTime || 0
-  state.duration.value = state.music.duration || 0
+/* -----------------------------------------------
+   Edit helpers (unchanged)
+------------------------------------------------ */
+function updateColumns(delta: number) {
+  if (!props.editMode) return
+  const current = merged.value.columns
+  const next = Math.max(1, Math.min(8, current + delta))
+  emit('updateConfig', { ...props.config, view: { ...props.config?.view, columns: next } })
 }
 
-// ===== LIFECYCLE =====
-let resizeObserver: ResizeObserver | null = null
+function cycleItemSize() {
+  if (!props.editMode) return
+  const sizes = ['sm', 'md', 'lg']
+  const i = sizes.indexOf(merged.value.itemSize)
+  emit('updateConfig', { ...props.config, view: { ...props.config?.view, itemSize: sizes[(i + 1) % sizes.length] } })
+}
+
+function cycleLayout() {
+  if (!props.editMode) return
+  const layouts = ['list', 'grid', 'details']
+  const i = layouts.indexOf(merged.value.layout)
+  emit('updateConfig', { ...props.config, view: { ...props.config?.view, layout: layouts[(i + 1) % layouts.length] } })
+}
 
 onMounted(async () => {
-  state.music.addEventListener('play', onMediaPlay)
-  state.music.addEventListener('pause', onMediaPause)
-  state.music.addEventListener('timeupdate', onTimeUpdate)
-  state.music.addEventListener('loadedmetadata', onLoadedMeta as any)
-  state.music.addEventListener('volumechange', onVolumeChange)
-  state.music.addEventListener('error', onMediaError)
-  state.music.addEventListener('rack:playlistindex', onRackIndex as EventListener)
+  const ro = new ResizeObserver(() => measureScrollbarWidth())
+  detailsScrollEl.value && ro.observe(detailsScrollEl.value)
 
-  state.playlists.register(state.sel, state.toPlaylistItems(), {
-    autoNext: 'linear',
-    repeat: state.repeat.value,
-    shuffle: state.shuffle.value,
-    dedupe: false
-  })
-  state.playlists.setItems(state.sel, state.toPlaylistItems(), { keepCurrent: true })
-  state.playlists.bindToHandle(state.sel, state.music)
-
-  await nextTick()
-  // 1) seed once
-  seedMeasureNow()
-  // 2) start RO and use contentRect → scheduleWidth (no forced layout)
-resizeObserver = new ResizeObserver((entries) => {
-  const e = entries[0]
-  const w = 'contentBoxSize' in e && e.contentBoxSize
-    ? (Array.isArray(e.contentBoxSize) ? e.contentBoxSize[0].inlineSize : e.contentBoxSize.inlineSize)
-    : e.contentRect.width
-  scheduleWidth(Math.round(w), 'ro')
-})
-  if (widgetRootEl.value) resizeObserver.observe(widgetRootEl.value)
-
-  hydrateFromHandle()
+  // optional: re-measure on font/theme changes after icons load in
+  window.addEventListener('resize', measureScrollbarWidth)
+  
+  await nextTick();                          // wait for Vue to paint this tick
+  requestAnimationFrame(() => {              // then wait for the browser to layout
+    measureScrollbarWidth();
+  });
 })
 
 onBeforeUnmount(() => {
-  if (rafForWidth) cancelAnimationFrame(rafForWidth)
-  resizeObserver?.disconnect()
-
-  state.music.removeEventListener('play', onMediaPlay)
-  state.music.removeEventListener('pause', onMediaPause)
-  state.music.removeEventListener('timeupdate', onTimeUpdate)
-  state.music.removeEventListener('loadedmetadata', onLoadedMeta as any)
-  state.music.removeEventListener('volumechange', onVolumeChange)
-  state.music.removeEventListener('error', onMediaError)
-  state.music.removeEventListener('rack:playlistindex', onRackIndex as EventListener)
-
-  state.playlists.unbind(state.sel)
-  dnd.dnd?.destroy()
+  window.removeEventListener('resize', measureScrollbarWidth)
+  engine.destroy()  
 })
 </script>
 
-
 <template>
-<div ref="widgetRootEl"
-     class="widget-root"
-     :style="{ '--widget-w': (containerWidth || hostWidth) + 'px' }">
-    <!-- Hidden file input -->
-    <input
-      ref="fileInput"
-      type="file"
-      multiple
-      :accept="INPUT_ACCEPT"
-      style="display: none"
-      @change="(e) => playlist.onFileInput(e, fileInput!)"
-    />
+  <div class="items-root" :style="hostVars" :class="{ dragging: isDragging, 'drag-selecting': marqueeActive }">
+    <!-- Edit mode toolbar -->
+    <div
+      v-if="editMode"
+      class="edit-toolbar"
+      @pointerdown.stop
+    >
+      <div class="edit-group">
+        <span class="edit-label">Layout:</span>
+        <button class="edit-btn" @click.stop="cycleLayout" :title="`Current: ${merged.layout}`">
+          {{ merged.layout === 'list' ? '☰' : merged.layout === 'grid' ? '▦' : '▤' }}
+        </button>
+      </div>
 
-    <!-- Compact Layout -->
-    <CompactLayout
-      v-if="hostLayout === 'compact'"
-      :current="state.current.value"
-      :has-tracks="state.hasTracks.value"
-      :is-playing="state.isPlaying.value"
-      :volume="state.volume.value"
-      :volume-icon="state.volumeIcon.value"
-      :play-tooltip="`${state.isPlaying.value ? 'Pause' : 'Play'}${state.current.value ? '\n' + state.current.value.name : ''}`"
-      @toggle-play="togglePlay"
-      @click-pick="clickPick"
-      @vol-input="volInput"
-    />
+      <div v-if="merged.layout === 'grid'" class="edit-group">
+        <span class="edit-label">Columns:</span>
+        <button class="edit-btn" @click.stop="updateColumns(-1)" :disabled="merged.columns <= 1">−</button>
+        <span class="edit-value">{{ merged.columns }}</span>
+        <button class="edit-btn" @click.stop="updateColumns(1)" :disabled="merged.columns >= 8">+</button>
+      </div>
 
-    <!-- Expanded Layout -->
-    <ExpandedLayout
-      v-else
-      ref="expandedLayoutRef"
-      :queue="state.queue.value"
-      :display-queue="dnd.displayQueue.value"
-      :current-index="state.currentIndex.value"
-      :selected-index="state.selectedIndex.value"
-      :current="state.current.value"
-      :has-tracks="state.hasTracks.value"
-      :can-prev="state.canPrev.value"
-      :can-next="state.canNext.value"
-      :is-playing="state.isPlaying.value"
-      :is-loading="state.isLoading.value"
-      :current-time="state.currentTime.value"
-      :duration="state.duration.value"
-      :volume="state.volume.value"
-      :repeat="state.repeat.value"
-      :shuffle="state.shuffle.value"
-      :queue-name="state.queueName.value"
-      :volume-icon="state.volumeIcon.value"
-      :playback-rate="state.playbackRate.value"
-      :playback-rate-label="state.playbackRateLabel.value"
-      :dnd-state="dnd.dndState.value"
-      :layout-class="layoutClass"
-      :show-queue="showQueue"
-      :renaming="renaming"
-      :draft-queue-name="draftQueueName"
-      :marquee-on="marquee.marqueeOn.value"
-      :marquee-dir="marquee.marqueeDir.value"
-      :resize-phase="props.placement?.resizePhase"
-      :set-marquee-box="marquee.setMarqueeBox"
-      :set-marquee-copy="marquee.setMarqueeCopy"
-      @toggle-play="togglePlay"
-      @prev="prev"
-      @next="next"
-      @seek="seek"
-      @adjust-speed="adjustSpeed"
-      @toggle-shuffle="toggleShuffle"
-      @toggle-repeat="toggleRepeat"
-      @click-pick="clickPick"
-      @toggle-mute="toggleMute"
-      @vol-input="volInput"
-      @toggle-queue="toggleQueue"
-      @begin-rename="beginRename"
-      @cancel-rename="cancelRename"
-      @commit-rename="commitRename"
-      @update:draft-queue-name="(v) => draftQueueName = v"
-      @save-playlist="playlist.savePlaylistGexm"
-      @row-dblclick="onRowDblClick"
-      @row-click="onRowClick"
-      @start-row-drag="dnd.startRowDrag"
-      @remove-at="playlist.removeAt"
-      @drag-enter="onDragEnter"
-      @drag-over="onDragOver"
-      @drag-leave="onDragLeave"
-      @drop="onDrop"
-    />
+      <div class="edit-group">
+        <span class="edit-label">Size:</span>
+        <button class="edit-btn" @click.stop="cycleItemSize" :title="`Current: ${merged.itemSize}`">
+          {{ merged.itemSize.toUpperCase() }}
+        </button>
+      </div>
+    </div>
+
+    <!-- Make the scroller focusable + capture keyboard -->
+    <div
+      class="items-scroll-container"
+      :class="{ 'is-details': merged.layout === 'details' }"
+      ref="scrollEl"
+      tabindex="0"
+      @keydown="onKeyDown"
+    >
+      <div v-if="loading" class="msg">Loading…</div>
+      <div v-else-if="error" class="err">{{ error }}</div>
+      <div v-else-if="!merged.rpath" class="msg">(no path)</div>
+
+      <!-- DETAILS VIEW -->
+
+      <div
+        v-else-if="merged.layout === 'details'"
+        class="details-root"
+        :data-icons="iconsTick"
+        :style="{ '--cols': detailsCols, '--hdrH': headerH + 'px' }"
+        ref="detailsRootEl"
+      >
+        <!-- Header OUTSIDE the scroll container -->
+        <div class="details-header" ref="headerEl">
+          <div class="details-header-inner">
+            <button class="th th-name" @click="onHeaderClickFiltered('name', $event)">
+              <span class="th-label">Name</span>
+              <span v-if="sortKey==='name'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+              <span class="resize-handle"
+                    @pointerdown.stop.prevent="startResize('name', $event)" />
+            </button>
+
+            <button class="th th-ext" @click="onHeaderClickFiltered('ext', $event)">
+              <span class="th-label">Ext</span>
+              <span v-if="sortKey==='ext'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+              <span class="resize-handle"
+                    @pointerdown.stop.prevent="startResize('ext', $event)" />
+            </button>
+
+            <button class="th th-size" @click="onHeaderClickFiltered('size', $event)">
+              <span class="th-label">Size</span>
+              <span v-if="sortKey==='size'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+              <span class="resize-handle"
+                    @pointerdown.stop.prevent="startResize('size', $event)" />
+            </button>
+
+            <button class="th th-mod" @click="onHeaderClickFiltered('modified', $event)">
+              <span class="th-label">Modified</span>
+              <span v-if="sortKey==='modified'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Rows scroller (the interactive plane) -->
+        <div
+          class="details-scroll"
+          ref="detailsScrollEl"
+          tabindex="0"
+          @pointerdown="onSurfacePointerDown"
+          @pointermove="onSurfacePointerMove"
+          @pointerup="onSurfacePointerUp"
+          @click.capture="onSurfaceClick"
+          @scroll.passive="onPlaneScroll"
+        >
+          <!-- gutters live inside here to match header inner -->
+          <div class="details-pad" ref="padEl">
+            <div class="details-grid">
+              <button
+                class="row"
+                :key="e.FullPath"
+                :data-path="e.FullPath"
+                v-for="(e, i) in sortedEntries"
+                :class="{ selected: selected.has(e.FullPath) }"
+                draggable="true"
+                @pointerdown.stop="(ev) => engine.rowDownId(e.FullPath, modsFromEvent(ev))"
+                @pointermove.stop="(ev) => engine.rowMove?.(ev.clientX, ev.clientY)"
+                @click.stop.prevent="() => engine.rowUpId(e.FullPath)"
+                @dblclick.stop.prevent="() => { openEntry(e.FullPath) }"
+                @dragstart="(ev) => { engine.dragStart(); onItemDragStart(e, ev as DragEvent) }"
+                @dragend="() => { onItemDragEnd(); engine.dragEnd() }"
+              >
+                <div class="td td-name" :title="e.Name || e.FullPath">
+                  <span class="icon">
+                    <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
+                    <span v-else>{{ iconText(e) }}</span>
+                  </span>
+                  <span class="name">{{ e.Name || e.FullPath }}</span>
+                </div>
+
+                <div class="td td-ext" :title="e.Ext || ''">{{ e.Ext || '' }}</div>
+
+                <div class="td td-size" :title="sizeLabel(e)">
+                  <span class="num">{{ sizeParts(e?.Size).num }}</span>
+                  <span class="unit">{{ sizeParts(e?.Size).unit }}</span>
+                </div>
+
+                <div class="td td-mod" :title="modLabel(e)">
+                  <span class="date">{{ modLabel(e).split(' ')[0] }}</span>
+                  <span class="time">{{ modParts(e?.ModifiedAt).time }}</span>
+                </div>
+              </button>
+            </div>
+            
+          </div>
+        </div>
+        
+            <div
+              v-if="marqueeRect"
+              class="marquee"
+              :style="{
+                left:  marqueeRect.x + 'px',
+                top:   marqueeRect.y + 'px',
+                width: marqueeRect.w + 'px',
+                height: marqueeRect.h + 'px'
+              }"
+            />
+      </div>
+
+      <!-- LIST VIEW -->
+      <div v-else-if="merged.layout === 'list'" class="list-root" :data-icons="iconsTick">
+          <button
+            class="row"
+            :data-path="e.FullPath"
+            v-for="(e, i) in sortedEntries"
+            :class="{ selected: selectedMap[e.FullPath] }"
+            draggable="true"
+            @pointerdown.stop="(ev) => engine.rowDownId(e.FullPath, modsFromEvent(ev))"
+            @pointermove.stop="(ev) => engine.rowMove?.(ev.clientX, ev.clientY)"
+            @click.stop.prevent="() => engine.rowUpId(e.FullPath)"
+            @dblclick.stop.prevent="() => { openEntry(e.FullPath) }"
+            @dragstart="(ev) => { engine.dragStart(); onItemDragStart(e, ev as DragEvent) }"
+            @dragend="() => { onItemDragEnd(); engine.dragEnd() }"
+          >
+          <div class="icon">
+            <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
+            <span v-else>{{ iconText(e) }}</span>
+          </div>
+          <div class="name">{{ e.Name || e.FullPath }}</div>
+        </button>
+      </div>
+
+      <!-- GRID VIEW -->
+      <div
+        v-else-if="merged.layout === 'grid'"
+        class="grid-root"
+        :data-icons="iconsTick"
+        :style="{
+          display: 'grid',
+          gap: S.gap + 'px',
+          padding: S.gap + 'px',
+          gridTemplateColumns: `repeat(${Math.max(1, merged.columns)}, minmax(0, 1fr))`
+        }"
+      >
+        <button
+          class="row"
+          :data-path="e.FullPath"
+          v-for="(e, i) in sortedEntries"
+          :class="{ selected: selectedMap[e.FullPath] }"
+          draggable="true"
+          @pointerdown.stop="(ev) => engine.rowDownId(e.FullPath, modsFromEvent(ev))"
+          @pointermove.stop="(ev) => engine.rowMove?.(ev.clientX, ev.clientY)"
+          @click.stop.prevent="() => engine.rowUpId(e.FullPath)"
+          @dblclick.stop.prevent="() => { openEntry(e.FullPath) }"
+          @dragstart="(ev) => { engine.dragStart(); onItemDragStart(e, ev as DragEvent) }"
+          @dragend="() => { onItemDragEnd(); engine.dragEnd() }"
+        >
+          <div class="icon">
+            <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
+            <span v-else>{{ iconText(e) }}</span>
+          </div>
+          <div class="name">{{ e.Name || e.FullPath }}</div>
+        </button>
+      </div>
+    </div>
   </div>
 </template>
+
+<style scoped>
+/* ================= THEME / ROOT ================= */
+.items-root{
+  font-size:var(--font-md);
+  color:var(--items-fg);
+  --local-font-sm:calc(1em * .85);
+  --local-font-md:1em;
+  --local-font-lg:calc(1em * 1.15);
+  --local-spacing:var(--space-sm);
+  --local-radius:var(--radius-md);
+
+  /* gutters for marquee space inside the scroller */
+  --items-gutter-left: 5%;
+  --items-gutter-right: 5%;
+  --items-pad-block: 6px;
+
+  /* column separator color */
+  --items-col-sep: color-mix(in oklab, var(--fg, #fff) 12%, transparent);
+
+  height:100%;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+  box-sizing:border-box;
+  position:relative;
+}
+
+/* Scroller: focusable, with left/right gutters */
+.items-scroll-container{
+  flex:1;
+  overflow-y:auto;
+  overflow-x:hidden;
+  position:relative;
+  padding-block: var(--items-pad-block, 6px);
+  padding-inline: var(--items-gutter-left, 5%) var(--items-gutter-right, 5%);
+  z-index:1;
+  outline:none;
+  border-top: 1px solid var(--items-header-sep);
+  border-bottom: 1px solid var(--items-header-sep);
+  border-radius: var(--local-radius);
+}
+.items-scroll-container:hover{ overscroll-behavior:contain; }
+
+.items-scroll-container.is-details{
+  overflow: hidden;            /* stop the outer one from scrolling */
+  padding: 0;                  /* remove side/top/bottom padding that was shrinking the inner scroller */
+  border-top: 0;               /* optional: keep or drop these borders here */
+  border-bottom: 0;            /* you can draw them on .details-pad if you like */
+}
+
+/* The scrollport: full height, stable end gutter only */
+.details-scroll{
+  position: relative;   /* the absolute marquee anchors here */
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
+
+/* ADD: the inner pad holds the side gutters + header spacing */
+.details-pad{
+  position: relative;
+  padding-inline: var(--items-gutter-left, 5%) var(--items-gutter-right, 5%);
+}
+
+.marquee{
+  position: absolute;
+  box-sizing: border-box;    /* already present */
+  pointer-events: none;
+  z-index: 2;
+  border: 1px solid var(--accent,#4ea1ff);
+  background: color-mix(in oklab, var(--accent,#4ea1ff) 18%, transparent);
+  border-radius: 4px;
+}
+
+.items-root.dragging{ user-select:none; }
+
+.drag-selecting { user-select: none; }
+/* ================ EDIT TOOLBAR ================ */
+.edit-toolbar{
+  display:flex; gap:var(--space-md); padding:var(--space-sm);
+  background:var(--surface-1,#1a1a1a); border-bottom:1px solid var(--border,#555);
+  align-items:center; flex-shrink:0; font-size:var(--font-sm);
+  position:sticky; top:0; z-index:5; pointer-events:auto;
+}
+.edit-label{ font-size:var(--local-font-sm);opacity:.7;font-weight:500; }
+.edit-value{ font-size:var(--local-font-md);font-weight:600;min-width:20px;text-align:center; }
+.edit-btn{
+  padding:var(--space-xs) var(--space-sm); border-radius:var(--radius-sm);
+  border:1px solid var(--border,#555); background:var(--surface-2,#222); color:var(--fg,#eee);
+  cursor:pointer; font-size:var(--local-font-sm); transition:all .15s ease; min-width:28px;text-align:center;
+}
+
+/* ================ GENERIC ROW (List/Grid base) ================ */
+.row{
+  border:1px solid var(--items-border); background:var(--items-bg); color:inherit;
+  border-radius:var(--local-radius);
+  display:flex; flex-direction:row; gap:var(--local-spacing); align-items:center;
+  min-height:calc(var(--base-font-size) * 2.4); padding:var(--space-xs) var(--space-sm);
+  box-sizing:border-box; font-size:var(--local-font-md);
+}
+.row:focus, .row:focus-visible { outline: none !important; }
+.row[draggable="true"]{ cursor:grab; }
+.row[draggable="true"]:active{ cursor:grabbing; }
+.row.selected { box-shadow: inset 0 0 0 2px var(--accent,#4ea1ff) !important; }
+
+/* Base icon size for LIST/GRID (scoped to those layouts only) */
+.list-root .icon,
+.grid-root .icon{
+  width:calc(var(--base-font-size) * 1.4);
+  height:calc(var(--base-font-size) * 1.4);
+  flex:0 0 calc(var(--base-font-size) * 1.4);
+  display:flex; align-items:center; justify-content:center;
+}
+.list-root .icon img,
+.grid-root .icon img{ width:100%; height:100%; object-fit:contain; }
+
+.name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* ================ DETAILS VIEW ONLY ================ */
+.details-root{
+  --padX: var(--space-sm);
+  --padY: var(--space-xs);
+  --gap:  var(--space-xs);
+  --iconW: calc(1em * 1.4);
+  --hdrH: 36px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                 /* makes inner scroller size correctly */
+}
+
+/* Header with outer gutters only */
+.details-header{
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  height: var(--hdrH);
+
+  /* same gutters as rows, PLUS measured scrollbar width on the right */
+  padding-inline: var(--items-gutter-left, 5%)
+                  calc(var(--items-gutter-right, 5%) + var(--sbw, 0px));
+
+  background: transparent;
+  border-radius: var(--local-radius);
+  box-sizing: border-box;
+}
+
+.details-header::before{ display:none; }
+
+/* Grid lives inside */
+.details-header-inner{
+  position: relative;
+  height: 100%;
+  display: grid;
+  grid-template-columns: var(--cols);
+  gap: var(--gap);
+  align-items: center;
+  padding: 0 var(--padX);
+  min-width: 0;
+  background: var(--items-header-bg, var(--surface-2,#222));
+  border-radius: var(--local-radius);
+  overflow: visible;
+}
+
+/* Separators between header cells */
+.details-header-inner > .th + .th{
+  border-left: 1px solid var(--items-col-sep);
+  padding-left: var(--space-xs);
+}
+
+/* Header cells - NOW WITH BACKGROUND */
+.th{
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--padY) 0;        /* side padding comes from header-inner */
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font-weight: 600;
+  min-width: 0;                  /* labels can ellipsize */
+}
+
+.th .th-label{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.th-size,.th-mod{ justify-content:flex-end; text-align:right; }
+
+
+
+/* Column separators */
+:root, :host{ --items-col-sep: color-mix(in oklab, var(--fg,#fff) 18%, transparent); }
+.details-grid   .row > .td + .td{ border-left: 1px solid var(--items-col-sep); padding-left: var(--space-xs); }
+
+/* Resizer handles (not on last column) */
+/* Resize handle stays on top and on the actual track edge */
+.resize-handle{
+  position:absolute; top:0; right:-6px; width:12px; height:100%;
+  cursor:col-resize; z-index:2;
+}
+.resize-handle::after{
+  content:""; position:absolute; top:0; bottom:0; left:50%;
+  transform:translateX(-0.5px);
+  width:1px; background: color-mix(in oklab, var(--fg,#fff) 28%, transparent);
+}
+.th:hover .resize-handle::after{
+  background: color-mix(in oklab, var(--accent,#4ea1ff) 55%, transparent);
+}
+
+/* ----- INTERACTIVE PLANE (rows + marquee) lives BELOW the header ----- */
+/* Rows (unchanged, just here for context) */
+.details-grid{ display: grid; gap: var(--space-xs); }
+.details-grid .row{
+  display:grid;
+  grid-template-columns: var(--cols);
+  gap: var(--gap);
+  align-items:center;
+  border:1px solid var(--items-border);
+  background: var(--items-bg);
+  border-radius: var(--local-radius);
+  min-height: calc(var(--base-font-size) * 2.4);
+  padding: var(--padY) var(--padX);
+  box-sizing:border-box;
+  cursor:pointer;
+  font-size: var(--local-font-md);
+}
+
+/* Cells */
+.td-name{ display:inline-flex; align-items:center; gap:var(--space-sm); min-width:0; }
+.td-ext, .td-size, .td-mod{
+  opacity:.9; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:var(--local-font-sm);
+}
+
+/* Numeric alignment */
+.td-size, .td-mod{ font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1; }
+.td-size{ display:flex; justify-content:flex-end; gap:var(--space-xs); }
+.td-mod{ display:flex; justify-content:flex-end; gap:var(--space-sm); }
+
+/* Details icon size (scoped!) */
+.details-grid .row > .td + .td{ border-left: 1px solid var(--items-col-sep); padding-left: var(--space-xs); }
+
+/* icon sizing scoped to details */
+.details-grid .td-name .icon{
+  width:var(--iconW);
+  height:var(--iconW);
+  flex:0 0 var(--iconW);
+  display:flex; align-items:center; justify-content:center; text-align:center;
+}
+.details-grid .td-name .icon img{
+  width:100%; height:100%; object-fit:contain;
+}
+
+/* ================ LIST / GRID CONTAINERS ================ */
+.list-root{ display:grid; gap:var(--space-xs); }
+
+/* ================ Messages ================ */
+.msg,.err{ padding:var(--space-md); font-size:var(--local-font-md); }
+.err{ color:#f77; }
+
+</style>
