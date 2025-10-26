@@ -149,15 +149,6 @@ const entries = ref<Array<{
 // ----- Resizer drag -----
 const isResizing = ref(false)
 
-let mDownX = 0, mDownY = 0;
-let mDownMods: Mods | null = null;
-
-const MARQUEE_START_PX = 6; // same as your startThreshold
-function distExceedsThreshold(x: number, y: number) {
-  const dx = x - mDownX, dy = y - mDownY;
-  return (dx*dx + dy*dy) >= (MARQUEE_START_PX * MARQUEE_START_PX);
-}
-
 // Adapters
 const geo: GeometryAdapter = {
   // Viewport rect in scroller-viewport space
@@ -475,7 +466,7 @@ function onPlaneScroll() {
   const sc = detailsScrollEl.value!;
   const dy = sc.scrollTop - lastScrollTopForDrag;
   if (dy) {
-    driver.adjustForScroll(dy);
+    driver.adjustForScroll(dy);                 // existing
     lastScrollTopForDrag = sc.scrollTop;
   }
 }
