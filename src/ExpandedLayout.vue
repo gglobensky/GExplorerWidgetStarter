@@ -26,7 +26,7 @@ const props = defineProps<{
   volumeIcon: string
   playbackRate: number
   playbackRateLabel: string
-  dndState: any
+  sortableState: any
   
   // UI
   layoutClass: string
@@ -287,7 +287,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
 <template>
   <div
     class="player-root"
-    :class="[layoutClass, { 'drag-over': draggingOver, dragging: dndState.isDragging, pressing: isPressing }]"
+    :class="[layoutClass, { 'drag-over': draggingOver, dragging: sortableState.isDragging, pressing: isPressing }]"
     @pointerdown="onPointerDown"
     @dragenter="emit('drag-enter', $event)"
     @dragover="emit('drag-over', $event)"
@@ -531,7 +531,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
         class="row item"
         :class="{
         skipped: t.missing,
-        'is-dragging': dndState.isDragging && dndState.draggingId === t.id,
+        'is-dragging': sortableState.isDragging && sortableState.draggingId === t.id,
         current: t.id === queue[currentIndex]?.id,
         selected: t.id === queue[selectedIndex]?.id
         }"
