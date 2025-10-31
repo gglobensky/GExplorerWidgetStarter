@@ -26,7 +26,7 @@ const props = defineProps<{
   volumeIcon: string
   playbackRate: number
   playbackRateLabel: string
-  dndState: any
+  sortableState: any
   
   // UI
   layoutClass: string
@@ -287,7 +287,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
 <template>
   <div
     class="player-root"
-    :class="[layoutClass, { 'drag-over': draggingOver, dragging: dndState.isDragging, pressing: isPressing }]"
+    :class="[layoutClass, { 'drag-over': draggingOver, dragging: sortableState.isDragging, pressing: isPressing }]"
     @pointerdown="onPointerDown"
     @dragenter="emit('drag-enter', $event)"
     @dragover="emit('drag-over', $event)"
@@ -370,9 +370,10 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
         <!-- Add button (ultra/micro) -->
         <button
           v-if="layoutClass === 'ultra' || layoutClass === 'micro'"
+          type="button"
           class="btn add-right"
           title="Add files…"
-          @click="emit('click-pick')"
+          @click.stop.prevent="emit('click-pick')"
         >
           +
         </button>
@@ -407,9 +408,10 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
         <!-- Add button (narrow only) -->
         <button
           v-if="layoutClass === 'narrow'"
+          type="button"
           class="btn add-left"
           title="Add files…"
-          @click="emit('click-pick')"
+          @click.stop.prevent="emit('click-pick')"
         >
           +
         </button>
@@ -531,7 +533,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
         class="row item"
         :class="{
         skipped: t.missing,
-        'is-dragging': dndState.isDragging && dndState.draggingId === t.id,
+        'is-dragging': sortableState.isDragging && sortableState.draggingId === t.id,
         current: t.id === queue[currentIndex]?.id,
         selected: t.id === queue[selectedIndex]?.id
         }"
@@ -594,7 +596,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
     <!-- Empty State -->
     <div v-if="queue.length === 0" class="empty">
       <p>Drop audio files here or</p>
-      <button class="btn" @click="emit('click-pick')">Add files…</button>
+      <button class="btn" type="button" @click.stop.prevent="emit('click-pick')">Add files…</button>
     </div>
   </div>
 </template>

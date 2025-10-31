@@ -3,17 +3,17 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { usePlayerState } from './usePlayerState'
 import { usePlaylist, INPUT_ACCEPT } from './usePlaylist'
 import { useMarquee } from './useMarquee'
-import { useDnD  } from './useDnD'
-import { fileRefsToPlaylistItems  } from '/src/widgets/dnd/utils'
+import { useDnD } from './useDnD'
+import { fileRefsToPlaylistItems } from '/src/widgets/dnd/utils'
 import { useKeyboardNav } from './useKeyboardNav'
 import CompactLayout from './CompactLayout.vue'
 import ExpandedLayout from './ExpandedLayout.vue'
 
-import { 
-  extractGexPayload, 
-  hasGexPayload, 
+import {
+  extractGexPayload,
+  hasGexPayload,
   authorizeFileRefs,
-  FileRefData 
+  FileRefData
 } from 'gexplorer/widgets'
 
 const props = defineProps<{
@@ -62,10 +62,9 @@ const state = usePlayerState(props.sourceId)
 const widgetRootEl = ref<HTMLElement | null>(null)
 const containerWidth = ref(0)
 
-
 // utility: common parent dir
 function commonDir(paths: string[]) {
-  const parts = paths.map(p => p.replace(/\\/g,'/').split('/'))
+  const parts = paths.map(p => p.replace(/\\/g, '/').split('/'))
   let i = 0
   while (true) {
     const seg = parts[0][i]
@@ -85,8 +84,8 @@ async function refsToTracks(
 ): Promise<Track[]> {
   const items = await fileRefsToPlaylistItems(refs, receiverWidgetType, receiverWidgetId)
   return items.map(it => ({
-    id: it.id || it.src,       // stable identity for DnD + selection
-    url: it.src,               // what the player actually plays
+    id: it.id || it.src,
+    url: it.src,
     name: it.name || it.src.split(/[\\/]/).pop() || 'track',
     type: it.type
   }))
@@ -95,9 +94,7 @@ async function refsToTracks(
 // Push tracks into queue and sync the underlying playlists engine
 async function appendTracks(tracks: Track[]) {
   if (!tracks.length) return
-  // append
   state.queue.value = state.queue.value.concat(tracks)
-  // reflect the queue → playlists (keeps current if playing)
   state.playlists.setItems(state.sel, state.toPlaylistItems(), { keepCurrent: true })
 }
 
@@ -106,17 +103,13 @@ let pendingWidth: number | null = null
 let rafForWidth = 0
 
 function commitWidth(w: number) {
-  if (Math.abs(w - containerWidth.value) < 1) return // 1px hysteresis
+  if (Math.abs(w - containerWidth.value) < 1) return
   containerWidth.value = w | 0
 }
 
-// replace your scheduleWidth with this:
 function scheduleWidth(w: number, src: 'host' | 'ro' = 'ro') {
   pendingWidth = w | 0
-
-  // Defer RO commits while dragging, but allow host commits live.
   if (props.placement?.resizePhase === 'active' && src === 'ro') return
-
   if (rafForWidth) return
   rafForWidth = requestAnimationFrame(() => {
     rafForWidth = 0
@@ -130,12 +123,10 @@ function scheduleWidth(w: number, src: 'host' | 'ro' = 'ro') {
 function seedMeasureNow() {
   const el = widgetRootEl.value
   if (!el) return
-  // Only used once to seed; after that we rely on RO’s contentRect.
   const w = Math.round(el.getBoundingClientRect().width || 0)
   if (w) scheduleWidth(w)
 }
 
-// When host says "idle", flush any pending width
 watch(() => props.placement?.resizePhase, (phase) => {
   if (phase === 'idle' && pendingWidth != null) {
     commitWidth(pendingWidth)
@@ -152,7 +143,6 @@ const hostLayout = computed<string>(() =>
   props.placement?.layout ?? props.variant ?? 'expanded'
 )
 
-// If the host reports its own size, coalesce that too.
 const hostWidth = computed(() => {
   const p = props.placement?.size
   return typeof p?.width === 'number' && p.width > 0
@@ -162,8 +152,9 @@ const hostWidth = computed(() => {
       : 0
 })
 watch(hostWidth, (w) => {
-  if (w > 0) scheduleWidth(Math.round(w), 'host')   // ← live during drag
+  if (w > 0) scheduleWidth(Math.round(w), 'host')
 })
+
 const layoutClass = computed(() => {
   const w = containerWidth.value || hostWidth.value || 0
   if (w <= 160) return 'micro'
@@ -173,15 +164,13 @@ const layoutClass = computed(() => {
   return 'wide'
 })
 
-// Recompute once after layout switch (seed; RO will take over)
 watch(() => hostLayout.value, () => {
   nextTick(() => {
     if (hostLayout.value !== 'compact') seedMeasureNow()
   })
 })
 
-// ===== DND =====
-const queueEl = ref<HTMLElement | null>(null)
+// ===== DND (list reordering) =====
 const showQueue = state.life.cell<boolean>('ui.showQueue', true)
 const dnd = useDnD(
   state.queue,
@@ -204,8 +193,11 @@ const playlist = usePlaylist(
   state.playlists,
   state.sel,
   state.toPlaylistItems,
-  () => dnd.ensureDnD()
+  () => dnd.ensureSortable(),           // <- if your useDnD exposes ensureDnD()
+  'local-player',                  // <- receiverWidgetType
+  props.sourceId                   // <- receiverWidgetId
 )
+
 
 // ===== KEYBOARD NAV =====
 const keyboard = useKeyboardNav(
@@ -348,8 +340,9 @@ function toggleRepeat() {
   state.playlists.setOptions(state.sel, { repeat: state.repeat.value })
 }
 
-function clickPick() {
-  fileInput.value?.click()
+async function clickPick() {
+  // Prefer host dialog; falls back to browser picker or <input> inside the hook.
+  await playlist.loadAndMerge(fileInput.value || null)
 }
 
 function toggleQueue() {
@@ -382,7 +375,7 @@ function commitRename() {
 
 // ===== ROW INTERACTIONS =====
 async function onRowDblClick(track: any) {
-  if (dnd.dndState.value.isDragging) return
+  if (dnd.sortableState.value.isDragging) return
   const realIdx = state.queue.value.findIndex(t => t.id === track.id)
   const idx = await state.playlists.playIndex(state.sel, realIdx, state.music)
   if (idx >= 0) {
@@ -411,36 +404,30 @@ async function onDrop(e: DragEvent) {
     const payload = extractGexPayload(e)
     if (!payload) return
 
-  if (payload.type === 'gex/file-refs') {
-      // 1) Authorize THE PLAYER (receiver)
+    if (payload.type === 'gex/file-refs') {
       const auth = await authorizeFileRefs(
-        'local-player',            // receiver widgetType
-        props.sourceId,            // receiver widgetId
+        'local-player',
+        props.sourceId,
         payload,
-        { requiredCaps: ['Read'] } // Metadata is allowed by backend; Read is sufficient here
+        { requiredCaps: ['Read'] }
       )
       if (!auth.ok) return
 
-      // 2) Convert refs → gex:// URLs → Tracks (no blobs)
       const tracks = await refsToTracks(
         payload.data as FileRefData[],
         'local-player',
         props.sourceId
       )
 
-      // 3) Append to queue and sync playlists
       await appendTracks(tracks)
 
-      // 4) Auto-start if player was empty
       if (state.queue.value.length === tracks.length && tracks.length) {
-        // was previously empty; play first track
         await play(0)
       }
       return
     }
   }
 
-  // Native OS drop
   if (e.dataTransfer?.files?.length) {
     await playlist.addFiles(e.dataTransfer.files)
   }
@@ -497,16 +484,14 @@ onMounted(async () => {
   state.playlists.bindToHandle(state.sel, state.music)
 
   await nextTick()
-  // 1) seed once
   seedMeasureNow()
-  // 2) start RO and use contentRect → scheduleWidth (no forced layout)
-resizeObserver = new ResizeObserver((entries) => {
-  const e = entries[0]
-  const w = 'contentBoxSize' in e && e.contentBoxSize
-    ? (Array.isArray(e.contentBoxSize) ? e.contentBoxSize[0].inlineSize : e.contentBoxSize.inlineSize)
-    : e.contentRect.width
-  scheduleWidth(Math.round(w), 'ro')
-})
+  resizeObserver = new ResizeObserver((entries) => {
+    const e = entries[0]
+    const w = 'contentBoxSize' in e && e.contentBoxSize
+      ? (Array.isArray(e.contentBoxSize) ? e.contentBoxSize[0].inlineSize : e.contentBoxSize.inlineSize)
+      : e.contentRect.width
+    scheduleWidth(Math.round(w), 'ro')
+  })
   if (widgetRootEl.value) resizeObserver.observe(widgetRootEl.value)
 
   hydrateFromHandle()
@@ -525,15 +510,16 @@ onBeforeUnmount(() => {
   state.music.removeEventListener('rack:playlistindex', onRackIndex as EventListener)
 
   state.playlists.unbind(state.sel)
-  dnd.dnd?.destroy()
+  dnd.sortable?.destroy()
 })
 </script>
 
-
 <template>
-<div ref="widgetRootEl"
-     class="widget-root"
-     :style="{ '--widget-w': (containerWidth || hostWidth) + 'px' }">
+  <div
+    ref="widgetRootEl"
+    class="widget-root"
+    :style="{ '--widget-w': (containerWidth || hostWidth) + 'px' }"
+  >
     <!-- Hidden file input -->
     <input
       ref="fileInput"
@@ -581,7 +567,7 @@ onBeforeUnmount(() => {
       :volume-icon="state.volumeIcon.value"
       :playback-rate="state.playbackRate.value"
       :playback-rate-label="state.playbackRateLabel.value"
-      :dnd-state="dnd.dndState.value"
+      :sortable-state="dnd.sortableState.value"
       :layout-class="layoutClass"
       :show-queue="showQueue"
       :renaming="renaming"

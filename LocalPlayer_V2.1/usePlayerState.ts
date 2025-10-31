@@ -1,8 +1,7 @@
 // usePlayerState.ts - Core player state and audio rack integration
 import { ref, computed, onMounted } from 'vue'
 import { useAudio, createLifecycle } from 'gexplorer/widgets'
-import { renewStreamForSource  } from '/src/widgets/dnd/utils'
-import { fsMintStreamHttp } from '/src/bridge/ipc'
+import { mintStreamHttp } from '/src/widgets/fs'
 export type Track = {
     id: string
     name: string
@@ -57,10 +56,19 @@ export function usePlayerState(sourceId: string) {
     const playbackRateLabel = computed(() => `${playbackRate.value.toFixed(2)}x`)
     // === Helpers ===
     function toPlaylistItems() {
-    return queue.value
-        .filter(t => !!t.url)
-        .map(t => ({ id: t.id, src: t.url, name: t.name, type: t.type }))
+        return queue.value
+            .filter(t => !!t.url)
+            .map(t => ({ id: t.id, src: t.url, name: t.name, type: t.type }))
     }
+    
+
+    onMounted(() => 
+        {
+            const audio = useAudio()
+            audio.setRenewProvider(({ ownerId, sourcePath, mimeHint }) =>
+                mintStreamHttp(sourcePath, 'local-player', ownerId, mimeHint)
+        )
+    })
     return {
         // Lifecycle
         life,
@@ -97,12 +105,4 @@ export function usePlayerState(sourceId: string) {
         // Helpers
         toPlaylistItems
     }
-
-    onMounted(() => 
-        {
-            const audio = useAudio()
-            audio.setRenewProvider(({ ownerId, sourcePath, mimeHint }) =>
-                fsMintStreamHttp(sourcePath, 'local-player', ownerId, mimeHint)
-        )
-    })
 }
