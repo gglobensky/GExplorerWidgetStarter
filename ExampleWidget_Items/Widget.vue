@@ -2,7 +2,7 @@
 /* -----------------------------------------------
    Imports
 ------------------------------------------------ */
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from '/runtime/vue.js'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineExpose } from '/runtime/vue.js'
 import { fsListDir, fsValidate, fsListDirWithAuth, shortcutsProbe } from '/src/widgets/fs'
 import { loadIconPack, iconFor, ensureIconsFor } from '/src/icons/index.ts'
 import { ensureConsent } from '/src/consent/service'
@@ -10,6 +10,7 @@ import { createSelectionEngine, type ItemsAdapter, type Mods } from '/src/widget
 import { createMarqueeDriver, type GeometryAdapter, type ScrollerAdapter, type Rect } from '/src/widgets/selection/marquee-driver';
 import { PickerMode, FileFilter, PickerSurfaceAdapter } from '/src/widgets/pickers/api';
 import { createGexPayload, setGexPayload, createDragPreview } from 'gexplorer/widgets'
+import { paneNav } from '/src/nav/paneNav'
 
 /* -----------------------------------------------
    Types
@@ -30,11 +31,13 @@ const props = defineProps<{
     context: 'grid' | 'sidebar' | 'embedded'
     size: { cols?: number; rows?: number; width?: number; height?: number }
   }
-  editMode?: boolean
+  editMode?: boolean,
 }>()
 
-const emit = defineEmits<{ (e: 'updateConfig', config: any): void }>()
-
+const emit = defineEmits<{ 
+  (e: 'updateConfig', config: any): void 
+  (e: 'event', payload: any): void
+}>()
 
 type SortKey = 'name' | 'kind' | 'ext' | 'size' | 'modified'
 type SortDir = 'asc' | 'desc'
@@ -138,14 +141,65 @@ const merged = computed(() => ({
   columns: cfg.value.view.columns || autoColumns.value,
   itemSize: cfg.value.view.itemSize || autoItemSize.value,
   showHidden: !!(cfg.value.view.showHidden ?? false),
-  navigateMode: String(cfg.value.view.navigateMode ?? 'internal').toLowerCase(),
+  navigateMode: String(cfg.value.view.navigateMode ?? 'tab').toLowerCase(),
 }))
 
 const cwd = ref<string>('')
 
+function isInternalHistory() {
+  return (merged.value.navigateMode || 'internal') === 'internal'
+}
+
+// ---- PathBar ownership announce ----
+function announceFocus() {
+  console.log('widget -> announcing focus')
+  //emit('event', { type: 'pathbar:focus', payload: { sourceId: props.sourceId, cwd: cwd.value } })
+}
+
+watch(cwd, (v) => {
+  emit('event', { type: 'cwd-changed', payload: { sourceId: props.sourceId, cwd: v } })
+})
+
 const entries = ref<Array<{
   Name: string; FullPath: string; Kind?: string; Ext?: string; Size?: number; ModifiedAt?: number; IconKey?: string
 }>>([])
+
+function emitSelectionChanged() {
+  // Build a lookup from FullPath → entry
+  const byPath = new Map<string, (typeof entries.value)[number]>()
+  for (const e of entries.value) byPath.set(e.FullPath, e)
+
+  const payload: Array<{
+    path: string
+    kind: 'file' | 'folder'
+    name?: string
+    size?: number
+    mtime?: number
+  }> = []
+
+  for (const fullPath of selected.value) {
+    const entry = byPath.get(fullPath)
+    if (!entry) {
+      payload.push({ path: fullPath, kind: 'file' })
+      continue
+    }
+
+    const kindStr = entry.Kind?.toLowerCase?.() ?? ''
+    const isFolder =
+      kindStr.includes('dir') ||   // "Dir", "Directory"
+      kindStr === 'folder'
+
+    payload.push({
+      path: entry.FullPath,
+      kind: isFolder ? 'folder' : 'file',
+      name: entry.Name,
+      size: entry.Size,
+      mtime: entry.ModifiedAt,
+    })
+  }
+
+  emit('event', { type: 'selectionChanged', payload })
+}
 
 // ----- Resizer drag -----
 const isResizing = ref(false)
@@ -289,7 +343,10 @@ const engine = createSelectionEngine(
   },
   itemsAdapter,
   {
-    selectionChanged: (set) => { selected.value = new Set(set); },
+    selectionChanged: (set) => {
+      selected.value = new Set(set)
+      emitSelectionChanged()
+    },
     focusChanged: (i) => { focusIndex.value = i; },
     //log: (e) => console.debug('[sel]', e.reason, e.selected, e),
   }
@@ -458,6 +515,10 @@ function onSurfacePointerDown(ev: PointerEvent) {
 
   (ev.currentTarget as Element)?.setPointerCapture?.(ev.pointerId);
 
+  // Ensure the widget owns focus on any left click in the canvas
+  scrollEl.value?.focus({ preventScroll: true })
+  announceFocus()
+
   lastClientX = ev.clientX; lastClientY = ev.clientY;
   lastScrollTopForDrag = detailsScrollEl.value!.scrollTop;  // add this
   driver.pointerDown(ev, modsFromEvent(ev));
@@ -521,6 +582,17 @@ function onSurfacePointerUp(ev: PointerEvent) {
     }
   }
 }
+
+async function applyExternalCwd(path: string, opts?: { mode?: 'push' | 'replace'; focus?: boolean }) {
+  if (!path) return
+  
+  // Apply and load
+  cwd.value = path
+  await loadDir(path)
+
+  if (opts?.focus) announceFocus()
+}
+
 
 function onSurfaceClick(ev: MouseEvent) {
   if (squelchNextPlaneClick) return;
@@ -633,36 +705,48 @@ async function loadDir(path: string) {
 
 async function openEntry(FullPath: string) {
   if (!FullPath) return
+
   try {
     const v = await fsValidate(FullPath)
     const isDir = !!v?.isDir
-    const preferTab =
-      merged.value.navigateMode === 'tab' ||
-      (merged.value.navigateMode !== 'internal' && typeof props.runAction === 'function')
 
     if (isDir) {
-      if (preferTab) props.runAction?.({ type: 'nav', to: FullPath })
-      else { cwd.value = FullPath; await loadDir(cwd.value) }
-      return
+      // Widget-level rule: folders → nav
+      props.runAction?.({ type: 'nav', to: FullPath })
+    } else {
+      // Widget-level rule: files → open
+      props.runAction?.({ type: 'open', path: FullPath })
     }
-    props.runAction?.({ type: 'open', path: FullPath })
   } catch (err) {
     console.error('[items] openEntry failed:', err)
   }
 }
+
 
 watch(
   detailsScrollEl,
   (el, _prev, onCleanup) => {
     if (!el || !detailsRootEl.value) return
 
-    // Measure once, right now (post-flush so DOM exists)
-    measureScrollbarWidth()
+    //measureScrollbarWidth()
 
-    // Keep up to date if the scroller’s box changes
-    const ro = new ResizeObserver(() => measureScrollbarWidth())
+    // ⚡ PERFORMANCE: Debounce to only measure after resize settles
+    let timeoutId: number | undefined
+    
+    const debouncedMeasure = () => {
+      clearTimeout(timeoutId)
+      timeoutId = window.setTimeout(() => {
+        measureScrollbarWidth()
+      }, 150) // Wait 150ms after last resize
+    }
+
+    const ro = new ResizeObserver(debouncedMeasure)
     ro.observe(el)
-    onCleanup(() => ro.disconnect())
+    
+    onCleanup(() => {
+      ro.disconnect()
+      clearTimeout(timeoutId)
+    })
   },
   { flush: 'post' }
 )
@@ -680,11 +764,6 @@ watch(colW, (w) => {
   })
 }, { deep: true })
 
-watch(
-  () => merged.value.rpath,
-  (next) => { if (next && next !== cwd.value) { cwd.value = next; loadDir(next) } },
-  { immediate: true }
-)
 
 watch(
   () => [props.config?.view?.sortKey, props.config?.view?.sortDir],
@@ -702,6 +781,18 @@ function pairForHandle(col: ResCol): [ResCol, ResCol] {
   // 'mod' has no right-side handle
   return ['mod', 'mod']
 }
+
+watch(
+  () => merged.value.rpath,
+  async (rp) => {
+    if (!rp) return
+    // initialize cwd + load entries
+    cwd.value = rp
+    await loadDir(rp)
+    // (cwd watcher already emits 'cwd-changed' to host)
+  },
+  { immediate: true }
+)
 
 // Helper: current header cell widths (px)
 function measureHeaderColsPx() {
@@ -904,12 +995,13 @@ function cycleLayout() {
   emit('updateConfig', { ...props.config, view: { ...props.config?.view, layout: layouts[(i + 1) % layouts.length] } })
 }
 
-onMounted(async () => {
-  const ro = new ResizeObserver(() => measureScrollbarWidth())
-  detailsScrollEl.value && ro.observe(detailsScrollEl.value)
+onMounted(() => {
+  announceFocus()      // tell TabContent "I own the PathBar"
+})
 
-  // optional: re-measure on font/theme changes after icons load in
-  window.addEventListener('resize', measureScrollbarWidth)
+onMounted(async () => {
+  const el = detailsScrollEl.value ?? scrollEl.value
+  el?.addEventListener('pointerdown', announceFocus, { capture: true })
   
   await nextTick();                          // wait for Vue to paint this tick
   requestAnimationFrame(() => {              // then wait for the browser to layout
@@ -918,9 +1010,15 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', measureScrollbarWidth)
+  const el = detailsScrollEl.value ?? scrollEl.value
+  el?.removeEventListener('pointerdown', announceFocus, { capture: true } as any)
+
   engine.destroy()  
 })
+
+function getNavState() { return { canGoBack: false, canGoForward: false, cwd: cwd.value } }
+
+defineExpose({ applyExternalCwd, getNavState })
 </script>
 
 <template>
@@ -931,6 +1029,7 @@ onBeforeUnmount(() => {
       class="edit-toolbar"
       @pointerdown.stop
     >
+    <!-- Validate if deprecated -->
       <div class="edit-group">
         <span class="edit-label">Layout:</span>
         <button class="edit-btn" @click.stop="cycleLayout" :title="`Current: ${merged.layout}`">
@@ -959,7 +1058,9 @@ onBeforeUnmount(() => {
       :class="{ 'is-details': merged.layout === 'details' }"
       ref="scrollEl"
       tabindex="0"
+      @focusin="announceFocus"
       @keydown="onKeyDown"
+      @pointerdown.self="() => { scrollEl?.value?.focus?.({ preventScroll: true }); announceFocus() }"
     >
       <div v-if="loading" class="msg">Loading…</div>
       <div v-else-if="error" class="err">{{ error }}</div>
@@ -1131,6 +1232,12 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* Details list rows */
+.row {
+  content-visibility: auto;
+  /* Approximate row height; adjust to match your actual row */
+  contain-intrinsic-size: 32px;
+}
 /* ================= THEME / ROOT ================= */
 .items-root{
   font-size:var(--font-md);
