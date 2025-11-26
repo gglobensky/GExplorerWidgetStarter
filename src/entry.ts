@@ -1,40 +1,58 @@
-// src/widgets/music/src/entry.ts
+// src/widgets/favorites/entry.ts
 import Widget from './Widget.vue'
 
 export default {
   api: '1.0',
-  id: 'local-player',                // must match entry.widget.type used in your library
-  version: '1.0.0',
+  id: 'favorites',
+  version: '0.1.0',
   Component: Widget,
 
+  // Where this widget can live
   contexts: {
+    // Toolbar strip (main intended place)
+    toolbar: {
+      // These are "grid-ish" units; tweak to taste once the toolbar host exists
+      minSize:     { cols: 4,  rows: 1 },
+      maxSize:     { cols: 24, rows: 1 },
+      defaultSize: { cols: 12, rows: 1 },
+    },
+
+    // Optional: allow dropping favorites in the main grid as a big widget
     grid: {
       minSize:     { cols: 2, rows: 1 },
-      maxSize:     { cols: 6, rows: 3 },
-      defaultSize: { cols: 3, rows: 2 },
+      maxSize:     { cols: 12, rows: 8 },
+      defaultSize: { cols: 4, rows: 2 },
     },
 
+    // Optional: also usable in sidebar
     sidebar: {
-      // Keep this shape the same as your working example
-      // (your sidebar's getMinHeight already understands it)
-      minHeight: 84,
+      minHeight: 120,
+    },
 
-      // The order here is the cycle order in your sidebar menu
-      layouts: [
-        { id: 'compact',  tooltip: 'Compact View (single row)' },
-        { id: 'expanded', tooltip: 'Expanded View (controls + queue)' },
-        // no 'collapsed' here — you said the app handles that globally
-      ],
+    // Widget-local layout modes (up to you & Widget.vue)
+    layouts: [
+      { id: 'toolbar', icon: '★', tooltip: 'Toolbar pills' },
+      { id: 'list',    icon: '☰', tooltip: 'Vertical list' },
+    ],
+  },
+
+  // Default config that will be passed as props.config
+  defaults: {
+    data: {
+      // Which logical favorites group to use in favorites/service
+      group: 'default',
+
+      // Future-you knobs:
+      // scope: 'global' | 'workspace' | 'profile' (if you ever want that)
+      showLabels: true,
+      maxVisible: 24,
+    },
+    view: {
+      layout: 'toolbar',  // must match one of contexts.layouts ids
+      dense: true,
     },
   },
 
-  // Seed whatever defaults your widget reads from props/config
-  defaults: {
-    queueName: 'Queue',
-    volume: 0.9,
-    repeat: 'off',
-    shuffle: false,
-  },
-
-  capabilities: [],
+  // Capability tag so other code can discover "favorites providers" later
+  capabilities: ['favorites:provider'],
 }

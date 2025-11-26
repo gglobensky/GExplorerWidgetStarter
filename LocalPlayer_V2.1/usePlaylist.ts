@@ -298,66 +298,11 @@ export function usePlaylist(
     }
   }
 
-  async function loadAndMerge(fileInput: HTMLInputElement | null) {
+  async function loadAndMerge() {
     // Prefer the host dialog…
     const handled = await openViaHostDialog()
-    if (handled) return
-
-    // …fallback to browser picker
-    try {
-      // @ts-ignore
-      if ('showOpenFilePicker' in window) {
-        // @ts-ignore
-        const handles: FileSystemFileHandle[] = await window.showOpenFilePicker({
-          multiple: true,
-          types: [
-            { description: 'Audio', accept: { 'audio/*': ['.mp3', '.ogg', '.oga', '.aac', '.m4a', '.flac', '.wav', '.webm'] } },
-            { description: 'GExplorer Playlist', accept: { 'application/json': ['.gexm'] } },
-            { description: 'M3U Playlist', accept: { 'audio/x-mpegurl': ['.m3u', '.m3u8'] } }
-          ]
-        })
-
-        const toAdd: Track[] = []
-        const placeholders: Track[] = []
-
-        for (const h of handles) {
-          const file = await h.getFile()
-          const nameLower = file.name.toLowerCase()
-
-          if (nameLower.endsWith('.gexm')) {
-            try { await importGexmText(await file.text()) } catch (e) { console.warn('[gexm:open] parse failed', e) }
-            continue
-          }
-
-          if (nameLower.endsWith('.m3u') || nameLower.endsWith('.m3u8')) {
-            try { placeholders.push(...parseM3U(await file.text())) } catch (e) { console.warn('[m3u:open] parse failed', e) }
-            continue
-          }
-
-          if (ACCEPTED_MIMES.includes(file.type) || /\.(mp3|ogg|oga|aac|m4a|flac|wav|webm)$/i.test(file.name)) {
-            const id = `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2)}`
-            const url = registerBlob(URL.createObjectURL(file))
-            toAdd.push({ id, name: file.name, url, type: file.type, _ownedBlob: true } as any)
-          }
-        }
-
-        const startEmpty = queue.value.length === 0
-        queue.value.push(...toAdd, ...placeholders)
-        if (startEmpty && toAdd.length) {
-          const idx = await playlists.playIndex(sel, 0, music)
-          if (idx >= 0) { currentIndex.value = idx; isPlaying.value = true }
-        }
-
-        ensureDnD()
-        playlists.setItems(sel, toPlaylistItems(), { keepCurrent: true })
-        return
-      }
-
-      // Final fallback: hidden <input type="file">
-      fileInput?.click()
-    } catch (e) {
-      console.warn('[open] failed', e)
-    }
+      if (handled) return
+      console.warn('[open] failed')
   }
 
   async function onFileInput(e: Event, fileInput: HTMLInputElement) {

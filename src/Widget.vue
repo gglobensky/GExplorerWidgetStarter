@@ -1,595 +1,727 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
-import { usePlayerState } from './usePlayerState'
-import { usePlaylist, INPUT_ACCEPT } from './usePlaylist'
-import { useMarquee } from './useMarquee'
-import { useDnD } from './useDnD'
-import { fileRefsToPlaylistItems } from '/src/widgets/dnd/utils'
-import { useKeyboardNav } from './useKeyboardNav'
-import CompactLayout from './CompactLayout.vue'
-import ExpandedLayout from './ExpandedLayout.vue'
-
+import { ref, computed, onMounted, watch } from '/runtime/vue.js'
+import { createSortable, type SortableHandle } from '/src/widgets/sortable/index'
+import type { FavoriteEntry, FavoritesConfig } from '@/widgets/contracts/favorites'
 import {
-  extractGexPayload,
-  hasGexPayload,
-  authorizeFileRefs,
-  FileRefData
-} from 'gexplorer/widgets'
+  getFavorites,
+  addFavorite,
+  removeFavorite,
+  reorderFavorites,
+} from '/src/widgets/favorites/service'
+import { getCurrentPath } from '/src/widgets/nav/index'
 
+type HostAction =
+  | { type: 'nav'; to: string; replace?: boolean; sourceId?: string }
+  | { type: 'open'; path: string }
+
+// Standard widget props shape (same pattern as Items)
 const props = defineProps<{
-  config?: Record<string, any>
-  placement?: {
-    context: 'grid' | 'sidebar' | 'embedded'
-    layout: string
-    size?: any
-    resizing: boolean
-    resizePhase?: 'active' | 'idle'
-  }
-  runAction?: (a: any) => void
-  context?: 'sidebar' | 'grid'
-  variant?: 'compact' | 'expanded' | 'collapsed'
-  width?: number
-  height?: number
-  theme?: string
-  editMode?: boolean
   sourceId: string
+  config?: FavoritesConfig | { data?: any; view?: any }
+  theme?: Record<string, string>
+  runAction?: (a: HostAction) => void
+  placement?: {
+    context: 'grid' | 'sidebar' | 'toolbar' | 'embedded'
+    size?: { cols?: number; rows?: number; width?: number; height?: number }
+  }
+  editMode?: boolean
 }>()
 
-const onMediaError = (e: Event) => {
-  const t = e.target as HTMLMediaElement
-  console.error('[Widget] Media error:', {
-    src: t.currentSrc || t.src,
-    error: t.error?.code,
-    errorMessage: t.error?.message,
-    currentTrack: state.current.value?.name,
-    currentIndex: state.currentIndex.value
-  })
+const emit = defineEmits<{
+  (e: 'updateConfig', config: FavoritesConfig | any): void
+  (e: 'event', payload: any): void
+}>()
+
+const loading = ref(false)
+const error = ref<string | null>(null)
+const saving = ref(false)
+
+// ---- Config plumbing ----
+const cfg = computed(() => ({
+  data: props.config?.data ?? {},
+  view: props.config?.view ?? {},
+}))
+
+// group still exists in config, but service ignores it for now
+const group      = computed(() => (cfg.value.data as any).group ?? 'default')
+const showLabels = computed(() => cfg.value.data.showLabels !== false)
+const maxVisible = computed(() => cfg.value.data.maxVisible ?? 24)
+
+const isSidebar  = computed(() => props.placement?.context === 'sidebar')
+const layout     = computed(() =>
+  cfg.value.view.layout ?? (isSidebar.value ? 'list' : 'toolbar')
+)
+const dense      = computed(() => !!cfg.value.view.dense)
+const showIcons  = computed(() => cfg.value.view?.showIcons !== false)
+
+const favorites = ref<FavoriteEntry[]>([])
+
+// ---- Sortable wiring: shared for list/toolbar ----
+const listEl = ref<HTMLElement | null>(null)
+let sortable: SortableHandle<FavoriteEntry> | null = null
+const sortableVersion = ref(0)
+let wasDragging = false
+let dragJustEnded = false
+
+function baseList(): FavoriteEntry[] {
+  return [...favorites.value]
 }
 
-type Track = {
-  id: string
-  url: string
-  name: string
-  type?: string
-}
+// Orientation depends on layout: vertical list, horizontal toolbar
+const sortableOrientation = computed<'vertical' | 'horizontal'>(() =>
+  layout.value === 'list' ? 'vertical' : 'horizontal'
+)
 
-const expandedLayoutRef = ref<InstanceType<typeof ExpandedLayout> | null>(null)
+function onSortableUpdate() {
+  if (!sortable) return
 
-// ===== PLAYER STATE =====
-const state = usePlayerState(props.sourceId)
+  // Force re-compute of displayFavorites + sortableState
+  sortableVersion.value++
 
-// ===== LAYOUT =====
-const widgetRootEl = ref<HTMLElement | null>(null)
-const containerWidth = ref(0)
+  const { isDragging } = sortable.getState()
 
-// utility: common parent dir
-function commonDir(paths: string[]) {
-  const parts = paths.map(p => p.replace(/\\/g, '/').split('/'))
-  let i = 0
-  while (true) {
-    const seg = parts[0][i]
-    if (!seg) break
-    if (!parts.every(a => a[i] === seg)) break
-    i++
+  if (!wasDragging && isDragging) {
+    document.body.style.cursor = 'grabbing'
   }
-  const shared = parts[0].slice(0, i).join('/')
-  return shared.endsWith(':') ? shared + '/' : shared || '/'
-}
 
-// Convert file-refs → streaming playlist items (gex://) → Tracks
-async function refsToTracks(
-  refs: FileRefData[],
-  receiverWidgetType: string,
-  receiverWidgetId: string
-): Promise<Track[]> {
-  const items = await fileRefsToPlaylistItems(refs, receiverWidgetType, receiverWidgetId)
-  return items.map(it => ({
-    id: it.id || it.src,
-    url: it.src,
-    name: it.name || it.src.split(/[\\/]/).pop() || 'track',
-    type: it.type
-  }))
-}
+  if (wasDragging && !isDragging) {
+    document.body.style.cursor = ''
 
-// Push tracks into queue and sync the underlying playlists engine
-async function appendTracks(tracks: Track[]) {
-  if (!tracks.length) return
-  state.queue.value = state.queue.value.concat(tracks)
-  state.playlists.setItems(state.sel, state.toPlaylistItems(), { keepCurrent: true })
-}
+    const committed = sortable.getOrderedList() as FavoriteEntry[]
+    const cur = baseList()
 
-// rAF + idle-gated width pipeline ------------------------------------------
-let pendingWidth: number | null = null
-let rafForWidth = 0
+    const same =
+      committed.length === cur.length &&
+      committed.every((e, i) => e?.path === cur[i]?.path)
 
-function commitWidth(w: number) {
-  if (Math.abs(w - containerWidth.value) < 1) return
-  containerWidth.value = w | 0
-}
-
-function scheduleWidth(w: number, src: 'host' | 'ro' = 'ro') {
-  pendingWidth = w | 0
-  if (props.placement?.resizePhase === 'active' && src === 'ro') return
-  if (rafForWidth) return
-  rafForWidth = requestAnimationFrame(() => {
-    rafForWidth = 0
-    if (pendingWidth != null) {
-      commitWidth(pendingWidth)
-      pendingWidth = null
+    if (!same) {
+      favorites.value = committed
+      const order = committed.map(f => f.path)
+      void reorderFavorites(order).catch(e => {
+        console.error('[favorites] reorderFavorites failed:', e)
+      })
     }
-  })
+
+    dragJustEnded = true
+  }
+
+  wasDragging = isDragging
 }
 
-function seedMeasureNow() {
-  const el = widgetRootEl.value
-  if (!el) return
-  const w = Math.round(el.getBoundingClientRect().width || 0)
-  if (w) scheduleWidth(w)
-}
 
-watch(() => props.placement?.resizePhase, (phase) => {
-  if (phase === 'idle' && pendingWidth != null) {
-    commitWidth(pendingWidth)
-    pendingWidth = null
-  }
-})
-// ---------------------------------------------------------------------------
-
-const hostContext = computed<'grid' | 'sidebar' | 'embedded'>(() =>
-  props.placement?.context ?? props.context ?? 'sidebar'
-)
-
-const hostLayout = computed<string>(() =>
-  props.placement?.layout ?? props.variant ?? 'expanded'
-)
-
-const hostWidth = computed(() => {
-  const p = props.placement?.size
-  return typeof p?.width === 'number' && p.width > 0
-    ? p.width
-    : typeof props.width === 'number' && props.width > 0
-      ? props.width
-      : 0
-})
-watch(hostWidth, (w) => {
-  if (w > 0) scheduleWidth(Math.round(w), 'host')
-})
-
-const layoutClass = computed(() => {
-  const w = containerWidth.value || hostWidth.value || 0
-  if (w <= 160) return 'micro'
-  if (w <= 260) return 'ultra'
-  if (w <= 320) return 'narrow'
-  if (w <= 400) return 'medium'
-  return 'wide'
-})
-
-watch(() => hostLayout.value, () => {
-  nextTick(() => {
-    if (hostLayout.value !== 'compact') seedMeasureNow()
-  })
-})
-
-// ===== DND (list reordering) =====
-const showQueue = state.life.cell<boolean>('ui.showQueue', true)
-const dnd = useDnD(
-  state.queue,
-  state.currentIndex,
-  showQueue,
-  () => expandedLayoutRef.value?.queueEl || null,
-  state.toPlaylistItems,
-  state.playlists,
-  state.sel
-)
-
-// ===== PLAYLIST OPS =====
-const playlist = usePlaylist(
-  state.queue,
-  state.currentIndex,
-  state.queueName,
-  state.isPlaying,
-  state.music,
-  state.playlists,
-  state.sel,
-  state.toPlaylistItems,
-  () => dnd.ensureSortable(),           // <- if your useDnD exposes ensureDnD()
-  'local-player',                  // <- receiverWidgetType
-  props.sourceId                   // <- receiverWidgetId
-)
-
-
-// ===== KEYBOARD NAV =====
-const keyboard = useKeyboardNav(
-  state.queue,
-  state.selectedIndex,
-  state.hasTracks,
-  play
-)
-
-// ===== MARQUEE =====
-const marquee = useMarquee(
-  state.currentTitle,
-  layoutClass,
-  computed(() => props.placement?.resizePhase),
-  computed(() => props.config)
-)
-
-// Rack index → sync current/selected
-type RackIndexEvt = CustomEvent<{
-  listId: string
-  index?: number
-  item?: { id?: string; url?: string } | null
-}>
-const onRackIndex = (e: Event) => {
-  const d = (e as RackIndexEvt).detail
-  let real = typeof d.index === 'number' ? d.index : -1
-  if (real < 0 && d.item) {
-    const { id, url } = d.item
-    if (id) real = state.queue.value.findIndex(t => t.id === id)
-    if (real < 0 && url) real = state.queue.value.findIndex(t => t.url === url)
-  }
-  if (real >= 0) {
-    if (state.currentIndex.value !== real) state.currentIndex.value = real
-    if (state.selectedIndex.value !== real) state.selectedIndex.value = real
-  }
-}
-
-// ===== PLAYER CONTROLS =====
-async function play(index?: number) {
-  await state.prime()
-  state.isLoading.value = true
-
-  if (typeof index === 'number') {
-    if (index >= 0 && index < state.queue.value.length && state.queue.value[index]?.url) {
-      const idx = await state.playlists.playIndex(state.sel, index, state.music)
-      if (idx >= 0) {
-        state.currentIndex.value = idx
-        state.selectedIndex.value = idx
-        state.isPlaying.value = true
-      }
-    }
-    state.isLoading.value = false
+function ensureSortable() {
+  const items = baseList()
+  if (!items.length || !listEl.value) {
+    sortable = null
     return
   }
 
-  if (state.currentIndex.value === -1) {
-    const first = state.queue.value.findIndex(t => !!t.url)
-    if (first >= 0) {
-      const idx = await state.playlists.playIndex(state.sel, first, state.music)
-      if (idx >= 0) {
-        state.currentIndex.value = idx
-        state.selectedIndex.value = idx
-        state.isPlaying.value = true
-      }
-      state.isLoading.value = false
-      return
-    }
-  }
-
-  try { await state.music.play(); state.isPlaying.value = true } catch { state.isPlaying.value = false }
-  setTimeout(() => { state.isLoading.value = false }, 300)
-}
-
-function pause() {
-  state.music.pause()
-  state.isPlaying.value = false
-}
-
-function togglePlay() {
-  if (!state.hasTracks.value) return
-  state.isPlaying.value ? pause() : play()
-}
-
-function next() {
-  state.playlists.next(state.sel, state.music).then((idx: number) => {
-    if (idx >= 0) {
-      state.currentIndex.value = idx
-      state.selectedIndex.value = idx
-    } else {
-      pause()
-    }
-  })
-}
-
-function prev() {
-  state.playlists.prev(state.sel, state.music).then((idx: number) => {
-    if (idx >= 0) {
-      state.currentIndex.value = idx
-      state.selectedIndex.value = idx
-    } else {
-      pause()
-    }
-  })
-}
-
-function seek(e: Event) {
-  if (!state.duration.value) return
-  const v = parseFloat((e.target as HTMLInputElement).value)
-  state.music.currentTime = v * state.duration.value
-}
-
-function adjustSpeed(delta: number) {
-  const newRate = Math.max(0.25, Math.min(3.0, state.playbackRate.value + delta))
-  state.playbackRate.value = newRate
-  state.music.playbackRate = newRate
-}
-
-function setVolume(v: number) {
-  const clamped = Math.min(1, Math.max(0, v))
-  state.volume.value = clamped
-  if (clamped > 0) state.lastNonZeroVolume.value = clamped
-  state.music.volume = clamped
-}
-
-function toggleMute() {
-  setVolume(state.volume.value > 0 ? 0 : state.lastNonZeroVolume.value || 0.5)
-}
-
-function volInput(v: number) {
-  setVolume(v)
-}
-
-function toggleShuffle() {
-  state.shuffle.value = !state.shuffle.value
-  state.playlists.setOptions(state.sel, { shuffle: state.shuffle.value })
-}
-
-function toggleRepeat() {
-  state.repeat.value = state.repeat.value === 'off' ? 'all' : state.repeat.value === 'all' ? 'one' : 'off'
-  state.playlists.setOptions(state.sel, { repeat: state.repeat.value })
-}
-
-async function clickPick() {
-  // Prefer host dialog; falls back to browser picker or <input> inside the hook.
-  await playlist.loadAndMerge()
-}
-
-function toggleQueue() {
-  showQueue.value = !showQueue.value
-}
-
-// ===== QUEUE RENAME =====
-const renaming = ref(false)
-const draftQueueName = ref('')
-const nameInput = ref<HTMLInputElement | null>(null)
-
-function beginRename() {
-  draftQueueName.value = state.queueName.value
-  renaming.value = true
-  nextTick(() => {
-    nameInput.value?.focus()
-    nameInput.value?.select()
-  })
-}
-
-function cancelRename() {
-  renaming.value = false
-}
-
-function commitRename() {
-  const v = draftQueueName.value.trim()
-  if (v) state.queueName.value = v
-  renaming.value = false
-}
-
-// ===== ROW INTERACTIONS =====
-async function onRowDblClick(track: any) {
-  if (dnd.sortableState.value.isDragging) return
-  const realIdx = state.queue.value.findIndex(t => t.id === track.id)
-  const idx = await state.playlists.playIndex(state.sel, realIdx, state.music)
-  if (idx >= 0) {
-    state.currentIndex.value = idx
-    state.selectedIndex.value = idx
+  if (!sortable) {
+    sortable = createSortable<FavoriteEntry>(items, {
+      identity: (e) => e.path,
+      orientation: sortableOrientation.value,
+      dragThresholdPx: 4,           // your "movement threshold"
+      onUpdate: onSortableUpdate,
+      scrollContainer: () => listEl.value,
+      rowSelector: '.fav-row',
+      containerClassOnDrag: 'gex-dragging',
+      autoScroll: { marginPx: 32, maxSpeedPxPerSec: 700 },
+    })
+  } else {
+    sortable.setOrderedList(items)
+    sortable.setOrientation?.(sortableOrientation.value) // optional if your impl supports it
   }
 }
 
-function onRowClick(index: number) {
-  keyboard.selectRow(index)
+function setRowRef(entry: FavoriteEntry, el: HTMLElement | null) {
+  sortable?.registerRef(entry, el)
 }
 
-// ===== DRAG & DROP (FILES) =====
-const draggingOver = ref(false)
+const sortableState = computed(() => {
+  // touch version so this recomputes as sortable updates
+  sortableVersion.value
 
-function prevent(e: Event) { e.preventDefault(); e.stopPropagation() }
-function onDragEnter(e: DragEvent) { prevent(e); draggingOver.value = true }
-function onDragOver(e: DragEvent) { prevent(e) }
-function onDragLeave(e: DragEvent) { prevent(e); draggingOver.value = false }
-
-async function onDrop(e: DragEvent) {
-  prevent(e)
-  draggingOver.value = false
-
-  if (hasGexPayload(e)) {
-    const payload = extractGexPayload(e)
-    if (!payload) return
-
-    if (payload.type === 'gex/file-refs') {
-      const auth = await authorizeFileRefs(
-        'local-player',
-        props.sourceId,
-        payload,
-        { requiredCaps: ['Read'] }
-      )
-      if (!auth.ok) return
-
-      const tracks = await refsToTracks(
-        payload.data as FileRefData[],
-        'local-player',
-        props.sourceId
-      )
-
-      await appendTracks(tracks)
-
-      if (state.queue.value.length === tracks.length && tracks.length) {
-        await play(0)
-      }
-      return
-    }
-  }
-
-  if (e.dataTransfer?.files?.length) {
-    await playlist.addFiles(e.dataTransfer.files)
-  }
-}
-
-// ===== MEDIA EVENTS =====
-const onMediaPlay = () => { state.isPlaying.value = true }
-const onMediaPause = () => { state.isPlaying.value = false }
-const onTimeUpdate = async () => {
-  state.currentTime.value = state.music.currentTime || 0
-}
-
-const onLoadedMeta = (e: Event) => {
-  const t = e.target as HTMLMediaElement | null
-  const d = t?.duration ?? state.music.duration
-  state.duration.value = Number.isFinite(d) ? d : 0
-}
-
-const onVolumeChange = () => {
-  const v = state.music.volume
-  if (v !== state.volume.value) {
-    state.volume.value = v
-    if (v > 0) state.lastNonZeroVolume.value = v
-  }
-}
-
-function hydrateFromHandle() {
-  state.volume.value = state.music.volume
-  if (state.volume.value > 0) state.lastNonZeroVolume.value = state.volume.value
-  state.isPlaying.value = !state.music.paused
-  state.currentTime.value = state.music.currentTime || 0
-  state.duration.value = state.music.duration || 0
-}
-
-// ===== LIFECYCLE =====
-let resizeObserver: ResizeObserver | null = null
-
-onMounted(async () => {
-  state.music.addEventListener('play', onMediaPlay)
-  state.music.addEventListener('pause', onMediaPause)
-  state.music.addEventListener('timeupdate', onTimeUpdate)
-  state.music.addEventListener('loadedmetadata', onLoadedMeta as any)
-  state.music.addEventListener('volumechange', onVolumeChange)
-  state.music.addEventListener('error', onMediaError)
-  state.music.addEventListener('rack:playlistindex', onRackIndex as EventListener)
-
-  state.playlists.register(state.sel, state.toPlaylistItems(), {
-    autoNext: 'linear',
-    repeat: state.repeat.value,
-    shuffle: state.shuffle.value,
-    dedupe: false
-  })
-  state.playlists.setItems(state.sel, state.toPlaylistItems(), { keepCurrent: true })
-  state.playlists.bindToHandle(state.sel, state.music)
-
-  await nextTick()
-  seedMeasureNow()
-  resizeObserver = new ResizeObserver((entries) => {
-    const e = entries[0]
-    const w = 'contentBoxSize' in e && e.contentBoxSize
-      ? (Array.isArray(e.contentBoxSize) ? e.contentBoxSize[0].inlineSize : e.contentBoxSize.inlineSize)
-      : e.contentRect.width
-    scheduleWidth(Math.round(w), 'ro')
-  })
-  if (widgetRootEl.value) resizeObserver.observe(widgetRootEl.value)
-
-  hydrateFromHandle()
+  return sortable
+    ? sortable.getState()
+    : { isDragging: false, draggingId: null, hoverIdx: null }
 })
 
-onBeforeUnmount(() => {
-  if (rafForWidth) cancelAnimationFrame(rafForWidth)
-  resizeObserver?.disconnect()
+function startRowDrag(displayIndex: number, event: PointerEvent) {
+  ensureSortable()
+  sortable?.startDrag(displayIndex, event)
+  event.preventDefault()
+}
 
-  state.music.removeEventListener('play', onMediaPlay)
-  state.music.removeEventListener('pause', onMediaPause)
-  state.music.removeEventListener('timeupdate', onTimeUpdate)
-  state.music.removeEventListener('loadedmetadata', onLoadedMeta as any)
-  state.music.removeEventListener('volumechange', onVolumeChange)
-  state.music.removeEventListener('error', onMediaError)
-  state.music.removeEventListener('rack:playlistindex', onRackIndex as EventListener)
-
-  state.playlists.unbind(state.sel)
-  dnd.sortable?.destroy()
+// This is what list/toolbar both render from
+const displayFavorites = computed(() => {
+  sortableVersion.value // tie reactivity to sortable updates
+  return sortable ? (sortable.getDisplayList() as FavoriteEntry[]) : baseList()
 })
+
+// Clamp for toolbar visual max
+const visibleFavorites = computed(() =>
+  displayFavorites.value.slice(0, Math.max(1, maxVisible.value))
+)
+
+// Keep sortable in sync when favorites change
+watch(
+  () => favorites.value.map(f => f.path).join('|'),
+  () => ensureSortable()
+)
+
+
+// Add/edit dialog state
+const showAddDialog = ref(false)
+const newPath  = ref('')
+const newLabel = ref('')
+
+// Helpers to prefill popup
+function guessLabelFromPath(path: string): string {
+  const p = (path || '').replace(/[\\/]+$/, '')
+  if (!p) return ''
+  const parts = p.split(/[/\\]/).filter(Boolean)
+  return parts[parts.length - 1] || p
+}
+
+function openAddDialog() {
+  const base = getCurrentPath().trim()
+  newPath.value = base
+  newLabel.value = guessLabelFromPath(base)
+  showAddDialog.value = true
+}
+
+function closeAddDialog() {
+  showAddDialog.value = false
+}
+
+// Load from service
+async function refreshFavorites() {
+  loading.value = true
+  error.value = null
+
+  try {
+    const svc = await getFavorites()
+    if (Array.isArray(svc)) {
+      favorites.value = svc
+      return
+    }
+
+    const fromCfg = (cfg.value.data as any)?.entries
+    favorites.value = Array.isArray(fromCfg) ? fromCfg : []
+  } catch (e: any) {
+    console.error('[favorites] getFavorites failed:', e)
+    error.value = String(e?.message ?? e ?? 'Error')
+
+    const fromCfg = (cfg.value.data as any)?.entries
+    favorites.value = Array.isArray(fromCfg) ? fromCfg : []
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(() => {
+  void refreshFavorites()
+})
+
+watch(group, () => {
+  void refreshFavorites()
+})
+
+const hostVars = computed(() => ({
+  '--fav-bg': props.theme?.bg         || 'var(--surface-1, #141414)',
+  '--fav-fg': props.theme?.fg         || 'var(--fg, #eee)',
+  '--fav-border': props.theme?.border || 'rgba(255,255,255,.14)',
+}))
+
+// Fire a nav/open for the host
+function openFavorite(fav: FavoriteEntry, event?: MouseEvent) {
+  // If a drag just ended, swallow this click
+  if (dragJustEnded) {
+    dragJustEnded = false
+    event?.preventDefault()
+    return
+  }
+
+  const path = fav.path?.trim()
+  if (!path) return
+
+  if (props.runAction) {
+    props.runAction({ type: 'nav', to: path, sourceId: props.sourceId })
+  } else {
+    emit('event', { type: 'openPath', payload: path })
+  }
+}
+
+
+// ---- Editing helpers ----
+
+async function confirmAddFavorite() {
+  const path = newPath.value.trim()
+  if (!path) return
+
+  const label = newLabel.value.trim() || undefined
+
+  saving.value = true
+  error.value = null
+  try {
+    await addFavorite(path, label)
+    await refreshFavorites()
+    closeAddDialog()
+  } catch (e: any) {
+    console.error('[favorites] addFavorite failed:', e)
+    error.value = String(e?.message ?? e ?? 'Error')
+  } finally {
+    saving.value = false
+  }
+}
+
+async function handleRemoveFavorite(path: string) {
+  error.value = null
+  try {
+    await removeFavorite(path)
+    favorites.value = favorites.value.filter(
+      f => f.path.toLowerCase() !== path.toLowerCase()
+    )
+  } catch (e: any) {
+    console.error('[favorites] removeFavorite failed:', e)
+    error.value = String(e?.message ?? e ?? 'Error')
+  }
+}
+
 </script>
 
 <template>
   <div
-    ref="widgetRootEl"
-    class="widget-root"
-    :style="{ '--widget-w': (containerWidth || hostWidth) + 'px' }"
+    class="favorites-root"
+    :class="{ 'sidebar-mode': isSidebar }"
+    :style="hostVars"
   >
-    <!-- Compact Layout -->
-    <CompactLayout
-      v-if="hostLayout === 'compact'"
-      :current="state.current.value"
-      :has-tracks="state.hasTracks.value"
-      :is-playing="state.isPlaying.value"
-      :volume="state.volume.value"
-      :volume-icon="state.volumeIcon.value"
-      :play-tooltip="`${state.isPlaying.value ? 'Pause' : 'Play'}${state.current.value ? '\n' + state.current.value.name : ''}`"
-      @toggle-play="togglePlay"
-      @click-pick="clickPick"
-      @vol-input="volInput"
-    />
+    <!-- Header: sidebar only, always editable -->
+    <div v-if="isSidebar" class="favorites-header">
+      <span class="favorites-title">Favorites</span>
+      <button
+        type="button"
+        class="header-icon-btn"
+        title="Add favorite"
+        @click="openAddDialog"
+      >
+        ★
+      </button>
+    </div>
 
-    <!-- Expanded Layout -->
-    <ExpandedLayout
-      v-else
-      ref="expandedLayoutRef"
-      :queue="state.queue.value"
-      :display-queue="dnd.displayQueue.value"
-      :current-index="state.currentIndex.value"
-      :selected-index="state.selectedIndex.value"
-      :current="state.current.value"
-      :has-tracks="state.hasTracks.value"
-      :can-prev="state.canPrev.value"
-      :can-next="state.canNext.value"
-      :is-playing="state.isPlaying.value"
-      :is-loading="state.isLoading.value"
-      :current-time="state.currentTime.value"
-      :duration="state.duration.value"
-      :volume="state.volume.value"
-      :repeat="state.repeat.value"
-      :shuffle="state.shuffle.value"
-      :queue-name="state.queueName.value"
-      :volume-icon="state.volumeIcon.value"
-      :playback-rate="state.playbackRate.value"
-      :playback-rate-label="state.playbackRateLabel.value"
-      :sortable-state="dnd.sortableState.value"
-      :layout-class="layoutClass"
-      :show-queue="showQueue"
-      :renaming="renaming"
-      :draft-queue-name="draftQueueName"
-      :marquee-on="marquee.marqueeOn.value"
-      :marquee-dir="marquee.marqueeDir.value"
-      :resize-phase="props.placement?.resizePhase"
-      :set-marquee-box="marquee.setMarqueeBox"
-      :set-marquee-copy="marquee.setMarqueeCopy"
-      @toggle-play="togglePlay"
-      @prev="prev"
-      @next="next"
-      @seek="seek"
-      @adjust-speed="adjustSpeed"
-      @toggle-shuffle="toggleShuffle"
-      @toggle-repeat="toggleRepeat"
-      @click-pick="clickPick"
-      @toggle-mute="toggleMute"
-      @vol-input="volInput"
-      @toggle-queue="toggleQueue"
-      @begin-rename="beginRename"
-      @cancel-rename="cancelRename"
-      @commit-rename="commitRename"
-      @update:draft-queue-name="(v) => draftQueueName = v"
-      @save-playlist="playlist.savePlaylistGexm"
-      @row-dblclick="onRowDblClick"
-      @row-click="onRowClick"
-      @start-row-drag="dnd.startRowDrag"
-      @remove-at="playlist.removeAt"
-      @drag-enter="onDragEnter"
-      @drag-over="onDragOver"
-      @drag-leave="onDragLeave"
-      @drop="onDrop"
-    />
+    <div v-if="loading" class="fav-msg">Loading…</div>
+    <div v-else-if="error" class="fav-msg error">{{ error }}</div>
+    <div v-else-if="!visibleFavorites.length" class="fav-msg empty">(No favorites yet)</div>
+    <template v-else>
+            <!-- LIST layout (sidebar) -->
+            <!-- LIST layout (sidebar) -->
+      <ul
+        v-if="layout === 'list'"
+        class="favorites-list"
+        :class="{ dense }"
+        ref="listEl"
+      >
+        <li
+          v-for="(fav, index) in displayFavorites"
+          :key="fav.path"
+          class="fav-row"
+          :class="{
+            'is-dragging':
+              sortableState.isDragging && sortableState.draggingId === fav.path
+          }"
+          :ref="el => setRowRef(fav, el as HTMLElement | null)"
+          @pointerdown.stop="startRowDrag(index, $event)"
+        >
+          <button
+            type="button"
+            class="fav-btn"
+            @click="openFavorite(fav, $event)"
+            :title="fav.label || fav.path"
+          >
+            <span v-if="showIcons" class="fav-icon">★</span>
+            <span v-if="showLabels" class="fav-label">
+              {{ fav.label || fav.path }}
+            </span>
+          </button>
+
+          <!-- Sidebar controls: delete only; drag is on whole row -->
+          <div v-if="isSidebar" class="fav-row-actions">
+            <button
+              type="button"
+              class="icon-btn danger"
+              @pointerdown.stop
+              @click.stop="handleRemoveFavorite(fav.path)"
+              title="Remove"
+            >
+              ✕
+            </button>
+
+          </div>
+        </li>
+      </ul>
+
+            <!-- TOOLBAR layout (read-only for now) -->
+      <div v-else class="favorites-toolbar" :class="{ dense }">
+        <button
+          v-for="fav in visibleFavorites"
+          :key="fav.path"
+          type="button"
+          class="fav-pill"
+          @click="openFavorite(fav, $event)"
+          :title="fav.label || fav.path"
+        >
+          <span v-if="showIcons" class="fav-icon">★</span>
+          <span v-if="showLabels" class="fav-label">
+            {{ fav.label || fav.path }}
+          </span>
+        </button>
+      </div>
+
+    </template>
+
+    <!-- Add favorite popup (global modal) -->
+    <teleport to="body">
+      <div
+        v-if="showAddDialog"
+        class="fav-dialog-backdrop"
+        @click.self="closeAddDialog"
+      >
+        <div class="fav-dialog">
+          <div class="fav-dialog-title">Add favorite</div>
+
+          <label class="fav-dialog-field">
+            <span class="field-label">Path</span>
+            <input
+              v-model="newPath"
+              type="text"
+              class="fav-input"
+              placeholder="C:\\Users\\you\\Downloads or home:/games"
+            />
+          </label>
+
+          <label class="fav-dialog-field">
+            <span class="field-label">Label</span>
+            <input
+              v-model="newLabel"
+              type="text"
+              class="fav-input"
+              placeholder="Downloads"
+            />
+          </label>
+
+          <div class="fav-dialog-buttons">
+            <button
+              type="button"
+              class="btn"
+              @click="closeAddDialog"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="btn primary"
+              :disabled="!newPath.trim() || saving"
+              @click="confirmAddFavorite"
+            >
+              Add
+            </button>
+          </div>
+        </div>
+      </div>
+    </teleport>
+
   </div>
 </template>
+
+<style scoped>
+.fav-row.is-dragging {
+  opacity: 0.7;
+}
+
+.favorites-root .gex-dragging {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.favorites-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+}
+
+/* you can keep your existing .fav-btn, .fav-pill, .icon-btn, etc. */
+
+
+.favorites-root {
+  position: relative;
+  background: var(--fav-bg);
+  color: var(--fav-fg);
+  border-radius: 8px;
+  border: 1px solid var(--fav-border);
+  padding: 6px 8px;
+  box-sizing: border-box;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Slightly tighter padding when docked in sidebar */
+.favorites-root.sidebar-mode {
+  padding: 4px 6px;
+}
+
+.favorites-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.9;
+}
+
+.favorites-title {
+  font-weight: 600;
+}
+
+.header-icon-btn {
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: transparent;
+  color: inherit;
+  width: 20px;
+  height: 20px;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.header-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.fav-msg {
+  font-size: 13px;
+  opacity: 0.8;
+  padding: 4px 2px;
+}
+
+.fav-msg.error {
+  color: #ff8a8a;
+}
+
+.fav-msg.empty {
+  opacity: 0.6;
+  font-style: italic;
+}
+
+/* Vertical list mode */
+.favorites-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.favorites-list.dense {
+  gap: 0;
+}
+
+.fav-row {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Common button styling for entries */
+.fav-btn,
+.fav-pill {
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  font-size: 13px;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.fav-btn {
+  width: 100%;
+  text-align: left;
+}
+
+.fav-pill {
+  white-space: nowrap;
+}
+
+.fav-btn:hover,
+.fav-pill:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Actions (reorder + delete) */
+.fav-row-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.icon-btn {
+  border: none;
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 11px;
+  cursor: pointer;
+  background: transparent;
+  color: inherit;
+  opacity: 0.7;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  opacity: 1;
+}
+
+.icon-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.icon-btn.danger:hover:not(:disabled) {
+  background: rgba(255, 128, 128, 0.16);
+}
+
+/* Horizontal toolbar layout */
+.favorites-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.favorites-toolbar.dense {
+  gap: 2px;
+}
+
+.fav-icon {
+  flex: 0 0 auto;
+  width: 16px;
+  text-align: center;
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+.fav-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+/* Add favorite popup */
+.fav-dialog-backdrop {
+  position: fixed;         /* instead of absolute */
+  inset: 0;
+  background: radial-gradient(
+    circle at top,
+    rgba(0, 0, 0, 0.4),
+    rgba(0, 0, 0, 0.8)
+  );
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;          /* above sidebar + other chrome */
+}
+
+
+.fav-dialog {
+  background: rgba(12, 12, 12, 0.96);
+  border-radius: 8px;
+  border: 1px solid var(--fav-border);
+  padding: 8px 10px;
+  min-width: 240px;
+  max-width: 320px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+}
+
+.fav-dialog-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.fav-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 6px;
+}
+
+.field-label {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.fav-dialog .fav-input {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: inherit;
+  font-size: 12px;
+  padding: 3px 6px;
+  box-sizing: border-box;
+}
+
+.fav-dialog .fav-input:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.fav-dialog-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.btn {
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.btn.primary {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.btn:not(:disabled):hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+</style>

@@ -183,7 +183,6 @@ const dnd = useDnD(
 )
 
 // ===== PLAYLIST OPS =====
-const fileInput = ref<HTMLInputElement | null>(null)
 const playlist = usePlaylist(
   state.queue,
   state.currentIndex,
@@ -342,7 +341,7 @@ function toggleRepeat() {
 
 async function clickPick() {
   // Prefer host dialog; falls back to browser picker or <input> inside the hook.
-  await playlist.loadAndMerge(fileInput.value || null)
+  await playlist.loadAndMerge()
 }
 
 function toggleQueue() {
@@ -520,16 +519,6 @@ onBeforeUnmount(() => {
     class="widget-root"
     :style="{ '--widget-w': (containerWidth || hostWidth) + 'px' }"
   >
-    <!-- Hidden file input -->
-    <input
-      ref="fileInput"
-      type="file"
-      multiple
-      :accept="INPUT_ACCEPT"
-      style="display: none"
-      @change="(e) => playlist.onFileInput(e, fileInput!)"
-    />
-
     <!-- Compact Layout -->
     <CompactLayout
       v-if="hostLayout === 'compact'"

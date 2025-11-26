@@ -97,26 +97,95 @@ const error = ref('')
 const S = computed(() => sizeTokens(merged.value.itemSize))
 
 const sortedEntries = computed(() => {
-  const data = entries.value.slice()
   const k = sortKey.value
   const dir = sortDir.value === 'asc' ? 1 : -1
+
   const cmp = (a: string, b: string) =>
     String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' })
 
+  // Start from raw directory entries
+  let data = entries.value.slice()
+
+  // ---- Apply extension filter (from dialog / other callers) ----
+  const f = activeFilter.value
+  if (f?.exts && f.exts.length) {
+    const allowed = new Set(
+      f.exts
+        .map(e => (e || '').toString().toLowerCase())
+        .filter(e => e && e !== '*')    // treat "*" as "no restriction"
+    )
+
+    if (allowed.size) {
+      data = data.filter((e: any) => {
+        const kindStr = String(e?.Kind || '').toLowerCase()
+        const isDir =
+          kindStr.includes('dir') ||   // "Dir", "Directory"
+          kindStr === 'folder'
+
+        // Never hide folders – matches OS dialogs
+        if (isDir) return true
+
+        const ext = String(e?.Ext || '')
+          .toLowerCase()
+          .replace(/^\./, '')          // ".mp3" -> "mp3"
+
+        if (!ext) return false         // files with no ext are hidden under filtered view
+        return allowed.has(ext)
+      })
+    }
+  }
+
+  // ---- Then sort the filtered set ----
   data.sort((A, B) => {
-    if (k === 'name')     return cmp(A?.Name || '', B?.Name || '') * dir
-    if (k === 'ext')      { const c = cmp(A?.Ext || '', B?.Ext || ''); return (c || cmp(A?.Name || '', B?.Name || '')) * dir }
-    if (k === 'size')     { const sa = (A?.Size ?? 0), sb = (B?.Size ?? 0); const c = sa === sb ? 0 : (sa < sb ? -1 : 1); return (c || cmp(A?.Name || '', B?.Name || '')) * dir }
-    if (k === 'modified') { const ta = A?.ModifiedAt ? +new Date(A.ModifiedAt) : 0; const tb = B?.ModifiedAt ? +new Date(B.ModifiedAt) : 0; const c = ta === tb ? 0 : (ta < tb ? -1 : 1); return (c || cmp(A?.Name || '', B?.Name || '')) * dir }
+    if (k === 'name')
+      return cmp(A?.Name || '', B?.Name || '') * dir
+
+    if (k === 'ext') {
+      const c = cmp(A?.Ext || '', B?.Ext || '')
+      return (c || cmp(A?.Name || '', B?.Name || '')) * dir
+    }
+
+    if (k === 'size') {
+      const sa = (A?.Size ?? 0), sb = (B?.Size ?? 0)
+      const c = sa === sb ? 0 : (sa < sb ? -1 : 1)
+      return (c || cmp(A?.Name || '', B?.Name || '')) * dir
+    }
+
+    if (k === 'modified') {
+      const ta = A?.ModifiedAt ? +new Date(A.ModifiedAt) : 0
+      const tb = B?.ModifiedAt ? +new Date(B.ModifiedAt) : 0
+      const c = ta === tb ? 0 : (ta < tb ? -1 : 1)
+      return (c || cmp(A?.Name || '', B?.Name || '')) * dir
+    }
+
     return 0
   })
+
   return data
 })
+
 
 const cfg = computed(() => ({
   data: props.config?.data ?? {},
   view: props.config?.view ?? {},
 }))
+
+type ItemsFilter = {
+  exts?: string[];   // lowercased, no dots, e.g. ["mp3", "wav"]
+}
+
+const activeFilter = computed<ItemsFilter | null>(() => {
+  const raw = cfg.value.data?.filters
+  if (!raw) return null
+
+  // Be forgiving: accept plain objects that look like { exts?: string[] }
+  if (typeof raw === 'object' && !Array.isArray(raw)) {
+    return raw as ItemsFilter
+  }
+
+  return null
+})
+
 
 const autoColumns = computed(() => {
   if (props.placement?.context === 'sidebar') return 1
@@ -159,6 +228,15 @@ function announceFocus() {
 watch(cwd, (v) => {
   emit('event', { type: 'cwd-changed', payload: { sourceId: props.sourceId, cwd: v } })
 })
+
+watch(
+  () => cfg.value.data?.filters,
+  () => {
+    // Clear selection when filter changes
+    selected.value = new Set()
+    engine.replaceSelection([], { reason: 'filter-changed' })
+  }
+)
 
 const entries = ref<Array<{
   Name: string; FullPath: string; Kind?: string; Ext?: string; Size?: number; ModifiedAt?: number; IconKey?: string
