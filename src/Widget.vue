@@ -1,11 +1,18 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from '/runtime/vue.js'
 import { createSortable, type SortableHandle } from '/src/widgets/sortable/index'
-import type { FavoriteEntry, FavoritesConfig } from '@/widgets/contracts/favorites'
+import type {
+  FavoriteEntry,
+  FavoritesConfig,
+  FavoriteTreeNode,
+} from '@/widgets/contracts/favorites'
 import {
   getFavorites,
+  getFavoritesTree,
   addFavorite,
+  addFolder,
   removeFavorite,
+  removeFolder,
   reorderFavorites,
 } from '/src/widgets/favorites/service'
 import { getCurrentPath } from '/src/widgets/nav/index'
@@ -13,6 +20,27 @@ import { getCurrentPath } from '/src/widgets/nav/index'
 type HostAction =
   | { type: 'nav'; to: string; replace?: boolean; sourceId?: string }
   | { type: 'open'; path: string }
+
+type MenuRow = {
+  id: string
+  type: 'folder' | 'item'
+  label: string
+  depth: number
+  path?: string
+}
+
+type OpenMenu = {
+  folderId: string | null
+  label: string
+  rows: MenuRow[]
+  top: number
+  left: number
+}
+
+// A "root row" in the sidebar list: either a folder node or a root-level item favorite
+type RootRow =
+  | { kind: 'folder'; node: FavoriteTreeNode }
+  | { kind: 'item';   entry: FavoriteEntry }
 
 // Standard widget props shape (same pattern as Items)
 const props = defineProps<{
@@ -54,28 +82,140 @@ const layout     = computed(() =>
 const dense      = computed(() => !!cfg.value.view.dense)
 const showIcons  = computed(() => cfg.value.view?.showIcons !== false)
 
+// Flat favorites (items); service is still the source of truth for item order
 const favorites = ref<FavoriteEntry[]>([])
 
-// ---- Sortable wiring: shared for list/toolbar ----
+// Tree for folders + nested items
+const fullTree = ref<FavoriteTreeNode[]>([])
+
+// Mixed root rows: folders + root-level items, in tree order
+const rootRows = ref<RootRow[]>([])
+
+// --------------------------------------------------------------
+// Helpers to build roots / base list
+// --------------------------------------------------------------
+function buildRootRows(
+  tree: FavoriteTreeNode[],
+  flatItems: FavoriteEntry[]
+): RootRow[] {
+  const byPath = new Map<string, FavoriteEntry>()
+  for (const f of flatItems) {
+    if (f.path) byPath.set(f.path, f)
+  }
+
+  const rows: RootRow[] = []
+
+  for (const n of tree) {
+    if (n.kind === 'folder') {
+      rows.push({ kind: 'folder', node: n })
+    } else if (n.kind === 'item') {
+      const path = (n as any).path as string | undefined
+      if (!path) continue
+      const entry = byPath.get(path) ?? ({
+        path,
+        label: (n as any).label,
+      } as FavoriteEntry)
+      rows.push({ kind: 'item', entry })
+    }
+  }
+
+  return rows
+}
+
+/**
+ * Root-visible favorites for toolbar / flat list:
+ * - If we have a tree, hide items that live inside folders.
+ * - If we don't have a tree yet, show all favorites.
+ */
+function baseList(): FavoriteEntry[] {
+  const tree = fullTree.value
+  if (!tree.length) {
+    return favorites.value
+  }
+
+  const nestedPaths = new Set<string>()
+
+  const walk = (nodes: FavoriteTreeNode[], insideFolder: boolean) => {
+    for (const n of nodes) {
+      if (n.kind === 'item') {
+        if (insideFolder && (n as any).path) {
+          nestedPaths.add((n as any).path)
+        }
+      } else if (n.kind === 'folder') {
+        const children = (n as any).children || []
+        if (Array.isArray(children) && children.length) {
+          walk(children, true)
+        }
+      }
+    }
+  }
+
+  walk(tree, false)
+
+  return favorites.value.filter(f => !nestedPaths.has(f.path))
+}
+
+// --------------------------------------------------------------
+// SORTABLE: single mixed list (folders + root items)
+// --------------------------------------------------------------
 const listEl = ref<HTMLElement | null>(null)
-let sortable: SortableHandle<FavoriteEntry> | null = null
+let sortable: SortableHandle<RootRow> | null = null
 const sortableVersion = ref(0)
 let wasDragging = false
 let dragJustEnded = false
 
-function baseList(): FavoriteEntry[] {
-  return [...favorites.value]
+function baseRootRows(): RootRow[] {
+  return rootRows.value.slice()
 }
 
-// Orientation depends on layout: vertical list, horizontal toolbar
-const sortableOrientation = computed<'vertical' | 'horizontal'>(() =>
-  layout.value === 'list' ? 'vertical' : 'horizontal'
-)
+const sortableState = computed(() => {
+  sortableVersion.value
+  return sortable
+    ? sortable.getState()
+    : { isDragging: false, draggingId: null, hoverIdx: null }
+})
+
+const displayRootRows = computed(() => {
+  sortableVersion.value
+  return sortable ? (sortable.getDisplayList() as RootRow[]) : baseRootRows()
+})
+
+function ensureSortable() {
+  // Only list layout is sortable; toolbar ignores this
+  if (layout.value !== 'list') {
+    sortable = null
+    return
+  }
+
+  const items = baseRootRows()
+  if (!items.length || !listEl.value) {
+    sortable = null
+    return
+  }
+
+  if (!sortable) {
+    sortable = createSortable<RootRow>(items, {
+      identity: (row) =>
+        row.kind === 'folder'
+          ? `folder:${row.node.id}`
+          : `item:${row.entry.path}`,
+      orientation: 'vertical',
+      dragThresholdPx: 4,
+      onUpdate: onSortableUpdate,
+      scrollContainer: () => listEl.value,
+      rowSelector: '.fav-row',
+      containerClassOnDrag: 'gex-dragging',
+      autoScroll: { marginPx: 32, maxSpeedPxPerSec: 700 },
+    })
+  } else {
+    sortable.setOrderedList(items)
+    sortable.setOrientation?.('vertical')
+  }
+}
 
 function onSortableUpdate() {
   if (!sortable) return
 
-  // Force re-compute of displayFavorites + sortableState
   sortableVersion.value++
 
   const { isDragging } = sortable.getState()
@@ -87,64 +227,54 @@ function onSortableUpdate() {
   if (wasDragging && !isDragging) {
     document.body.style.cursor = ''
 
-    const committed = sortable.getOrderedList() as FavoriteEntry[]
-    const cur = baseList()
+    const committed = sortable.getOrderedList() as RootRow[]
+    const cur = baseRootRows()
 
     const same =
       committed.length === cur.length &&
-      committed.every((e, i) => e?.path === cur[i]?.path)
+      committed.every((r, i) => {
+        const a = r
+        const b = cur[i]
+        if (a.kind !== b.kind) return false
+        if (a.kind === 'folder') return a.node.id === b.node.id
+        return a.entry.path === b.entry.path
+      })
 
     if (!same) {
-      favorites.value = committed
-      const order = committed.map(f => f.path)
-      void reorderFavorites(order).catch(e => {
-        console.error('[favorites] reorderFavorites failed:', e)
-      })
+      // Update local row ordering
+      rootRows.value = committed
+
+      // Persist item order (folders TODO: separate service)
+      const committedItems = committed.filter(r => r.kind === 'item').map(r => r.entry)
+      const curRoots = baseList()
+
+      const sameItems =
+        committedItems.length === curRoots.length &&
+        committedItems.every((e, i) => e.path === curRoots[i]?.path)
+
+      if (!sameItems) {
+        // Rebuild favorites: reorder root items, keep nested entries in place
+        const rootPathsSet = new Set(committedItems.map(e => e.path))
+        const nested = favorites.value.filter(f => !rootPathsSet.has(f.path))
+        favorites.value = [...committedItems, ...nested]
+
+        const order = committedItems.map(f => f.path)
+        void reorderFavorites(order).catch(e => {
+          console.error('[favorites] reorderFavorites failed:', e)
+        })
+      }
     }
 
+    // Next click after a drag should NOT open anything
     dragJustEnded = true
   }
 
   wasDragging = isDragging
 }
 
-
-function ensureSortable() {
-  const items = baseList()
-  if (!items.length || !listEl.value) {
-    sortable = null
-    return
-  }
-
-  if (!sortable) {
-    sortable = createSortable<FavoriteEntry>(items, {
-      identity: (e) => e.path,
-      orientation: sortableOrientation.value,
-      dragThresholdPx: 4,           // your "movement threshold"
-      onUpdate: onSortableUpdate,
-      scrollContainer: () => listEl.value,
-      rowSelector: '.fav-row',
-      containerClassOnDrag: 'gex-dragging',
-      autoScroll: { marginPx: 32, maxSpeedPxPerSec: 700 },
-    })
-  } else {
-    sortable.setOrderedList(items)
-    sortable.setOrientation?.(sortableOrientation.value) // optional if your impl supports it
-  }
+function setRowRef(row: RootRow, el: HTMLElement | null) {
+  sortable?.registerRef(row, el)
 }
-
-function setRowRef(entry: FavoriteEntry, el: HTMLElement | null) {
-  sortable?.registerRef(entry, el)
-}
-
-const sortableState = computed(() => {
-  // touch version so this recomputes as sortable updates
-  sortableVersion.value
-
-  return sortable
-    ? sortable.getState()
-    : { isDragging: false, draggingId: null, hoverIdx: null }
-})
 
 function startRowDrag(displayIndex: number, event: PointerEvent) {
   ensureSortable()
@@ -152,30 +282,48 @@ function startRowDrag(displayIndex: number, event: PointerEvent) {
   event.preventDefault()
 }
 
-// This is what list/toolbar both render from
-const displayFavorites = computed(() => {
-  sortableVersion.value // tie reactivity to sortable updates
-  return sortable ? (sortable.getDisplayList() as FavoriteEntry[]) : baseList()
-})
-
-// Clamp for toolbar visual max
+// Clamp for toolbar visual max (uses root-visible items)
 const visibleFavorites = computed(() =>
-  displayFavorites.value.slice(0, Math.max(1, maxVisible.value))
+  baseList().slice(0, Math.max(1, maxVisible.value))
 )
 
-// Keep sortable in sync when favorites change
+// Keep sortable in sync when rootRows change
 watch(
-  () => favorites.value.map(f => f.path).join('|'),
+  () =>
+    rootRows.value
+      .map(r =>
+        r.kind === 'folder'
+          ? `folder:${r.node.id}`
+          : `item:${r.entry.path}`
+      )
+      .join('|'),
   () => ensureSortable()
 )
 
-
-// Add/edit dialog state
+// --------------------------------------------------------------
+// ADD / EDIT DIALOG STATE (with folders)
+// --------------------------------------------------------------
 const showAddDialog = ref(false)
 const newPath  = ref('')
 const newLabel = ref('')
 
-// Helpers to prefill popup
+// 'item' = normal favorite, 'folder' = folder node
+const addMode = ref<'item' | 'folder'>('item')
+
+// '' = root, otherwise a folder id
+const newParentId = ref<string>('')
+
+type FolderOption = { id: string; label: string; depth: number }
+const folderOptions = ref<FolderOption[]>([])
+
+const addDialogTitle = computed(() =>
+  addMode.value === 'folder' ? 'Add folder' : 'Add favorite'
+)
+
+const addButtonLabel = computed(() =>
+  addMode.value === 'folder' ? 'Create' : 'Add'
+)
+
 function guessLabelFromPath(path: string): string {
   const p = (path || '').replace(/[\\/]+$/, '')
   if (!p) return ''
@@ -183,10 +331,49 @@ function guessLabelFromPath(path: string): string {
   return parts[parts.length - 1] || p
 }
 
+async function refreshFolderOptions() {
+  try {
+    const tree = await getFavoritesTree()
+    const opts: FolderOption[] = []
+
+    const walk = (nodes: FavoriteTreeNode[], depth: number) => {
+      for (const n of nodes) {
+        if (n.kind === 'folder') {
+          opts.push({ id: n.id, label: n.label, depth })
+          walk(n.children, depth + 1)
+        }
+      }
+    }
+
+    walk(tree, 0)
+    folderOptions.value = opts
+  } catch (e) {
+    console.error('[favorites] refreshFolderOptions failed:', e)
+    // keep previous options if something goes wrong
+  }
+}
+
+// Load tree and build rootRows from it
+async function refreshRootFolders() {
+  try {
+    const tree = await getFavoritesTree()
+    fullTree.value = tree
+    rootRows.value = buildRootRows(tree, favorites.value)
+  } catch (e) {
+    console.error('[favorites] refreshRootFolders failed', e)
+    fullTree.value = []
+    rootRows.value = []
+  }
+}
+
 function openAddDialog() {
   const base = getCurrentPath().trim()
+  addMode.value = 'item'
   newPath.value = base
   newLabel.value = guessLabelFromPath(base)
+  newParentId.value = '' // root by default
+
+  void refreshFolderOptions()
   showAddDialog.value = true
 }
 
@@ -194,7 +381,84 @@ function closeAddDialog() {
   showAddDialog.value = false
 }
 
-// Load from service
+// --------------------------------------------------------------
+// FOLDER MENU (overlay)
+// --------------------------------------------------------------
+const openMenus = ref<OpenMenu[]>([])
+
+function openFolderDropdown(folder: FavoriteTreeNode, event: MouseEvent) {
+  // Swallow click right after a drag (folder or item)
+  if (dragJustEnded) {
+    dragJustEnded = false
+    event.preventDefault()
+    return
+  }
+
+  const anchor = event.currentTarget as HTMLElement | null
+  const rect = anchor?.getBoundingClientRect()
+
+  const top = rect ? rect.bottom + 4 : 80
+  const left = rect ? rect.left : 80
+
+  const rows = buildMenuRows(folder.children)
+
+  // Toggle if same folder already open as root
+  const existingRoot = openMenus.value[0]
+  if (existingRoot && existingRoot.folderId === folder.id) {
+    closeFolderMenu()
+    return
+  }
+
+  openMenus.value = [
+    {
+      folderId: folder.id,
+      label: folder.label,
+      rows,
+      top,
+      left,
+    },
+  ]
+}
+
+function closeFolderMenu() {
+  openMenus.value = []
+}
+
+function handleFolderMenuClick(row: MenuRow, event: MouseEvent, level: number) {
+  if (row.type === 'folder') {
+    const folder = findFolderNodeById(row.id)
+    if (!folder) return
+
+    const anchor = event.currentTarget as HTMLElement | null
+    const rect = anchor?.getBoundingClientRect()
+
+    const parentMenu = openMenus.value[level]
+    const top = rect ? rect.top : parentMenu?.top ?? 80
+    const left = rect ? rect.right + 8 : (parentMenu?.left ?? 80) + 220
+
+    const rows = buildMenuRows(folder.children)
+
+    const next = openMenus.value.slice(0, level + 1)
+    next[level + 1] = {
+      folderId: folder.id,
+      label: folder.label,
+      rows,
+      top,
+      left,
+    }
+    openMenus.value = next
+    return
+  }
+
+  // Leaf item
+  if (!row.path) return
+  openFavorite({ path: row.path, label: row.label }, event)
+  closeFolderMenu()
+}
+
+// --------------------------------------------------------------
+// LOAD FROM SERVICE
+// --------------------------------------------------------------
 async function refreshFavorites() {
   loading.value = true
   error.value = null
@@ -203,17 +467,24 @@ async function refreshFavorites() {
     const svc = await getFavorites()
     if (Array.isArray(svc)) {
       favorites.value = svc
-      return
+    } else {
+      const fromCfg = (cfg.value.data as any)?.entries
+      favorites.value = Array.isArray(fromCfg) ? fromCfg : []
     }
 
-    const fromCfg = (cfg.value.data as any)?.entries
-    favorites.value = Array.isArray(fromCfg) ? fromCfg : []
+    if (fullTree.value.length) {
+      rootRows.value = buildRootRows(fullTree.value, favorites.value)
+    }
   } catch (e: any) {
     console.error('[favorites] getFavorites failed:', e)
     error.value = String(e?.message ?? e ?? 'Error')
 
     const fromCfg = (cfg.value.data as any)?.entries
     favorites.value = Array.isArray(fromCfg) ? fromCfg : []
+
+    if (fullTree.value.length) {
+      rootRows.value = buildRootRows(fullTree.value, favorites.value)
+    }
   } finally {
     loading.value = false
   }
@@ -221,10 +492,12 @@ async function refreshFavorites() {
 
 onMounted(() => {
   void refreshFavorites()
+  void refreshRootFolders()
 })
 
 watch(group, () => {
   void refreshFavorites()
+  void refreshRootFolders()
 })
 
 const hostVars = computed(() => ({
@@ -233,7 +506,9 @@ const hostVars = computed(() => ({
   '--fav-border': props.theme?.border || 'rgba(255,255,255,.14)',
 }))
 
-// Fire a nav/open for the host
+// --------------------------------------------------------------
+// NAV
+// --------------------------------------------------------------
 function openFavorite(fav: FavoriteEntry, event?: MouseEvent) {
   // If a drag just ended, swallow this click
   if (dragJustEnded) {
@@ -252,26 +527,93 @@ function openFavorite(fav: FavoriteEntry, event?: MouseEvent) {
   }
 }
 
+// --------------------------------------------------------------
+// EDITING HELPERS
+// --------------------------------------------------------------
+function buildMenuRows(nodes: FavoriteTreeNode[]): MenuRow[] {
+  const rows: MenuRow[] = []
+  for (const n of nodes) {
+    if (n.kind === 'folder') {
+      rows.push({
+        id: n.id,
+        type: 'folder',
+        label: n.label,
+        depth: 0, // one level per dropdown → depth 0 inside each
+      })
+    } else {
+      rows.push({
+        id: n.id,
+        type: 'item',
+        label: n.label,
+        depth: 0,
+        path: (n as any).path,
+      })
+    }
+  }
+  return rows
+}
 
-// ---- Editing helpers ----
+function findFolderNodeById(id: string | null): FavoriteTreeNode | null {
+  if (!id) return null
+  const stack: FavoriteTreeNode[] = [...fullTree.value]
+
+  while (stack.length) {
+    const node = stack.pop()!
+    if (node.kind === 'folder') {
+      if (node.id === id) return node
+      for (const child of node.children) {
+        if (child.kind === 'folder') stack.push(child)
+      }
+    }
+  }
+
+  return null
+}
 
 async function confirmAddFavorite() {
   const path = newPath.value.trim()
-  if (!path) return
-
-  const label = newLabel.value.trim() || undefined
+  const label = newLabel.value.trim()
+  const parentId = newParentId.value || null
 
   saving.value = true
   error.value = null
   try {
-    await addFavorite(path, label)
+    if (addMode.value === 'folder') {
+      if (!label) return
+      await addFolder(label, parentId)
+      await refreshFolderOptions()
+      await refreshRootFolders()
+    } else {
+      if (!path) return
+      await addFavorite(path, label || undefined, parentId)
+      await refreshRootFolders()
+    }
     await refreshFavorites()
     closeAddDialog()
   } catch (e: any) {
-    console.error('[favorites] addFavorite failed:', e)
+    console.error('[favorites] addFavorite/addFolder failed:', e)
     error.value = String(e?.message ?? e ?? 'Error')
   } finally {
     saving.value = false
+  }
+}
+
+async function handleRemoveFolder(folderId: string) {
+  const ok = window.confirm(
+    'Delete this folder and ALL nested favorites inside it? This cannot be undone.'
+  )
+  if (!ok) return
+
+  error.value = null
+  try {
+    await removeFolder(folderId)
+
+    // Reload tree + flat favorites so UI is fully in sync
+    await refreshRootFolders()
+    await refreshFavorites()
+  } catch (e: any) {
+    console.error('[favorites] removeFolder failed:', e)
+    error.value = String(e?.message ?? e ?? 'Error')
   }
 }
 
@@ -282,13 +624,16 @@ async function handleRemoveFavorite(path: string) {
     favorites.value = favorites.value.filter(
       f => f.path.toLowerCase() !== path.toLowerCase()
     )
+    if (fullTree.value.length) {
+      rootRows.value = buildRootRows(fullTree.value, favorites.value)
+    }
   } catch (e: any) {
     console.error('[favorites] removeFavorite failed:', e)
     error.value = String(e?.message ?? e ?? 'Error')
   }
 }
-
 </script>
+
 
 <template>
   <div
@@ -298,23 +643,27 @@ async function handleRemoveFavorite(path: string) {
   >
     <!-- Header: sidebar only, always editable -->
     <div v-if="isSidebar" class="favorites-header">
-      <span class="favorites-title">Favorites</span>
       <button
         type="button"
         class="header-icon-btn"
-        title="Add favorite"
+        title="Add favorite or folder"
         @click="openAddDialog"
       >
         ★
       </button>
     </div>
 
+
     <div v-if="loading" class="fav-msg">Loading…</div>
     <div v-else-if="error" class="fav-msg error">{{ error }}</div>
-    <div v-else-if="!visibleFavorites.length" class="fav-msg empty">(No favorites yet)</div>
+    <div
+      v-else-if="!visibleFavorites.length && !rootRows.length"
+      class="fav-msg empty"
+    >
+      (No favorites yet)
+    </div>
     <template v-else>
-            <!-- LIST layout (sidebar) -->
-            <!-- LIST layout (sidebar) -->
+      <!-- LIST layout (sidebar) -->
       <ul
         v-if="layout === 'list'"
         class="favorites-list"
@@ -322,45 +671,84 @@ async function handleRemoveFavorite(path: string) {
         ref="listEl"
       >
         <li
-          v-for="(fav, index) in displayFavorites"
-          :key="fav.path"
+          v-for="(row, index) in displayRootRows"
+          :key="row.kind === 'folder'
+            ? 'folder:' + row.node.id
+            : 'item:' + row.entry.path"
           class="fav-row"
           :class="{
+            'folder-row': row.kind === 'folder',
+            'item-row': row.kind === 'item',
             'is-dragging':
-              sortableState.isDragging && sortableState.draggingId === fav.path
+              sortableState.isDragging &&
+              sortableState.draggingId === (
+                row.kind === 'folder'
+                  ? 'folder:' + row.node.id
+                  : 'item:' + row.entry.path
+              )
           }"
-          :ref="el => setRowRef(fav, el as HTMLElement | null)"
+          :ref="el => setRowRef(row, el as HTMLElement | null)"
           @pointerdown.stop="startRowDrag(index, $event)"
         >
-          <button
-            type="button"
-            class="fav-btn"
-            @click="openFavorite(fav, $event)"
-            :title="fav.label || fav.path"
-          >
-            <span v-if="showIcons" class="fav-icon">★</span>
-            <span v-if="showLabels" class="fav-label">
-              {{ fav.label || fav.path }}
-            </span>
-          </button>
-
-          <!-- Sidebar controls: delete only; drag is on whole row -->
-          <div v-if="isSidebar" class="fav-row-actions">
+          <!-- Folder row -->
+          <template v-if="row.kind === 'folder'">
             <button
               type="button"
-              class="icon-btn danger"
-              @pointerdown.stop
-              @click.stop="handleRemoveFavorite(fav.path)"
-              title="Remove"
+              class="fav-btn folder-btn"
+              @click="openFolderDropdown(row.node, $event)"
+              :title="row.node.label"
             >
-              ✕
+              <span class="fav-icon">📁</span>
+              <span v-if="showLabels" class="fav-label">
+                {{ row.node.label }}
+              </span>
             </button>
 
-          </div>
+            <div v-if="isSidebar" class="fav-row-actions">
+              <button
+                type="button"
+                class="icon-btn danger"
+                @pointerdown.stop
+                @click.stop="handleRemoveFolder(row.node.id)"
+                title="Delete folder and nested favorites"
+              >
+                ✕
+              </button>
+            </div>
+          </template>
+
+          <!-- Item row -->
+          <template v-else>
+            <button
+              type="button"
+              class="fav-btn"
+              @click="openFavorite(row.entry, $event)"
+              :title="row.entry.label || row.entry.path"
+            >
+              <span v-if="showIcons" class="fav-icon">★</span>
+              <span v-if="showLabels" class="fav-label">
+                {{ row.entry.label || row.entry.path }}
+              </span>
+            </button>
+
+            <div v-if="isSidebar" class="fav-row-actions">
+              <button
+                type="button"
+                class="icon-btn danger"
+                @pointerdown.stop
+                @click.stop="handleRemoveFavorite(row.entry.path)"
+                title="Remove"
+              >
+                ✕
+              </button>
+            </div>
+          </template>
         </li>
       </ul>
 
-            <!-- TOOLBAR layout (read-only for now) -->
+
+
+      <!-- TOOLBAR layout (read-only for now) -->
       <div v-else class="favorites-toolbar" :class="{ dense }">
         <button
           v-for="fav in visibleFavorites"
@@ -379,17 +767,55 @@ async function handleRemoveFavorite(path: string) {
 
     </template>
 
-    <!-- Add favorite popup (global modal) -->
+    <!-- Add favorite / folder popup (global modal) -->
     <teleport to="body">
       <div
         v-if="showAddDialog"
         class="fav-dialog-backdrop"
-        @click.self="closeAddDialog"
       >
         <div class="fav-dialog">
-          <div class="fav-dialog-title">Add favorite</div>
+          <div class="fav-dialog-title">{{ addDialogTitle }}</div>
+
+          <div class="fav-type-toggle">
+            <button
+              type="button"
+              class="btn-toggle"
+              :class="{ active: addMode === 'item' }"
+              @click="addMode = 'item'"
+            >
+              Favorite
+            </button>
+            <button
+              type="button"
+              class="btn-toggle"
+              :class="{ active: addMode === 'folder' }"
+              @click="addMode = 'folder'"
+            >
+              Folder
+            </button>
+          </div>
 
           <label class="fav-dialog-field">
+            <span class="field-label">Location</span>
+            <select
+              v-model="newParentId"
+              class="fav-input"
+            >
+              <option value="">Root</option>
+              <option
+                v-for="opt in folderOptions"
+                :key="opt.id"
+                :value="opt.id"
+              >
+                {{ '  '.repeat(opt.depth) + opt.label }}
+              </option>
+            </select>
+          </label>
+
+          <label
+            v-if="addMode === 'item'"
+            class="fav-dialog-field"
+          >
             <span class="field-label">Path</span>
             <input
               v-model="newPath"
@@ -405,7 +831,7 @@ async function handleRemoveFavorite(path: string) {
               v-model="newLabel"
               type="text"
               class="fav-input"
-              placeholder="Downloads"
+              :placeholder="addMode === 'folder' ? 'New folder' : 'Downloads'"
             />
           </label>
 
@@ -420,15 +846,79 @@ async function handleRemoveFavorite(path: string) {
             <button
               type="button"
               class="btn primary"
-              :disabled="!newPath.trim() || saving"
+              :disabled="
+                saving ||
+                (addMode === 'item'
+                  ? !newPath.trim()
+                  : !newLabel.trim())
+              "
               @click="confirmAddFavorite"
             >
-              Add
+              {{ addButtonLabel }}
             </button>
           </div>
         </div>
       </div>
     </teleport>
+
+    <!-- Folders menu overlay -->
+    <!-- Folders menu overlay (stacked menus) -->
+<teleport to="body">
+  <div
+    v-if="openMenus.length"
+    class="fav-menu-backdrop"
+    @click.self="closeFolderMenu"
+  >
+    <div
+      v-for="(menu, level) in openMenus"
+      :key="menu.folderId ?? 'root-' + level"
+      class="fav-menu"
+      :style="{
+        top: menu.top + 'px',
+        left: menu.left + 'px',
+      }"
+      @click.stop
+    >
+      <div class="fav-menu-title">
+        {{ menu.label || 'Folder' }}
+      </div>
+
+      <div v-if="!menu.rows.length" class="fav-menu-empty">
+        No entries
+      </div>
+
+      <ul v-else class="fav-menu-list">
+        <li
+          v-for="row in menu.rows"
+          :key="row.id"
+          class="fav-menu-row"
+          :class="{ 'is-folder': row.type === 'folder' }"
+        >
+          <button
+            type="button"
+            class="fav-menu-btn"
+            @click="handleFolderMenuClick(row, $event, level)"
+          >
+            <span class="fav-menu-label">
+              <span
+                class="fav-menu-indent"
+                :style="{ width: row.depth * 12 + 'px' }"
+              />
+              <span class="fav-menu-icon">
+                <span v-if="row.type === 'folder'">📁</span>
+                <span v-else>★</span>
+              </span>
+              <span class="fav-menu-text">
+                {{ row.label }}
+              </span>
+            </span>
+          </button>
+        </li>
+      </ul>
+    </div>
+  </div>
+</teleport>
+
 
   </div>
 </template>
@@ -438,21 +928,7 @@ async function handleRemoveFavorite(path: string) {
   opacity: 0.7;
 }
 
-.favorites-root .gex-dragging {
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.favorites-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  overflow: hidden;
-}
-
-/* you can keep your existing .fav-btn, .fav-pill, .icon-btn, etc. */
-
-
+/* Root container */
 .favorites-root {
   position: relative;
   background: var(--fav-bg);
@@ -485,6 +961,12 @@ async function handleRemoveFavorite(path: string) {
 
 .favorites-title {
   font-weight: 600;
+}
+
+.header-actions {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
 }
 
 .header-icon-btn {
@@ -573,7 +1055,12 @@ async function handleRemoveFavorite(path: string) {
   background: rgba(255, 255, 255, 0.06);
 }
 
-/* Actions (reorder + delete) */
+/* Folder row styling (optional subtle tweak) */
+.folder-row .folder-btn {
+  font-weight: 500;
+}
+
+/* Actions (delete) */
 .fav-row-actions {
   flex: 0 0 auto;
   display: inline-flex;
@@ -635,9 +1122,9 @@ async function handleRemoveFavorite(path: string) {
   overflow: hidden;
 }
 
-/* Add favorite popup */
+/* Add favorite / folder popup */
 .fav-dialog-backdrop {
-  position: fixed;         /* instead of absolute */
+  position: fixed;
   inset: 0;
   background: radial-gradient(
     circle at top,
@@ -647,17 +1134,16 @@ async function handleRemoveFavorite(path: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 10000;          /* above sidebar + other chrome */
+  z-index: 10000;
 }
-
 
 .fav-dialog {
   background: rgba(12, 12, 12, 0.96);
   border-radius: 8px;
   border: 1px solid var(--fav-border);
   padding: 8px 10px;
-  min-width: 240px;
-  max-width: 320px;
+  min-width: 260px;
+  max-width: 340px;
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
 }
 
@@ -665,6 +1151,31 @@ async function handleRemoveFavorite(path: string) {
   font-size: 13px;
   font-weight: 600;
   margin-bottom: 6px;
+}
+
+.fav-type-toggle {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.btn-toggle {
+  flex: 1 1 0;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.btn-toggle.active {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.btn-toggle:not(.active):hover {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .fav-dialog-field {
@@ -723,5 +1234,97 @@ async function handleRemoveFavorite(path: string) {
 
 .btn:not(:disabled):hover {
   background: rgba(255, 255, 255, 0.24);
+}
+
+/* Folders menu overlay */
+.fav-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  pointer-events: auto; /* so outside clicks are captured */
+  z-index: 10001;
+}
+
+.fav-menu {
+  position: absolute;
+  pointer-events: auto;
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 420px;
+  overflow: auto;
+  background: rgba(10, 10, 10, 0.98);
+  border-radius: 8px;
+  border: 1px solid var(--fav-border);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.7);
+  padding: 6px 0;
+}
+
+.fav-menu-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.8;
+  padding: 0 10px 4px;
+}
+
+.fav-menu-empty {
+  font-size: 12px;
+  opacity: 0.8;
+  padding: 4px 10px 8px;
+  font-style: italic;
+}
+
+.fav-menu-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.fav-menu-row {
+  margin: 0;
+  padding: 0;
+}
+
+.fav-menu-btn {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.fav-menu-btn:disabled {
+  cursor: default;
+  opacity: 0.8;
+}
+
+.fav-menu-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.fav-menu-label {
+  display: inline-flex;
+  align-items: center;
+}
+
+.fav-menu-indent {
+  display: inline-block;
+  flex: 0 0 auto;
+}
+
+.fav-menu-icon {
+  display: inline-block;
+  width: 18px;
+  text-align: center;
+  margin-right: 4px;
+}
+
+.fav-menu-text {
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
 }
 </style>
