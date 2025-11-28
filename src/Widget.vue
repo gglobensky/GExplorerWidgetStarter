@@ -14,6 +14,7 @@ import {
   removeFavorite,
   removeFolder,
   reorderFavorites,
+  reorderRootNodes,
 } from '/src/widgets/favorites/service'
 import { getCurrentPath } from '/src/widgets/nav/index'
 
@@ -159,6 +160,7 @@ function baseList(): FavoriteEntry[] {
 // SORTABLE: single mixed list (folders + root items)
 // --------------------------------------------------------------
 const listEl = ref<HTMLElement | null>(null)
+const toolbarEl = ref<HTMLElement | null>(null)
 let sortable: SortableHandle<RootRow> | null = null
 const sortableVersion = ref(0)
 let wasDragging = false
@@ -181,17 +183,16 @@ const displayRootRows = computed(() => {
 })
 
 function ensureSortable() {
-  // Only list layout is sortable; toolbar ignores this
-  if (layout.value !== 'list') {
+  const items = baseRootRows()
+  const containerEl = layout.value === 'list' ? listEl.value : toolbarEl.value
+  
+  if (!items.length || !containerEl) {
     sortable = null
     return
   }
 
-  const items = baseRootRows()
-  if (!items.length || !listEl.value) {
-    sortable = null
-    return
-  }
+  const orientation = layout.value === 'list' ? 'vertical' : 'horizontal'
+  const rowSelector = layout.value === 'list' ? '.fav-row' : '.toolbar-sortable-item'
 
   if (!sortable) {
     sortable = createSortable<RootRow>(items, {
@@ -199,17 +200,17 @@ function ensureSortable() {
         row.kind === 'folder'
           ? `folder:${row.node.id}`
           : `item:${row.entry.path}`,
-      orientation: 'vertical',
+      orientation,
       dragThresholdPx: 4,
       onUpdate: onSortableUpdate,
-      scrollContainer: () => listEl.value,
-      rowSelector: '.fav-row',
+      scrollContainer: () => containerEl,
+      rowSelector,
       containerClassOnDrag: 'gex-dragging',
       autoScroll: { marginPx: 32, maxSpeedPxPerSec: 700 },
     })
   } else {
     sortable.setOrderedList(items)
-    sortable.setOrientation?.('vertical')
+    sortable.setOrientation?.(orientation)
   }
 }
 
@@ -244,25 +245,16 @@ function onSortableUpdate() {
       // Update local row ordering
       rootRows.value = committed
 
-      // Persist item order (folders TODO: separate service)
-      const committedItems = committed.filter(r => r.kind === 'item').map(r => r.entry)
-      const curRoots = baseList()
-
-      const sameItems =
-        committedItems.length === curRoots.length &&
-        committedItems.every((e, i) => e.path === curRoots[i]?.path)
-
-      if (!sameItems) {
-        // Rebuild favorites: reorder root items, keep nested entries in place
-        const rootPathsSet = new Set(committedItems.map(e => e.path))
-        const nested = favorites.value.filter(f => !rootPathsSet.has(f.path))
-        favorites.value = [...committedItems, ...nested]
-
-        const order = committedItems.map(f => f.path)
-        void reorderFavorites(order).catch(e => {
-          console.error('[favorites] reorderFavorites failed:', e)
-        })
-      }
+      // Persist root node order (folders + items)
+      const nodeIds = committed.map(row => 
+        row.kind === 'folder' 
+          ? `folder:${row.node.id}`
+          : `item:${row.entry.path}`
+      )
+      
+      void reorderRootNodes(nodeIds).catch(e => {
+        console.error('[favorites] reorderRootNodes failed:', e)
+      })
     }
 
     // Next click after a drag should NOT open anything
@@ -385,6 +377,11 @@ function closeAddDialog() {
 // FOLDER MENU (overlay)
 // --------------------------------------------------------------
 const openMenus = ref<OpenMenu[]>([])
+
+// Helper to check if a folder menu is currently open
+function isFolderMenuOpen(folderId: string): boolean {
+  return openMenus.value.some(m => m.folderId === folderId)
+}
 
 function openFolderDropdown(folder: FavoriteTreeNode, event: MouseEvent) {
   // Swallow click right after a drag (folder or item)
@@ -641,17 +638,19 @@ async function handleRemoveFavorite(path: string) {
     :class="{ 'sidebar-mode': isSidebar }"
     :style="hostVars"
   >
-    <!-- Header: sidebar only, always editable -->
-    <div v-if="isSidebar" class="favorites-header">
+    <!-- Add button: sidebar as full row, toolbar as inline pill -->
+    <template v-if="isSidebar">
       <button
         type="button"
-        class="header-icon-btn"
+        class="add-favorite-btn"
         title="Add favorite or folder"
         @click="openAddDialog"
       >
-        ★
+        <span class="add-icon">+</span>
+        <span class="add-label">Add favorite</span>
       </button>
-    </div>
+    </template>
+
 
 
     <div v-if="loading" class="fav-msg">Loading…</div>
@@ -704,7 +703,7 @@ async function handleRemoveFavorite(path: string) {
               </span>
             </button>
 
-            <div v-if="isSidebar" class="fav-row-actions">
+            <div class="fav-row-actions">
               <button
                 type="button"
                 class="icon-btn danger"
@@ -731,7 +730,7 @@ async function handleRemoveFavorite(path: string) {
               </span>
             </button>
 
-            <div v-if="isSidebar" class="fav-row-actions">
+            <div class="fav-row-actions">
               <button
                 type="button"
                 class="icon-btn danger"
@@ -748,21 +747,82 @@ async function handleRemoveFavorite(path: string) {
 
 
 
-      <!-- TOOLBAR layout (read-only for now) -->
-      <div v-else class="favorites-toolbar" :class="{ dense }">
+<!-- TOOLBAR layout (enhanced with folders & dropdowns) -->
+      <div v-else ref="toolbarEl" class="favorites-toolbar" :class="{ dense }">
+        <!-- Add button at start of toolbar -->
         <button
-          v-for="fav in visibleFavorites"
-          :key="fav.path"
           type="button"
-          class="fav-pill"
-          @click="openFavorite(fav, $event)"
-          :title="fav.label || fav.path"
+          class="add-favorite-pill"
+          title="Add favorite or folder"
+          @click="openAddDialog"
         >
-          <span v-if="showIcons" class="fav-icon">★</span>
-          <span v-if="showLabels" class="fav-label">
-            {{ fav.label || fav.path }}
-          </span>
+          <span class="add-icon">+</span>
         </button>
+        
+        <!-- Each root row: either a folder dropdown or an item pill -->
+        <template v-for="(row, idx) in displayRootRows" :key="idx">
+          <!-- Folder with dropdown -->
+          <div
+            v-if="row.kind === 'folder'"
+            class="toolbar-folder-wrapper toolbar-sortable-item"
+            :ref="el => setRowRef(row, el)"
+          >
+            <button
+              type="button"
+              class="fav-pill folder-pill"
+              :class="{ 'menu-open': isFolderMenuOpen(row.node.id) }"
+              @click="openFolderDropdown(row.node, $event)"
+              :title="row.node.label"
+              @pointerdown="(e) => startRowDrag(idx, e)"
+            >
+              <span class="fav-icon">📁</span>
+              <span v-if="showLabels" class="fav-label">{{ row.node.label }}</span>
+              <span class="dropdown-arrow">▼</span>
+            </button>
+            
+            <!-- Delete button -->
+            <button
+              type="button"
+              class="icon-btn danger toolbar-delete-btn"
+              @pointerdown.stop
+              @click.stop="handleRemoveFolder(row.node.id)"
+              title="Delete folder and nested favorites"
+            >
+              ✕
+            </button>
+          </div>
+
+          <!-- Regular item pill -->
+          <div
+            v-else
+            class="toolbar-item-wrapper toolbar-sortable-item"
+            :ref="el => setRowRef(row, el)"
+          >
+            <button
+              type="button"
+              class="fav-pill"
+              @click="openFavorite(row.entry, $event)"
+              :title="row.entry.label || row.entry.path"
+              @pointerdown="(e) => startRowDrag(idx, e)"
+            >
+              <span v-if="showIcons" class="fav-icon">★</span>
+              <span v-if="showLabels" class="fav-label">
+                {{ row.entry.label || row.entry.path }}
+              </span>
+            </button>
+            
+            <!-- Delete button -->
+            <button
+              type="button"
+              class="icon-btn danger toolbar-delete-btn"
+              @pointerdown.stop
+              @click.stop="handleRemoveFavorite(row.entry.path)"
+              title="Remove"
+            >
+              ✕
+            </button>
+          </div>
+        </template>
       </div>
 
     </template>
@@ -969,22 +1029,64 @@ async function handleRemoveFavorite(path: string) {
   align-items: center;
 }
 
-.header-icon-btn {
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+/* Add favorite button - Sidebar style (full row) */
+.add-favorite-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 5px; /* Less left padding to align + with icons */
+  margin-bottom: 4px;
+  border-radius: 6px;
+  border: 1px dashed rgba(255, 255, 255, 0.3);
   background: transparent;
   color: inherit;
-  width: 20px;
-  height: 20px;
-  font-size: 11px;
-  line-height: 18px;
-  text-align: center;
+  font-size: 13px;
   cursor: pointer;
-  padding: 0;
+  transition: all 0.15s ease;
 }
 
-.header-icon-btn:hover {
-  background: rgba(255, 255, 255, 0.12);
+.add-favorite-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.add-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 14px;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+.add-label {
+  opacity: 0.9;
+}
+
+/* Add favorite button - Toolbar style (inline pill) */
+.add-favorite-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px dashed rgba(255, 255, 255, 0.3);
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  height: fit-content;
+  box-sizing: border-box;
+}
+
+.add-favorite-pill:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.5);
 }
 
 .fav-msg {
@@ -1060,12 +1162,24 @@ async function handleRemoveFavorite(path: string) {
   font-weight: 500;
 }
 
-/* Actions (delete) */
+/* Actions (delete) - Show on hover in normal mode, always in edit mode */
 .fav-row-actions {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+/* Show on hover */
+.fav-row:hover .fav-row-actions {
+  opacity: 1;
+}
+
+/* Always visible in edit mode */
+.favorites-root.edit-mode .fav-row-actions {
+  opacity: 1;
 }
 
 .icon-btn {
@@ -1093,17 +1207,104 @@ async function handleRemoveFavorite(path: string) {
   background: rgba(255, 128, 128, 0.16);
 }
 
-/* Horizontal toolbar layout */
+/* Horizontal toolbar layout - ENHANCED */
 .favorites-toolbar {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  overflow: hidden;
+  flex-wrap: nowrap; /* Changed from wrap - single row */
+  align-items: center; /* Vertical centering */
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: visible; /* Allow dropdowns to extend below */
+  height: 100%; /* Fill parent height for vertical centering */
+  padding: 0 4px; /* Small horizontal padding */
 }
 
 .favorites-toolbar.dense {
-  gap: 2px;
+  gap: 3px;
+}
+
+/* Folder wrapper for positioning dropdown */
+.toolbar-folder-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+/* Toolbar item/folder wrappers for sortable */
+.toolbar-item-wrapper,
+.toolbar-folder-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Delete button in toolbar - hidden by default, show on hover or in edit mode */
+.toolbar-delete-btn {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  font-size: 10px;
+  padding: 1px 3px;
+}
+
+/* Show on hover */
+.toolbar-item-wrapper:hover .toolbar-delete-btn,
+.toolbar-folder-wrapper:hover .toolbar-delete-btn {
+  opacity: 0.7;
+}
+
+/* Always visible in edit mode */
+.favorites-root.edit-mode .toolbar-delete-btn {
+  opacity: 0.7;
+}
+
+.toolbar-delete-btn:hover {
+  opacity: 1 !important;
+}
+
+/* Enhanced pill styling with better visual hierarchy */
+.fav-pill {
+  white-space: nowrap;
+  height: fit-content; /* Auto-size to content */
+  transition: all 0.15s ease;
+  position: relative;
+}
+
+.fav-pill.folder-pill {
+  padding-right: 8px; /* Extra space for dropdown arrow */
+}
+
+.dropdown-arrow {
+  font-size: 9px;
+  opacity: 0.6;
+  margin-left: 2px;
+  transition: transform 0.2s ease;
+}
+
+.folder-pill:hover .dropdown-arrow {
+  opacity: 1;
+}
+
+/* When folder menu is open */
+.folder-pill.menu-open .dropdown-arrow {
+  transform: rotate(180deg);
+}
+
+/* Toolbar-specific menu positioning (opens downward) */
+.favorites-toolbar .fav-menu {
+  top: calc(100% + 4px); /* Position below the button */
+  left: 0;
+  transform-origin: top left;
+}
+
+/* Better hover states for toolbar */
+.favorites-toolbar .fav-pill:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.favorites-toolbar .fav-pill:active {
+  transform: translateY(0);
 }
 
 .fav-icon {
