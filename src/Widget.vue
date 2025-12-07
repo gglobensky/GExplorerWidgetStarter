@@ -17,6 +17,7 @@ import { ensureConsent } from '/src/consent/service'
 import { createSelectionEngine, type ItemsAdapter, type Mods } from '/src/widgets/selection/selection-engine'
 import { createMarqueeDriver, type GeometryAdapter, type ScrollerAdapter, type Rect } from '/src/widgets/selection/marquee-driver';
 import { PickerMode, FileFilter, PickerSurfaceAdapter } from '/src/widgets/pickers/api';
+
 import {
   createGexPayload,
   setGexPayload,
@@ -59,7 +60,7 @@ type SortDir = 'asc' | 'desc'
 const sortKey = ref<SortKey>((props.config?.view?.sortKey as SortKey) || 'name')
 const sortDir = ref<SortDir>((props.config?.view?.sortDir as SortDir) || 'asc')
 
-let offWidgetMsg: (() => void) | null = null;
+const offWidgetMsg = ref<null | (() => void)>(null)
 
 const iconsTick = ref(0)
 
@@ -1270,43 +1271,54 @@ function cycleLayout() {
 }
 
 onMounted(async () => {
-   // 🔔 Listen for widget-bus messages addressed to this Items pane
-   offWidgetMsg = onWidgetMessage(props.sourceId, (msg) => {
-    // We already filtered by `to` in instances.ts,
-    // so here we just care about the topic.
-    if (msg.topic !== 'fs:refresh-after-drop') return;
+  console.log('[items] mount, sourceId =', props.sourceId)
 
-    const current = cwd.value || merged.value.rpath || '';
-    
-    if (!current) return;
+  offWidgetMsg.value = onWidgetMessage(props.sourceId, (msg) => {
+    const current = cwd.value || merged.value.rpath || ''
+    console.log('[items] onWidgetMessage', {
+      sourceId: props.sourceId,
+      topic: msg.topic,
+      payload: msg.payload,
+      current,
+      cwd: cwd.value,
+      rpath: merged.value.rpath,
+    })
 
-    const target = String(msg.payload?.target || '');
+    if (!current) return
 
-    // We send the *destination* path as msg.payload.target.
-    // This message is addressed to the *source* pane, whose cwd differs from that
-    // destination, so we only reload when they are not the same directory.
-    if (!!target && normalizeDir(target) !== normalizeDir(current)) {
-      console.log('[items] fs:refresh-after-drop → reloading', current);
-      loadDir(current);
+    if (msg.topic === 'fs:refresh-after-drop') {
+      const target = String(msg.payload?.target || '')
+      if (target && normalizeDir(target) !== normalizeDir(current)) {
+        console.log('[items] fs:refresh-after-drop → reloading', current)
+        loadDir(current)
+      }
     }
-  });
 
-  
-  const el = detailsScrollEl.value ?? scrollEl.value
-  
-  await nextTick();                          // wait for Vue to paint this tick
-  requestAnimationFrame(() => {              // then wait for the browser to layout
-    measureScrollbarWidth();
-  });
+    if (msg.topic === 'fs:changed') {
+      const root = String(msg.payload?.root || '')
+      console.log('[items] fs:changed candidate', {
+        rootNorm: normalizeDir(root),
+        currentNorm: normalizeDir(current),
+      })
+      if (root && normalizeDir(root) === normalizeDir(current)) {
+        console.log('[items] fs:changed → reloading', current)
+        loadDir(current)
+      }
+    }
+  })
+
+  await nextTick()
+  requestAnimationFrame(() => {
+    measureScrollbarWidth()
+  })
 })
 
-onBeforeUnmount(() => {
-  if (offWidgetMsg) {
-    offWidgetMsg();
-    offWidgetMsg = null;
-  }
 
-  const el = detailsScrollEl.value ?? scrollEl.value
+onBeforeUnmount(() => {
+  if (offWidgetMsg.value) {
+    offWidgetMsg.value();
+    offWidgetMsg.value = null;
+  }
 
   engine.destroy()  
 })
