@@ -3,14 +3,28 @@
    Imports
 ------------------------------------------------ */
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineExpose } from '/runtime/vue.js'
-import { fsListDir, fsValidate, fsListDirWithAuth, shortcutsProbe } from '/src/widgets/fs'
+import {
+  fsListDirSmart,
+  fsValidate,
+  shortcutsProbe,
+  fsMove,
+  onFsQueueUpdate,
+} from '/src/widgets/fs'
+import { sendWidgetMessage, onWidgetMessage } from '/src/widgets/instances'
 import { loadIconPack, iconFor, ensureIconsFor } from '/src/icons/index.ts'
 import { ensureConsent } from '/src/consent/service'
 import { createSelectionEngine, type ItemsAdapter, type Mods } from '/src/widgets/selection/selection-engine'
 import { createMarqueeDriver, type GeometryAdapter, type ScrollerAdapter, type Rect } from '/src/widgets/selection/marquee-driver';
 import { PickerMode, FileFilter, PickerSurfaceAdapter } from '/src/widgets/pickers/api';
-import { createGexPayload, setGexPayload, createDragPreview } from 'gexplorer/widgets'
-import { paneNav } from '/src/nav/paneNav'
+
+import {
+  createGexPayload,
+  setGexPayload,
+  createDragPreview,
+  hasGexPayload,
+  extractGexPayload,
+  authorizeFileRefs
+} from 'gexplorer/widgets'
 
 /* -----------------------------------------------
    Types
@@ -44,6 +58,8 @@ type SortDir = 'asc' | 'desc'
 
 const sortKey = ref<SortKey>((props.config?.view?.sortKey as SortKey) || 'name')
 const sortDir = ref<SortDir>((props.config?.view?.sortDir as SortDir) || 'asc')
+
+const offWidgetMsg = ref<null | (() => void)>(null)
 
 const iconsTick = ref(0)
 
@@ -220,11 +236,6 @@ function isInternalHistory() {
 }
 
 // ---- PathBar ownership announce ----
-function announceFocus() {
-  console.log('widget -> announcing focus')
-  //emit('event', { type: 'pathbar:focus', payload: { sourceId: props.sourceId, cwd: cwd.value } })
-}
-
 watch(cwd, (v) => {
   emit('event', { type: 'cwd-changed', payload: { sourceId: props.sourceId, cwd: v } })
 })
@@ -595,7 +606,6 @@ function onSurfacePointerDown(ev: PointerEvent) {
 
   // Ensure the widget owns focus on any left click in the canvas
   scrollEl.value?.focus({ preventScroll: true })
-  announceFocus()
 
   lastClientX = ev.clientX; lastClientY = ev.clientY;
   lastScrollTopForDrag = detailsScrollEl.value!.scrollTop;  // add this
@@ -667,8 +677,6 @@ async function applyExternalCwd(path: string, opts?: { mode?: 'push' | 'replace'
   // Apply and load
   cwd.value = path
   await loadDir(path)
-
-  if (opts?.focus) announceFocus()
 }
 
 
@@ -717,43 +725,36 @@ function modParts(ms?: number | null): { date: string; time: string } {
   return { date: FMT_DATE.format(d), time: FMT_TIME.format(d) }
 }
 async function loadDir(path: string) {
-  if (!path) { entries.value = []; return }
+  if (!path) {
+    entries.value = []
+    return
+  }
   loading.value = true
   error.value = ''
-
+console.log('test')
   try {
-    let res = await fsListDir(path)
-
-    if (!res?.ok) {
-      const raw = String(res?.error || '')
-      const msg = raw.toLowerCase()
-      const accessDenied =
-        msg.includes('access denied') ||
-        msg.includes('unauthorized') ||
-        msg.includes('e_access_denied') ||
-        /access.*denied/.test(msg) ||
-        /denied/.test(msg)
-
-      if (accessDenied) {
-        const granted = await ensureConsent('items', props.sourceId, path, ['Read', 'Metadata'], { afterDenied: true })
-        if (!granted) throw new Error('Permission not granted')
-
-        res = await fsListDirWithAuth('items', props.sourceId, path)
-        if (!res?.ok) throw new Error(res?.error || 'list failed after consent')
-      } else {
-        throw new Error(res?.error || 'list failed')
-      }
-    }
+    // Centralized lazy-consent logic lives in fsListDirSmart now
+    const res = await fsListDirSmart('items', props.sourceId, path)
 
     let list = Array.isArray((res as any).entries) ? (res as any).entries : []
-    if (!merged.value.showHidden) list = list.filter((e: any) => !String(e?.Name || '').startsWith('.'))
+    if (!merged.value.showHidden) {
+      list = list.filter((e: any) => !String(e?.Name || '').startsWith('.'))
+    }
 
     entries.value = list.sort((a: any, b: any) =>
-      String(a?.Name ?? '').localeCompare(String(b?.Name ?? ''), undefined, { numeric: true, sensitivity: 'base' })
+      String(a?.Name ?? '').localeCompare(
+        String(b?.Name ?? ''),
+        undefined,
+        { numeric: true, sensitivity: 'base' },
+      )
     )
 
     const lnks = entries.value
-      .filter(e => e?.Kind === 'link' && e?.Ext === '.lnk' && (!e.IconKey || !String(e.IconKey).startsWith('link:')))
+      .filter(e =>
+        e?.Kind === 'link' &&
+        e?.Ext === '.lnk' &&
+        (!e.IconKey || !String(e.IconKey).startsWith('link:'))
+      )
       .map(e => e.FullPath)
 
     if (lnks.length) {
@@ -767,10 +768,15 @@ async function loadDir(path: string) {
             if (k) e.IconKey = k
           }
         }
-      } catch { /* ignore */ }
+      } catch {
+        // ignore
+      }
     }
 
-    const n = await ensureIconsFor(entries.value.map(e => ({ iconKey: e.IconKey })), 32)
+    const n = await ensureIconsFor(
+      entries.value.map(e => ({ iconKey: e.IconKey })),
+      32
+    )
     if (n > 0) iconsTick.value++
 
   } catch (e: any) {
@@ -780,6 +786,7 @@ async function loadDir(path: string) {
     loading.value = false
   }
 }
+
 
 async function openEntry(FullPath: string) {
   if (!FullPath) return
@@ -997,12 +1004,19 @@ const hostVars = computed(() => ({
 /* -----------------------------------------------
    Drag & drop (unchanged; suppress when marqueeing)
 ------------------------------------------------ */
-const isDragging = ref(false)
+// Normalizes directory paths for comparison (same logic as TabContent)
+function normalizeDir(p: string | null | undefined): string {
+  if (!p) return ''
+  // Normalize to backslashes and trim trailing separators, then lowercase
+  return p.replace(/[\\/]+/g, '\\').replace(/[\\]+$/, '').toLowerCase()
+}
 
+const isDragging = ref(false)
+const isDropActive = ref(false)
 
 function onItemDragStart(e: any, event: DragEvent) {
   if (!event.dataTransfer) return;
-  if (marqueeActive.value) { event.preventDefault(); return; } // ← replace old check
+  if (marqueeActive.value) { event.preventDefault(); return; } // ← suppress when marqueeing
 
   isDragging.value = true;
 
@@ -1013,15 +1027,17 @@ function onItemDragStart(e: any, event: DragEvent) {
       'gex/file-refs',
       paths.map(p => ({
         path: p,
-        name: (p === e.FullPath ? e.Name : (entries.value.find(x => x.FullPath === p)?.Name || p)),
-        size: (p === e.FullPath ? e.Size : (entries.value.find(x => x.FullPath === p)?.Size)),
-        mimeType: guessMimeType((p === e.FullPath ? e.Name : (entries.value.find(x => x.FullPath === p)?.Name || ''))),
-        isDirectory: (p === e.FullPath ? e.Kind === 'dir' : entries.value.find(x => x.FullPath === p)?.Kind === 'dir')
+        name: entries.value.find(x => x.FullPath === p)?.Name ?? '',
+        size: entries.value.find(x => x.FullPath === p)?.Size ?? 0,
+        mimeType: guessMimeType(p),
+        isDirectory: entries.value.find(x => x.FullPath === p)?.Kind === 'dir',
       })),
       { widgetType: 'items', widgetId: props.sourceId }
     );
 
     setGexPayload(event.dataTransfer, payload);
+
+    event.dataTransfer.effectAllowed = 'copyMove';
 
     const preview = createDragPreview({
       label: (selected.value.size > 1 ? `${paths.length} items` : e.Name),
@@ -1035,7 +1051,186 @@ function onItemDragStart(e: any, event: DragEvent) {
   }
 }
 
-function onItemDragEnd() { isDragging.value = false; }
+
+function onItemDragEnd() {
+  isDragging.value = false;
+}
+
+/**
+ * Root drag-over handler: detect our DnD payload and highlight the pane.
+ * We only react to gexplorer payloads and ignore our own widget as source.
+ */
+function onRootDragOver(ev: DragEvent) {
+  const dt = ev.dataTransfer
+  if (!dt) return
+
+  const has = hasGexPayload(dt)
+
+  // Optional debug:
+  // console.log('[Items] dragover', { types: Array.from(dt.types || []), has })
+
+  if (!has) return
+
+  ev.preventDefault()
+  dt.dropEffect = 'move'
+  isDropActive.value = true
+}
+
+function onRootDragLeave(ev: DragEvent) {
+  const current = ev.currentTarget as HTMLElement | null;
+  const related = ev.relatedTarget as HTMLElement | null;
+
+  if (current && related && current.contains(related)) return;
+
+  isDropActive.value = false;
+}
+
+async function onRootDrop(ev: DragEvent) {
+  const payload = extractGexPayload(ev)
+  isDropActive.value = false
+
+  if (!payload || payload.type !== 'gex/file-refs') return
+
+  const srcId = (payload as any).source?.widgetId
+  if (srcId === props.sourceId) {
+    // Dropping back onto the same pane → ignore
+    return
+  }
+
+  ev.preventDefault()
+  ev.stopPropagation()
+
+  try {
+    // 1) Run the DnD auth layer (same as before)
+    const auth = await authorizeFileRefs('items', props.sourceId, payload)
+    if (!auth?.ok) {
+      console.warn('[Items] Drop not authorized:', auth?.reason)
+      return
+    }
+
+    const refs = payload.data || []
+    if (!refs.length) return
+
+    const target = cwd.value || merged.value.rpath || ''
+    if (!target) {
+      console.warn('[Items] Drop ignored: no cwd')
+      return
+    }
+
+    const destNorm = normalizeDir(target)
+    const sources: string[] = []
+
+    for (const r of refs as any[]) {
+      const p = String(r?.path ?? '')
+      if (!p) continue
+      // simple dirname
+      const m = p.match(/^(.*[\\/])[^\\/]+$/)
+      const parentNorm = normalizeDir(m ? m[1] : '')
+      if (parentNorm === destNorm) {
+        // already in this folder → no-op
+        continue
+      }
+      sources.push(p)
+    }
+
+    if (!sources.length) {
+      console.debug('[Items] drop: all refs already in target; nothing to copy')
+      return
+    }
+
+    // 2) Kick off the fs.copy job via the fs API
+    //    This will:
+    //      - ensure widget hash
+    //      - ensure consent (ticketFor -> ensureConsent)
+    //      - enqueue a queued fs.copy job
+    const items = sources.map(from => ({ from, to: target }))
+
+    // Optional: listen to global queue updates for this job
+    const jobPromise = fsMove(items, 'items', props.sourceId)
+
+    // If you want per-widget events:
+    const off = onFsQueueUpdate(job => {
+      // Narrow to our job if you want; here we just echo all updates.
+      if (job.op.kind === 'fs.move') {
+        emit('event', {
+          type: 'fs-job:update',
+          payload: {
+            jobId: job.id,
+            state: job.state,
+            progress: job.progress,
+            error: job.error,
+          },
+        })
+
+        if (
+          job.state === 'succeeded' ||
+          job.state === 'failed' ||
+          job.state === 'cancelled'
+        ) {
+          off()
+          emit('event', {
+            type: 'fs-job:finished',
+            payload: {
+              jobId: job.id,
+              state: job.state,
+              error: job.error,
+            },
+          })
+        }
+      }
+    })
+
+    // Also emit a started event immediately if you like
+    emit('event', {
+      type: 'fs-job:started',
+      payload: {
+        kind: 'fs.move',   // 🔁 was 'fs.copy'
+        target,
+        items,
+      },
+    })
+
+    jobPromise
+    .then(async job => {
+      console.log('[Items] fsMove done:', {
+        state: job.state,
+        error: job.error,
+        op: job.op,
+      })
+
+      if (job.state === 'succeeded') {
+        // 🔄 1) Refresh *this* pane’s cwd
+        const path = cwd.value || merged.value.rpath || ''
+        if (path) {
+          await loadDir(path)
+        }
+        console.log('srcId:', srcId)
+        // 🔔 2) Ask the *source* widget to refresh itself too
+        //      (srcId is captured from outer scope)
+        if (srcId && srcId !== props.sourceId) {
+        console.log('trying')
+          sendWidgetMessage({
+            from: props.sourceId,
+            to: srcId,
+            topic: 'fs:refresh-after-drop',
+            payload: {
+              kind: 'fs.move',
+              target: path,                 // dest folder after drop
+            },
+          })
+        }
+      }
+    })
+    .catch(err => {
+      console.error('[Items] fsMove crashed:', err)
+    })
+
+
+  } catch (err) {
+    console.error('[Items] drop failed:', err)
+  }
+}
+
 
 function guessMimeType(filename: string): string {
   const ext = filename.toLowerCase().split('.').pop() || ''
@@ -1073,23 +1268,55 @@ function cycleLayout() {
   emit('updateConfig', { ...props.config, view: { ...props.config?.view, layout: layouts[(i + 1) % layouts.length] } })
 }
 
-onMounted(() => {
-  announceFocus()      // tell TabContent "I own the PathBar"
+onMounted(async () => {
+  console.log('[items] mount, sourceId =', props.sourceId)
+
+  offWidgetMsg.value = onWidgetMessage(props.sourceId, (msg) => {
+    const current = cwd.value || merged.value.rpath || ''
+    console.log('[items] onWidgetMessage', {
+      sourceId: props.sourceId,
+      topic: msg.topic,
+      payload: msg.payload,
+      current,
+      cwd: cwd.value,
+      rpath: merged.value.rpath,
+    })
+
+    if (!current) return
+
+    if (msg.topic === 'fs:refresh-after-drop') {
+      const target = String(msg.payload?.target || '')
+      if (target && normalizeDir(target) !== normalizeDir(current)) {
+        console.log('[items] fs:refresh-after-drop → reloading', current)
+        loadDir(current)
+      }
+    }
+
+    if (msg.topic === 'fs:changed') {
+      const root = String(msg.payload?.root || '')
+      console.log('[items] fs:changed candidate', {
+        rootNorm: normalizeDir(root),
+        currentNorm: normalizeDir(current),
+      })
+      if (root && normalizeDir(root) === normalizeDir(current)) {
+        console.log('[items] fs:changed → reloading', current)
+        loadDir(current)
+      }
+    }
+  })
+
+  await nextTick()
+  requestAnimationFrame(() => {
+    measureScrollbarWidth()
+  })
 })
 
-onMounted(async () => {
-  const el = detailsScrollEl.value ?? scrollEl.value
-  el?.addEventListener('pointerdown', announceFocus, { capture: true })
-  
-  await nextTick();                          // wait for Vue to paint this tick
-  requestAnimationFrame(() => {              // then wait for the browser to layout
-    measureScrollbarWidth();
-  });
-})
 
 onBeforeUnmount(() => {
-  const el = detailsScrollEl.value ?? scrollEl.value
-  el?.removeEventListener('pointerdown', announceFocus, { capture: true } as any)
+  if (offWidgetMsg.value) {
+    offWidgetMsg.value();
+    offWidgetMsg.value = null;
+  }
 
   engine.destroy()  
 })
@@ -1100,7 +1327,18 @@ defineExpose({ applyExternalCwd, getNavState })
 </script>
 
 <template>
-  <div class="items-root" :style="hostVars" :class="{ dragging: isDragging, 'drag-selecting': marqueeActive }">
+  <div
+  class="items-root"
+  :style="hostVars"
+    :class="{
+      dragging: isDragging,
+      'drag-selecting': marqueeActive,
+      'drop-active': isDropActive,
+    }"
+    @dragover="onRootDragOver"
+    @dragleave="onRootDragLeave"
+    @drop="onRootDrop"
+  >
     <!-- Edit mode toolbar -->
     <div
       v-if="editMode"
@@ -1136,9 +1374,8 @@ defineExpose({ applyExternalCwd, getNavState })
       :class="{ 'is-details': merged.layout === 'details' }"
       ref="scrollEl"
       tabindex="0"
-      @focusin="announceFocus"
       @keydown="onKeyDown"
-      @pointerdown.self="() => { scrollEl?.value?.focus?.({ preventScroll: true }); announceFocus() }"
+      @pointerdown.self="() => { scrollEl?.value?.focus?.({ preventScroll: true }); }"
     >
       <div v-if="loading" class="msg">Loading…</div>
       <div v-else-if="error" class="err">{{ error }}</div>
@@ -1310,6 +1547,10 @@ defineExpose({ applyExternalCwd, getNavState })
 </template>
 
 <style scoped>
+.items-root.drop-active {
+  outline: 2px dashed rgba(255, 255, 255, 0.4);
+  outline-offset: -2px;
+}
 /* Details list rows */
 .row {
   content-visibility: auto;
