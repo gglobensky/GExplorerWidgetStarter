@@ -115,7 +115,7 @@ let dragOffsetY = 0
 const loading = ref(false)
 const error = ref<string | null>(null)
 const saving = ref(false)
-let lastDropIntent: DropIntent | null = null
+const lastDropIntent = ref<DropIntent | null>(null)
 
 // Hover-to-open while dragging
 let hoverFolderId: RootRowId | null = null
@@ -140,6 +140,15 @@ const layout     = computed(() =>
 )
 const dense      = computed(() => !!cfg.value.view.dense)
 const showIcons  = computed(() => cfg.value.view?.showIcons !== false)
+
+const dropTargetFolderId = computed<string | null>(() => {
+  const intent = lastDropIntent.value
+  if (!intent || intent.placement !== 'inside' || !intent.targetId) {
+    return null
+  }
+  const id = String(intent.targetId)
+  return id.startsWith('folder:') ? id : null
+})
 
 // Flat favorites (items); service is still the source of truth for item order
 const favorites = ref<FavoriteEntry[]>([])
@@ -232,6 +241,9 @@ function rowId(row: RootRow): RootRowId {
 // Map from row id -> actual DOM element, for hit-testing
 const rowEls = new Map<RootRowId, HTMLElement>()
 
+// Map from folderId -> menu container element (for empty-folder drops)
+const menuContainers = new Map<string, HTMLElement>()
+
 // Simple state for template bindings
 const sortableState = ref<{ isDragging: boolean; draggingId: RootRowId | null }>({
   isDragging: false,
@@ -312,16 +324,34 @@ function ensureSortable() {
   activeLayout = layoutKey
 
  const model: SortableModelAdapter<RootRowId> = {
-    snapshot() {
-      const rows = baseRootRows()
-      return snapshotFromNodes(
-        rows.map(row => ({
-          id: rowId(row),
-          parentId: null,
-          sortMode: 'manual',
-          isContainer: row.kind === 'folder',   // 👈 important
-        })),
-      )
+  snapshot() {
+      const roots = baseRootRows()
+
+      const rootNodes: SortableNodeRef[] = roots.map(row => ({
+        id: rowId(row),
+        parentId: null,
+        sortMode: 'manual',
+        isContainer: row.kind === 'folder',
+      }))
+
+      // Also include all rows from open menus as children of their folder
+      const menuNodes: SortableNodeRef[] = []
+      for (const menu of openMenus.value) {
+        if (!menu.folderId) continue
+        const parentId: RootRowId = `folder:${menu.folderId}`
+        for (const r of menu.rows) {
+          const id = menuRowId(r)
+          if (!id) continue
+          menuNodes.push({
+            id,
+            parentId,
+            sortMode: 'manual',
+            isContainer: r.type === 'folder',
+          })
+        }
+      }
+
+      return snapshotFromNodes([...rootNodes, ...menuNodes])
     },
       
     canStartDrag(id) {
@@ -330,10 +360,15 @@ function ensureSortable() {
     },
 
     applyMove(move) {
-      const intent = lastDropIntent
+      console.log('[DEBUG] model.applyMove called', { 
+        moveId: move.id, 
+        dragJustEnded, 
+        openMenusCount: openMenus.value.length,
+        timestamp: performance.now()
+      })
+
+      const intent = lastDropIntent.value
       if (!intent || !intent.targetId) {
-        // Defensive: if for some reason we don't have an intent,
-        // just bail out instead of corrupting order.
         console.warn('[favorites] applyMove without intent – ignoring')
         return
       }
@@ -345,10 +380,10 @@ function ensureSortable() {
       const { kind: movedKind, key: movedKey } = parseRootRowId(movedRowId)
       const { kind: targetKind, key: targetKey } = parseRootRowId(targetRowId)
 
-      // Delegate to the service; it will:
-      //  - load the global tree
-      //  - move the node
-      //  - write the new tree to disk
+      // FIX: Set dragJustEnded IMMEDIATELY so backdrop clicks are swallowed
+      dragJustEnded = true
+      console.log('[DEBUG] Set dragJustEnded = true in applyMove')
+
       void applyFavoritesMove({
         movedKind,
         movedKey,
@@ -357,10 +392,11 @@ function ensureSortable() {
         placement,
       })
         .then(async () => {
-          // Refresh local state from the global tree so all instances stay in sync
+          console.log('[DEBUG] applyFavoritesMove completed, calling refreshRootFolders')
           await refreshRootFolders()
           await refreshFavorites()
           broadcastFavoritesChanged('move')
+          console.log('[DEBUG] Refresh complete, openMenusCount:', openMenus.value.length)
         })
         .catch(err => {
           console.error('[favorites] applyFavoritesMove failed', err)
@@ -376,14 +412,10 @@ function ensureSortable() {
       const x = (evt as PointerEvent).clientX
       const y = (evt as PointerEvent).clientY
 
+      // 1) First, try to hit any known row (roots or menu rows)
       for (const [id, el] of rowEls) {
         const rect = el.getBoundingClientRect()
-        if (
-          x >= rect.left &&
-          x <= rect.right &&
-          y >= rect.top &&
-          y <= rect.bottom
-        ) {
+        if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
           const rel = layoutKey === 'list'
             ? (y - rect.top) / (rect.height || 1)
             : (x - rect.left) / (rect.width || 1)
@@ -393,9 +425,21 @@ function ensureSortable() {
         }
       }
 
+      // 2) If no row was hit, check if we're inside any open folder menu.
+      //    This is how empty folders get an "inside" target.
+      for (const [folderId, el] of menuContainers) {
+        const rect = el.getBoundingClientRect()
+        if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+          const id: RootRowId = `folder:${folderId}`
+          // relY doesn't really matter for "inside", middle is fine
+          return { id, relY: 0.5 }
+        }
+      }
+
       return null
     },
   }
+
 
   visuals = createSortableVisuals({
     listEl: containerEl,
@@ -423,10 +467,20 @@ function ensureSortable() {
         handleDragHover(intent)
       },
 
+      
       async onDrop(move, blocked) {
+        console.log('[DEBUG] onDrop called', { 
+          hasMove: !!move, 
+          blocked, 
+          dragJustEnded,
+          openMenusCount: openMenus.value.length,
+          timestamp: performance.now()
+        })
+
         // Normal case: driver accepted the move and already called model.applyMove
         if (!blocked && move) {
           dragJustEnded = true
+          console.log('[DEBUG] Set dragJustEnded = true in onDrop (normal path)')
           teardownDragVisuals()
           clearHoverTimer()
           return
@@ -435,12 +489,13 @@ function ensureSortable() {
         // Fallback: driver blocked the move (likely because targetId isn't in the snapshot),
         // but we *do* have a meaningful drop intent we can apply at the tree level.
         const draggingId = sortableState.value.draggingId as RootRowId | null
-        const intent = lastDropIntent
+        const intent = lastDropIntent.value   // ←← THIS is the important fix
 
         if (
           blocked &&
           draggingId &&
-          intent?.targetId
+          intent &&
+          intent.targetId
         ) {
           const targetRowId = String(intent.targetId) as RootRowId
 
@@ -448,6 +503,12 @@ function ensureSortable() {
           // we don't want to double-apply or fight the driver.
           const isRootTarget = baseRootRows().some(r => rowId(r) === targetRowId)
           if (!isRootTarget) {
+            // FIX: Set dragJustEnded IMMEDIATELY at the start of fallback path
+            // This ensures backdrop clicks are swallowed BEFORE async work completes
+            dragJustEnded = true
+            console.log('[DEBUG] Set dragJustEnded = true in onDrop (fallback - EARLY)')
+
+            console.log('[DEBUG] Entering fallback path in onDrop')
             const { kind: movedKind, key: movedKey } = parseRootRowId(draggingId)
             const { kind: targetKind, key: targetKey } = parseRootRowId(targetRowId)
             const placement = (intent.placement as any) ?? 'after'
@@ -464,8 +525,6 @@ function ensureSortable() {
               await refreshRootFolders()
               await refreshFavorites()
               broadcastFavoritesChanged('move')
-
-              dragJustEnded = true
             } catch (err) {
               console.error(
                 '[favorites] applyFavoritesMove (fallback from onDrop) failed',
@@ -495,6 +554,18 @@ function startRowDrag(row: RootRow, event: PointerEvent) {
   setupGhostForRow(id, event)
 
   driver.startDrag(id, event)
+  event.preventDefault()
+}
+
+function startMenuRowDrag(row: MenuRow, event: PointerEvent) {
+  ensureSortable()
+  if (!driver) return
+
+  const id = menuRowId(row)
+  if (!id) return
+
+  setupGhostForRow(id as RootRowId, event)
+  driver.startDrag(id as RootRowId, event)
   event.preventDefault()
 }
 
@@ -620,6 +691,17 @@ function closeAddDialog() {
 // --------------------------------------------------------------
 // FOLDER MENU (overlay)
 // --------------------------------------------------------------
+function setMenuContainerRef(menu: OpenMenu, el: HTMLElement | null) {
+  const folderId = menu.folderId
+  if (!folderId) return
+
+  if (el) {
+    menuContainers.set(folderId, el)
+  } else {
+    menuContainers.delete(folderId)
+  }
+}
+
 const openMenus = ref<OpenMenu[]>([])
 
 // Helper to check if a folder menu is currently open
@@ -628,13 +710,6 @@ function isFolderMenuOpen(folderId: string): boolean {
 }
 
 function openFolderDropdown(folder: FavoriteTreeNode, event: MouseEvent) {
-  // Swallow click right after a drag (folder or item)
-  if (dragJustEnded) {
-    dragJustEnded = false
-    event.preventDefault()
-    return
-  }
-
   const anchor = event.currentTarget as HTMLElement | null
   const rect = anchor?.getBoundingClientRect()
 
@@ -663,27 +738,69 @@ function openFolderDropdown(folder: FavoriteTreeNode, event: MouseEvent) {
 
 function openFolderDropdownFromDrag(folder: FavoriteTreeNode, anchor: HTMLElement | null) {
   const rect = anchor?.getBoundingClientRect()
-  const top = rect ? rect.bottom + 4 : 80
-  const left = rect ? rect.left : 80
-
   const rows = buildMenuRows(folder.children)
 
-  // Toggle logic similar to click: if same root is already open, do nothing.
-  const existingRoot = openMenus.value[0]
-  if (existingRoot && existingRoot.folderId === folder.id) {
+  // --- Case 1: root-level folder (same behavior as before) ---
+  if (isRootFolder(folder.id)) {
+    const top = rect ? rect.bottom + 4 : 80
+    const left = rect ? rect.left : 80
+
+    const existingRoot = openMenus.value[0]
+    if (existingRoot && existingRoot.folderId === folder.id) {
+      // Already open as root → do nothing
+      return
+    }
+
+    openMenus.value = [
+      {
+        folderId: folder.id,
+        label: folder.label,
+        rows,
+        top,
+        left,
+      },
+    ]
     return
   }
 
-  openMenus.value = [
-    {
-      folderId: folder.id,
-      label: folder.label,
-      rows,
-      top,
-      left,
-    },
-  ]
+  // --- Case 2: nested folder inside an existing menu ---
+  // Find which menu level contains this folder as a row
+  const level = openMenus.value.findIndex(menu =>
+    menu.rows.some(r => r.type === 'folder' && r.id === folder.id),
+  )
+
+  if (level === -1) {
+    // Fallback: treat it like a root-level open if we somehow didn't find it
+    const top = rect ? rect.bottom + 4 : 80
+    const left = rect ? rect.left : 80
+    openMenus.value = [
+      {
+        folderId: folder.id,
+        label: folder.label,
+        rows,
+        top,
+        left,
+      },
+    ]
+    return
+  }
+
+  const parentMenu = openMenus.value[level]
+  const top = rect ? rect.top : parentMenu?.top ?? 80
+  const left = rect ? rect.right + 8 : (parentMenu?.left ?? 80) + 220
+
+  const next = openMenus.value.slice(0, level + 1)
+  next[level + 1] = {
+    folderId: folder.id,
+    label: folder.label,
+    rows,
+    top,
+    left,
+  }
+
+  openMenus.value = next
 }
+
 
 function closeFolderMenu() {
   openMenus.value = []
@@ -823,6 +940,12 @@ function openFavorite(fav: FavoriteEntry, event?: MouseEvent) {
 // --------------------------------------------------------------
 // EDITING HELPERS
 // --------------------------------------------------------------
+function isRootFolder(folderId: string): boolean {
+  return fullTree.value.some(
+    n => n.kind === 'folder' && n.id === folderId,
+  )
+}
+
 function buildMenuRows(nodes: FavoriteTreeNode[]): MenuRow[] {
   const rows: MenuRow[] = []
   for (const n of nodes) {
@@ -864,6 +987,12 @@ function findFolderNodeById(id: string | null): FavoriteTreeNode | null {
 }
 
 function refreshOpenMenusFromTree() {
+  console.log('[DEBUG] refreshOpenMenusFromTree called', {
+    openMenusCount: openMenus.value.length,
+    menuFolderIds: openMenus.value.map(m => m.folderId),
+    timestamp: performance.now()
+  })
+
   if (!openMenus.value.length) return
 
   const next: OpenMenu[] = []
@@ -878,6 +1007,7 @@ function refreshOpenMenusFromTree() {
     const folder = findFolderNodeById(menu.folderId)
     if (!folder) {
       // Folder no longer exists → drop that menu level
+      console.log('[DEBUG] Folder no longer exists, dropping menu:', menu.folderId)
       continue
     }
 
@@ -888,6 +1018,11 @@ function refreshOpenMenusFromTree() {
       // keep top/left so the menu doesn't jump
     })
   }
+
+  console.log('[DEBUG] refreshOpenMenusFromTree complete', {
+    oldCount: openMenus.value.length,
+    newCount: next.length
+  })
 
   openMenus.value = next
 }
@@ -939,11 +1074,15 @@ async function handleRemoveFolder(folderId: string) {
     // Reload tree + flat favorites so UI is fully in sync
     await refreshRootFolders()
     await refreshFavorites()
+
+    // 🔔 Notify other favorites widgets
+    broadcastFavoritesChanged('folder-remove')
   } catch (e: any) {
     console.error('[favorites] removeFolder failed:', e)
     error.value = String(e?.message ?? e ?? 'Error')
   }
 }
+
 
 async function handleRemoveFavorite(path: string) {
   error.value = null
@@ -1084,9 +1223,10 @@ function clearHoverTimer() {
   }
   hoverFolderId = null
 }
+
 function handleDragHover(intent: DropIntent | null) {
   // Keep last intent for applyMove
-  lastDropIntent = intent ?? null
+  lastDropIntent.value = intent ?? null
 
   if (!intent || !intent.targetId || intent.placement !== 'inside') {
     clearHoverTimer()
@@ -1116,6 +1256,25 @@ function handleDragHover(intent: DropIntent | null) {
     openFolderDropdownFromDrag(folderNode, rowEl)
   }, HOVER_OPEN_DELAY)
 }
+
+function handleMenuBackdropClick() {
+  console.log('[DEBUG] handleMenuBackdropClick called', { 
+    dragJustEnded,
+    openMenusCount: openMenus.value.length,
+    timestamp: performance.now()
+  })
+  
+  // Swallow the first click after a drag/drop so the menu doesn't close
+  if (dragJustEnded) {
+    dragJustEnded = false
+    console.log('[DEBUG] Swallowed backdrop click (dragJustEnded was true)')
+    return
+  }
+  
+  console.log('[DEBUG] Closing folder menu from backdrop click')
+  closeFolderMenu()
+}
+
 
 </script>
 
@@ -1416,13 +1575,12 @@ function handleDragHover(intent: DropIntent | null) {
       </div>
     </teleport>
 
-    <!-- Folders menu overlay -->
-    <!-- Folders menu overlay (stacked menus) -->
+  <!-- Folders menu overlay (stacked menus) -->
 <teleport to="body">
   <div
     v-if="openMenus.length"
     class="fav-menu-backdrop"
-    @click.self="closeFolderMenu"
+    @click.self="handleMenuBackdropClick"
   >
     <div
       v-for="(menu, level) in openMenus"
@@ -1433,14 +1591,24 @@ function handleDragHover(intent: DropIntent | null) {
         left: menu.left + 'px',
       }"
       @click.stop
+      :ref="el => setMenuContainerRef(menu, el as HTMLElement | null)"
     >
+
       <div class="fav-menu-title">
         {{ menu.label || 'Folder' }}
       </div>
 
-      <div v-if="!menu.rows.length" class="fav-menu-empty">
+      <div
+        v-if="!menu.rows.length"
+        class="fav-menu-empty"
+        :class="{
+          'is-drop-target':
+            dropTargetFolderId === ('folder:' + (menu.folderId ?? '')),
+        }"
+      >
         No entries
       </div>
+
 
       <ul v-else class="fav-menu-list">
         <li
@@ -1453,6 +1621,7 @@ function handleDragHover(intent: DropIntent | null) {
           <button
             type="button"
             class="fav-menu-btn"
+            @pointerdown.stop="startMenuRowDrag(row, $event as PointerEvent)"
             @click="handleFolderMenuClick(row, $event, level)"
           >
             <span class="fav-menu-label">
@@ -1469,8 +1638,36 @@ function handleDragHover(intent: DropIntent | null) {
               </span>
             </span>
           </button>
+
+          <!-- NEW: inline delete actions -->
+          <div class="fav-menu-row-actions">
+            <!-- Delete folder -->
+            <button
+              v-if="row.type === 'folder'"
+              type="button"
+              class="icon-btn danger fav-menu-delete-btn"
+              @pointerdown.stop
+              @click.stop="handleRemoveFolder(row.id)"
+              title="Delete folder and nested favorites"
+            >
+              ✕
+            </button>
+
+            <!-- Delete item -->
+            <button
+              v-else
+              type="button"
+              class="icon-btn danger fav-menu-delete-btn"
+              @pointerdown.stop
+              @click.stop="row.path && handleRemoveFavorite(row.path)"
+              title="Remove favorite"
+            >
+              ✕
+            </button>
+          </div>
         </li>
       </ul>
+
     </div>
   </div>
 </teleport>
@@ -1622,6 +1819,12 @@ function handleDragHover(intent: DropIntent | null) {
 .fav-msg.empty {
   opacity: 0.6;
   font-style: italic;
+}
+
+.fav-menu-empty.is-drop-target {
+  background: rgba(255, 255, 255, 0.06);
+  border-top: 1px dashed rgba(255, 255, 255, 0.4);
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.4);
 }
 
 /* Vertical list mode */
@@ -1975,13 +2178,17 @@ function handleDragHover(intent: DropIntent | null) {
   pointer-events: auto;
   min-width: 220px;
   max-width: 320px;
-  max-height: 420px;
+
+  /* Let it grow until it hits the window edge, with a small margin */
+  max-height: calc(100vh - 32px);
   overflow: auto;
+
   background: rgba(10, 10, 10, 0.98);
   border-radius: 8px;
   box-shadow: 0 14px 40px rgba(0, 0, 0, 0.7);
   padding: 6px 0;
 }
+
 
 .fav-menu-title {
   font-size: 11px;
@@ -2071,5 +2278,39 @@ function handleDragHover(intent: DropIntent | null) {
 .gex-fav-insert-bar-blocked {
   background-color: #ff4d4f;
 }
+
+.fav-menu-row {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+}
+
+/* Button takes the main width, actions sit on the right */
+.fav-menu-btn {
+  flex: 1 1 auto;
+}
+
+/* Actions area in menu rows */
+.fav-menu-row-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  padding-right: 6px;
+}
+
+/* Show on hover */
+.fav-menu-row:hover .fav-menu-row-actions {
+  opacity: 1;
+}
+
+.fav-menu-delete-btn {
+  font-size: 10px;
+  padding: 1px 3px;
+}
+
 
 </style>
