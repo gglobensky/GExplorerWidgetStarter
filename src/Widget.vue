@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, onBeforeUnmount } from '/runtime/vue.js'
+import { ref, computed, onMounted, watch, onBeforeUnmount, nextTick } from '/runtime/vue.js'
+import { createSingleResizer, createClickOrDrag } from '/src/widgets/resize-helper/resize-helper'
 import type {
   FavoriteEntry,
   FavoritesConfig,
@@ -106,6 +107,18 @@ const emit = defineEmits<{
   (e: 'event', payload: any): void
 }>()
 
+const sidebarStripEl = ref<HTMLElement | null>(null)
+const toolbarStripEl = ref<HTMLElement | null>(null)
+
+// Optional: if you have a clear parent container that defines max available space
+const sidebarContainerEl = ref<HTMLElement | null>(null)
+const toolbarContainerEl = ref<HTMLElement | null>(null)
+  
+const toolbarRightHandle = createClickOrDrag({
+  onClick: () => toolbarScrollByPage(1),
+  onDragStart: (e) => onToolbarStripResizeDown(e),
+})
+
 // Ghost + insertion bar visuals
 let ghostEl: HTMLElement | null = null
 let insertBarEl: HTMLElement | null = null
@@ -121,6 +134,56 @@ const lastDropIntent = ref<DropIntent | null>(null)
 let hoverFolderId: RootRowId | null = null
 let hoverTimer: number | null = null
 const HOVER_OPEN_DELAY = 450 // ms
+
+const toolbarHasOverflow = ref(false)
+const toolbarAtStart = ref(true)
+const toolbarAtEnd = ref(true)
+
+let toolbarScrollScheduled = false
+function updateToolbarOverflowState() {
+  const el = toolbarStripEl.value?.querySelector('.favorites-toolbar') as HTMLElement | null
+  if (!el) return
+
+  const eps = 2
+  const sw = Math.ceil(el.scrollWidth)
+  const cw = Math.ceil(el.clientWidth)
+  const sl = Math.ceil(el.scrollLeft)
+
+  toolbarHasOverflow.value = sw - cw > eps
+  toolbarAtStart.value = sl <= eps
+  toolbarAtEnd.value = sw - (sl + cw) <= eps
+}
+
+function onToolbarScroll() {
+  if (toolbarScrollScheduled) return
+  toolbarScrollScheduled = true
+  requestAnimationFrame(() => {
+    toolbarScrollScheduled = false
+    updateToolbarOverflowState()
+  })
+}
+
+function toolbarScrollByPage(dir: -1 | 1) {
+  const el = toolbarStripEl.value?.querySelector('.favorites-toolbar') as HTMLElement | null
+  if (!el) return
+  const step = Math.max(80, Math.round(el.clientWidth * 0.8))
+  el.scrollBy({ left: dir * step, behavior: 'smooth' })
+}
+
+function onToolbarWheel(e: WheelEvent) {
+  const el = toolbarStripEl.value?.querySelector('.favorites-toolbar') as HTMLElement | null
+  if (!el) return
+  if (!toolbarHasOverflow.value) return
+
+  // Trackpads often send deltaX already; mouse wheels send deltaY.
+  const dx = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY
+
+  // Only steal the wheel if we can actually scroll horizontally
+  if (dx !== 0) {
+    el.scrollLeft += dx
+    e.preventDefault()
+  }
+}
 
 
 // ---- Config plumbing ----
@@ -140,6 +203,164 @@ const layout     = computed(() =>
 )
 const dense      = computed(() => !!cfg.value.view.dense)
 const showIcons  = computed(() => cfg.value.view?.showIcons !== false)
+
+// ---- Resizable strip (sidebar list height + toolbar width) ----
+const BASE_ROW_HEIGHT = 26
+const MIN_ROWS = 2
+const MAX_ROWS = 20
+
+// Per-widget "size" for the favorites strip
+const favStripSize = ref<number | null>(null)
+const sidebarRowCount = computed(() => displayRootRows.value.length)
+
+function getSidebarMinPx() {
+  return MIN_ROWS * BASE_ROW_HEIGHT
+}
+
+function getSidebarMaxPx() {
+  const contentMax = Math.max(
+    getSidebarMinPx(),
+    sidebarRowCount.value * BASE_ROW_HEIGHT
+  )
+
+  const containerMax = sidebarContainerEl.value
+    ? Math.max(getSidebarMinPx(), sidebarContainerEl.value.getBoundingClientRect().height - 16)
+    : Number.POSITIVE_INFINITY
+
+  return Math.min(contentMax, containerMax)
+}
+
+
+const sidebarListStyle = computed(() => {
+  if (!isSidebar.value || layout.value !== 'list') return {}
+
+  const px = favStripSize.value
+  if (!px) {
+    // default: fill available space via flex (current behavior)
+    return {}
+  }
+
+  // When user has resized: force a fixed height & stop flex-stretch
+  return {
+    height: px + 'px',
+    maxHeight: px + 'px',
+    flex: '0 0 auto',
+  }
+})
+
+const DEFAULT_STEP_PX = 64
+let toolbarSnapPoints: number[] = []
+
+function buildToolbarSnapPoints() {
+  const strip = toolbarStripEl.value
+  if (!strip) return []
+
+  // IMPORTANT: give your toolbar items a class so we can query them reliably
+  const kids = Array.from(strip.querySelectorAll<HTMLElement>('.fav-toolbar-item'))
+
+  const pts: number[] = []
+  let sum = 0
+  for (const k of kids) {
+    sum += k.getBoundingClientRect().width
+    pts.push(sum)
+  }
+  return pts
+}
+
+function snapToolbarWidth(raw: number, points: number[]) {
+  if (points.length === 0) {
+    return Math.round(raw / DEFAULT_STEP_PX) * DEFAULT_STEP_PX
+  }
+
+  const maxPoint = points[points.length - 1]
+  if (raw > maxPoint) {
+    const extra = raw - maxPoint
+    const stepped = Math.round(extra / DEFAULT_STEP_PX) * DEFAULT_STEP_PX
+    return maxPoint + stepped
+  }
+
+  // nearest point
+  let best = points[0]
+  let bestDist = Math.abs(raw - best)
+  for (const p of points) {
+    const d = Math.abs(raw - p)
+    if (d < bestDist) { best = p; bestDist = d }
+  }
+  return best
+}
+
+
+const toolbarStripStyle = computed(() => {
+  if (isSidebar.value || layout.value !== 'toolbar') return {}
+
+  const px = favStripSize.value
+  if (!px) {
+    // No user resize yet → let toolbar row decide
+    return {}
+  }
+
+  return {
+    width: px + 'px',
+    maxWidth: px + 'px',
+    flex: '0 0 auto',
+  }
+})
+
+const favStripSizePx = computed(() =>
+  favStripSize.value == null ? undefined : `${Math.round(favStripSize.value)}px`
+)
+
+// Vertical resizer for sidebar list (snaps to whole rows)
+
+const sidebarListResizer = createSingleResizer({
+  orientation: 'vertical',
+  getInitialValue: () =>
+    Math.round(sidebarStripEl.value?.getBoundingClientRect().height ?? (favStripSize.value ?? 4 * BASE_ROW_HEIGHT)),
+  apply: (newPx) => {
+    const MIN = getSidebarMinPx()
+    const MAX = getSidebarMaxPx()
+
+    let clamped = Math.max(MIN, Math.min(MAX, newPx))
+    clamped = Math.round(clamped / BASE_ROW_HEIGHT) * BASE_ROW_HEIGHT
+
+    favStripSize.value = clamped
+  },
+})
+
+function onSidebarListResizeDown(e: MouseEvent | PointerEvent) {
+  sidebarListResizer.start(e)
+}
+
+
+// Horizontal resizer for toolbar strip
+const toolbarStripResizer = createSingleResizer({
+  orientation: 'horizontal',
+  getInitialValue: () =>
+    Math.round(toolbarStripEl.value?.getBoundingClientRect().width ?? (favStripSize.value ?? 260)),
+  apply: (newPx) => {
+    const snapped = snapToolbarWidth(newPx, toolbarSnapPoints)
+
+    const MIN = 80
+    const MAX = toolbarContainerEl.value
+      ? Math.max(MIN, toolbarContainerEl.value.getBoundingClientRect().width - 16)
+      : 4000
+
+    favStripSize.value = Math.max(MIN, Math.min(MAX, snapped))
+  },
+})
+
+function onToolbarStripResizeDown(e: MouseEvent | PointerEvent) {
+  // Pattern A reinforcement: lock the starting width to current DOM width (no jump)
+  if (toolbarStripEl.value) {
+    favStripSize.value = Math.round(toolbarStripEl.value.getBoundingClientRect().width)
+    toolbarSnapPoints = buildToolbarSnapPoints()
+  } else {
+    toolbarSnapPoints = []
+  }
+  toolbarStripResizer.start(e)
+}
+
+
 
 const dropTargetFolderId = computed<string | null>(() => {
   const intent = lastDropIntent.value
@@ -412,10 +633,15 @@ function ensureSortable() {
       const x = (evt as PointerEvent).clientX
       const y = (evt as PointerEvent).clientY
 
+      const containerRect = container.getBoundingClientRect()
+
       // 1) First, try to hit any known row (roots or menu rows)
       for (const [id, el] of rowEls) {
         const rect = el.getBoundingClientRect()
-        if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+        if (
+          x >= rect.left && x <= rect.right &&
+          y >= rect.top && y <= rect.bottom
+        ) {
           const rel = layoutKey === 'list'
             ? (y - rect.top) / (rect.height || 1)
             : (x - rect.left) / (rect.width || 1)
@@ -429,16 +655,48 @@ function ensureSortable() {
       //    This is how empty folders get an "inside" target.
       for (const [folderId, el] of menuContainers) {
         const rect = el.getBoundingClientRect()
-        if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+        if (
+          x >= rect.left && x <= rect.right &&
+          y >= rect.top && y <= rect.bottom
+        ) {
           const id: RootRowId = `folder:${folderId}`
           // relY doesn't really matter for "inside", middle is fine
           return { id, relY: 0.5 }
         }
       }
 
+      // 3) Fallbacks for “after last root row”
+      const roots = baseRootRows()
+      if (!roots.length) {
+        return null
+      }
+      const last = roots[roots.length - 1]
+      const lastId = rowId(last)
+
+      // 3a) Pointer is inside the toolbar/list container but not on a pill:
+      //     treat this as “after last root item”.
+      if (
+        x >= containerRect.left && x <= containerRect.right &&
+        y >= containerRect.top && y <= containerRect.bottom
+      ) {
+        return { id: lastId, relY: 1 }
+      }
+
+      // 3b) Toolbar-only: pointer is in the vertical band of the row but
+      //     *to the right* of the container → still “after last”.
+      if (layoutKey === 'toolbar') {
+        const inVerticalBand =
+          y >= containerRect.top && y <= containerRect.bottom
+
+        if (inVerticalBand && x > containerRect.right) {
+          return { id: lastId, relY: 1 }
+        }
+      }
+
       return null
     },
   }
+
 
 
   visuals = createSortableVisuals({
@@ -714,7 +972,19 @@ function openFolderDropdown(folder: FavoriteTreeNode, event: MouseEvent) {
   const rect = anchor?.getBoundingClientRect()
 
   const top = rect ? rect.bottom + 4 : 80
-  const left = rect ? rect.left : 80
+
+  let left: number
+  if (rect) {
+    if (isSidebar.value) {
+      // Sidebar: shift menu so only ~half of it covers the sidebar
+      left = rect.left + rect.width / 2
+    } else {
+      // Toolbar / grid: keep existing behavior
+      left = rect.left
+    }
+  } else {
+    left = 80
+  }
 
   const rows = buildMenuRows(folder.children)
 
@@ -889,11 +1159,28 @@ onMounted(() => {
     void refreshRootFolders()
   })
 
+  // initialize from actual DOM so the handle doesn't "jump" on first grab
+  if (favStripSize.value == null) {
+    const el = layout.value === 'toolbar' ? toolbarStripEl.value : sidebarStripEl.value
+    if (el) favStripSize.value = Math.round(el.getBoundingClientRect()[layout.value === 'toolbar' ? 'width' : 'height'])
+  }
+
   window.addEventListener('pointermove', handleGlobalPointerMove)
   window.addEventListener('pointerup', handleGlobalPointerUp)
+
+  nextTick(() => {
+    updateToolbarOverflowState()
+    const el = toolbarStripEl.value?.querySelector('.favorites-toolbar') as HTMLElement | null
+    el?.addEventListener('scroll', onToolbarScroll, { passive: true })
+    el?.addEventListener('wheel', onToolbarWheel as any, { passive: false })
+  })
 })
 
 onBeforeUnmount(() => {
+  const el = toolbarStripEl.value?.querySelector('.favorites-toolbar') as HTMLElement | null
+  el?.removeEventListener('scroll', onToolbarScroll as any)
+  el?.removeEventListener('wheel', onToolbarWheel as any)
+
   window.removeEventListener('pointermove', handleGlobalPointerMove)
   window.removeEventListener('pointerup', handleGlobalPointerUp)
 
@@ -909,6 +1196,11 @@ watch(group, () => {
   void refreshFavorites()
   void refreshRootFolders()
 })
+
+watch(
+  () => displayRootRows.value.length,
+  () => requestAnimationFrame(updateToolbarOverflowState)
+)
 
 const hostVars = computed(() => ({
   '--fav-bg': props.theme?.bg         || 'var(--surface-1, #141414)',
@@ -1285,6 +1577,7 @@ function handleMenuBackdropClick() {
     :class="{
       'sidebar-mode': isSidebar,
       'toolbar-mode': !isSidebar && layout === 'toolbar',
+      'edit-mode': !!editMode,
     }"
     :style="hostVars"
   >
@@ -1313,170 +1606,212 @@ function handleMenuBackdropClick() {
     </div>
     <template v-else>
       <!-- LIST layout (sidebar) -->
-      <ul
+      <div
         v-if="layout === 'list'"
-        class="favorites-list"
-        :class="{ dense }"
-        ref="listEl"
+        ref="sidebarStripEl"
+        class="favorites-list-wrapper"
+        :style="sidebarListStyle"
       >
-      <li
-        v-for="row in displayRootRows"
-        :key="row.kind === 'folder'
-          ? 'folder:' + row.node.id
-          : 'item:' + row.entry.path"
-        class="fav-row"
-        :class="{
-          'folder-row': row.kind === 'folder',
-          'item-row': row.kind === 'item',
-          'is-dragging':
-            sortableState.isDragging &&
-            sortableState.draggingId === (
-              row.kind === 'folder'
-                ? 'folder:' + row.node.id
-                : 'item:' + row.entry.path
-            )
-        }"
-        :ref="el => setRowRef(row, el as HTMLElement | null)"
-        @pointerdown.stop="startRowDrag(row, $event)"
-      >
-
-
-          <!-- Folder row -->
-          <template v-if="row.kind === 'folder'">
-            <button
-              type="button"
-              class="fav-btn folder-btn"
-              @click="openFolderDropdown(row.node, $event)"
-              :title="row.node.label"
-            >
-              <span class="fav-icon">📁</span>
-              <span v-if="showLabels" class="fav-label">
-                {{ row.node.label }}
-              </span>
-            </button>
-
-            <div class="fav-row-actions">
+        <ul ref="listEl" class="favorites-list" :class="{ dense }">
+          <li
+            v-for="row in displayRootRows"
+            :key="row.kind === 'folder'
+              ? 'folder:' + row.node.id
+              : 'item:' + row.entry.path"
+            class="fav-row"
+            :class="{
+              'folder-row': row.kind === 'folder',
+              'item-row': row.kind === 'item',
+              'is-dragging':
+                sortableState.isDragging &&
+                sortableState.draggingId === (
+                  row.kind === 'folder'
+                    ? 'folder:' + row.node.id
+                    : 'item:' + row.entry.path
+                )
+            }"
+            :ref="el => setRowRef(row, el as HTMLElement | null)"
+            @pointerdown.stop="startRowDrag(row, $event)"
+          >
+            <!-- Folder row -->
+            <template v-if="row.kind === 'folder'"
+              class="toolbar-folder-wrapper toolbar-sortable-item fav-toolbar-item">
               <button
                 type="button"
-                class="icon-btn danger"
-                @pointerdown.stop
-                @click.stop="handleRemoveFolder(row.node.id)"
-                title="Delete folder and nested favorites"
+                class="fav-btn folder-btn"
+                @click="openFolderDropdown(row.node, $event)"
+                :title="row.node.label"
               >
-                ✕
+                <span class="fav-icon">📁</span>
+                <span v-if="showLabels" class="fav-label">
+                  {{ row.node.label }}
+                </span>
               </button>
-            </div>
-          </template>
 
-          <!-- Item row -->
-          <template v-else>
-            <button
-              type="button"
-              class="fav-btn"
-              @click="openFavorite(row.entry, $event)"
-              :title="row.entry.label || row.entry.path"
-            >
-              <span v-if="showIcons" class="fav-icon">★</span>
-              <span v-if="showLabels" class="fav-label">
-                {{ row.entry.label || row.entry.path }}
-              </span>
-            </button>
+              <div class="fav-row-actions">
+                <button
+                  type="button"
+                  class="icon-btn danger"
+                  @pointerdown.stop
+                  @click.stop="handleRemoveFolder(row.node.id)"
+                  title="Delete folder and nested favorites"
+                >
+                  ✕
+                </button>
+              </div>
+            </template>
 
-            <div class="fav-row-actions">
+            <!-- Item row -->
+            <template v-else
+            class="toolbar-item-wrapper toolbar-sortable-item fav-toolbar-item">
               <button
                 type="button"
-                class="icon-btn danger"
-                @pointerdown.stop
-                @click.stop="handleRemoveFavorite(row.entry.path)"
-                title="Remove"
+                class="fav-btn"
+                @click="openFavorite(row.entry, $event)"
+                :title="row.entry.label || row.entry.path"
               >
-                ✕
+                <span v-if="showIcons" class="fav-icon">★</span>
+                <span v-if="showLabels" class="fav-label">
+                  {{ row.entry.label || row.entry.path }}
+                </span>
               </button>
+
+              <div class="fav-row-actions">
+                <button
+                  type="button"
+                  class="icon-btn danger"
+                  @pointerdown.stop
+                  @click.stop="handleRemoveFavorite(row.entry.path)"
+                  title="Remove"
+                >
+                  ✕
+                </button>
+              </div>
+            </template>
+          </li>
+        </ul>
+      </div>
+
+
+      <!-- Resize handle at bottom (sidebar list only) -->
+      <div
+        v-if="isSidebar && layout === 'list' && !editMode"
+        class="fav-list-resize-handle"
+        @pointerdown.prevent="onSidebarListResizeDown"
+      />
+
+
+
+      <!-- TOOLBAR layout (enhanced with folders & dropdowns) -->
+      <div v-else ref="toolbarContainerEl" class="favorites-toolbar-container">
+        <div class="fav-toolbar-viewport">
+          <!-- LEFT hint -->
+          <button
+            v-if="toolbarHasOverflow && !toolbarAtStart"
+            class="fav-scroll-hint left"
+            type="button"
+            title="Scroll left"
+            @click.stop="toolbarScrollByPage(-1)"
+          >
+            ◀
+          </button>
+
+        <div ref="toolbarStripEl" class="favorites-toolbar-wrapper" :style="toolbarStripStyle">
+          <div ref="toolbarEl" class="favorites-toolbar" :class="{ dense }">
+              <!-- Add button at start of toolbar -->
+              <button
+                type="button"
+                class="add-favorite-pill"
+                title="Add favorite or folder"
+                @click="openAddDialog"
+              >
+                <span class="add-icon">+</span>
+              </button>
+              
+              <!-- Each root row: either a folder dropdown or an item pill -->
+              <template v-for="(row, idx) in displayRootRows" :key="idx">
+                <!-- Folder with dropdown -->
+                <div
+                  v-if="row.kind === 'folder'"
+                  class="toolbar-folder-wrapper toolbar-sortable-item"
+                  :ref="el => setRowRef(row, el as HTMLElement | null)"
+                  @pointerdown.stop="startRowDrag(row, $event)"
+                >
+                  <button
+                    type="button"
+                    class="fav-pill folder-pill"
+                    :class="{ 'menu-open': isFolderMenuOpen(row.node.id) }"
+                    @click="openFolderDropdown(row.node, $event)"
+                    :title="row.node.label"
+                  >
+                    <span class="fav-icon">📁</span>
+                    <span v-if="showLabels" class="fav-label">{{ row.node.label }}</span>
+                    <span class="dropdown-arrow">▼</span>
+                  </button>
+                  
+                  <!-- Delete button -->
+                  <button
+                    type="button"
+                    class="icon-btn danger toolbar-delete-btn"
+                    @pointerdown.stop
+                    @click.stop="handleRemoveFolder(row.node.id)"
+                    title="Delete folder and nested favorites"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <!-- Regular item pill -->
+                <div
+                  v-else
+                  class="toolbar-item-wrapper toolbar-sortable-item"
+                  :ref="el => setRowRef(row, el as HTMLElement | null)"
+                  @pointerdown.stop="startRowDrag(row, $event)"
+                >
+                  <button
+                    type="button"
+                    class="fav-pill"
+                    @click="openFavorite(row.entry, $event)"
+                    :title="row.entry.label || row.entry.path"
+                  >
+                    <span v-if="showIcons" class="fav-icon">★</span>
+                    <span v-if="showLabels" class="fav-label">
+                      {{ row.entry.label || row.entry.path }}
+                    </span>
+                  </button>
+                  
+                  <!-- Delete button -->
+                  <button
+                    type="button"
+                    class="icon-btn danger toolbar-delete-btn"
+                    @pointerdown.stop
+                    @click.stop="handleRemoveFavorite(row.entry.path)"
+                    title="Remove"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </template>
             </div>
-          </template>
-        </li>
-      </ul>
+          </div>
+        </div>
 
-
-
-<!-- TOOLBAR layout (enhanced with folders & dropdowns) -->
-      <div v-else ref="toolbarEl" class="favorites-toolbar" :class="{ dense }">
-        <!-- Add button at start of toolbar -->
+          <!-- RIGHT hint (shown when more to the right) -->
         <button
+          v-if="!editMode && toolbarHasOverflow && !toolbarAtEnd"
+          class="fav-scroll-hint right is-resize-handle"
           type="button"
-          class="add-favorite-pill"
-          title="Add favorite or folder"
-          @click="openAddDialog"
+          title="Scroll right (drag to resize)"
+          @pointerdown="toolbarRightHandle.onPointerDown"
         >
-          <span class="add-icon">+</span>
+          ▶
         </button>
-        
-        <!-- Each root row: either a folder dropdown or an item pill -->
-        <template v-for="(row, idx) in displayRootRows" :key="idx">
-          <!-- Folder with dropdown -->
-          <div
-            v-if="row.kind === 'folder'"
-            class="toolbar-folder-wrapper toolbar-sortable-item"
-            :ref="el => setRowRef(row, el as HTMLElement | null)"
-            @pointerdown.stop="startRowDrag(row, $event)"
-          >
 
-            <button
-              type="button"
-              class="fav-pill folder-pill"
-              :class="{ 'menu-open': isFolderMenuOpen(row.node.id) }"
-              @click="openFolderDropdown(row.node, $event)"
-              :title="row.node.label"
-            >
-              <span class="fav-icon">📁</span>
-              <span v-if="showLabels" class="fav-label">{{ row.node.label }}</span>
-              <span class="dropdown-arrow">▼</span>
-            </button>
-            
-            <!-- Delete button -->
-            <button
-              type="button"
-              class="icon-btn danger toolbar-delete-btn"
-              @pointerdown.stop
-              @click.stop="handleRemoveFolder(row.node.id)"
-              title="Delete folder and nested favorites"
-            >
-              ✕
-            </button>
-          </div>
-
-          <!-- Regular item pill -->
-          <div
-            v-else
-            class="toolbar-item-wrapper toolbar-sortable-item"
-            :ref="el => setRowRef(row, el as HTMLElement | null)"
-            @pointerdown.stop="startRowDrag(row, $event)"
-          >
-
-            <button
-              type="button"
-              class="fav-pill"
-              @click="openFavorite(row.entry, $event)"
-              :title="row.entry.label || row.entry.path"
-            >
-              <span v-if="showIcons" class="fav-icon">★</span>
-              <span v-if="showLabels" class="fav-label">
-                {{ row.entry.label || row.entry.path }}
-              </span>
-            </button>
-            
-            <!-- Delete button -->
-            <button
-              type="button"
-              class="icon-btn danger toolbar-delete-btn"
-              @pointerdown.stop
-              @click.stop="handleRemoveFavorite(row.entry.path)"
-              title="Remove"
-            >
-              ✕
-            </button>
-          </div>
-        </template>
+        <div
+          v-else-if="!editMode"
+          class="fav-toolbar-resize-handle"
+          @pointerdown.prevent="onToolbarStripResizeDown"
+        />
       </div>
 
     </template>
@@ -1827,12 +2162,39 @@ function handleMenuBackdropClick() {
   border-bottom: 1px dashed rgba(255, 255, 255, 0.4);
 }
 
-/* Vertical list mode */
+.fav-list-resize-handle {
+  width: 100%;
+  height: 4px;
+  cursor: ns-resize;
+  background: transparent;
+}
+
+
+.fav-list-resize-handle::before {
+  content: '';
+  display: block;
+  margin: 1px auto 0;
+  width: 40%;
+  height: 2px;
+  border-radius: 999px;
+  opacity: 0.35;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+
+/* Vertical list mode: outer wrapper handles scroll + height */
+.favorites-list-wrapper {
+  scrollbar-width: none;          /* Firefox */
+}
+.favorites-list-wrapper::-webkit-scrollbar {
+  width: 0;
+  height: 0;                      /* Chrome/Edge */
+}
+/* Inner list just stacks rows */
 .favorites-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1935,17 +2297,80 @@ function handleMenuBackdropClick() {
   background: rgba(255, 128, 128, 0.16);
 }
 
-/* Horizontal toolbar layout - ENHANCED */
+/* make the scroll container take the wrapper’s width */
 .favorites-toolbar {
-  display: flex;
-  flex-wrap: nowrap; /* Changed from wrap - single row */
-  align-items: center; /* Vertical centering */
-  gap: 6px;
-  overflow-x: auto;
-  overflow-y: visible; /* Allow dropdowns to extend below */
-  height: 100%; /* Fill parent height for vertical centering */
-  padding: 0 4px; /* Small horizontal padding */
+  width: 100%;
+  overflow-x: auto;     /* <-- REQUIRED */
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
+.favorites-toolbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;                   /* Chrome/Edge */
+}
+
+/* viewport wrapper to host overlay arrows */
+.fav-toolbar-viewport {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  overflow: hidden;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* overlay scroll hints */
+.fav-scroll-hint {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 22px;
+  min-width: 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.22);
+  background: rgba(0,0,0,0.25);
+  color: inherit;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  z-index: 5;
+}
+.fav-scroll-hint.left  { left: 4px; }
+.fav-scroll-hint.right { right: 8px; } /* leave room for resize grip */
+
+.fav-scroll-hint:hover {
+  background: rgba(255,255,255,0.10);
+  border-color: rgba(255,255,255,0.35);
+}
+
+
+/* viewport is already display:flex; the wrapper MUST flex + shrink */
+.favorites-toolbar-wrapper {
+  flex: 1 1 auto;
+  min-width: 0;        /* critical for flex children to shrink */
+  overflow: hidden;    /* prevents inner scrollbars from leaking */
+}
+
+/* Thin vertical grip on the right for width resizing */
+.fav-toolbar-resize-handle {
+  flex: 0 0 4px;
+  cursor: ew-resize;
+  position: relative;
+}
+
+.fav-toolbar-resize-handle::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 2px;
+  height: 40%;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  opacity: 0.35;
+}
+
 
 .favorites-toolbar.dense {
   gap: 3px;
@@ -2050,6 +2475,7 @@ function handleMenuBackdropClick() {
   text-overflow: ellipsis;
   overflow: hidden;
 }
+
 
 /* Add favorite / folder popup */
 .fav-dialog-backdrop {
@@ -2312,5 +2738,14 @@ function handleMenuBackdropClick() {
   padding: 1px 3px;
 }
 
+.favorites-root.sidebar-mode .favorites-toolbar {
+  overflow-x: hidden;
+}
 
+.favorites-toolbar-container {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  overflow: hidden;
+}
 </style>
