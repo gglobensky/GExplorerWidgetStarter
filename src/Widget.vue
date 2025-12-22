@@ -1,731 +1,595 @@
 <script setup lang="ts">
-import { ref, computed, nextTick } from '/runtime/vue.js'
-import { useScrollHints, useSnapResize } from '/src/widgets/list-kit'
-import { createDragTrigger } from '/src/widgets/utils/click-drag.ts'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
+import { usePlayerState } from './usePlayerState'
+import { usePlaylist, INPUT_ACCEPT } from './usePlaylist'
+import { useMarquee } from './useMarquee'
+import { useDnD } from './useDnD'
+import { fileRefsToPlaylistItems } from '/src/widgets/dnd/utils'
+import { useKeyboardNav } from './useKeyboardNav'
+import CompactLayout from './CompactLayout.vue'
+import ExpandedLayout from './ExpandedLayout.vue'
 
-import type {
-  FavoritesConfig,
-} from '/src/widgets/contracts/favorites'
+import {
+  extractGexPayload,
+  hasGexPayload,
+  authorizeFileRefs,
+  FileRefData
+} from 'gexplorer/widgets'
 
-import { useFavoritesData } from './useFavoritesData'
-import { useDragVisuals } from './useDragVisuals'
-import { useFolderMenus } from './useFolderMenus'
-import { useFavoritesDialog } from './useFavoritesDialog'
-import { useFavoritesSortable } from './useFavoritesSortable'
-
-import { rowId, type HostAction } from "./favorites.model"
-
-// Standard widget props shape (same pattern as Items)
 const props = defineProps<{
-  sourceId: string
-  config?: FavoritesConfig | { data?: any; view?: any }
-  theme?: Record<string, string>
-  runAction?: (a: HostAction) => void
+  config?: Record<string, any>
   placement?: {
-    context: 'grid' | 'sidebar' | 'toolbar' | 'embedded'
-    size?: { cols?: number; rows?: number; width?: number; height?: number }
+    context: 'grid' | 'sidebar' | 'embedded'
+    layout: string
+    size?: any
+    resizing: boolean
+    resizePhase?: 'active' | 'idle'
   }
+  runAction?: (a: any) => void
+  context?: 'sidebar' | 'grid'
+  variant?: 'compact' | 'expanded' | 'collapsed'
+  width?: number
+  height?: number
+  theme?: string
   editMode?: boolean
+  sourceId: string
 }>()
 
-// Use the sourceId as our bus instance identifier
-let _instanceSeq = 0
-function makeInstanceId(base: string) {
-    _instanceSeq++
-    return `${base}::${Date.now()}_${_instanceSeq}`
+const onMediaError = (e: Event) => {
+  const t = e.target as HTMLMediaElement
+  console.error('[Widget] Media error:', {
+    src: t.currentSrc || t.src,
+    error: t.error?.code,
+    errorMessage: t.error?.message,
+    currentTrack: state.current.value?.name,
+    currentIndex: state.currentIndex.value
+  })
 }
-const instanceId = makeInstanceId(props.sourceId)
 
-const emit = defineEmits<{
-  (e: 'updateConfig', config: FavoritesConfig | any): void
-  (e: 'event', payload: any): void
-}>()
+type Track = {
+  id: string
+  url: string
+  name: string
+  type?: string
+}
 
-// --- Config plumbing ---------------------------------------------------------
-const cfg = computed(() => {
-    const data = (props.config as any)?.data ?? {}
-    const view = (props.config as any)?.view ?? {}
-    return { data, view }
+const expandedLayoutRef = ref<InstanceType<typeof ExpandedLayout> | null>(null)
+
+// ===== PLAYER STATE =====
+const state = usePlayerState(props.sourceId)
+
+// ===== LAYOUT =====
+const widgetRootEl = ref<HTMLElement | null>(null)
+const containerWidth = ref(0)
+
+// utility: common parent dir
+function commonDir(paths: string[]) {
+  const parts = paths.map(p => p.replace(/\\/g, '/').split('/'))
+  let i = 0
+  while (true) {
+    const seg = parts[0][i]
+    if (!seg) break
+    if (!parts.every(a => a[i] === seg)) break
+    i++
+  }
+  const shared = parts[0].slice(0, i).join('/')
+  return shared.endsWith(':') ? shared + '/' : shared || '/'
+}
+
+// Convert file-refs → streaming playlist items (gex://) → Tracks
+async function refsToTracks(
+  refs: FileRefData[],
+  receiverWidgetType: string,
+  receiverWidgetId: string
+): Promise<Track[]> {
+  const items = await fileRefsToPlaylistItems(refs, receiverWidgetType, receiverWidgetId)
+  return items.map(it => ({
+    id: it.id || it.src,
+    url: it.src,
+    name: it.name || it.src.split(/[\\/]/).pop() || 'track',
+    type: it.type
+  }))
+}
+
+// Push tracks into queue and sync the underlying playlists engine
+async function appendTracks(tracks: Track[]) {
+  if (!tracks.length) return
+  state.queue.value = state.queue.value.concat(tracks)
+  state.playlists.setItems(state.sel, state.toPlaylistItems(), { keepCurrent: true })
+}
+
+// rAF + idle-gated width pipeline ------------------------------------------
+let pendingWidth: number | null = null
+let rafForWidth = 0
+
+function commitWidth(w: number) {
+  if (Math.abs(w - containerWidth.value) < 1) return
+  containerWidth.value = w | 0
+}
+
+function scheduleWidth(w: number, src: 'host' | 'ro' = 'ro') {
+  pendingWidth = w | 0
+  if (props.placement?.resizePhase === 'active' && src === 'ro') return
+  if (rafForWidth) return
+  rafForWidth = requestAnimationFrame(() => {
+    rafForWidth = 0
+    if (pendingWidth != null) {
+      commitWidth(pendingWidth)
+      pendingWidth = null
+    }
+  })
+}
+
+function seedMeasureNow() {
+  const el = widgetRootEl.value
+  if (!el) return
+  const w = Math.round(el.getBoundingClientRect().width || 0)
+  if (w) scheduleWidth(w)
+}
+
+watch(() => props.placement?.resizePhase, (phase) => {
+  if (phase === 'idle' && pendingWidth != null) {
+    commitWidth(pendingWidth)
+    pendingWidth = null
+  }
 })
+// ---------------------------------------------------------------------------
 
-const editMode = computed(() => !!props.editMode)
-const group = computed(() => String((cfg.value.view as any)?.group ?? (cfg.value.data as any)?.group ?? 'main'))
-const isSidebar = computed(() => props.placement?.context === 'sidebar')
-const layout = computed(() =>
-  (cfg.value.view?.layout as 'list' | 'toolbar' | undefined) ??
-  (isSidebar.value ? 'list' : 'toolbar')
+const hostContext = computed<'grid' | 'sidebar' | 'embedded'>(() =>
+  props.placement?.context ?? props.context ?? 'sidebar'
 )
-const dense = computed(() => !!cfg.value.view?.dense)
-const showIcons = computed(() => cfg.value.view?.showIcons !== false)
-const showLabels = computed(() => cfg.value.data?.showLabels !== false)
 
-const hostVars = computed(() => ({
-  '--fav-bg': props.theme?.bg         || 'var(--surface-1, #141414)',
-  '--fav-fg': props.theme?.fg         || 'var(--fg, #eee)',
-  '--fav-border': props.theme?.border || 'rgba(255,255,255,.14)',
-}))
+const hostLayout = computed<string>(() =>
+  props.placement?.layout ?? props.variant ?? 'expanded'
+)
 
-// --- DOM Refs ----------------------------------------------------------------
-const rootEl = ref<HTMLElement | null>(null)
-const sidebarStripEl = ref<HTMLElement | null>(null)
-const toolbarEl = ref<HTMLElement | null>(null)
-const listEl = ref<HTMLElement | null>(null)
-
-// Row element map (shared across composables)
-const rowEls = new Map<string, HTMLElement>()
-
-// --- Data Layer (useFavoritesData) -------------------------------------------
-const {
-  loading,
-  error,
-  favorites,
-  fullTree,
-  rootRows,
-  refreshFavorites,
-  refreshRootFolders,
-  broadcastFavoritesChanged,
-  findFolderNodeById,
-  isRootFolder,
-} = useFavoritesData({
-  sourceId: props.sourceId,
-  configData: () => cfg.value.data,
-  groupValue: () => group.value,
-  instanceId,
+const hostWidth = computed(() => {
+  const p = props.placement?.size
+  return typeof p?.width === 'number' && p.width > 0
+    ? p.width
+    : typeof props.width === 'number' && props.width > 0
+      ? props.width
+      : 0
+})
+watch(hostWidth, (w) => {
+  if (w > 0) scheduleWidth(Math.round(w), 'host')
 })
 
-// Used only for the "empty" message gate in the template
-const visibleFavorites = computed(() => favorites.value)
+const layoutClass = computed(() => {
+  const w = containerWidth.value || hostWidth.value || 0
+  if (w <= 160) return 'micro'
+  if (w <= 260) return 'ultra'
+  if (w <= 320) return 'narrow'
+  if (w <= 400) return 'medium'
+  return 'wide'
+})
 
-// Base root rows helper (for sortable)
-function baseRootRows() {
-  return rootRows.value.slice()
+watch(() => hostLayout.value, () => {
+  nextTick(() => {
+    if (hostLayout.value !== 'compact') seedMeasureNow()
+  })
+})
+
+// ===== DND (list reordering) =====
+const showQueue = state.life.cell<boolean>('ui.showQueue', true)
+const dnd = useDnD(
+  state.queue,
+  state.currentIndex,
+  showQueue,
+  () => expandedLayoutRef.value?.queueEl || null,
+  state.toPlaylistItems,
+  state.playlists,
+  state.sel
+)
+
+// ===== PLAYLIST OPS =====
+const playlist = usePlaylist(
+  state.queue,
+  state.currentIndex,
+  state.queueName,
+  state.isPlaying,
+  state.music,
+  state.playlists,
+  state.sel,
+  state.toPlaylistItems,
+  () => dnd.ensureSortable(),           // <- if your useDnD exposes ensureDnD()
+  'local-player',                  // <- receiverWidgetType
+  props.sourceId                   // <- receiverWidgetId
+)
+
+
+// ===== KEYBOARD NAV =====
+const keyboard = useKeyboardNav(
+  state.queue,
+  state.selectedIndex,
+  state.hasTracks,
+  play
+)
+
+// ===== MARQUEE =====
+const marquee = useMarquee(
+  state.currentTitle,
+  layoutClass,
+  computed(() => props.placement?.resizePhase),
+  computed(() => props.config)
+)
+
+// Rack index → sync current/selected
+type RackIndexEvt = CustomEvent<{
+  listId: string
+  index?: number
+  item?: { id?: string; url?: string } | null
+}>
+const onRackIndex = (e: Event) => {
+  const d = (e as RackIndexEvt).detail
+  let real = typeof d.index === 'number' ? d.index : -1
+  if (real < 0 && d.item) {
+    const { id, url } = d.item
+    if (id) real = state.queue.value.findIndex(t => t.id === id)
+    if (real < 0 && url) real = state.queue.value.findIndex(t => t.url === url)
+  }
+  if (real >= 0) {
+    if (state.currentIndex.value !== real) state.currentIndex.value = real
+    if (state.selectedIndex.value !== real) state.selectedIndex.value = real
+  }
 }
 
-const displayRootRows = computed(() => baseRootRows())
+// ===== PLAYER CONTROLS =====
+async function play(index?: number) {
+  await state.prime()
+  state.isLoading.value = true
 
-// --- Navigation --------------------------------------------------------------
-function openFavorite(fav: { path: string; label?: string }, event?: MouseEvent) {
-  // If a drag just ended, swallow this click
-  if (sortable.isDragJustEnded()) {
-    sortable.resetDragJustEnded()
-    event?.preventDefault()
+  if (typeof index === 'number') {
+    if (index >= 0 && index < state.queue.value.length && state.queue.value[index]?.url) {
+      const idx = await state.playlists.playIndex(state.sel, index, state.music)
+      if (idx >= 0) {
+        state.currentIndex.value = idx
+        state.selectedIndex.value = idx
+        state.isPlaying.value = true
+      }
+    }
+    state.isLoading.value = false
     return
   }
 
-  const path = fav.path?.trim()
-  if (!path) return
-
-  if (props.runAction) {
-    props.runAction({ type: 'nav', to: path, sourceId: props.sourceId })
-  } else {
-    emit('event', { type: 'openPath', payload: path })
+  if (state.currentIndex.value === -1) {
+    const first = state.queue.value.findIndex(t => !!t.url)
+    if (first >= 0) {
+      const idx = await state.playlists.playIndex(state.sel, first, state.music)
+      if (idx >= 0) {
+        state.currentIndex.value = idx
+        state.selectedIndex.value = idx
+        state.isPlaying.value = true
+      }
+      state.isLoading.value = false
+      return
+    }
   }
+
+  try { await state.music.play(); state.isPlaying.value = true } catch { state.isPlaying.value = false }
+  setTimeout(() => { state.isLoading.value = false }, 300)
 }
 
-// --- Folder Menus (useFolderMenus) -------------------------------------------
-const {
-  openMenus,
-  menuContainers,
-  getDropTargetFolderId,
-  isFolderMenuOpen,
-  openFolderDropdown,
-  openFolderDropdownFromDrag,
-  closeFolderMenu,
-  handleFolderMenuClick,
-  refreshOpenMenusFromTree,
-  setMenuContainerRef,
-  setMenuRowRef,
-} = useFolderMenus({
-  isSidebar: () => isSidebar.value,
-  findFolderNodeById,
-  isRootFolder,
-  openFavorite,
-  rowEls,
-})
+function pause() {
+  state.music.pause()
+  state.isPlaying.value = false
+}
 
-const dropTargetFolderId = computed(() => getDropTargetFolderId(dragVisuals.lastDropIntent.value))
+function togglePlay() {
+  if (!state.hasTracks.value) return
+  state.isPlaying.value ? pause() : play()
+}
 
-// Intercept backdrop clicks to handle drag-just-ended swallowing
-function handleMenuBackdropClick() {
-  console.log('[DEBUG] handleMenuBackdropClick called', { 
-    dragJustEnded: sortable.isDragJustEnded(),
-    openMenusCount: openMenus.value.length,
-    timestamp: performance.now()
+function next() {
+  state.playlists.next(state.sel, state.music).then((idx: number) => {
+    if (idx >= 0) {
+      state.currentIndex.value = idx
+      state.selectedIndex.value = idx
+    } else {
+      pause()
+    }
   })
-  
-  // Swallow the first click after a drag/drop so the menu doesn't close
-  if (sortable.isDragJustEnded()) {
-    sortable.resetDragJustEnded()
-    console.log('[DEBUG] Swallowed backdrop click (dragJustEnded was true)')
-    return
-  }
-  
-  console.log('[DEBUG] Closing folder menu from backdrop click')
-  closeFolderMenu()
 }
 
-// Keep menus in sync when root folders refresh
-async function refreshRootFoldersWithMenuSync() {
-  await refreshRootFolders()
-  refreshOpenMenusFromTree()
-}
-
-// --- Dialog (useFavoritesDialog) ---------------------------------------------
-const {
-  showAddDialog,
-  saving,
-  newPath,
-  newLabel,
-  addMode,
-  newParentId,
-  folderOptions,
-  addDialogTitle,
-  addButtonLabel,
-  openAddDialog,
-  closeAddDialog,
-  confirmAddFavorite,
-  handleRemoveFolder,
-  handleRemoveFavorite,
-} = useFavoritesDialog({
-  refreshFavorites,
-  refreshRootFolders: refreshRootFoldersWithMenuSync,
-  broadcastFavoritesChanged,
-})
-
-// --- Drag Visuals (useDragVisuals) -------------------------------------------
-const dragVisuals = useDragVisuals({
-  activeContainer: () => layout.value === 'list' ? listEl.value : toolbarEl.value,
-  activeLayout: () => layout.value === 'list' ? 'list' : layout.value === 'toolbar' ? 'toolbar' : null,
-  rowEls,
-  findFolderNodeById,
-  openFolderDropdownFromDrag,
-})
-
-// --- Sortable (useFavoritesSortable) -----------------------------------------
-const sortable = useFavoritesSortable({
-  layout: () => layout.value,
-  listEl,
-  toolbarEl,
-  baseRootRows,
-  openMenus,
-  rowEls,
-  menuContainers,
-  lastDropIntent: dragVisuals.lastDropIntent,
-  refreshFavorites,
-  refreshRootFolders: refreshRootFoldersWithMenuSync,
-  broadcastFavoritesChanged,
-  setupGhostForRow: dragVisuals.setupGhostForRow,
-  updateGhostPosition: dragVisuals.updateGhostPosition,
-  updateInsertBar: dragVisuals.updateInsertBar,
-  handleDragHover: dragVisuals.handleDragHover,
-  teardownDragVisuals: dragVisuals.teardownDragVisuals,
-  clearHoverTimer: dragVisuals.clearHoverTimer,
-})
-
-// --- Scroll Hints ------------------------------------------------------------
-const {
-  hasOverflow: listHasOverflow,
-  atStart: listAtTop,
-  atEnd: listAtBottom,
-  scrollByPage: listScrollByPage,
-} = useScrollHints({
-  scrollEl: sidebarStripEl,
-  axis: 'y',
-  deps: () => displayRootRows.value.length,
-  minPageStep: 60,
-})
-
-const {
-  hasOverflow: toolbarHasOverflow,
-  atStart: toolbarAtStart,
-  atEnd: toolbarAtEnd,
-  scrollByPage: toolbarScrollByPage,
-} = useScrollHints({
-  scrollEl: toolbarEl,
-  axis: 'x',
-  deps: () => displayRootRows.value.length,
-  minPageStep: 80,
-  wheel: 'transpose',
-})
-
-// --- Snap Resize (sidebar only) ----------------------------------------------
-const { style: sidebarListStyle, onResizeDown: onSidebarListResizeDown } =
-  useSnapResize({
-    targetEl: sidebarStripEl,
-    containerEl: rootEl,
-    itemCount: computed(() => displayRootRows.value.length),
-    stepPx: 26,
-    minSteps: 2,
-    maxSteps: 20,
-    paddingPx: 16,
+function prev() {
+  state.playlists.prev(state.sel, state.music).then((idx: number) => {
+    if (idx >= 0) {
+      state.currentIndex.value = idx
+      state.selectedIndex.value = idx
+    } else {
+      pause()
+    }
   })
+}
 
-const onSidebarHandlePointerDown = createDragTrigger(
-  (e) => {
-    // Drag -> resize
-    onSidebarListResizeDown(e)
-  },
-  {
-    thresholdPx: 4,
-    gate: { includeDefaultInteractive: false },
-    suppressClickAfterDrag: true,
-  },
-)
+function seek(e: Event) {
+  if (!state.duration.value) return
+  const v = parseFloat((e.target as HTMLInputElement).value)
+  state.music.currentTime = v * state.duration.value
+}
 
-function onSidebarHandleClick() {
-  // Click -> scroll down (only when it makes sense)
-  if (listHasOverflow.value && !listAtBottom.value) {
-    listScrollByPage(1)
+function adjustSpeed(delta: number) {
+  const newRate = Math.max(0.25, Math.min(3.0, state.playbackRate.value + delta))
+  state.playbackRate.value = newRate
+  state.music.playbackRate = newRate
+}
+
+function setVolume(v: number) {
+  const clamped = Math.min(1, Math.max(0, v))
+  state.volume.value = clamped
+  if (clamped > 0) state.lastNonZeroVolume.value = clamped
+  state.music.volume = clamped
+}
+
+function toggleMute() {
+  setVolume(state.volume.value > 0 ? 0 : state.lastNonZeroVolume.value || 0.5)
+}
+
+function volInput(v: number) {
+  setVolume(v)
+}
+
+function toggleShuffle() {
+  state.shuffle.value = !state.shuffle.value
+  state.playlists.setOptions(state.sel, { shuffle: state.shuffle.value })
+}
+
+function toggleRepeat() {
+  state.repeat.value = state.repeat.value === 'off' ? 'all' : state.repeat.value === 'all' ? 'one' : 'off'
+  state.playlists.setOptions(state.sel, { repeat: state.repeat.value })
+}
+
+async function clickPick() {
+  // Prefer host dialog; falls back to browser picker or <input> inside the hook.
+  await playlist.loadAndMerge()
+}
+
+function toggleQueue() {
+  showQueue.value = !showQueue.value
+}
+
+// ===== QUEUE RENAME =====
+const renaming = ref(false)
+const draftQueueName = ref('')
+const nameInput = ref<HTMLInputElement | null>(null)
+
+function beginRename() {
+  draftQueueName.value = state.queueName.value
+  renaming.value = true
+  nextTick(() => {
+    nameInput.value?.focus()
+    nameInput.value?.select()
+  })
+}
+
+function cancelRename() {
+  renaming.value = false
+}
+
+function commitRename() {
+  const v = draftQueueName.value.trim()
+  if (v) state.queueName.value = v
+  renaming.value = false
+}
+
+// ===== ROW INTERACTIONS =====
+async function onRowDblClick(track: any) {
+  if (dnd.sortableState.value.isDragging) return
+  const realIdx = state.queue.value.findIndex(t => t.id === track.id)
+  const idx = await state.playlists.playIndex(state.sel, realIdx, state.music)
+  if (idx >= 0) {
+    state.currentIndex.value = idx
+    state.selectedIndex.value = idx
   }
 }
 
+function onRowClick(index: number) {
+  keyboard.selectRow(index)
+}
+
+// ===== DRAG & DROP (FILES) =====
+const draggingOver = ref(false)
+
+function prevent(e: Event) { e.preventDefault(); e.stopPropagation() }
+function onDragEnter(e: DragEvent) { prevent(e); draggingOver.value = true }
+function onDragOver(e: DragEvent) { prevent(e) }
+function onDragLeave(e: DragEvent) { prevent(e); draggingOver.value = false }
+
+async function onDrop(e: DragEvent) {
+  prevent(e)
+  draggingOver.value = false
+
+  if (hasGexPayload(e)) {
+    const payload = extractGexPayload(e)
+    if (!payload) return
+
+    if (payload.type === 'gex/file-refs') {
+      const auth = await authorizeFileRefs(
+        'local-player',
+        props.sourceId,
+        payload,
+        { requiredCaps: ['Read'] }
+      )
+      if (!auth.ok) return
+
+      const tracks = await refsToTracks(
+        payload.data as FileRefData[],
+        'local-player',
+        props.sourceId
+      )
+
+      await appendTracks(tracks)
+
+      if (state.queue.value.length === tracks.length && tracks.length) {
+        await play(0)
+      }
+      return
+    }
+  }
+
+  if (e.dataTransfer?.files?.length) {
+    await playlist.addFiles(e.dataTransfer.files)
+  }
+}
+
+// ===== MEDIA EVENTS =====
+const onMediaPlay = () => { state.isPlaying.value = true }
+const onMediaPause = () => { state.isPlaying.value = false }
+const onTimeUpdate = async () => {
+  state.currentTime.value = state.music.currentTime || 0
+}
+
+const onLoadedMeta = (e: Event) => {
+  const t = e.target as HTMLMediaElement | null
+  const d = t?.duration ?? state.music.duration
+  state.duration.value = Number.isFinite(d) ? d : 0
+}
+
+const onVolumeChange = () => {
+  const v = state.music.volume
+  if (v !== state.volume.value) {
+    state.volume.value = v
+    if (v > 0) state.lastNonZeroVolume.value = v
+  }
+}
+
+function hydrateFromHandle() {
+  state.volume.value = state.music.volume
+  if (state.volume.value > 0) state.lastNonZeroVolume.value = state.volume.value
+  state.isPlaying.value = !state.music.paused
+  state.currentTime.value = state.music.currentTime || 0
+  state.duration.value = state.music.duration || 0
+}
+
+// ===== LIFECYCLE =====
+let resizeObserver: ResizeObserver | null = null
+
+onMounted(async () => {
+  state.music.addEventListener('play', onMediaPlay)
+  state.music.addEventListener('pause', onMediaPause)
+  state.music.addEventListener('timeupdate', onTimeUpdate)
+  state.music.addEventListener('loadedmetadata', onLoadedMeta as any)
+  state.music.addEventListener('volumechange', onVolumeChange)
+  state.music.addEventListener('error', onMediaError)
+  state.music.addEventListener('rack:playlistindex', onRackIndex as EventListener)
+
+  state.playlists.register(state.sel, state.toPlaylistItems(), {
+    autoNext: 'linear',
+    repeat: state.repeat.value,
+    shuffle: state.shuffle.value,
+    dedupe: false
+  })
+  state.playlists.setItems(state.sel, state.toPlaylistItems(), { keepCurrent: true })
+  state.playlists.bindToHandle(state.sel, state.music)
+
+  await nextTick()
+  seedMeasureNow()
+  resizeObserver = new ResizeObserver((entries) => {
+    const e = entries[0]
+    const w = 'contentBoxSize' in e && e.contentBoxSize
+      ? (Array.isArray(e.contentBoxSize) ? e.contentBoxSize[0].inlineSize : e.contentBoxSize.inlineSize)
+      : e.contentRect.width
+    scheduleWidth(Math.round(w), 'ro')
+  })
+  if (widgetRootEl.value) resizeObserver.observe(widgetRootEl.value)
+
+  hydrateFromHandle()
+})
+
+onBeforeUnmount(() => {
+  if (rafForWidth) cancelAnimationFrame(rafForWidth)
+  resizeObserver?.disconnect()
+
+  state.music.removeEventListener('play', onMediaPlay)
+  state.music.removeEventListener('pause', onMediaPause)
+  state.music.removeEventListener('timeupdate', onTimeUpdate)
+  state.music.removeEventListener('loadedmetadata', onLoadedMeta as any)
+  state.music.removeEventListener('volumechange', onVolumeChange)
+  state.music.removeEventListener('error', onMediaError)
+  state.music.removeEventListener('rack:playlistindex', onRackIndex as EventListener)
+
+  state.playlists.unbind(state.sel)
+  dnd.sortable?.destroy()
+})
 </script>
-
 
 <template>
   <div
-    class="favorites-root"
-    ref="rootEl" 
-    :class="{
-      'sidebar-mode': isSidebar,
-      'toolbar-mode': !isSidebar && layout === 'toolbar',
-      'edit-mode': !!editMode,
-    }"
-    :style="hostVars"
+    ref="widgetRootEl"
+    class="widget-root"
+    :style="{ '--widget-w': (containerWidth || hostWidth) + 'px' }"
   >
-    <!-- Add button: sidebar as full row, toolbar as inline pill -->
-    <template v-if="isSidebar">
-      <button
-        type="button"
-        class="add-favorite-btn"
-        @click="openAddDialog"
-      >
-        <span class="add-icon">+</span>
-        <span class="add-label">Add favorite</span>
-      </button>
+    <!-- Compact Layout -->
+    <CompactLayout
+      v-if="hostLayout === 'compact'"
+      :current="state.current.value"
+      :has-tracks="state.hasTracks.value"
+      :is-playing="state.isPlaying.value"
+      :volume="state.volume.value"
+      :volume-icon="state.volumeIcon.value"
+      :play-tooltip="`${state.isPlaying.value ? 'Pause' : 'Play'}${state.current.value ? '\n' + state.current.value.name : ''}`"
+      @toggle-play="togglePlay"
+      @click-pick="clickPick"
+      @vol-input="volInput"
+    />
 
-      <!-- Error message -->
-      <div v-if="error" class="fav-msg error">{{ error }}</div>
-
-      <!-- Loading message -->
-      <div v-if="loading" class="fav-msg">Loading...</div>
-
-      <!-- Empty state -->
-      <div
-        v-if="!loading && !error && !visibleFavorites.length"
-        class="fav-msg empty"
-      >
-        No favorites yet
-      </div>
-
-      <!-- Vertical list mode with scroll hints -->
-      <div
-        v-if="displayRootRows.length"
-        class="favorites-list-shell"
-      >
-        <!-- Top hint (scroll up) -->
-        <button
-          v-if="listHasOverflow && !listAtTop"
-          type="button"
-          class="fav-list-top-hint"
-          @click="listScrollByPage(-1)"
-          title="Scroll up"
-        >
-          <span class="chev">▲</span>
-        </button>
-
-        <!-- Scrollable list wrapper -->
-        <div
-          class="favorites-list-wrapper"
-          ref="sidebarStripEl"
-          :style="sidebarListStyle"
-        >
-          <ul class="favorites-list" :class="{ dense }" ref="listEl">
-            <li
-              v-for="row in displayRootRows"
-              :key="row.kind === 'folder' ? row.node.id : row.entry.path"
-              class="fav-row"
-              :class="{ 'folder-row': row.kind === 'folder' }"
-              :ref="el => sortable.setRowRef(row, el as HTMLElement | null)"
-            >
-              <!-- Folder row -->
-              <button
-                v-if="row.kind === 'folder'"
-                type="button"
-                class="fav-btn folder-btn"
-                :class="{ 'menu-open': isFolderMenuOpen(row.node.id) }"
-                @pointerdown.stop="sortable.startRowDrag(row, $event)"
-                @click="openFolderDropdown(row.node, $event)"
-              >
-                <span v-if="showIcons" class="fav-icon">📁</span>
-                <span v-if="showLabels" class="fav-label">{{ row.node.label }}</span>
-              </button>
-
-              <!-- Item row -->
-              <button
-                v-else
-                type="button"
-                class="fav-btn"
-                @pointerdown.stop="sortable.startRowDrag(row, $event)"
-                @click="openFavorite(row.entry, $event)"
-                :title="row.entry.label || row.entry.path"
-              >
-                <span v-if="showIcons" class="fav-icon">★</span>
-                <span v-if="showLabels" class="fav-label">
-                  {{ row.entry.label || row.entry.path }}
-                </span>
-              </button>
-
-              <!-- Actions (delete) -->
-              <div class="fav-row-actions">
-                <button
-                  v-if="row.kind === 'folder'"
-                  type="button"
-                  class="icon-btn danger"
-                  @pointerdown.stop
-                  @click.stop="handleRemoveFolder(row.node.id)"
-                  title="Delete folder and nested favorites"
-                >
-                  ✕
-                </button>
-                <button
-                  v-else
-                  type="button"
-                  class="icon-btn danger"
-                  @pointerdown.stop
-                  @click.stop="handleRemoveFavorite(row.entry.path)"
-                  title="Remove"
-                >
-                  ✕
-                </button>
-              </div>
-            </li>
-          </ul>
-        </div>
-
-        <!-- Bottom resize handle (drag to resize or click to scroll) -->
-        <div
-          class="fav-list-resize-handle"
-          @pointerdown="onSidebarHandlePointerDown"
-          @click.stop="onSidebarHandleClick"
-        >
-          <div class="handle-line"></div>
-        </div>
-      </div>
-    </template>
-
-    <!-- Toolbar mode -->
-    <template v-else>
-      <div class="favorites-toolbar-container">
-        <!-- LEFT gutter: stable controls that do NOT overlap scroll content -->
-        <div class="fav-toolbar-gutter left">
-          <button
-            type="button"
-            class="fav-edge-tab left fav-edge-add"
-            @click.stop="openAddDialog"
-            title="Add favorite or folder"
-            :disabled="editMode"
-          >
-            +
-          </button>
-
-          <button
-            type="button"
-            class="fav-edge-tab left"
-            title="Scroll left"
-            :disabled="editMode || !toolbarHasOverflow || toolbarAtStart"
-            @click.stop="toolbarScrollByPage(-1)"
-          >
-            ◀
-          </button>
-        </div>
-
-        <!-- CENTER: scrollable content -->
-        <div class="favorites-toolbar-wrapper">
-          <div
-            class="favorites-toolbar"
-            :class="{ dense }"
-            ref="toolbarEl"
-          >
-            <template
-              v-for="row in displayRootRows"
-              :key="row.kind === 'folder' ? row.node.id : row.entry.path"
-            >
-              <!-- Folder pill with dropdown -->
-              <div
-                v-if="row.kind === 'folder'"
-                class="toolbar-folder-wrapper toolbar-sortable-item"
-                :ref="el => sortable.setRowRef(row, el as HTMLElement | null)"
-                @pointerdown.stop="sortable.startRowDrag(row, $event)"
-              >
-                <button
-                  type="button"
-                  class="fav-pill folder-pill"
-                  :class="{ 'menu-open': isFolderMenuOpen(row.node.id) }"
-                  @click="openFolderDropdown(row.node, $event)"
-                  :title="row.node.label"
-                >
-                  <span class="fav-icon">📁</span>
-                  <span v-if="showLabels" class="fav-label">{{ row.node.label }}</span>
-                  <span class="dropdown-arrow">▼</span>
-                </button>
-
-                <!-- Delete button -->
-                <button
-                  type="button"
-                  class="icon-btn danger toolbar-delete-btn"
-                  @pointerdown.stop
-                  @click.stop="handleRemoveFolder(row.node.id)"
-                  title="Delete folder and nested favorites"
-                >
-                  ✕
-                </button>
-              </div>
-
-              <!-- Regular item pill -->
-              <div
-                v-else
-                class="toolbar-item-wrapper toolbar-sortable-item"
-                :ref="el => sortable.setRowRef(row, el as HTMLElement | null)"
-                @pointerdown.stop="sortable.startRowDrag(row, $event)"
-              >
-                <button
-                  type="button"
-                  class="fav-pill"
-                  @click="openFavorite(row.entry, $event)"
-                  :title="row.entry.label || row.entry.path"
-                >
-                  <span v-if="showIcons" class="fav-icon">★</span>
-                  <span v-if="showLabels" class="fav-label">
-                    {{ row.entry.label || row.entry.path }}
-                  </span>
-                </button>
-
-                <!-- Delete button -->
-                <button
-                  type="button"
-                  class="icon-btn danger toolbar-delete-btn"
-                  @pointerdown.stop
-                  @click.stop="handleRemoveFavorite(row.entry.path)"
-                  title="Remove"
-                >
-                  ✕
-                </button>
-              </div>
-            </template>
-          </div>
-        </div>
-
-        <!-- RIGHT gutter: stable scroll (never overlaps X) -->
-        <div class="fav-toolbar-gutter right">
-          <button
-            type="button"
-            class="fav-edge-tab right"
-            title="Scroll right"
-            :disabled="editMode || !toolbarHasOverflow || toolbarAtEnd"
-            @click.stop="toolbarScrollByPage(1)"
-          >
-            ▶
-          </button>
-        </div>
-      </div>
-
-    </template>
-
-
-    <!-- Add favorite / folder popup (global modal) -->
-    <teleport to="body">
-      <div
-        v-if="showAddDialog"
-        class="fav-dialog-backdrop"
-      >
-        <div class="fav-dialog">
-          <div class="fav-dialog-title">{{ addDialogTitle }}</div>
-
-          <div class="fav-type-toggle">
-            <button
-              type="button"
-              class="btn-toggle"
-              :class="{ active: addMode === 'item' }"
-              @click="addMode = 'item'"
-            >
-              Favorite
-            </button>
-            <button
-              type="button"
-              class="btn-toggle"
-              :class="{ active: addMode === 'folder' }"
-              @click="addMode = 'folder'"
-            >
-              Folder
-            </button>
-          </div>
-
-          <label class="fav-dialog-field">
-            <span class="field-label">Location</span>
-            <select
-              v-model="newParentId"
-              class="fav-input"
-            >
-              <option value="">Root</option>
-              <option
-                v-for="opt in folderOptions"
-                :key="opt.id"
-                :value="opt.id"
-              >
-                {{ '  '.repeat(opt.depth) + opt.label }}
-              </option>
-            </select>
-          </label>
-
-          <label
-            v-if="addMode === 'item'"
-            class="fav-dialog-field"
-          >
-            <span class="field-label">Path</span>
-            <input
-              v-model="newPath"
-              type="text"
-              class="fav-input"
-              placeholder="C:\\Users\\you\\Downloads or home:/games"
-            />
-          </label>
-
-          <label class="fav-dialog-field">
-            <span class="field-label">Label</span>
-            <input
-              v-model="newLabel"
-              type="text"
-              class="fav-input"
-              :placeholder="addMode === 'folder' ? 'New folder' : 'Downloads'"
-            />
-          </label>
-
-          <div class="fav-dialog-buttons">
-            <button
-              type="button"
-              class="btn"
-              @click="closeAddDialog"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              class="btn primary"
-              :disabled="
-                saving ||
-                (addMode === 'item'
-                  ? !newPath.trim()
-                  : !newLabel.trim())
-              "
-              @click="confirmAddFavorite"
-            >
-              {{ addButtonLabel }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </teleport>
-
-  <!-- Folders menu overlay (stacked menus) -->
-<teleport to="body">
-  <div
-    v-if="openMenus.length"
-    class="fav-menu-backdrop"
-    @click.self="handleMenuBackdropClick"
-  >
-    <div
-      v-for="(menu, level) in openMenus"
-      :key="menu.folderId ?? 'root-' + level"
-      class="fav-menu"
-      :style="{
-        top: menu.top + 'px',
-        left: menu.left + 'px',
-      }"
-      @click.stop
-      :ref="el => setMenuContainerRef(menu, el as HTMLElement | null)"
-    >
-
-      <div class="fav-menu-title">
-        {{ menu.label || 'Folder' }}
-      </div>
-
-      <div
-        v-if="!menu.rows.length"
-        class="fav-menu-empty"
-        :class="{
-          'is-drop-target':
-            dropTargetFolderId === ('folder:' + (menu.folderId ?? '')),
-        }"
-      >
-        No entries
-      </div>
-
-
-      <ul v-else class="fav-menu-list">
-        <li
-          v-for="row in menu.rows"
-          :key="row.id"
-          class="fav-menu-row"
-          :class="{ 'is-folder': row.type === 'folder' }"
-          :ref="el => setMenuRowRef(row, el as HTMLElement | null)"
-        >
-          <button
-            type="button"
-            class="fav-menu-btn"
-            @pointerdown.stop="sortable.startMenuRowDrag(row, $event as PointerEvent)"
-            @click="handleFolderMenuClick(row, $event, level)"
-          >
-            <span class="fav-menu-label">
-              <span
-                class="fav-menu-indent"
-                :style="{ width: row.depth * 12 + 'px' }"
-              />
-              <span class="fav-menu-icon">
-                <span v-if="row.type === 'folder'">📁</span>
-                <span v-else>★</span>
-              </span>
-              <span class="fav-menu-text">
-                {{ row.label }}
-              </span>
-            </span>
-          </button>
-
-          <!-- NEW: inline delete actions -->
-          <div class="fav-menu-row-actions">
-            <!-- Delete folder -->
-            <button
-              v-if="row.type === 'folder'"
-              type="button"
-              class="icon-btn danger fav-menu-delete-btn"
-              @pointerdown.stop
-              @click.stop="handleRemoveFolder(row.id)"
-              title="Delete folder and nested favorites"
-            >
-              ✕
-            </button>
-
-            <!-- Delete item -->
-            <button
-              v-else
-              type="button"
-              class="icon-btn danger fav-menu-delete-btn"
-              @pointerdown.stop
-              @click.stop="row.path && handleRemoveFavorite(row.path)"
-              title="Remove favorite"
-            >
-              ✕
-            </button>
-          </div>
-        </li>
-      </ul>
-
-    </div>
-  </div>
-</teleport>
-
-
+    <!-- Expanded Layout -->
+    <ExpandedLayout
+      v-else
+      ref="expandedLayoutRef"
+      :queue="state.queue.value"
+      :display-queue="dnd.displayQueue.value"
+      :current-index="state.currentIndex.value"
+      :selected-index="state.selectedIndex.value"
+      :current="state.current.value"
+      :has-tracks="state.hasTracks.value"
+      :can-prev="state.canPrev.value"
+      :can-next="state.canNext.value"
+      :is-playing="state.isPlaying.value"
+      :is-loading="state.isLoading.value"
+      :current-time="state.currentTime.value"
+      :duration="state.duration.value"
+      :volume="state.volume.value"
+      :repeat="state.repeat.value"
+      :shuffle="state.shuffle.value"
+      :queue-name="state.queueName.value"
+      :volume-icon="state.volumeIcon.value"
+      :playback-rate="state.playbackRate.value"
+      :playback-rate-label="state.playbackRateLabel.value"
+      :sortable-state="dnd.sortableState.value"
+      :layout-class="layoutClass"
+      :show-queue="showQueue"
+      :renaming="renaming"
+      :draft-queue-name="draftQueueName"
+      :marquee-on="marquee.marqueeOn.value"
+      :marquee-dir="marquee.marqueeDir.value"
+      :resize-phase="props.placement?.resizePhase"
+      :set-marquee-box="marquee.setMarqueeBox"
+      :set-marquee-copy="marquee.setMarqueeCopy"
+      @toggle-play="togglePlay"
+      @prev="prev"
+      @next="next"
+      @seek="seek"
+      @adjust-speed="adjustSpeed"
+      @toggle-shuffle="toggleShuffle"
+      @toggle-repeat="toggleRepeat"
+      @click-pick="clickPick"
+      @toggle-mute="toggleMute"
+      @vol-input="volInput"
+      @toggle-queue="toggleQueue"
+      @begin-rename="beginRename"
+      @cancel-rename="cancelRename"
+      @commit-rename="commitRename"
+      @update:draft-queue-name="(v) => draftQueueName = v"
+      @save-playlist="playlist.savePlaylistGexm"
+      @row-dblclick="onRowDblClick"
+      @row-click="onRowClick"
+      @start-row-drag="dnd.startRowDrag"
+      @remove-at="playlist.removeAt"
+      @drag-enter="onDragEnter"
+      @drag-over="onDragOver"
+      @drag-leave="onDragLeave"
+      @drop="onDrop"
+    />
   </div>
 </template>
-
-<style scoped src="./Widget.css"></style>
