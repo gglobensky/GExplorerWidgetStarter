@@ -19,7 +19,7 @@ import {
 } from '/src/widgets/favorites/service'
 
 import { getCurrentPath } from '/src/widgets/nav/index'
-import { sendWidgetMessage, onWidgetMessage } from '/src/widgets/instances'
+import { sendWidgetMessage, onWidgetMessage, createWidgetInstanceId } from '/src/widgets/instances'
 import {
   snapshotFromNodes,
   type SortableNodeRef,
@@ -39,19 +39,44 @@ import {
   type SortableVisuals,
 } from '/src/widgets/sortable/ui-adapter'
 
-import {
-  buildRootRows,
-  buildMenuRows,
-  guessLabelFromPath,
-  rowId,
-  menuRowId,
-  parseRootRowId,
-  type RootRow,
-  type RootRowId,
-  type MenuRow,
-  type OpenMenu,
-  type HostAction,
-} from "./favorites.model"
+
+type HostAction =
+  | { type: 'nav'; to: string; replace?: boolean; sourceId?: string }
+  | { type: 'open'; path: string }
+
+type MenuRow = {
+  id: string
+  type: 'folder' | 'item'
+  label: string
+  depth: number
+  path?: string
+}
+
+type OpenMenu = {
+  folderId: string | null
+  label: string
+  rows: MenuRow[]
+  top: number
+  left: number
+}
+
+// A "root row" in the sidebar list: either a folder node or a root-level item favorite
+type RootRow =
+  | { kind: 'folder'; node: FavoriteTreeNode }
+  | { kind: 'item';   entry: FavoriteEntry }
+
+type FavoritesNodeKind = 'folder' | 'item'
+
+function parseRootRowId(id: RootRowId): { kind: FavoritesNodeKind; key: string } {
+  if (id.startsWith('folder:')) {
+    return { kind: 'folder', key: id.slice('folder:'.length) }
+  }
+  if (id.startsWith('item:')) {
+    return { kind: 'item', key: id.slice('item:'.length) }
+  }
+  // Fallback: treat as item path
+  return { kind: 'item', key: id }
+}
 
 // Standard widget props shape (same pattern as Items)
 const props = defineProps<{
@@ -67,42 +92,8 @@ const props = defineProps<{
 }>()
 
 // Use the sourceId as our bus instance identifier for now
-// Unique per mounted widget instance (prevents "self" filtering from blocking other instances)
-let _instanceSeq = 0
-function makeInstanceId(base: string) {
-    _instanceSeq++
-    return `${base}::${Date.now()}_${_instanceSeq}`
-}
-const instanceId = makeInstanceId(props.sourceId)
+const instanceId = createWidgetInstanceId(props.sourceId)
 
-// --- Config plumbing ---------------------------------------------------------
-// We treat `props.config` as an untyped blob coming from the widget host.
-// Keep the reads defensive and centralized.
-const cfg = computed(() => {
-    const data = (props.config as any)?.data ?? {}
-    const view = (props.config as any)?.view ?? {}
-    return { data, view }
-})
-
-const editMode = computed(() => !!props.editMode)
-
-// NOTE: `group` exists in some configs. The current service mostly ignores it,
-// but we keep it so a config change can re-run refresh logic.
-// Prefer `view.group` (older setups sometimes used it), but fall back gracefully.
-const group = computed(() => String((cfg.value.view as any)?.group ?? (cfg.value.data as any)?.group ?? 'main'))
-
-// Placement comes from the widget host (same convention as Items)
-const isSidebar = computed(() => props.placement?.context === 'sidebar')
-
-// View-driven layout with a context-aware default (matches the pre-refactor widget)
-const layout = computed(() =>
-  (cfg.value.view?.layout as 'list' | 'toolbar' | undefined) ??
-  (isSidebar.value ? 'list' : 'toolbar')
-)
-
-const dense = computed(() => !!cfg.value.view?.dense)
-const showIcons = computed(() => cfg.value.view?.showIcons !== false)
-const showLabels = computed(() => cfg.value.data?.showLabels !== false)
 function broadcastFavoritesChanged(
   reason: 'add' | 'remove' | 'move' | 'folder-add' | 'folder-remove' | 'other' = 'other'
 ) {
@@ -130,9 +121,42 @@ const {
   scrollEl: sidebarStripEl,
   axis: 'y',
   deps: () => displayRootRows.value.length,
-  minPageStep: 60,
+  minPageStep: 60
 })
 
+// Ghost + insertion bar visuals
+let ghostEl: HTMLElement | null = null
+let insertBarEl: HTMLElement | null = null
+let dragOffsetX = 0
+let dragOffsetY = 0
+
+const loading = ref(false)
+const error = ref<string | null>(null)
+const saving = ref(false)
+const lastDropIntent = ref<DropIntent | null>(null)
+
+// Hover-to-open while dragging
+let hoverFolderId: RootRowId | null = null
+let hoverTimer: number | null = null
+const HOVER_OPEN_DELAY = 450 // ms
+
+// ---- Config plumbing ----
+const cfg = computed(() => ({
+  data: props.config?.data ?? {},
+  view: props.config?.view ?? {},
+}))
+
+// group still exists in config, but service ignores it for now
+const showLabels = computed(() => cfg.value.data.showLabels !== false)
+
+const isSidebar  = computed(() => props.placement?.context === 'sidebar')
+const layout     = computed(() =>
+  cfg.value.view.layout ?? (isSidebar.value ? 'list' : 'toolbar')
+)
+const dense      = computed(() => !!cfg.value.view.dense)
+const showIcons  = computed(() => cfg.value.view?.showIcons !== false)
+
+// ---- Resizable strip (sidebar list height + toolbar width) ----
 
 const {
   hasOverflow: toolbarHasOverflow,
@@ -144,20 +168,8 @@ const {
   axis: 'x',
   deps: () => displayRootRows.value.length,
   minPageStep: 80,
-  wheel: 'transpose',
+  wheel: 'transpose'
 })
-
-
-const { style: sidebarListStyle, onResizeDown: onSidebarListResizeDown } =
-  useSnapResize({
-    targetEl: sidebarStripEl,
-    containerEl: rootEl,
-    itemCount: computed(() => displayRootRows.value.length),
-    stepPx: 26,
-    minSteps: 2,
-    maxSteps: 20,
-    paddingPx: 16,
-  })
 
 const onSidebarHandlePointerDown = createDragTrigger(
   (e) => {
@@ -178,17 +190,16 @@ function onSidebarHandleClick() {
   }
 }
 
-
-// --------------------------------------------------------------
-// Async state used by template + operations
-// --------------------------------------------------------------
-const loading = ref(false)
-const error = ref<string | null>(null)
-const saving = ref(false)
-
-// Keep the last preview intent around so we can apply moves using intent context.
-const lastDropIntent = ref<DropIntent | null>(null)
-
+const { style: sidebarListStyle, onResizeDown: onSidebarListResizeDown } =
+  useSnapResize({
+    targetEl: sidebarStripEl,
+    containerEl: rootEl,
+    itemCount: computed(() => displayRootRows.value.length),
+    stepPx: 26,
+    minSteps: 2,
+    maxSteps: 20,
+    paddingPx: 16,
+  })
 
 const dropTargetFolderId = computed<string | null>(() => {
   const intent = lastDropIntent.value
@@ -211,6 +222,33 @@ const rootRows = ref<RootRow[]>([])
 // --------------------------------------------------------------
 // Helpers to build roots / base list
 // --------------------------------------------------------------
+function buildRootRows(
+  tree: FavoriteTreeNode[],
+  flatItems: FavoriteEntry[]
+): RootRow[] {
+  const byPath = new Map<string, FavoriteEntry>()
+  for (const f of flatItems) {
+    if (f.path) byPath.set(f.path, f)
+  }
+
+  const rows: RootRow[] = []
+
+  for (const n of tree) {
+    if (n.kind === 'folder') {
+      rows.push({ kind: 'folder', node: n })
+    } else if (n.kind === 'item') {
+      const path = (n as any).path as string | undefined
+      if (!path) continue
+      const entry = byPath.get(path) ?? ({
+        path,
+        label: (n as any).label,
+      } as FavoriteEntry)
+      rows.push({ kind: 'item', entry })
+    }
+  }
+
+  return rows
+}
 
 // --------------------------------------------------------------
 // SORTABLE: single mixed list (folders + root items)
@@ -218,6 +256,13 @@ const rootRows = ref<RootRow[]>([])
 // --------------------------------------------------------------
 const listEl = ref<HTMLElement | null>(null)
 
+type RootRowId = string
+
+function rowId(row: RootRow): RootRowId {
+  return row.kind === 'folder'
+    ? `folder:${row.node.id}`
+    : `item:${row.entry.path}`
+}
 
 // Map from row id -> actual DOM element, for hit-testing
 const rowEls = new Map<RootRowId, HTMLElement>()
@@ -231,25 +276,37 @@ const sortableState = ref<{ isDragging: boolean; draggingId: RootRowId | null }>
   draggingId: null,
 })
 
+// Swallow the first click that often fires right after pointer-up at the end of a drag.
+// (Prevents "drop then instantly click/close/open something else")
+let dragJustEnded = false
+let swallowTimer: number | null = null
+
+function swallowNextClick(ms = 250) {
+  dragJustEnded = true
+  if (swallowTimer !== null) {
+    window.clearTimeout(swallowTimer)
+    swallowTimer = null
+  }
+  swallowTimer = window.setTimeout(() => {
+    dragJustEnded = false
+    swallowTimer = null
+  }, ms)
+}
+
+function clearSwallow() {
+  dragJustEnded = false
+  if (swallowTimer !== null) {
+    window.clearTimeout(swallowTimer)
+    swallowTimer = null
+  }
+}
+
+
 // New driver + visuals
 let driver: SortableDriver | null = null
 let visuals: SortableVisuals | null = null
 let activeContainer: HTMLElement | null = null
 let activeLayout: 'list' | 'toolbar' | null = null
-
-// Reuse the existing click-swallow flag
-let dragJustEnded = false
-
-// Ghost + insertion bar visuals (used by global pointer handlers)
-let ghostEl: HTMLElement | null = null
-let insertBarEl: HTMLElement | null = null
-let dragOffsetX = 0
-let dragOffsetY = 0
-
-// Hover-to-open while dragging
-let hoverFolderId: RootRowId | null = null
-let hoverTimer: number | null = null
-const HOVER_OPEN_DELAY = 450 // ms
 
 function baseRootRows(): RootRow[] {
   return rootRows.value.slice()
@@ -266,6 +323,14 @@ function setRowRef(row: RootRow, el: HTMLElement | null) {
   }
 }
 
+function menuRowId(row: MenuRow): RootRowId {
+  if (row.type === 'folder') {
+    return `folder:${row.id}`
+  }
+  // row.type === 'item'
+  // Safety: row.path should always exist for items
+  return `item:${row.path ?? ''}`
+}
 
 function setMenuRowRef(row: MenuRow, el: HTMLElement | null) {
   const id = menuRowId(row)
@@ -344,13 +409,6 @@ function ensureSortable() {
     },
 
     applyMove(move) {
-      console.log('[DEBUG] model.applyMove called', { 
-        moveId: move.id, 
-        dragJustEnded, 
-        openMenusCount: openMenus.value.length,
-        timestamp: performance.now()
-      })
-
       const intent = lastDropIntent.value
       if (!intent || !intent.targetId) {
         console.warn('[favorites] applyMove without intent – ignoring')
@@ -364,10 +422,6 @@ function ensureSortable() {
       const { kind: movedKind, key: movedKey } = parseRootRowId(movedRowId)
       const { kind: targetKind, key: targetKey } = parseRootRowId(targetRowId)
 
-      // FIX: Set dragJustEnded IMMEDIATELY so backdrop clicks are swallowed
-      dragJustEnded = true
-      console.log('[DEBUG] Set dragJustEnded = true in applyMove')
-
       void applyFavoritesMove({
         movedKind,
         movedKey,
@@ -376,11 +430,9 @@ function ensureSortable() {
         placement,
       })
         .then(async () => {
-          console.log('[DEBUG] applyFavoritesMove completed, calling refreshRootFolders')
           await refreshRootFolders()
           await refreshFavorites()
           broadcastFavoritesChanged('move')
-          console.log('[DEBUG] Refresh complete, openMenusCount:', openMenus.value.length)
         })
         .catch(err => {
           console.error('[favorites] applyFavoritesMove failed', err)
@@ -490,46 +542,26 @@ function ensureSortable() {
 
       
       async onDrop(move, blocked) {
-        console.log('[DEBUG] onDrop called', { 
-          hasMove: !!move, 
-          blocked, 
-          dragJustEnded,
-          openMenusCount: openMenus.value.length,
-          timestamp: performance.now()
-        })
-
         // Normal case: driver accepted the move and already called model.applyMove
         if (!blocked && move) {
-          dragJustEnded = true
-          console.log('[DEBUG] Set dragJustEnded = true in onDrop (normal path)')
+          swallowNextClick()
           teardownDragVisuals()
           clearHoverTimer()
           return
         }
 
-        // Fallback: driver blocked the move (likely because targetId isn't in the snapshot),
-        // but we *do* have a meaningful drop intent we can apply at the tree level.
+        // Fallback: driver blocked the move, but we can apply using lastDropIntent
         const draggingId = sortableState.value.draggingId as RootRowId | null
-        const intent = lastDropIntent.value   // ←← THIS is the important fix
+        const intent = lastDropIntent.value
 
-        if (
-          blocked &&
-          draggingId &&
-          intent &&
-          intent.targetId
-        ) {
+        if (blocked && draggingId && intent && intent.targetId) {
           const targetRowId = String(intent.targetId) as RootRowId
 
-          // If the target is *also* a root row, let the block stand:
-          // we don't want to double-apply or fight the driver.
+          // If the target is also a root row, let the block stand
           const isRootTarget = baseRootRows().some(r => rowId(r) === targetRowId)
           if (!isRootTarget) {
-            // FIX: Set dragJustEnded IMMEDIATELY at the start of fallback path
-            // This ensures backdrop clicks are swallowed BEFORE async work completes
-            dragJustEnded = true
-            console.log('[DEBUG] Set dragJustEnded = true in onDrop (fallback - EARLY)')
+            swallowNextClick()
 
-            console.log('[DEBUG] Entering fallback path in onDrop')
             const { kind: movedKind, key: movedKey } = parseRootRowId(draggingId)
             const { kind: targetKind, key: targetKey } = parseRootRowId(targetRowId)
             const placement = (intent.placement as any) ?? 'after'
@@ -603,10 +635,6 @@ function handleGlobalPointerUp(ev: PointerEvent) {
   driver?.pointerUp(ev)
 }
 
-
-// Used only for the "empty" message gate in the template.
-const visibleFavorites = computed(() => favorites.value)
-
 // Keep sortable in sync when rootRows change
 watch(
   () =>
@@ -644,6 +672,12 @@ const addButtonLabel = computed(() =>
   addMode.value === 'folder' ? 'Create' : 'Add'
 )
 
+function guessLabelFromPath(path: string): string {
+  const p = (path || '').replace(/[\\/]+$/, '')
+  if (!p) return ''
+  const parts = p.split(/[/\\]/).filter(Boolean)
+  return parts[parts.length - 1] || p
+}
 
 async function refreshFolderOptions() {
   try {
@@ -931,11 +965,7 @@ onBeforeUnmount(() => {
   teardownSortable()
   teardownDragVisuals()
   clearHoverTimer()
-})
-
-watch(group, () => {
-  void refreshFavorites()
-  void refreshRootFolders()
+  clearSwallow()
 })
 
 const hostVars = computed(() => ({
@@ -950,7 +980,7 @@ const hostVars = computed(() => ({
 function openFavorite(fav: FavoriteEntry, event?: MouseEvent) {
   // If a drag just ended, swallow this click
   if (dragJustEnded) {
-    dragJustEnded = false
+    clearSwallow()
     event?.preventDefault()
     return
   }
@@ -965,6 +995,7 @@ function openFavorite(fav: FavoriteEntry, event?: MouseEvent) {
   }
 }
 
+
 // --------------------------------------------------------------
 // EDITING HELPERS
 // --------------------------------------------------------------
@@ -974,6 +1005,28 @@ function isRootFolder(folderId: string): boolean {
   )
 }
 
+function buildMenuRows(nodes: FavoriteTreeNode[]): MenuRow[] {
+  const rows: MenuRow[] = []
+  for (const n of nodes) {
+    if (n.kind === 'folder') {
+      rows.push({
+        id: n.id,
+        type: 'folder',
+        label: n.label,
+        depth: 0, // one level per dropdown → depth 0 inside each
+      })
+    } else {
+      rows.push({
+        id: n.id,
+        type: 'item',
+        label: n.label,
+        depth: 0,
+        path: (n as any).path,
+      })
+    }
+  }
+  return rows
+}
 
 function findFolderNodeById(id: string | null): FavoriteTreeNode | null {
   if (!id) return null
@@ -993,12 +1046,6 @@ function findFolderNodeById(id: string | null): FavoriteTreeNode | null {
 }
 
 function refreshOpenMenusFromTree() {
-  console.log('[DEBUG] refreshOpenMenusFromTree called', {
-    openMenusCount: openMenus.value.length,
-    menuFolderIds: openMenus.value.map(m => m.folderId),
-    timestamp: performance.now()
-  })
-
   if (!openMenus.value.length) return
 
   const next: OpenMenu[] = []
@@ -1231,6 +1278,7 @@ function clearHoverTimer() {
 }
 
 function handleDragHover(intent: DropIntent | null) {
+  // Keep last intent for applyMove
   lastDropIntent.value = intent ?? null
 
   if (!intent || !intent.targetId || intent.placement !== 'inside') {
@@ -1245,9 +1293,11 @@ function handleDragHover(intent: DropIntent | null) {
   }
 
   // If we're still on the same folder, do nothing – timer already running or menu open
-  if (hoverFolderId === id) return
+  if (hoverFolderId === id) {
+    return
+  }
 
-  // ✅ clear old timer FIRST, then set the new hovered id
+  // New folder hovered → restart timer
   clearHoverTimer()
   hoverFolderId = id
 
@@ -1263,23 +1313,14 @@ function handleDragHover(intent: DropIntent | null) {
 
 
 function handleMenuBackdropClick() {
-  console.log('[DEBUG] handleMenuBackdropClick called', { 
-    dragJustEnded,
-    openMenusCount: openMenus.value.length,
-    timestamp: performance.now()
-  })
-  
   // Swallow the first click after a drag/drop so the menu doesn't close
   if (dragJustEnded) {
-    dragJustEnded = false
-    console.log('[DEBUG] Swallowed backdrop click (dragJustEnded was true)')
+    clearSwallow()
     return
   }
-  
-  console.log('[DEBUG] Closing folder menu from backdrop click')
+
   closeFolderMenu()
 }
-
 
 </script>
 
@@ -1313,17 +1354,19 @@ function handleMenuBackdropClick() {
     <div v-if="loading" class="fav-msg">Loading…</div>
     <div v-else-if="error" class="fav-msg error">{{ error }}</div>
     <div
-      v-else-if="!visibleFavorites.length && !rootRows.length"
+      v-else-if="!displayRootRows.length"
       class="fav-msg empty"
     >
       (No favorites yet)
     </div>
     <template v-else>
-      
-      <!-- LIST layout (sidebar) -->
-      <div v-if="layout === 'list'" class="favorites-list-shell">
+    <!-- LIST layout -->
+    <template v-if="layout === 'list'">
+      <div class="favorites-list-shell">
+        <!-- TOP hint as overlay tab (does NOT push content) -->
         <button
           v-if="listHasOverflow && !listAtTop"
+          type="button"
           class="fav-list-top-hint"
           title="Scroll up"
           @click.stop="listScrollByPage(-1)"
@@ -1337,167 +1380,57 @@ function handleMenuBackdropClick() {
           class="favorites-list-wrapper"
           :style="sidebarListStyle"
         >
-        <ul ref="listEl" class="favorites-list" :class="{ dense }">
-          <li
-            v-for="row in displayRootRows"
-            :key="row.kind === 'folder'
-              ? 'folder:' + row.node.id
-              : 'item:' + row.entry.path"
-            class="fav-row"
-            :class="{
-              'folder-row': row.kind === 'folder',
-              'item-row': row.kind === 'item',
-              'is-dragging':
-                sortableState.isDragging &&
-                sortableState.draggingId === (
-                  row.kind === 'folder'
-                    ? 'folder:' + row.node.id
-                    : 'item:' + row.entry.path
-                )
-            }"
-            :ref="el => setRowRef(row, el as HTMLElement | null)"
-            @pointerdown.stop="startRowDrag(row, $event)"
-          >
-            <!-- Folder row -->
-            <template v-if="row.kind === 'folder'"
-              class="toolbar-folder-wrapper toolbar-sortable-item fav-toolbar-item">
-              <button
-                type="button"
-                class="fav-btn folder-btn"
-                @click="openFolderDropdown(row.node, $event)"
-                :title="row.node.label"
-              >
-                <span class="fav-icon">📁</span>
-                <span v-if="showLabels" class="fav-label">
-                  {{ row.node.label }}
-                </span>
-              </button>
-
-              <div class="fav-row-actions">
+          <ul ref="listEl" class="favorites-list" :class="{ dense }">
+            <li
+              v-for="row in displayRootRows"
+              :key="row.kind === 'folder'
+                ? 'folder:' + row.node.id
+                : 'item:' + row.entry.path"
+              class="fav-row"
+              :class="{
+                'folder-row': row.kind === 'folder',
+                'item-row': row.kind === 'item',
+                'is-dragging':
+                  sortableState.isDragging &&
+                  sortableState.draggingId === (
+                    row.kind === 'folder'
+                      ? 'folder:' + row.node.id
+                      : 'item:' + row.entry.path
+                  )
+              }"
+              :ref="el => setRowRef(row, el as HTMLElement | null)"
+              @pointerdown.stop="startRowDrag(row, $event)"
+            >
+              <template v-if="row.kind === 'folder'">
                 <button
                   type="button"
-                  class="icon-btn danger"
-                  @pointerdown.stop
-                  @click.stop="handleRemoveFolder(row.node.id)"
-                  title="Delete folder and nested favorites"
-                >
-                  ✕
-                </button>
-              </div>
-            </template>
-
-            <!-- Item row -->
-            <template v-else
-            class="toolbar-item-wrapper toolbar-sortable-item fav-toolbar-item">
-              <button
-                type="button"
-                class="fav-btn"
-                @click="openFavorite(row.entry, $event)"
-                :title="row.entry.label || row.entry.path"
-              >
-                <span v-if="showIcons" class="fav-icon">★</span>
-                <span v-if="showLabels" class="fav-label">
-                  {{ row.entry.label || row.entry.path }}
-                </span>
-              </button>
-
-              <div class="fav-row-actions">
-                <button
-                  type="button"
-                  class="icon-btn danger"
-                  @pointerdown.stop
-                  @click.stop="handleRemoveFavorite(row.entry.path)"
-                  title="Remove"
-                >
-                  ✕
-                </button>
-              </div>
-            </template>
-          </li>
-        </ul>
-        </div>
-
-        <!-- Resize handle at bottom (sidebar list only) -->
-        <div
-          v-if="isSidebar && !editMode"
-          class="fav-list-resize-handle"
-          :title="listHasOverflow && !listAtBottom ? 'Scroll down' : 'Resize'"
-          @pointerdown.stop.prevent="onSidebarHandlePointerDown"
-          @click.stop="onSidebarHandleClick"
-        >
-          <span v-if="listHasOverflow && !listAtBottom" class="chev">▼</span>
-          <span v-else class="handle-line"></span>
-        </div>
-      </div>
-<!-- TOOLBAR layout (enhanced with folders & dropdowns) -->
-      <div v-else class="favorites-toolbar-container">
-        <!-- LEFT gutter: stable scroll + stable add -->
-        <div class="fav-toolbar-gutter left">
-          <button
-            type="button"
-            class="fav-edge-tab left"
-            title="Scroll left"
-            :disabled="editMode || !toolbarHasOverflow || toolbarAtStart"
-            @click.stop="toolbarScrollByPage(-1)"
-          >
-            ◀
-          </button>
-
-          <button
-            type="button"
-            class="add-favorite-pill fav-edge-add"
-            title="Add favorite or folder"
-            @click="openAddDialog"
-          >
-            <span class="add-icon">+</span>
-          </button>
-        </div>
-
-        <!-- Scroll area -->
-        <div class="favorites-toolbar-wrapper">
-          <div ref="toolbarEl" class="favorites-toolbar" :class="{ dense }">
-            <template v-for="row in displayRootRows" :key="rowId(row)">
-              <!-- Folder with dropdown -->
-              <div
-                v-if="row.kind === 'folder'"
-                class="toolbar-folder-wrapper toolbar-sortable-item"
-                :ref="el => setRowRef(row, el as HTMLElement | null)"
-                @pointerdown.stop="startRowDrag(row, $event)"
-              >
-                <button
-                  type="button"
-                  class="fav-pill folder-pill"
-                  :class="{ 'menu-open': isFolderMenuOpen(row.node.id) }"
+                  class="fav-btn folder-btn"
                   @click="openFolderDropdown(row.node, $event)"
                   :title="row.node.label"
                 >
                   <span class="fav-icon">📁</span>
-                  <span v-if="showLabels" class="fav-label">{{ row.node.label }}</span>
-                  <span class="dropdown-arrow">▼</span>
+                  <span v-if="showLabels" class="fav-label">
+                    {{ row.node.label }}
+                  </span>
                 </button>
 
-                <!-- Delete button -->
-                <button
-                  type="button"
-                  class="icon-btn danger toolbar-delete-btn"
-                  @pointerdown.stop
-                  @click.stop="handleRemoveFolder(row.node.id)"
-                  title="Delete folder and nested favorites"
-                >
-                  ✕
-                </button>
-              </div>
+                <div class="fav-row-actions">
+                  <button
+                    type="button"
+                    class="icon-btn danger"
+                    @pointerdown.stop
+                    @click.stop="handleRemoveFolder(row.node.id)"
+                    title="Delete folder and nested favorites"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </template>
 
-              <!-- Regular item pill -->
-              <div
-                v-else
-                class="toolbar-item-wrapper toolbar-sortable-item"
-                :ref="el => setRowRef(row, el as HTMLElement | null)"
-                @pointerdown.stop="startRowDrag(row, $event)"
-              >
+              <template v-else>
                 <button
                   type="button"
-                  class="fav-pill"
+                  class="fav-btn"
                   @click="openFavorite(row.entry, $event)"
                   :title="row.entry.label || row.entry.path"
                 >
@@ -1507,36 +1440,139 @@ function handleMenuBackdropClick() {
                   </span>
                 </button>
 
-                <!-- Delete button -->
-                <button
-                  type="button"
-                  class="icon-btn danger toolbar-delete-btn"
-                  @pointerdown.stop
-                  @click.stop="handleRemoveFavorite(row.entry.path)"
-                  title="Remove"
-                >
-                  ✕
-                </button>
-              </div>
-            </template>
-          </div>
-        </div>
-
-        <!-- RIGHT gutter: stable scroll (never overlaps X) -->
-        <div class="fav-toolbar-gutter right">
-          <button
-            type="button"
-            class="fav-edge-tab right"
-            title="Scroll right"
-            :disabled="editMode || !toolbarHasOverflow || toolbarAtEnd"
-            @click.stop="toolbarScrollByPage(1)"
-          >
-            ▶
-          </button>
+                <div class="fav-row-actions">
+                  <button
+                    type="button"
+                    class="icon-btn danger"
+                    @pointerdown.stop
+                    @click.stop="handleRemoveFavorite(row.entry.path)"
+                    title="Remove"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </template>
+            </li>
+          </ul>
         </div>
       </div>
 
+      <!-- Bottom handle: click = scroll down, drag = resize -->
+      <div
+        v-if="isSidebar && !editMode"
+        class="fav-list-resize-handle"
+        :title="listHasOverflow && !listAtBottom ? 'Scroll down' : 'Resize'"
+        @pointerdown.stop="onSidebarHandlePointerDown"
+        @click.stop="onSidebarHandleClick"
+      >
+        <span v-if="listHasOverflow && !listAtBottom" class="chev">▼</span>
+        <span v-else class="handle-line"></span>
+      </div>
     </template>
+
+    <!-- TOOLBAR layout -->
+    <div v-else class="favorites-toolbar-container">
+      <!-- LEFT gutter: stable scroll + stable add -->
+      <div class="fav-toolbar-gutter left">
+        <button
+          type="button"
+          class="fav-edge-tab left"
+          title="Scroll left"
+          :disabled="editMode || !toolbarHasOverflow || toolbarAtStart"
+          @click.stop="toolbarScrollByPage(-1)"
+        >
+          ◀
+        </button>
+
+        <button
+          type="button"
+          class="add-favorite-pill fav-edge-add"
+          title="Add favorite or folder"
+          @click="openAddDialog"
+        >
+          <span class="add-icon">+</span>
+        </button>
+      </div>
+
+      <!-- Scroll area -->
+      <div class="favorites-toolbar-wrapper">
+        <div ref="toolbarEl" class="favorites-toolbar" :class="{ dense }">
+          <template v-for="row in displayRootRows" :key="rowId(row)">
+            <div
+              v-if="row.kind === 'folder'"
+              class="toolbar-folder-wrapper toolbar-sortable-item"
+              :ref="el => setRowRef(row, el as HTMLElement | null)"
+              @pointerdown.stop="startRowDrag(row, $event)"
+            >
+              <button
+                type="button"
+                class="fav-pill folder-pill"
+                :class="{ 'menu-open': isFolderMenuOpen(row.node.id) }"
+                @click="openFolderDropdown(row.node, $event)"
+                :title="row.node.label"
+              >
+                <span class="fav-icon">📁</span>
+                <span v-if="showLabels" class="fav-label">{{ row.node.label }}</span>
+                <span class="dropdown-arrow">▼</span>
+              </button>
+
+              <button
+                type="button"
+                class="icon-btn danger toolbar-delete-btn"
+                @pointerdown.stop
+                @click.stop="handleRemoveFolder(row.node.id)"
+                title="Delete folder and nested favorites"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div
+              v-else
+              class="toolbar-item-wrapper toolbar-sortable-item"
+              :ref="el => setRowRef(row, el as HTMLElement | null)"
+              @pointerdown.stop="startRowDrag(row, $event)"
+            >
+              <button
+                type="button"
+                class="fav-pill"
+                @click="openFavorite(row.entry, $event)"
+                :title="row.entry.label || row.entry.path"
+              >
+                <span v-if="showIcons" class="fav-icon">★</span>
+                <span v-if="showLabels" class="fav-label">
+                  {{ row.entry.label || row.entry.path }}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                class="icon-btn danger toolbar-delete-btn"
+                @pointerdown.stop
+                @click.stop="handleRemoveFavorite(row.entry.path)"
+                title="Remove"
+              >
+                ✕
+              </button>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- RIGHT gutter: stable scroll (never overlaps X) -->
+      <div class="fav-toolbar-gutter right">
+        <button
+          type="button"
+          class="fav-edge-tab right"
+          title="Scroll right"
+          :disabled="editMode || !toolbarHasOverflow || toolbarAtEnd"
+          @click.stop="toolbarScrollByPage(1)"
+        >
+          ▶
+        </button>
+      </div>
+    </div>
+  </template>
 
 
     <!-- Add favorite / folder popup (global modal) -->
@@ -1734,4 +1770,853 @@ function handleMenuBackdropClick() {
   </div>
 </template>
 
-<style scoped src="./Widget.css"></style>
+<style scoped>
+.fav-row.is-dragging {
+  opacity: 0.7;
+}
+
+/* Root container */
+.favorites-root {
+  position: relative;
+  background: var(--fav-bg);
+  color: var(--fav-fg);
+  border-radius: 8px;
+  padding: 6px 8px;
+  box-sizing: border-box;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Slightly tighter padding when docked in sidebar */
+.favorites-root.sidebar-mode {
+  padding: 4px 6px;
+}
+
+/* Slightly tighter padding & font-size when used in a toolbar row */
+.favorites-root.toolbar-mode .add-favorite-pill,
+.favorites-root.toolbar-mode .fav-pill {
+  padding: 2px 5px;
+  font-size: 0.85em;
+  padding-block: 1px;    /* <= this is where you “buy back” those last few px */
+}
+
+.favorites-root.toolbar-mode {
+  height: 100%;
+  display: flex;
+  align-items: stretch;
+  padding-block: 0;      /* <— kill any top/bottom padding */
+  margin-block: 0;       /* safety: no vertical margin in toolbar mode */
+}
+
+/* Make the internal toolbar container hug the row height */
+.favorites-root.toolbar-mode .favorites-toolbar {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding-block: 0;      /* absolutely no vertical padding here */
+  margin-block: 0;
+}
+
+.favorites-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  font-size: 0.75em; /* instead of 11px */
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.9;
+}
+
+.favorites-title {
+  font-weight: 600;
+}
+
+.header-actions {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+/* Add favorite button - Sidebar style (full row) */
+.add-favorite-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 5px; /* Less left padding to align + with icons */
+  margin-bottom: 4px;
+  border-radius: 6px;
+  border: 1px dashed rgba(255, 255, 255, 0.3);
+  background: transparent;
+  color: inherit;
+  font-size: 0.9em; /* instead of 13px */
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.add-favorite-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.add-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 14px;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+.add-label {
+  opacity: 0.9;
+}
+
+/* Add favorite button - Toolbar style (inline pill) */
+.add-favorite-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px dashed rgba(255, 255, 255, 0.3);
+  background: transparent;
+  color: inherit;
+  font-size: 0.9em; /* base; toolbar-mode overrides to 0.85em */
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  height: fit-content;
+  box-sizing: border-box;
+}
+
+.add-favorite-pill:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.fav-msg {
+  font-size: 13px;
+  opacity: 0.8;
+  padding: 4px 2px;
+}
+
+.fav-msg.error {
+  color: #ff8a8a;
+}
+
+.fav-msg.empty {
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.fav-menu-empty.is-drop-target {
+  background: rgba(255, 255, 255, 0.06);
+  border-top: 1px dashed rgba(255, 255, 255, 0.4);
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.4);
+}
+
+/* Top hint as an overlay tab (no layout push) */
+.fav-list-top-hint {
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+
+  height: 18px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.22);
+  background: rgba(0,0,0,0.25);
+  color: inherit;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+
+  cursor: pointer;
+  opacity: 0.85;
+}
+
+.fav-list-top-hint:hover {
+  background: rgba(255,255,255,0.10);
+  border-color: rgba(255,255,255,0.35);
+  opacity: 1;
+}
+
+.fav-list-top-hint .chev {
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0.8;
+}
+
+/* Toolbar gutters: stable controls that do NOT overlap scroll content */
+.fav-toolbar-gutter {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.fav-toolbar-gutter.left {
+  padding-right: 6px;
+}
+
+.fav-toolbar-gutter.right {
+  padding-left: 6px;
+}
+
+/* Small edge “tab” buttons */
+.fav-edge-tab {
+  height: 22px;
+  min-width: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+
+  border: 1px solid rgba(255,255,255,0.22);
+  background: rgba(0,0,0,0.25);
+  color: inherit;
+
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.fav-edge-tab:hover:not(:disabled) {
+  background: rgba(255,255,255,0.10);
+  border-color: rgba(255,255,255,0.35);
+}
+
+.fav-edge-tab:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+.fav-edge-add {
+  /* keeps it visually aligned with the arrows */
+  padding: 2px 6px;
+}
+
+
+.fav-list-resize-handle {
+  height: 18px;
+  margin-top: 6px;
+  cursor: ns-resize;
+  background: linear-gradient(to bottom, transparent, rgba(255,255,255,0.10), transparent);
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+}
+
+
+.fav-list-resize-handle .handle-line {
+  width: 36px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255,255,255,0.28);
+}
+
+.fav-list-resize-handle .chev {
+  opacity: 0.7;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.fav-list-resize-handle::before {
+  content: '';
+  display: block;
+  margin: 1px auto 0;
+  width: 40%;
+  height: 2px;
+  border-radius: 999px;
+  opacity: 0.35;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+/* Shell so we can overlay the top hint without affecting layout */
+.favorites-list-shell {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Vertical list mode: outer wrapper handles scroll + height */
+.favorites-list-wrapper {
+  flex: 1 1 auto;
+  min-height: 0;      /* critical in column flex layouts */
+  overflow-y: auto;   /* <-- the missing piece */
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+.favorites-list-wrapper::-webkit-scrollbar {
+  width: 0;
+  height: 0;                      /* Chrome/Edge */
+}
+/* Inner list just stacks rows */
+.favorites-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.favorites-list.dense {
+  gap: 0;
+}
+
+.fav-row {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Common button styling for entries */
+.fav-btn,
+.fav-pill {
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  font-size: 0.9em; /* inherit + scale with widget text size */
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+/* Remove borders in toolbar mode to match drives widget */
+.favorites-toolbar .fav-pill {
+  border: none;
+}
+
+.fav-btn {
+  width: 100%;
+  text-align: left;
+}
+
+.fav-pill {
+  white-space: nowrap;
+}
+
+.fav-btn:hover,
+.fav-pill:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Folder row styling (optional subtle tweak) */
+.folder-row .folder-btn {
+  font-weight: 500;
+}
+
+/* Actions (delete) - Show on hover in normal mode, always in edit mode */
+.fav-row-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+/* Show on hover */
+.fav-row:hover .fav-row-actions {
+  opacity: 1;
+}
+
+/* Always visible in edit mode */
+.favorites-root.edit-mode .fav-row-actions {
+  opacity: 1;
+}
+
+.icon-btn {
+  border: none;
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 0.8em; /* instead of 11px */
+  cursor: pointer;
+  background: transparent;
+  color: inherit;
+  opacity: 0.7;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  opacity: 1;
+}
+
+.icon-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.icon-btn.danger:hover:not(:disabled) {
+  background: rgba(255, 128, 128, 0.16);
+}
+
+/* make the scroll container take the wrapper’s width */
+.favorites-toolbar {
+  width: 100%;
+  overflow-x: auto;     /* <-- REQUIRED */
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.favorites-toolbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;                   /* Chrome/Edge */
+}
+
+/* viewport wrapper to host overlay arrows */
+.fav-toolbar-viewport {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  overflow: hidden;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* overlay scroll hints */
+.fav-scroll-hint {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 22px;
+  min-width: 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.22);
+  background: rgba(0,0,0,0.25);
+  color: inherit;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  z-index: 5;
+}
+.fav-scroll-hint.left  { left: 4px; }
+.fav-scroll-hint.right { right: 4px; } /* leave room for resize grip */
+
+.fav-scroll-hint:hover {
+  background: rgba(255,255,255,0.10);
+  border-color: rgba(255,255,255,0.35);
+}
+
+
+/* viewport is already display:flex; the wrapper MUST flex + shrink */
+.favorites-toolbar-wrapper {
+  flex: 1 1 auto;
+  min-width: 0;        /* critical for flex children to shrink */
+  overflow: hidden;    /* prevents inner scrollbars from leaking */
+}
+
+/* Thin vertical grip on the right for width resizing */
+.fav-toolbar-resize-handle {
+  flex: 0 0 4px;
+  cursor: ew-resize;
+  position: relative;
+}
+
+.fav-toolbar-resize-handle::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 2px;
+  height: 40%;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  opacity: 0.35;
+}
+
+
+.favorites-toolbar.dense {
+  gap: 3px;
+}
+
+/* Folder wrapper for positioning dropdown */
+.toolbar-folder-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+/* Toolbar item/folder wrappers for sortable */
+.toolbar-item-wrapper,
+.toolbar-folder-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Delete button in toolbar - hidden by default, show on hover or in edit mode */
+.toolbar-delete-btn {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  font-size: 10px;
+  padding: 1px 3px;
+}
+
+/* Show on hover */
+.toolbar-item-wrapper:hover .toolbar-delete-btn,
+.toolbar-folder-wrapper:hover .toolbar-delete-btn {
+  opacity: 0.7;
+}
+
+/* Always visible in edit mode */
+.favorites-root.edit-mode .toolbar-delete-btn {
+  opacity: 0.7;
+}
+
+.toolbar-delete-btn:hover {
+  opacity: 1 !important;
+}
+
+/* Enhanced pill styling with better visual hierarchy */
+.fav-pill {
+  white-space: nowrap;
+  height: fit-content; /* Auto-size to content */
+  transition: all 0.15s ease;
+  position: relative;
+}
+
+.fav-pill.folder-pill {
+  padding-right: 8px; /* Extra space for dropdown arrow */
+}
+
+.dropdown-arrow {
+  font-size: 9px;
+  opacity: 0.6;
+  margin-left: 2px;
+  transition: transform 0.2s ease;
+}
+
+.folder-pill:hover .dropdown-arrow {
+  opacity: 1;
+}
+
+/* When folder menu is open */
+.folder-pill.menu-open .dropdown-arrow {
+  transform: rotate(180deg);
+}
+
+/* Toolbar-specific menu positioning (opens downward) */
+.favorites-toolbar .fav-menu {
+  top: calc(100% + 4px); /* Position below the button */
+  left: 0;
+  transform-origin: top left;
+}
+
+/* Better hover states for toolbar */
+.favorites-toolbar .fav-pill:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.favorites-toolbar .fav-pill:active {
+  transform: translateY(0);
+}
+
+.fav-icon {
+  flex: 0 0 auto;
+  width: 16px;
+  text-align: center;
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+.fav-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+
+/* Add favorite / folder popup */
+.fav-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(
+    circle at top,
+    rgba(0, 0, 0, 0.4),
+    rgba(0, 0, 0, 0.8)
+  );
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+
+.fav-dialog {
+  background: rgba(12, 12, 12, 0.96);
+  border-radius: 8px;
+  border: 1px solid var(--fav-border);
+  padding: 8px 10px;
+  min-width: 260px;
+  max-width: 340px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+}
+
+.fav-dialog-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.fav-type-toggle {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.btn-toggle {
+  flex: 1 1 0;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.btn-toggle.active {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.btn-toggle:not(.active):hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.fav-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 6px;
+}
+
+.field-label {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.fav-dialog .fav-input {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: inherit;
+  font-size: 12px;
+  padding: 3px 6px;
+  box-sizing: border-box;
+}
+
+.fav-dialog .fav-input:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.fav-dialog-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.btn {
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.btn.primary {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.btn:not(:disabled):hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+/* Folders menu overlay */
+.fav-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  pointer-events: auto; /* so outside clicks are captured */
+  z-index: 10001;
+}
+
+.fav-menu {
+  position: absolute;
+  pointer-events: auto;
+  min-width: 220px;
+  max-width: 320px;
+
+  /* Let it grow until it hits the window edge, with a small margin */
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+
+  background: rgba(10, 10, 10, 0.98);
+  border-radius: 8px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.7);
+  padding: 6px 0;
+}
+
+
+.fav-menu-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.8;
+  padding: 0 10px 4px;
+}
+
+.fav-menu-empty {
+  font-size: 12px;
+  opacity: 0.8;
+  padding: 4px 10px 8px;
+  font-style: italic;
+}
+
+.fav-menu-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.fav-menu-row {
+  margin: 0;
+  padding: 0;
+}
+
+.fav-menu-btn {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.fav-menu-btn:disabled {
+  cursor: default;
+  opacity: 0.8;
+}
+
+.fav-menu-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.fav-menu-label {
+  display: inline-flex;
+  align-items: center;
+}
+
+.fav-menu-indent {
+  display: inline-block;
+  flex: 0 0 auto;
+}
+
+.fav-menu-icon {
+  display: inline-block;
+  width: 18px;
+  text-align: center;
+  margin-right: 4px;
+}
+
+.fav-menu-text {
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.gex-fav-ghost {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
+}
+
+.favorites-list,
+.favorites-toolbar {
+  position: relative;
+}
+
+.gex-fav-insert-bar {
+  background-color: var(--gex-accent-color, #4dabf7);
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.7);
+}
+
+.gex-fav-insert-bar-blocked {
+  background-color: #ff4d4f;
+}
+
+.fav-menu-row {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+}
+
+/* Button takes the main width, actions sit on the right */
+.fav-menu-btn {
+  flex: 1 1 auto;
+}
+
+/* Actions area in menu rows */
+.fav-menu-row-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  padding-right: 6px;
+}
+
+/* Show on hover */
+.fav-menu-row:hover .fav-menu-row-actions {
+  opacity: 1;
+}
+
+.fav-menu-delete-btn {
+  font-size: 10px;
+  padding: 1px 3px;
+}
+
+.favorites-root.sidebar-mode .favorites-toolbar {
+  overflow-x: hidden;
+}
+
+.favorites-toolbar-container {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  overflow: hidden;
+}
+</style>
