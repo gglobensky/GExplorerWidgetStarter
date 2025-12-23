@@ -1,6 +1,6 @@
 // useDnD.ts - Drag & drop for queue reordering
 import { ref, watch, computed, nextTick, type Ref } from 'vue'
-import { createSortable, type SortableHandle } from 'gexplorer/widgets'
+import { createLinearSortable, type SortableHandle } from 'gexplorer/widgets'
 import type { Track } from './usePlayerState'
 
 export function useDnD(
@@ -56,7 +56,7 @@ export function useDnD(
 
   function ensureSortable() {
     if (!sortable && queue.value.length > 0) {
-      sortable = createSortable(queue.value, {
+      sortable = createLinearSortable(queue.value, {
         identity: t => t.id,
         orientation: 'vertical',
         dragThresholdPx: 4,

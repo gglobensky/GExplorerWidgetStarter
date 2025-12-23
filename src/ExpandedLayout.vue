@@ -106,7 +106,7 @@ const {
 const { style: queueStyle, onResizeDown: onQueueResizeDown, heightPx } = useSnapResize({
   targetEl: queueEl,
   itemCount: computed(() => props.displayQueue.length),
-  stepPx: 32, // row height (measured from .row.item in onMounted)
+  stepPx: rowHeight.value, // row height (measured from .row.item in onMounted)
   minSteps: 3,
   maxSteps: 20,
   paddingPx: 34, // approximate header height
@@ -541,7 +541,13 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
         <span v-if="t.missing" class="skip-tag" title="File not found">[missing]</span>
         </span>
 
-        <span class="dur">{{ t.duration ? fmtTime(t.duration) : '—' }}</span>
+        <span class="dur">
+          {{
+            t.id === queue[currentIndex]?.id
+              ? fmtTime(duration || 0)
+              : (t.duration ? fmtTime(t.duration) : '—')
+          }}
+        </span>
 
         <span class="act">
         <button

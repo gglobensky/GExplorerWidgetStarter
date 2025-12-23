@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { createTipDirective } from 'gexplorer/widgets'
+import { useScrollHints, useSnapResize } from '/src/widgets/list-kit'
+import { createDragTrigger } from '/src/widgets/utils/click-drag.ts'
 import type { Track } from './usePlayerState'
 
 const vTip = createTipDirective({ force: true })
@@ -71,12 +73,8 @@ const emit = defineEmits<{
   (e: 'drop', event: DragEvent): void
 }>()
 
-const rowHeight = ref(0)         // px per row
-const maxRows = ref(8)           // default visible rows
-const headerOffset = ref(34)          // header/padding allowance, tweak if needed
-const hasOverflow = ref(false)
-const atTop = ref(true)
-const atBottom = ref(true)
+// Measure row height from DOM (used for snap resize step)
+const rowHeight = ref(32) // default, will be measured
 
 const renameOverlayPos = ref<{ left: number; top: number; width: number } | null>(null)
 
@@ -90,17 +88,68 @@ const volPopStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px'
 const isPressing = ref(false)
 const draggingOver = ref(false)
 
-let scrollScheduled = false
-function onQueueScroll() {
-  // rAF-throttled overflow calc
-  if (scrollScheduled) return
-  scrollScheduled = true
-  requestAnimationFrame(() => {
-    scrollScheduled = false
-    updateOverflowState()
-  })
+// ===== LIST-KIT: SCROLL HINTS =====
+const {
+  hasOverflow,
+  atStart: atTop,
+  atEnd: atBottom,
+  scrollByPage,
+} = useScrollHints({
+  scrollEl: queueEl,
+  axis: 'y',
+  deps: () => props.displayQueue.length,
+  eps: 2,
+  minPageStep: 60,
+})
+
+// ===== LIST-KIT: SNAP RESIZE =====
+const { style: queueStyle, onResizeDown: onQueueResizeDown, heightPx } = useSnapResize({
+  targetEl: queueEl,
+  itemCount: computed(() => props.displayQueue.length),
+  stepPx: 32, // row height (measured from .row.item in onMounted)
+  minSteps: 3,
+  maxSteps: 20,
+  paddingPx: 34, // approximate header height
+})
+
+// Set initial height (8 rows by default)
+watch([rowHeight, () => props.showQueue], ([rh, visible]) => {
+  if (visible && rh && heightPx.value === null) {
+    heightPx.value = 8 * rh + 34 // 8 rows + header
+  }
+}, { immediate: true })
+
+// Drag trigger: discriminate between drag-to-resize and click-to-scroll
+const onQueueHandlePointerDown = createDragTrigger(
+  (e) => {
+    // Drag -> resize
+    onQueueResizeDown(e)
+  },
+  {
+    thresholdPx: 4,
+    gate: { includeDefaultInteractive: false },
+    suppressClickAfterDrag: true,
+  },
+)
+
+function onQueueHandleClick() {
+  // Click -> scroll down (only when it makes sense)
+  if (hasOverflow.value && !atBottom.value) {
+    scrollByPage(1)
+  }
 }
 
+// Watch for queue visibility changes to measure row height
+watch(() => props.showQueue, v => {
+  if (v) nextTick(measureRowHeight)
+})
+
+function measureRowHeight() {
+  const sample = queueEl.value?.querySelector('.row.item') as HTMLElement | null
+  if (sample) {
+    rowHeight.value = Math.max(28, Math.round(sample.getBoundingClientRect().height))
+  }
+}
 
 const playTooltip = computed(() => {
   const head = props.isPlaying ? 'Pause' : 'Play'
@@ -109,38 +158,9 @@ const playTooltip = computed(() => {
   return name ? `${head}\n${name}\n${timeLine}` : head
 })
 
-const queueStyle = computed(() => ({
-  maxHeight: rowHeight.value
-    ? `${Math.max(3, maxRows.value) * rowHeight.value + headerOffset.value}px`
-    : undefined
-}))
-
 const seekTooltip = computed(() =>
   fmtTime(props.currentTime) + ' / ' + fmtTime(props.duration || 0)
 )
-watch(() => props.displayQueue.length, () => requestAnimationFrame(updateOverflowState))
-watch(() => props.showQueue, v => { if (v) nextTick(() => { measureQueueMetrics(); updateOverflowState() }) })
-
-watch(
-  [() => props.displayQueue.length, () => props.showQueue, rowHeight, maxRows],
-  () => nextTick(() => {
-        measureQueueMetrics()
-        updateOverflowState()
-    })
-)
-
-function updateOverflowState() {
-  const el = queueEl.value
-  if (!el) return
-  const eps = Math.max(2, Math.round(rowHeight.value * 0.5)) // forgiving epsilon
-  const sh = Math.ceil(el.scrollHeight)
-  const ch = Math.ceil(el.clientHeight)
-  const st = Math.ceil(el.scrollTop)
-
-  hasOverflow.value = sh - ch > 2
-  atTop.value = st <= eps
-  atBottom.value = sh - (st + ch) <= eps
-}
 
 function onBeginRenameDblClick(e: MouseEvent) {
   const el = e.currentTarget as HTMLElement
@@ -163,19 +183,6 @@ function onBeginRenameDblClick(e: MouseEvent) {
   renameOverlayPos.value = { left, top: r.top, width: desired }
   emit('begin-rename')
 }
-
-function measureQueueMetrics() {
-  // header height
-  const header = queueEl.value?.querySelector('.row.header') as HTMLElement | null
-  const hh = Math.round(header?.getBoundingClientRect().height || 30)
-  headerOffset.value = hh
-
-  // first row height
-  const sample = queueEl.value?.querySelector('.row.item') as HTMLElement | null
-  const rh = Math.round(sample?.getBoundingClientRect().height || 32)
-  rowHeight.value = Math.max(28, rh)
-}
-
 
 function fmtTime(sec: number) {
   if (!isFinite(sec)) return '0:00'
@@ -237,40 +244,13 @@ const onRowClick = (index: number, event: MouseEvent) => {
   emit('row-click', realIndex)
 }
 
-let resizeStartY = 0
-let startRows = 0
-function onStartResize(e: MouseEvent) {
-  e.preventDefault()
-  resizeStartY = e.clientY
-  startRows = maxRows.value
-  window.addEventListener('mousemove', onResizeMove)
-  window.addEventListener('mouseup', onResizeEnd, { once: true })
-}
-
-function onResizeMove(e: MouseEvent) {
-  if (!rowHeight.value) return
-  const dy = e.clientY - resizeStartY
-  const deltaRows = Math.round(dy / rowHeight.value)
-  maxRows.value = Math.max(3, startRows + deltaRows)
-  nextTick(updateOverflowState)
-}
-
-function onResizeEnd() {
-  window.removeEventListener('mousemove', onResizeMove)
-}
-
 onMounted(() => {
   document.addEventListener('pointerup', onPointerUp)
   document.addEventListener('pointercancel', onPointerUp)
   window.addEventListener('blur', onPointerUp)
   document.addEventListener('click', onDocClick, true)
 
-  nextTick(() => {
-    const sample = queueEl.value?.querySelector('.row.item') as HTMLElement | null
-    rowHeight.value = Math.max(28, Math.round(sample?.getBoundingClientRect().height || 32))
-    measureQueueMetrics()
-
-  })
+  nextTick(measureRowHeight)
 })
 
 onBeforeUnmount(() => {
@@ -278,7 +258,6 @@ onBeforeUnmount(() => {
   document.removeEventListener('pointercancel', onPointerUp)
   window.removeEventListener('blur', onPointerUp)
   document.removeEventListener('click', onDocClick, true)
-  queueEl.value?.removeEventListener('scroll', updateOverflowState)
 })
 
 defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
@@ -298,143 +277,125 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
     <div class="controls" :class="layoutClass" ref="controlsEl">
       <!-- Row 1 -->
       <div class="row-1">
+        <!-- Add Files button -->
+        <button
+          v-if="['wide', 'medium'].includes(layoutClass)"
+          class="btn add-left narrow"
+          type="button"
+          title="Add files"
+          @click.stop.prevent="emit('click-pick')"
+        >
+          + Add
+        </button>
+
+        <!-- Transport controls -->
         <div class="transport-group">
-          <!-- Speed controls (wide/medium only) -->
           <button
-            v-if="layoutClass === 'wide' || layoutClass === 'medium'"
-            class="btn speed"
-            :title="`Slower (Current: ${playbackRateLabel})`"
-            @click="emit('adjust-speed', -0.25)"
-          >
-            ◀◀
-          </button>
-          
-          <!-- Transport -->
-          <button
-            v-if="layoutClass !== 'micro'"
-            class="btn prev"
-            :class="{ narrow: layoutClass === 'narrow' || layoutClass === 'ultra' }"
-            title="Previous"
+            class="btn transport-btn narrow"
+            type="button"
             :disabled="!canPrev"
+            title="Previous track"
             @click="emit('prev')"
           >
-            ◀
+            ⏮
           </button>
-          
           <button
-            class="btn primary play"
+            class="btn transport-btn primary"
             :class="{ loading: isLoading }"
-            v-tip="playTooltip"
+            type="button"
             :disabled="!hasTracks"
+            v-tip="playTooltip"
             @click="emit('toggle-play')"
           >
-            <span v-if="isLoading">⏳</span>
-            <span v-else-if="isPlaying">⏸</span>
-            <span v-else>▶</span>
+            {{ isPlaying ? '⏸' : '▶' }}
           </button>
-          
           <button
-            v-if="layoutClass !== 'micro'"
-            class="btn next"
-            :class="{ narrow: layoutClass === 'narrow' || layoutClass === 'ultra' }"
-            title="Next"
+            class="btn transport-btn narrow"
+            type="button"
             :disabled="!canNext"
+            title="Next track"
             @click="emit('next')"
           >
-            ▶
-          </button>
-          
-          <!-- Speed controls (wide/medium only) -->
-          <button
-            v-if="layoutClass === 'wide' || layoutClass === 'medium'"
-            class="btn speed"
-            :title="`Faster (Current: ${playbackRateLabel})`"
-            @click="emit('adjust-speed', 0.25)"
-          >
-            ▶▶
+            ⏭
           </button>
         </div>
-        
-        <!-- Modes (narrow only) -->
-        <div v-if="layoutClass === 'narrow'" class="modes-group">
-          <button class="btn" :class="{ active: shuffle }" title="Shuffle" @click="emit('toggle-shuffle')">
-            🔀
-          </button>
-          <button class="btn" :class="{ active: repeat !== 'off' }" title="Repeat" @click="emit('toggle-repeat')">
-            <span v-if="repeat === 'off'">🔁</span>
-            <span v-else-if="repeat === 'all'">🔂</span>
-            <span v-else>🔂1</span>
-          </button>
-        </div>
-        
-        <!-- Add button (ultra/micro) -->
+
+        <!-- Playback Rate -->
         <button
-          v-if="layoutClass === 'ultra' || layoutClass === 'micro'"
+          v-if="['wide', 'medium'].includes(layoutClass)"
+          class="btn narrow"
           type="button"
-          class="btn add-right"
-          title="Add files…"
+          title="Playback speed"
+          @click="emit('adjust-speed', 0.1)"
+          @contextmenu.prevent="emit('adjust-speed', -0.1)"
+        >
+          {{ playbackRateLabel }}
+        </button>
+
+        <!-- Shuffle -->
+        <button
+          class="btn narrow"
+          :class="{ active: shuffle }"
+          type="button"
+          title="Shuffle"
+          @click="emit('toggle-shuffle')"
+        >
+          🔀
+        </button>
+
+        <!-- Repeat -->
+        <button
+          class="btn narrow"
+          :class="{ active: repeat !== 'off' }"
+          type="button"
+          :title="repeat === 'off' ? 'Repeat: Off' : repeat === 'all' ? 'Repeat: All' : 'Repeat: One'"
+          @click="emit('toggle-repeat')"
+        >
+          {{ repeat === 'one' ? '🔂' : '🔁' }}
+        </button>
+
+        <!-- Add Files (ultra/micro) -->
+        <button
+          v-if="['ultra', 'micro'].includes(layoutClass)"
+          class="btn add-right narrow"
+          type="button"
+          title="Add files"
           @click.stop.prevent="emit('click-pick')"
         >
           +
         </button>
-        
-        <!-- Volume button -->
+
+        <!-- Volume (with popover) -->
         <button
           ref="volBtnEl"
-          class="btn vol-btn"
-          :class="{ active: volume === 0 }"
+          class="btn vol-btn narrow"
+          type="button"
           :title="`Volume: ${Math.round(volume * 100)}%`"
-          @click.stop="toggleVolPop"
+          @click="toggleVolPop"
         >
           {{ volumeIcon }}
         </button>
       </div>
-      
-      <!-- Row 2 -->
-      <div class="row-2" style="height: 38px;">
-        <!-- Modes (wide/medium only) -->
-        <div v-if="layoutClass === 'wide' || layoutClass === 'medium'" class="modes-group">
-          <button class="btn" :class="{ active: shuffle }" title="Shuffle" @click="emit('toggle-shuffle')">
-            🔀
-          </button>
-          <button class="btn" :class="{ active: repeat !== 'off' }" title="Repeat" @click="emit('toggle-repeat')">
-            <span v-if="repeat === 'off'">🔁</span>
-            <span v-else-if="repeat === 'all'">🔂</span>
-            <span v-else>🔂1</span>
-          </button>
-          <button class="btn" title="Add files…" @click="emit('click-pick')">+</button>
+
+      <!-- Row 2: Seek bar + time -->
+      <div class="row-2 timeline">
+        <span v-if="layoutClass !== 'micro'" class="mono time-label">{{ fmtTime(currentTime) }}</span>
+        
+        <div class="seek-wrap">
+          <input
+            class="seek"
+            type="range"
+            min="0"
+            max="1"
+            step="0.001"
+            v-tip="seekTooltip"
+            :value="duration ? currentTime / duration : 0"
+            :disabled="!hasTracks || !duration"
+            @input="emit('seek', $event)"
+          />
         </div>
         
-        <!-- Add button (narrow only) -->
-        <button
-          v-if="layoutClass === 'narrow'"
-          type="button"
-          class="btn add-left"
-          title="Add files…"
-          @click.stop.prevent="emit('click-pick')"
-        >
-          +
-        </button>
-        
-        <!-- Timeline -->
-        <div class="timeline">
-          <span v-if="layoutClass === 'wide'" class="mono time-label">{{ fmtTime(currentTime) }}</span>
-          
-          <div class="seek-wrap" v-tip="seekTooltip">
-            <input
-              class="seek"
-              type="range"
-              min="0"
-              max="1"
-              step="0.001"
-              :value="duration ? currentTime / duration : 0"
-              :disabled="!hasTracks || !duration"
-              @input="emit('seek', $event)"
-            />
-          </div>
-          
-          <span v-if="layoutClass === 'wide'" class="mono time-label">-{{ fmtTime(Math.max(0, (duration || 0) - currentTime)) }}</span>
-        </div>
+        <span v-if="layoutClass === 'wide'" class="mono time-label">-{{ fmtTime(Math.max(0, (duration || 0) - currentTime)) }}</span>
       </div>
     </div>
 
@@ -493,11 +454,20 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
 
     <!-- Queue Toggle (with top arrows flanking the button) -->
     <div v-if="queue.length" class="queue-collapse-tab">
-    <span class="queue-top-hint" v-if="showQueue && hasOverflow && !atTop">
+    <!-- Left top hint -->
+    <button
+        v-if="showQueue && hasOverflow && !atTop"
+        class="queue-top-hint clickable"
+        @click="scrollByPage(-1)"
+        title="Scroll up"
+    >
         <svg width="24" height="10" viewBox="0 0 24 10">
         <path d="M3,8 L12,2 L21,8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
         </svg>
-    </span>
+    </button>
+    <div v-else-if="showQueue && hasOverflow && atTop" class="queue-top-hint">
+        <div class="handle-line"></div>
+    </div>
 
     <button
         class="tab-btn"
@@ -507,11 +477,20 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
         <span v-if="showQueue">▴</span><span v-else>▾</span>
     </button>
 
-    <span class="queue-top-hint" v-if="showQueue && hasOverflow && !atTop">
+    <!-- Right top hint (mirror of left) -->
+    <button
+        v-if="showQueue && hasOverflow && !atTop"
+        class="queue-top-hint clickable"
+        @click="scrollByPage(-1)"
+        title="Scroll up"
+    >
         <svg width="24" height="10" viewBox="0 0 24 10">
         <path d="M3,8 L12,2 L21,8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
         </svg>
-    </span>
+    </button>
+    <div v-else-if="showQueue && hasOverflow && atTop" class="queue-top-hint">
+        <div class="handle-line"></div>
+    </div>
     </div>
     
     <!-- Queue List -->
@@ -520,7 +499,6 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
     class="queue"
     ref="queueEl"
     :style="queueStyle"
-    @scroll="onQueueScroll"
     >
     <div class="row header">
         <span>#</span><span>Title</span><span class="dur">Length</span><span class="act"></span>
@@ -548,31 +526,29 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
             <span
             :ref="setMarqueeBox"
             class="marquee"
+            :class="{ run: marqueeOn, suspend: resizePhase === 'active' }"
             :data-dir="marqueeDir"
-            :class="{ run: marqueeOn && resizePhase !== 'active', suspend: resizePhase === 'active' }"
             >
             <span class="marquee-track">
-                <span :ref="setMarqueeCopy" class="copy real">{{ t.name }}</span>
-                <span class="copy twin" aria-hidden="true">{{ t.name }}</span>
+                <span :ref="setMarqueeCopy" class="copy">{{ t.name }}</span>
+                <span class="copy" aria-hidden="true">{{ t.name }}</span>
             </span>
             </span>
         </template>
         <template v-else>
             {{ t.name }}
         </template>
-        <em v-if="t.missing" class="skip-tag"> (skipped)</em>
+        <span v-if="t.missing" class="skip-tag" title="File not found">[missing]</span>
         </span>
 
-        <span class="dur mono" v-if="!t.missing && t.id === queue[currentIndex]?.id && duration">
-        {{ fmtTime(duration) }}
-        </span>
-        <span class="dur mono" v-else>—</span>
+        <span class="dur">{{ t.duration ? fmtTime(t.duration) : '—' }}</span>
 
         <span class="act">
         <button
             class="icon-btn"
+            type="button"
             title="Remove"
-            @click.stop="emit('remove-at', queue.findIndex(track => track.id === t.id))"
+            @click.stop="emit('remove-at', i)"
         >
             ✕
         </button>
@@ -580,12 +556,13 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
     </div>
     </div>
 
-    <!-- Bottom resize/overflow indicator -->
+    <!-- Bottom resize handle (with scroll hint) -->
     <div
     v-if="queue.length && showQueue"
     class="queue-resize-handle"
-    @mousedown="onStartResize"
-    title="Drag to resize list height"
+    @pointerdown="onQueueHandlePointerDown"
+    @click.stop="onQueueHandleClick"
+    :title="hasOverflow && !atBottom ? 'Scroll down (or drag to resize)' : 'Drag to resize list height'"
     >
     <!-- down chevron when more below; line when at end -->
     <svg v-if="hasOverflow && !atBottom" width="24" height="10" viewBox="0 0 24 10">
@@ -628,42 +605,35 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
 
 /* ====================== CONTROLS (FLEX HARD LOCK) ====================== */
 .controls {
-  display: flex;                   /* <- switch to flex */
+  display: flex;
   flex-direction: column;
-  row-gap: 8px;                    /* same spacing as before */
-  height: calc(var(--control-row-h) * 2 + 8px);  /* 2 rows + gap */
-  min-height: calc(var(--control-row-h) * 2 + 8px);
-  padding: 6px 8px;
-  background: var(--surface-1, #1a1a1a);
-  border: 1px solid var(--border, #555);
-  border-radius: var(--radius-sm, 6px);
-  box-sizing: border-box;
+  gap: 6px;
+  flex: 0 0 auto;
 }
-.controls .row-1,
-.controls .row-2 {
+.row-1 {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex: 0 0 var(--control-row-h);  /* <- hard height per row */
-  min-height: var(--control-row-h);
-  height: var(--control-row-h);
+  height: var(--btn-h);
 }
-.controls .row-1 > *,
-.controls .row-2 > * { margin-top: 0; margin-bottom: 0; }
-.row-1 .vol-btn { margin-left: auto; }
+.row-2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--btn-h);
+}
 
-.transport-group, .modes-group { display: flex; gap: 8px; align-items: center; }
-.transport-group { gap: 6px; }
-.transport-group::after { content: ''; width: 1px; margin: 0 3px; }
+.transport-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 
-/* Timeline never collapses */
 .timeline {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex: 1;
   min-width: 0;
-  min-height: var(--control-row-h);
 }
 .seek-wrap {
   height: var(--btn-h);
@@ -757,8 +727,36 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
   display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.12s ease;
 }
 .tab-btn:hover { background: var(--surface-3, #333); border-color: var(--accent, #4ea1ff); }
-.queue-top-hint { width: 24px; height: 12px; display: grid; place-items: center; pointer-events: none; opacity: .7; }
-.queue-top-hint svg { display: block; }
+
+.queue-top-hint { 
+  width: 24px; height: 12px; display: grid; place-items: center; 
+  border: none;
+  background: transparent;
+  padding: 0;
+}
+
+.queue-top-hint.clickable {
+  cursor: pointer;
+  pointer-events: auto;
+  opacity: 1;
+  transition: opacity 0.12s ease;
+}
+.queue-top-hint.clickable:hover { opacity: 0.7; }
+
+/* Top hint bar (when at top, not clickable) */
+.queue-top-hint .handle-line {
+  width: 24px; height: 2px; border-radius: 2px; background: rgba(255,255,255,0.28);
+}
+
+/* White arrows for clickable top hints */
+.queue-top-hint.clickable svg {
+  display: block;
+  opacity: 1;
+  color: rgba(255, 255, 255, 0.9);
+}
+.queue-top-hint.clickable:hover svg {
+  color: rgba(255, 255, 255, 1);
+}
 
 /* ====================== QUEUE LIST ====================== */
 .queue {
@@ -796,7 +794,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
 .row.item.current .title { font-weight: 600; color: #d9ecff; }
 .row.item.is-dragging { border: 2px solid var(--accent, #4ea1ff); box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28); opacity: 1; z-index: 10; }
 
-/* “X” remove only on hover/selection */
+/* "X" remove only on hover/selection */
 .row.item .act .icon-btn { opacity: 0; pointer-events: none; transition: opacity .12s ease; }
 .row.item:hover .act .icon-btn,
 .row.item.selected .act .icon-btn { opacity: 1; pointer-events: auto; }

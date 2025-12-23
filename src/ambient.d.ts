@@ -181,6 +181,46 @@ type HostAction =
  */
 
 declare module "gexplorer/widgets" {
+    export type SortableId = string | number
+  export type SortableOrientation = "vertical" | "horizontal"
+
+  export interface SortableState {
+    isDragging: boolean
+    draggingId: SortableId | null
+    hoverIdx: number | null
+  }
+
+  export interface CreateSortableOptions<T> {
+    identity(item: T): SortableId
+    getRef?(item: T): HTMLElement | null
+
+    orientation?: SortableOrientation
+    dragThresholdPx?: number
+    rowSelector?: string
+    onUpdate?: () => void
+
+    containerClassOnDrag?: string
+    scrollContainer?: HTMLElement | (() => HTMLElement | null) | null
+    autoScroll?: { marginPx?: number; maxSpeedPxPerSec?: number }
+  }
+
+  export interface SortableHandle<T> {
+    getOrderedList(): T[]
+    getDisplayList(): T[]
+    setOrderedList(items: readonly T[]): void
+
+    registerRef(item: T, el: HTMLElement | null): void
+    startDrag(displayIndex: number, startEvent?: PointerEvent | MouseEvent): void
+
+    getState(): SortableState
+    destroy(): void
+  }
+
+  export function createLinearSortable<T>(
+    items: readonly T[],
+    options: CreateSortableOptions<T>
+  ): SortableHandle<T>
+  
   /** Orientation for hit testing & pointer axis */
   export type DnDOrientation = "vertical" | "horizontal";
 
