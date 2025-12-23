@@ -74,7 +74,40 @@ const emit = defineEmits<{
 }>()
 
 // Measure row height from DOM (used for snap resize step)
-const rowHeight = ref(32) // default, will be measured
+const rowStepPx = ref(32)     // default, will be measured (snap increment)
+const headerPx = ref(34)      // default fallback, will be measured
+
+function measureQueueMetrics() {
+  const q = queueEl.value
+  if (!q) return
+
+  // Header row inside the scroll container (sticky)
+  const header = q.querySelector('.row.header') as HTMLElement | null
+  if (header) {
+    headerPx.value = Math.max(0, Math.ceil(header.getBoundingClientRect().height))
+  }
+
+  // Prefer measuring the *step* between two consecutive rows
+  const items = q.querySelectorAll('.row.item') as NodeListOf<HTMLElement>
+  if (items.length >= 2) {
+    const a = items[0].getBoundingClientRect()
+    const b = items[1].getBoundingClientRect()
+    const delta = b.top - a.top
+    rowStepPx.value = Math.max(28, Math.round(delta * 100) / 100)
+
+  } else if (items.length === 1) {
+    rowStepPx.value = Math.max(28, Math.ceil(items[0].getBoundingClientRect().height))
+  }
+}
+
+function measureAfterPaint() {
+  // nextTick ensures the queue is rendered; rAF ensures layout has settled
+  nextTick(() => requestAnimationFrame(measureQueueMetrics))
+}
+
+// ===== LIST-KIT: SNAP RESIZE =====
+const snapStepPx = computed(() => rowStepPx.value)
+const snapPadPx  = computed(() => headerPx.value || 0)
 
 const renameOverlayPos = ref<{ left: number; top: number; width: number } | null>(null)
 
@@ -106,23 +139,24 @@ const {
 const { style: queueStyle, onResizeDown: onQueueResizeDown, heightPx } = useSnapResize({
   targetEl: queueEl,
   itemCount: computed(() => props.displayQueue.length),
-  stepPx: rowHeight.value, // row height (measured from .row.item in onMounted)
+  stepPx: () => rowStepPx.value,
   minSteps: 3,
   maxSteps: 20,
-  paddingPx: 34, // approximate header height
+  paddingPx: () => headerPx.value,
 })
 
 // Set initial height (8 rows by default)
-watch([rowHeight, () => props.showQueue], ([rh, visible]) => {
-  if (visible && rh && heightPx.value === null) {
-    heightPx.value = 8 * rh + 34 // 8 rows + header
+watch([snapStepPx, snapPadPx, () => props.showQueue], ([step, pad, visible]) => {
+  if (visible && step > 0 && heightPx.value === null) {
+    heightPx.value = 8 * step + pad // 8 rows + header
   }
 }, { immediate: true })
+
 
 // Drag trigger: discriminate between drag-to-resize and click-to-scroll
 const onQueueHandlePointerDown = createDragTrigger(
   (e) => {
-    // Drag -> resize
+    measureQueueMetrics()
     onQueueResizeDown(e)
   },
   {
@@ -141,15 +175,14 @@ function onQueueHandleClick() {
 
 // Watch for queue visibility changes to measure row height
 watch(() => props.showQueue, v => {
-  if (v) nextTick(measureRowHeight)
+  if (v) measureAfterPaint()
 })
 
-function measureRowHeight() {
-  const sample = queueEl.value?.querySelector('.row.item') as HTMLElement | null
-  if (sample) {
-    rowHeight.value = Math.max(28, Math.round(sample.getBoundingClientRect().height))
-  }
-}
+// Also re-measure when content/layout changes (can affect row metrics)
+watch(
+  [() => props.displayQueue.length, () => props.layoutClass, () => props.showQueue],
+  ([, , show]) => { if (show) measureAfterPaint() }
+)
 
 const playTooltip = computed(() => {
   const head = props.isPlaying ? 'Pause' : 'Play'
@@ -250,7 +283,7 @@ onMounted(() => {
   window.addEventListener('blur', onPointerUp)
   document.addEventListener('click', onDocClick, true)
 
-  nextTick(measureRowHeight)
+  measureAfterPaint()
 })
 
 onBeforeUnmount(() => {
@@ -766,8 +799,11 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
 
 /* ====================== QUEUE LIST ====================== */
 .queue {
-  overflow-y: auto; overflow-x: hidden; contain: layout paint;
+  overflow-y: auto; 
+  overflow-x: hidden; 
+  contain: layout paint;
   scrollbar-width: none;
+  overflow-anchor: none;
 }
 .queue::-webkit-scrollbar { width: 0; height: 0; }
 
