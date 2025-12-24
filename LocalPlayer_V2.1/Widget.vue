@@ -311,7 +311,14 @@ function seek(e: Event) {
 function adjustSpeed(delta: number) {
   const newRate = Math.max(0.25, Math.min(3.0, state.playbackRate.value + delta))
   state.playbackRate.value = newRate
-  state.music.playbackRate = newRate
+  applyPlaybackRate()
+}
+
+function applyPlaybackRate() {
+  const r = Number(state.playbackRate.value ?? 1)
+  // defaultPlaybackRate helps survive source changes in some browsers / flows
+  ;(state.music as any).defaultPlaybackRate = r
+  state.music.playbackRate = r
 }
 
 function setVolume(v: number) {
@@ -433,17 +440,32 @@ async function onDrop(e: DragEvent) {
 }
 
 // ===== MEDIA EVENTS =====
-const onMediaPlay = () => { state.isPlaying.value = true }
+const onMediaPlay = () => { applyPlaybackRate(); state.isPlaying.value = true }
 const onMediaPause = () => { state.isPlaying.value = false }
 const onTimeUpdate = async () => {
   state.currentTime.value = state.music.currentTime || 0
 }
 
 const onLoadedMeta = (e: Event) => {
+  applyPlaybackRate()
   const t = e.target as HTMLMediaElement | null
-  const d = t?.duration ?? state.music.duration
-  state.duration.value = Number.isFinite(d) ? d : 0
+  const raw = t?.duration ?? state.music.duration
+  const dur = Number.isFinite(raw) ? raw : 0
+
+  state.duration.value = dur
+
+  // ✅ Persist duration onto the current track so the list can show it
+  const curId = state.current.value?.id
+  if (curId) {
+    const tr = state.queue.value.find(x => x.id === curId)
+    if (tr) tr.duration = dur
+  } else {
+    const idx = state.currentIndex.value
+    const tr = idx >= 0 ? state.queue.value[idx] : null
+    if (tr) tr.duration = dur
+  }
 }
+
 
 const onVolumeChange = () => {
   const v = state.music.volume
@@ -494,6 +516,8 @@ onMounted(async () => {
   if (widgetRootEl.value) resizeObserver.observe(widgetRootEl.value)
 
   hydrateFromHandle()
+
+  applyPlaybackRate()
 })
 
 onBeforeUnmount(() => {

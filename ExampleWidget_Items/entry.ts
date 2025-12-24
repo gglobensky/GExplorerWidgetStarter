@@ -13,9 +13,6 @@ export default {
       maxSize: { cols: 12, rows: 8 },
       defaultSize: { cols: 4, rows: 3 }
     },
-    sidebar: {
-      minHeight: 200
-    },
     layouts: [
       { id: 'list', icon: '☰', tooltip: 'List View' },
       { id: 'grid', icon: '▦', tooltip: 'Grid View' },
