@@ -83,23 +83,12 @@ const SIZE_MIN = 90
 // put this near your other constants
 const MIN_MOD_PX = 150; // min width for "Modified" col
 
-// Listen for refresh messages from context menu
-const unsubscribe = onWidgetMessage(props.sourceId, async (msg) => {
-  if (msg.topic === 'items:refresh') {
-    console.debug('[items] Refreshing from context menu')
-    // Your refresh logic here
-    await loadDir(msg.payload?.path)
-  }
-})
-
 /* -----------------------------------------------
    Selection marquee with rAF autoscroll
    Rules:
    - Do NOT scroll while pointer is inside the scroll rect.
    - When pointer is outside, scroll speed grows with distance
      (quadratic), capped at MAX_SPEED.
-   - Speed tuned ~1.75× previous value.
-   - Click on empty space (no drag) clears selection.
 ------------------------------------------------ */
 const scrollEl = ref<HTMLElement | null>(null)
 
@@ -1338,8 +1327,9 @@ onMounted(async () => {
 // Listen for refresh messages from context menu
 const offRefresh = onWidgetMessage(props.sourceId, async (msg) => {
   if (msg.topic === 'items:refresh') {
-    console.debug('[items] Refreshing from context menu')
-    await loadDir(msg.payload?.path)
+    console.debug('[items] Refreshing from context menu (2nd handler), current cwd:', cwd.value)
+    // Always refresh the CURRENT directory, not the payload path
+    await loadDir(cwd.value)
   }
 })
 
