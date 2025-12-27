@@ -1,4 +1,27 @@
 import Widget from './Widget.vue'
+import { registerWidgetMenus } from '/src/contextmenu'
+
+// Define menu contributions for the Items widget
+const menuConfig = {
+  contributions: [
+    {
+      scope: 'background',
+      items: [
+        {
+          id: 'items.refresh-menu-item',
+          type: 'command',
+          actionId: 'items.refresh',
+          section: '@core.view',
+          order: 10,
+        },
+      ],
+    },
+  ],
+}
+
+
+// Register the menu contributions when the widget loads
+registerWidgetMenus('items', menuConfig)
 
 export default {
   api: '1.0',

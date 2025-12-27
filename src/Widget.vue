@@ -2,7 +2,7 @@
 /* -----------------------------------------------
    Imports
 ------------------------------------------------ */
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineExpose } from '/runtime/vue.js'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineExpose, onUnmounted } from '/runtime/vue.js'
 import {
   fsListDirSmart,
   fsValidate,
@@ -26,6 +26,19 @@ import {
   authorizeFileRefs
 } from 'gexplorer/widgets'
 
+import { buildVfsInfo } from '/src/contextmenu/context'
+
+const contextMenuOptions = computed(() => ({
+  widgetType: 'items',
+  widgetId: props.sourceId,  // ← Change from instanceId to sourceId
+  location: {
+    area: 'grid' as const,
+  },
+  target: 'background' as const,
+  vfs: buildVfsInfo(cwd.value || merged.value.rpath || ''),
+  selection: [],
+}))
+
 /* -----------------------------------------------
    Types
 ------------------------------------------------ */
@@ -38,6 +51,7 @@ type ResCol = keyof DetailWeights
 
 const props = defineProps<{
   sourceId: string
+  instanceId: string
   config?: { data?: any; view?: any }
   theme?: Record<string, string>
   runAction?: (a: HostAction) => void
@@ -68,6 +82,15 @@ const EXT_MIN  = 70
 const SIZE_MIN = 90
 // put this near your other constants
 const MIN_MOD_PX = 150; // min width for "Modified" col
+
+// Listen for refresh messages from context menu
+const unsubscribe = onWidgetMessage(props.sourceId, async (msg) => {
+  if (msg.topic === 'items:refresh') {
+    console.debug('[items] Refreshing from context menu')
+    // Your refresh logic here
+    await loadDir(msg.payload?.path)
+  }
+})
 
 /* -----------------------------------------------
    Selection marquee with rAF autoscroll
@@ -724,17 +747,18 @@ function modParts(ms?: number | null): { date: string; time: string } {
   const d = new Date(ms)
   return { date: FMT_DATE.format(d), time: FMT_TIME.format(d) }
 }
-async function loadDir(path: string) {
-  if (!path) {
+async function loadDir(path?: string) {
+  const p = String(path ?? cwd.value ?? '')
+  if (!p) {
     entries.value = []
     return
   }
   loading.value = true
   error.value = ''
-console.log('test')
+
   try {
     // Centralized lazy-consent logic lives in fsListDirSmart now
-    const res = await fsListDirSmart('items', props.sourceId, path)
+    const res = await fsListDirSmart('items', props.sourceId, p)
 
     let list = Array.isArray((res as any).entries) ? (res as any).entries : []
     if (!merged.value.showHidden) {
@@ -1311,14 +1335,29 @@ onMounted(async () => {
   })
 })
 
+// Listen for refresh messages from context menu
+const offRefresh = onWidgetMessage(props.sourceId, async (msg) => {
+  if (msg.topic === 'items:refresh') {
+    console.debug('[items] Refreshing from context menu')
+    await loadDir(msg.payload?.path)
+  }
+})
 
 onBeforeUnmount(() => {
-  if (offWidgetMsg.value) {
-    offWidgetMsg.value();
-    offWidgetMsg.value = null;
+  try {
+    if (typeof offRefresh === 'function') offRefresh()
+  } catch (e) {
+    console.warn('[items] offRefresh cleanup failed', e)
   }
 
-  engine.destroy()  
+  try {
+    offWidgetMsg.value?.()
+    offWidgetMsg.value = null
+  } catch {}
+
+  try {
+    engine.destroy()
+  } catch {}
 })
 
 function getNavState() { return { canGoBack: false, canGoForward: false, cwd: cwd.value } }
@@ -1329,6 +1368,7 @@ defineExpose({ applyExternalCwd, getNavState })
 <template>
   <div
   class="items-root"
+  v-context-menu="contextMenuOptions"
   :style="hostVars"
     :class="{
       dragging: isDragging,
