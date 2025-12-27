@@ -7,6 +7,7 @@ import {
   fsListDirSmart,
   fsValidate,
   shortcutsProbe,
+  fsRename,
   fsMove,
   onFsQueueUpdate,
 } from '/src/widgets/fs'
@@ -27,17 +28,33 @@ import {
 } from 'gexplorer/widgets'
 
 import { buildVfsInfo } from '/src/contextmenu/context'
+import { startRename } from '/src/widgets/renameOverlay' 
 
-const contextMenuOptions = computed(() => ({
-  widgetType: 'items',
-  widgetId: props.sourceId,  // ← Change from instanceId to sourceId
-  location: {
-    area: 'grid' as const,
-  },
-  target: 'background' as const,
-  vfs: buildVfsInfo(cwd.value || merged.value.rpath || ''),
-  selection: [],
-}))
+const contextMenuOptions = computed(() => {
+  const selectedPaths = Array.from(selected.value)
+  const hasSelection = selectedPaths.length > 0
+  
+  const opts = {
+    widgetType: 'items',
+    widgetId: props.sourceId,
+    location: { area: 'grid' as const },
+    target: hasSelection ? ('selection' as const) : ('background' as const),
+    vfs: buildVfsInfo(cwd.value || merged.value.rpath || ''),
+    selection: selectedPaths,
+  }
+  
+  // 🐛 DEBUG
+  console.log('[items] contextMenuOptions computed:', {
+    selectedValue: selected.value,
+    selectedSize: selected.value.size,
+    selectedPaths,
+    hasSelection,
+    target: opts.target,
+    selection: opts.selection
+  })
+  
+  return opts
+})
 
 /* -----------------------------------------------
    Types
@@ -588,6 +605,26 @@ function scrollRowIntoView(idx: number) {
 
 function onKeyDown(ev: KeyboardEvent) {
   if (!sortedEntries.value.length) return
+  
+  // F2 = Rename selected item
+  if (ev.key === 'F2') {
+    ev.preventDefault()
+    ev.stopPropagation()
+    
+    const selectedPaths = Array.from(selected.value)
+    console.debug('[items] F2 pressed, selected:', selectedPaths)
+    
+    if (selectedPaths.length === 1) {
+      console.debug('[items] Starting rename for:', selectedPaths[0])
+      startItemRename(selectedPaths[0])
+    } else if (selectedPaths.length === 0) {
+      console.debug('[items] F2: No selection')
+    } else {
+      console.debug('[items] F2: Multiple selection, cannot rename')
+    }
+    return  // Don't continue to arrow key handling
+  }
+  
   const key =
     ev.key === 'ArrowDown' ? 'Down' :
     ev.key === 'ArrowUp'   ? 'Up'   :
@@ -1257,8 +1294,28 @@ function guessMimeType(filename: string): string {
   return map[ext] || 'application/octet-stream'
 }
 
+/**
+ * Get the directory portion of a path.
+ */
+function dirname(path: string): string {
+  const normalized = path.replace(/[\\/]+$/, '')
+  const idx = Math.max(
+    normalized.lastIndexOf('\\'),
+    normalized.lastIndexOf('/')
+  )
+  return idx < 0 ? '' : normalized.slice(0, idx)
+}
+
+/**
+ * Join path segments.
+ */
+function joinPath(parent: string, name: string): string {
+  const sep = parent.includes('\\') ? '\\' : '/'
+  return parent.replace(/[\\/]+$/, '') + sep + name
+}
+
 /* -----------------------------------------------
-   Edit helpers (unchanged)
+   Edit helpers
 ------------------------------------------------ */
 function updateColumns(delta: number) {
   if (!props.editMode) return
@@ -1279,6 +1336,48 @@ function cycleLayout() {
   const layouts = ['list', 'grid', 'details']
   const i = layouts.indexOf(merged.value.layout)
   emit('updateConfig', { ...props.config, view: { ...props.config?.view, layout: layouts[(i + 1) % layouts.length] } })
+}
+
+/**
+ * Handle rename commit - perform the actual file rename.
+ */
+async function handleRenameCommit(oldPath: string, newName: string): Promise<void> {
+  const parentDir = dirname(oldPath)
+  const newPath = joinPath(parentDir, newName)
+  
+  console.debug('[items] Renaming:', { oldPath, newPath, parentDir, newName })
+  
+  try {
+    // Use fsRename for same-directory rename operations
+    await fsRename(oldPath, newPath, 'items', props.sourceId)
+    
+    console.debug('[items] Rename successful')
+    
+    // Refresh the current directory
+    await loadDir(cwd.value)
+    
+  } catch (err) {
+    console.error('[items] Rename failed:', err)
+    // TODO: Show error notification to user
+  }
+}
+
+/**
+ * Start rename mode for a specific item.
+ */
+function startItemRename(itemPath: string): void {
+  console.log('[items] startItemRename called with:', itemPath)
+  
+  startRename(itemPath, {
+    selectBasename: true,
+    onCommit: async (newName: string) => {
+      console.log('[items] Rename commit:', { oldPath: itemPath, newName })
+      await handleRenameCommit(itemPath, newName)
+    },
+    onCancel: () => {
+      console.log('[items] Rename cancelled for:', itemPath)
+    }
+  })
 }
 
 onMounted(async () => {
@@ -1324,12 +1423,20 @@ onMounted(async () => {
   })
 })
 
-// Listen for refresh messages from context menu
+// Listen for refresh and rename messages from context menu
 const offRefresh = onWidgetMessage(props.sourceId, async (msg) => {
   if (msg.topic === 'items:refresh') {
-    console.debug('[items] Refreshing from context menu (2nd handler), current cwd:', cwd.value)
-    // Always refresh the CURRENT directory, not the payload path
+    console.debug('[items] Refreshing from context menu, current cwd:', cwd.value)
     await loadDir(cwd.value)
+  }
+  
+  // NEW: Handle rename requests
+  if (msg.topic === 'items:startRename') {
+    const path = msg.payload?.path
+    if (path) {
+      console.debug('[items] Starting rename for:', path)
+      startItemRename(path)
+    }
   }
 })
 
@@ -1484,7 +1591,13 @@ defineExpose({ applyExternalCwd, getNavState })
                     <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
                     <span v-else>{{ iconText(e) }}</span>
                   </span>
-                  <span class="name">{{ e.Name || e.FullPath }}</span>
+                  <span 
+                    class="name"
+                    :data-rename-id="e.FullPath"
+                    :data-rename-value="e.Name"
+                  >
+                    {{ e.Name || e.FullPath }}
+                  </span>
                 </div>
 
                 <div class="td td-ext" :title="e.Ext || ''">{{ e.Ext || '' }}</div>
@@ -1536,7 +1649,13 @@ defineExpose({ applyExternalCwd, getNavState })
             <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
             <span v-else>{{ iconText(e) }}</span>
           </div>
-          <div class="name">{{ e.Name || e.FullPath }}</div>
+          <div 
+            class="name"
+            :data-rename-id="e.FullPath"
+            :data-rename-value="e.Name"
+          >
+            {{ e.Name || e.FullPath }}
+          </div>
         </button>
       </div>
 
@@ -1569,7 +1688,13 @@ defineExpose({ applyExternalCwd, getNavState })
             <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
             <span v-else>{{ iconText(e) }}</span>
           </div>
-          <div class="name">{{ e.Name || e.FullPath }}</div>
+          <div 
+            class="name"
+            :data-rename-id="e.FullPath"
+            :data-rename-value="e.Name"
+          >
+            {{ e.Name || e.FullPath }}
+          </div>
         </button>
       </div>
     </div>

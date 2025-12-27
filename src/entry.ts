@@ -1,9 +1,12 @@
+// Updated entry.ts for Items widget
+
 import Widget from './Widget.vue'
 import { registerWidgetMenus } from '/src/contextmenu'
 
 // Define menu contributions for the Items widget
 const menuConfig = {
   contributions: [
+    // Background context (when nothing is selected)
     {
       scope: 'background',
       items: [
@@ -16,9 +19,21 @@ const menuConfig = {
         },
       ],
     },
+    // Item/selection context - use 'all' to match both item and selection
+    {
+      scope: 'all',  // ✅ Changed from 'selection' to 'all'
+      items: [
+        {
+          id: 'items.rename-menu-item',
+          type: 'command',
+          actionId: 'fs.rename',
+          section: '@core.edit',
+          order: 10,
+        },
+      ],
+    },
   ],
 }
-
 
 // Register the menu contributions when the widget loads
 registerWidgetMenus('items', menuConfig)
@@ -29,7 +44,6 @@ export default {
   version: '0.3.1',
   Component: Widget,
   
-  // NEW: Declare context support
   contexts: {
     grid: {
       minSize: { cols: 2, rows: 1 },
