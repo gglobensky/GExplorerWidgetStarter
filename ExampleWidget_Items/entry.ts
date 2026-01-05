@@ -1,46 +1,37 @@
+// Updated entry.ts for Items widget
+
 import Widget from './Widget.vue'
-import { registerWidgetMenus } from '@/contextmenu'
-import type { WidgetMenuConfig } from '@/contextmenu'
+import { registerWidgetMenus } from '/src/contextmenu'
 
 // Define menu contributions for the Items widget
-const menuConfig: WidgetMenuConfig = {
-  // No need to register actions here - they're already registered globally
-  // We just contribute menu items that reference the actions
-  
+const menuConfig = {
   contributions: [
+    // Background context (when nothing is selected)
     {
-      scope: 'background',  // Show when right-clicking empty space
+      scope: 'background',
       items: [
         {
           id: 'items.refresh-menu-item',
           type: 'command',
-          actionId: 'items.refresh',  // References the globally registered action
+          actionId: 'items.refresh',
           section: '@core.view',
           order: 10,
         },
-        // Future: Add more items like paste, new folder, etc.
-        // {
-        //   id: 'items.paste-menu-item',
-        //   type: 'command',
-        //   actionId: 'fs.paste',
-        //   section: '@core.edit',
-        //   order: 20,
-        // },
       ],
     },
-    // Future: Add contributions for 'item' and 'selection' scopes
-    // {
-    //   scope: 'item',
-    //   items: [
-    //     {
-    //       id: 'items.open-menu-item',
-    //       type: 'command',
-    //       actionId: 'fs.open',
-    //       section: '@core.file',
-    //       order: 10,
-    //     },
-    //   ],
-    // },
+    // Item/selection context - use 'all' to match both item and selection
+    {
+      scope: 'all',  // ✅ Changed from 'selection' to 'all'
+      items: [
+        {
+          id: 'items.rename-menu-item',
+          type: 'command',
+          actionId: 'fs.rename',
+          section: '@core.edit',
+          order: 10,
+        },
+      ],
+    },
   ],
 }
 
@@ -53,18 +44,25 @@ export default {
   version: '0.3.1',
   Component: Widget,
   
-  // NEW: Declare context support
   contexts: {
     grid: {
-      minSize: { cols: 2, rows: 1 },
-      maxSize: { cols: 12, rows: 8 },
-      defaultSize: { cols: 4, rows: 3 }
+      layouts: [
+        { id: 'list', icon: '☰', tooltip: 'List' },
+        { id: 'grid', icon: '▦', tooltip: 'Grid' },
+        { id: 'details', icon: '▤', tooltip: 'Details' },
+      ],
+      minSize: { cols: 2, rows: 2 },
     },
-    layouts: [
-      { id: 'list', icon: '☰', tooltip: 'List View' },
-      { id: 'grid', icon: '▦', tooltip: 'Grid View' },
-      { id: 'details', icon: '▤', tooltip: 'Details View' }
-    ]
+    
+    sidebar: {
+      layouts: [
+        { id: 'compact', icon: '─', tooltip: 'Compact Browser' },
+        { id: 'list', icon: '☰', tooltip: 'File List' },
+      ],
+      minHeight: 100,
+    },
+    
+    // No layouts for embedded/dialog contexts - they use defaults
   },
   
   defaults: {

@@ -140,7 +140,15 @@ const hostContext = computed<'grid' | 'sidebar' | 'embedded'>(() =>
 )
 
 const hostLayout = computed<string>(() =>
-  props.placement?.layout ?? props.variant ?? 'expanded'
+  // Priority order:
+  // 1. config.view.layout (set by WidgetHost via context menu or cycle button)
+  // 2. placement.layout (legacy GridLayout)
+  // 3. variant (Sidebar prop)
+  // 4. Default to 'expanded'
+  props.config?.view?.layout ??
+  props.placement?.layout ?? 
+  props.variant ?? 
+  'expanded'
 )
 
 const hostWidth = computed(() => {
