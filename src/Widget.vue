@@ -1737,6 +1737,10 @@ defineExpose({ applyExternalCwd, getNavState })
   /* column separator color */
   --items-col-sep: color-mix(in oklab, var(--fg, #fff) 12%, transparent);
 
+  /* Alignment hooks (app can override per-widget via CSS vars) */
+  --items-row-text-align: left;
+  --items-name-text-align: left;
+
   height:100%;
   display:flex;
   flex-direction:column;
@@ -1817,6 +1821,7 @@ defineExpose({ applyExternalCwd, getNavState })
   display:flex; flex-direction:row; gap:var(--local-spacing); align-items:center;
   min-height:calc(var(--base-font-size) * 2.4); padding:var(--space-xs) var(--space-sm);
   box-sizing:border-box; font-size:var(--local-font-md);
+  text-align: var(--items-row-text-align, left);
 }
 .row:focus, .row:focus-visible { outline: none !important; }
 .row[draggable="true"]{ cursor:grab; }
@@ -1834,7 +1839,10 @@ defineExpose({ applyExternalCwd, getNavState })
 .list-root .icon img,
 .grid-root .icon img{ width:100%; height:100%; object-fit:contain; }
 
-.name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.name{ 
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; 
+  text-align: var(--items-name-text-align, left);
+}
 
 /* ================ DETAILS VIEW ONLY ================ */
 .details-root{
@@ -1946,9 +1954,20 @@ defineExpose({ applyExternalCwd, getNavState })
 }
 
 /* Cells */
-.td-name{ display:inline-flex; align-items:center; gap:var(--space-sm); min-width:0; }
+.td-name{ display:flex; align-items:center; gap:var(--space-sm); min-width:0; }
 .td-ext, .td-size, .td-mod{
   opacity:.9; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:var(--local-font-sm);
+}
+
+/* Make the renamable name region span the full available width.
+   The rename overlay anchors to the element with data-rename-id (".name"),
+   so if it only sizes to its text content, the overlay becomes too narrow. */
+.details-grid .td-name .name,
+.list-root .row .name,
+.grid-root .row .name{
+  flex: 1 1 auto;
+  min-width: 0;
+  display: block;
 }
 
 /* Numeric alignment */
