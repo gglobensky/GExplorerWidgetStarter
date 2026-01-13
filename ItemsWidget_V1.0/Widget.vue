@@ -30,10 +30,6 @@ import {
 import { buildVfsInfo } from '/src/contextmenu/context'
 import { startRename } from '/src/widgets/renameOverlay' 
 import { getItemsLayoutService, type ViewConfig } from './layout-service'
-import ItemsListLayout from './ItemsListLayout.vue'
-import ItemsGridLayout from './ItemsGridLayout.vue'
-import ItemsDetailsLayout from './ItemsDetailsLayout.vue'
-import { useItemsSort, type SortKey } from './useItemsSort'
 
 const contextMenuOptions = computed(() => {
   const selectedPaths = Array.from(selected.value)
@@ -90,6 +86,12 @@ const emit = defineEmits<{
   (e: 'event', payload: any): void
 }>()
 
+type SortKey = 'name' | 'kind' | 'ext' | 'size' | 'modified'
+type SortDir = 'asc' | 'desc'
+
+const sortKey = ref<SortKey>((props.config?.view?.sortKey as SortKey) || 'name')
+const sortDir = ref<SortDir>((props.config?.view?.sortDir as SortDir) || 'asc')
+
 const offWidgetMsg = ref<null | (() => void)>(null)
 
 const iconsTick = ref(0)
@@ -118,23 +120,11 @@ let lastScrollTopForDrag = 0;
 const selected = ref<Set<string>>(new Set());   // now driven by engine
 const focusIndex = ref<number | null>(null);
 
-// Refs to Details layout component and its internal elements
-const detailsLayoutRef = ref<any>(null)
 const headerH = ref(36)
 const detailsScrollEl = ref<HTMLElement | null>(null)
 const headerEl = ref<HTMLElement|null>(null)
 const padEl    = ref<HTMLElement|null>(null)
 const sbw = ref(0)
-
-// Sync refs from Details component when it mounts/updates
-watch(detailsLayoutRef, (component) => {
-  if (component && merged.value.layout === 'details') {
-    detailsScrollEl.value = component.detailsScrollEl
-    detailsRootEl.value = component.detailsRootEl
-    headerEl.value = component.headerEl
-    padEl.value = component.padEl
-  }
-}, { flush: 'post' })
 
 const selectedMap = computed<Record<string, true>>(() => {
   const m: Record<string, true> = {};
@@ -152,6 +142,75 @@ const loading = ref(false)
 const error = ref('')
 
 const S = computed(() => sizeTokens(merged.value.itemSize))
+
+const sortedEntries = computed(() => {
+  const k = sortKey.value
+  const dir = sortDir.value === 'asc' ? 1 : -1
+
+  const cmp = (a: string, b: string) =>
+    String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' })
+
+  // Start from raw directory entries
+  let data = entries.value.slice()
+
+  // ---- Apply extension filter (from dialog / other callers) ----
+  const f = activeFilter.value
+  if (f?.exts && f.exts.length) {
+    const allowed = new Set(
+      f.exts
+        .map(e => (e || '').toString().toLowerCase())
+        .filter(e => e && e !== '*')    // treat "*" as "no restriction"
+    )
+
+    if (allowed.size) {
+      data = data.filter((e: any) => {
+        const kindStr = String(e?.Kind || '').toLowerCase()
+        const isDir =
+          kindStr.includes('dir') ||   // "Dir", "Directory"
+          kindStr === 'folder'
+
+        // Never hide folders – matches OS dialogs
+        if (isDir) return true
+
+        const ext = String(e?.Ext || '')
+          .toLowerCase()
+          .replace(/^\./, '')          // ".mp3" -> "mp3"
+
+        if (!ext) return false         // files with no ext are hidden under filtered view
+        return allowed.has(ext)
+      })
+    }
+  }
+
+  // ---- Then sort the filtered set ----
+  data.sort((A, B) => {
+    if (k === 'name')
+      return cmp(A?.Name || '', B?.Name || '') * dir
+
+    if (k === 'ext') {
+      const c = cmp(A?.Ext || '', B?.Ext || '')
+      return (c || cmp(A?.Name || '', B?.Name || '')) * dir
+    }
+
+    if (k === 'size') {
+      const sa = (A?.Size ?? 0), sb = (B?.Size ?? 0)
+      const c = sa === sb ? 0 : (sa < sb ? -1 : 1)
+      return (c || cmp(A?.Name || '', B?.Name || '')) * dir
+    }
+
+    if (k === 'modified') {
+      const ta = A?.ModifiedAt ? +new Date(A.ModifiedAt) : 0
+      const tb = B?.ModifiedAt ? +new Date(B.ModifiedAt) : 0
+      const c = ta === tb ? 0 : (ta < tb ? -1 : 1)
+      return (c || cmp(A?.Name || '', B?.Name || '')) * dir
+    }
+
+    return 0
+  })
+
+  return data
+})
+
 
 const cfg = computed(() => ({
   data: props.config?.data ?? {},
@@ -173,21 +232,6 @@ const activeFilter = computed<ItemsFilter | null>(() => {
 
   return null
 })
-
-// Entries ref (must be declared before useItemsSort)
-const entries = ref<Array<{
-  Name: string; FullPath: string; Kind?: string; Ext?: string; Size?: number; ModifiedAt?: number; IconKey?: string
-}>>([])
-
-// ---- Use Sort Composable ----
-const { sortKey, sortDir, sortedEntries, onHeaderClick } = useItemsSort({
-  entries,
-  initialSortKey: (props.config?.view?.sortKey as any) || 'name',
-  initialSortDir: (props.config?.view?.sortDir as any) || 'asc',
-  activeFilter
-})
-
-
 
 
 const autoColumns = computed(() => {
@@ -235,6 +279,10 @@ watch(
     engine.replaceSelection([], { reason: 'filter-changed' })
   }
 )
+
+const entries = ref<Array<{
+  Name: string; FullPath: string; Kind?: string; Ext?: string; Size?: number; ModifiedAt?: number; IconKey?: string
+}>>([])
 
 function emitSelectionChanged() {
   // Build a lookup from FullPath → entry
@@ -1002,6 +1050,11 @@ function modLabel(e: any) {
   return `${p.date} ${p.time}`
 }
 
+function onHeaderClick(nextKey: SortKey) {
+  if (sortKey.value === nextKey) sortDir.value = (sortDir.value === 'asc' ? 'desc' : 'asc')
+  else { sortKey.value = nextKey; sortDir.value = 'asc' }
+}
+
 const hostVars = computed(() => ({
   '--items-border':     props.theme?.border    || 'var(--border, #555)',
   '--items-fg':         props.theme?.fg        || 'var(--fg, #eee)',
@@ -1478,64 +1531,187 @@ defineExpose({ applyExternalCwd, getNavState })
       <div v-else-if="!merged.rpath" class="msg">(no path)</div>
 
       <!-- DETAILS VIEW -->
-      <ItemsDetailsLayout
+
+      <div
         v-else-if="merged.layout === 'details'"
-        ref="detailsLayoutRef"
-        :entries="sortedEntries"
-        :selected="selected"
-        :icons-tick="iconsTick"
-        :source-id="props.sourceId"
-        :sort-key="sortKey"
-        :sort-dir="sortDir"
-        :initial-weights="colW"
-        :marquee-rect="marqueeRect"
-        @row-down="({ id, mods }) => engine.rowDownId(id, mods)"
-        @row-move="({ x, y }) => engine.rowMove?.(x, y)"
-        @row-up="({ id }) => engine.rowUpId(id)"
-        @dblclick="({ id }) => openEntry(id)"
-        @dragstart="({ entry, event }) => { engine.dragStart(); onItemDragStart(entry, event) }"
-        @dragend="() => { onItemDragEnd(); engine.dragEnd() }"
-        @header-click="(key) => onHeaderClick(key)"
-        @surface-pointer-down="onSurfacePointerDown"
-        @surface-pointer-move="onSurfacePointerMove"
-        @surface-pointer-up="onSurfacePointerUp"
-        @surface-click="onSurfaceClick"
-        @plane-scroll="onPlaneScroll"
-        @weights-changed="(w) => colW = w"
-      />
+        class="details-root"
+        :data-icons="iconsTick"
+        :style="{ '--cols': detailsCols, '--hdrH': headerH + 'px' }"
+        ref="detailsRootEl"
+      >
+        <!-- Header OUTSIDE the scroll container -->
+        <div class="details-header" ref="headerEl">
+          <div class="details-header-inner">
+            <button class="th th-name" @click="onHeaderClickFiltered('name', $event)">
+              <span class="th-label">Name</span>
+              <span v-if="sortKey==='name'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+              <span class="resize-handle"
+                    @pointerdown.stop.prevent="startResize('name', $event)" />
+            </button>
+
+            <button class="th th-ext" @click="onHeaderClickFiltered('ext', $event)">
+              <span class="th-label">Ext</span>
+              <span v-if="sortKey==='ext'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+              <span class="resize-handle"
+                    @pointerdown.stop.prevent="startResize('ext', $event)" />
+            </button>
+
+            <button class="th th-size" @click="onHeaderClickFiltered('size', $event)">
+              <span class="th-label">Size</span>
+              <span v-if="sortKey==='size'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+              <span class="resize-handle"
+                    @pointerdown.stop.prevent="startResize('size', $event)" />
+            </button>
+
+            <button class="th th-mod" @click="onHeaderClickFiltered('modified', $event)">
+              <span class="th-label">Modified</span>
+              <span v-if="sortKey==='modified'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Rows scroller (the interactive plane) -->
+        <div
+          class="details-scroll"
+          ref="detailsScrollEl"
+          tabindex="0"
+          @pointerdown="onSurfacePointerDown"
+          @pointermove="onSurfacePointerMove"
+          @pointerup="onSurfacePointerUp"
+          @click.capture="onSurfaceClick"
+          @scroll.passive="onPlaneScroll"
+        >
+          <!-- gutters live inside here to match header inner -->
+          <div class="details-pad" ref="padEl">
+            <div class="details-grid">
+              <button
+                class="row"
+                :key="e.FullPath"
+                :data-path="e.FullPath"
+                v-for="(e, i) in sortedEntries"
+                :class="{ selected: selected.has(e.FullPath) }"
+                draggable="true"
+                @pointerdown.stop="(ev) => engine.rowDownId(e.FullPath, modsFromEvent(ev))"
+                @pointermove.stop="(ev) => engine.rowMove?.(ev.clientX, ev.clientY)"
+                @click.stop.prevent="() => engine.rowUpId(e.FullPath)"
+                @dblclick.stop.prevent="() => { openEntry(e.FullPath) }"
+                @dragstart="(ev) => { engine.dragStart(); onItemDragStart(e, ev as DragEvent) }"
+                @dragend="() => { onItemDragEnd(); engine.dragEnd() }"
+              >
+                <div class="td td-name" :title="e.Name || e.FullPath">
+                  <span class="icon">
+                    <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
+                    <span v-else>{{ iconText(e) }}</span>
+                  </span>
+                  <span 
+                    class="name"
+                    :data-rename-id="e.FullPath"
+                    :data-rename-value="e.Name"
+                    :data-widget-id="props.sourceId"
+                  >
+                    {{ e.Name || e.FullPath }}
+                  </span>
+                </div>
+
+                <div class="td td-ext" :title="e.Ext || ''">{{ e.Ext || '' }}</div>
+
+                <div class="td td-size" :title="sizeLabel(e)">
+                  <span class="num">{{ sizeParts(e?.Size).num }}</span>
+                  <span class="unit">{{ sizeParts(e?.Size).unit }}</span>
+                </div>
+
+                <div class="td td-mod" :title="modLabel(e)">
+                  <span class="date">{{ modLabel(e).split(' ')[0] }}</span>
+                  <span class="time">{{ modParts(e?.ModifiedAt).time }}</span>
+                </div>
+              </button>
+            </div>
+            
+          </div>
+          
+          <div
+            v-if="marqueeRect"
+            class="marquee"
+            :style="{
+              left:  marqueeRect.x + 'px',
+              top:   marqueeRect.y + 'px',
+              width: marqueeRect.w + 'px',
+              height: marqueeRect.h + 'px'
+            }"
+          />
+        </div>
+        
+      </div>
 
       <!-- LIST VIEW -->
-      <ItemsListLayout
-        v-else-if="merged.layout === 'list'"
-        :entries="sortedEntries"
-        :selected="selected"
-        :icons-tick="iconsTick"
-        :source-id="props.sourceId"
-        :S="S"
-        @row-down="({ id, mods }) => engine.rowDownId(id, mods)"
-        @row-move="({ x, y }) => engine.rowMove?.(x, y)"
-        @row-up="({ id }) => engine.rowUpId(id)"
-        @dblclick="({ id }) => openEntry(id)"
-        @dragstart="({ entry, event }) => { engine.dragStart(); onItemDragStart(entry, event) }"
-        @dragend="() => { onItemDragEnd(); engine.dragEnd() }"
-      />
+      <div v-else-if="merged.layout === 'list'" class="list-root" :data-icons="iconsTick">
+          <button
+            class="row"
+            :data-path="e.FullPath"
+            v-for="(e, i) in sortedEntries"
+            :class="{ selected: selectedMap[e.FullPath] }"
+            draggable="true"
+            @pointerdown.stop="(ev) => engine.rowDownId(e.FullPath, modsFromEvent(ev))"
+            @pointermove.stop="(ev) => engine.rowMove?.(ev.clientX, ev.clientY)"
+            @click.stop.prevent="() => engine.rowUpId(e.FullPath)"
+            @dblclick.stop.prevent="() => { openEntry(e.FullPath) }"
+            @dragstart="(ev) => { engine.dragStart(); onItemDragStart(e, ev as DragEvent) }"
+            @dragend="() => { onItemDragEnd(); engine.dragEnd() }"
+          >
+          <div class="icon">
+            <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
+            <span v-else>{{ iconText(e) }}</span>
+          </div>
+          <div 
+            class="name"
+            :data-rename-id="e.FullPath"
+            :data-rename-value="e.Name"
+            :data-widget-id="props.sourceId"
+          >
+            {{ e.Name || e.FullPath }}
+          </div>
+        </button>
+      </div>
 
       <!-- GRID VIEW -->
-      <ItemsGridLayout
+      <div
         v-else-if="merged.layout === 'grid'"
-        :entries="sortedEntries"
-        :selected="selected"
-        :icons-tick="iconsTick"
-        :source-id="props.sourceId"
-        :columns="merged.columns"
-        :S="S"
-        @row-down="({ id, mods }) => engine.rowDownId(id, mods)"
-        @row-move="({ x, y }) => engine.rowMove?.(x, y)"
-        @row-up="({ id }) => engine.rowUpId(id)"
-        @dblclick="({ id }) => openEntry(id)"
-        @dragstart="({ entry, event }) => { engine.dragStart(); onItemDragStart(entry, event) }"
-        @dragend="() => { onItemDragEnd(); engine.dragEnd() }"
-      />
+        class="grid-root"
+        :data-icons="iconsTick"
+        :style="{
+          display: 'grid',
+          gap: S.gap + 'px',
+          padding: S.gap + 'px',
+          gridTemplateColumns: `repeat(${Math.max(1, merged.columns)}, minmax(0, 1fr))`
+        }"
+      >
+        <button
+          class="row"
+          :data-path="e.FullPath"
+          v-for="(e, i) in sortedEntries"
+          :class="{ selected: selectedMap[e.FullPath] }"
+          draggable="true"
+          @pointerdown.stop="(ev) => engine.rowDownId(e.FullPath, modsFromEvent(ev))"
+          @pointermove.stop="(ev) => engine.rowMove?.(ev.clientX, ev.clientY)"
+          @click.stop.prevent="() => engine.rowUpId(e.FullPath)"
+          @dblclick.stop.prevent="() => { openEntry(e.FullPath) }"
+          @dragstart="(ev) => { engine.dragStart(); onItemDragStart(e, ev as DragEvent) }"
+          @dragend="() => { onItemDragEnd(); engine.dragEnd() }"
+        >
+          <div class="icon">
+            <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
+            <span v-else>{{ iconText(e) }}</span>
+          </div>
+          <div 
+            class="name"
+            :data-rename-id="e.FullPath"
+            :data-rename-value="e.Name"
+            :data-widget-id="props.sourceId"
+          >
+            {{ e.Name || e.FullPath }}
+          </div>
+        </button>
+      </div>
     </div>
   </div>
 </template>
@@ -1604,6 +1780,20 @@ defineExpose({ applyExternalCwd, getNavState })
   border-bottom: 0;            /* you can draw them on .details-pad if you like */
 }
 
+/* The scrollport: full height, stable end gutter only */
+.details-scroll{
+  position: relative;   /* the absolute marquee anchors here */
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
+
+/* ADD: the inner pad holds the side gutters + header spacing */
+.details-pad{
+  position: relative;
+  padding-inline: var(--items-gutter-left, 5%) var(--items-gutter-right, 5%);
+}
+
 .marquee{
   position: absolute;
   box-sizing: border-box;    /* already present */
@@ -1646,10 +1836,169 @@ defineExpose({ applyExternalCwd, getNavState })
 .row[draggable="true"]:active{ cursor:grabbing; }
 .row.selected { box-shadow: inset 0 0 0 2px var(--accent,#4ea1ff) !important; }
 
+/* Base icon size for LIST/GRID (scoped to those layouts only) */
+.list-root .icon,
+.grid-root .icon{
+  width:calc(var(--base-font-size) * 1.4);
+  height:calc(var(--base-font-size) * 1.4);
+  flex:0 0 calc(var(--base-font-size) * 1.4);
+  display:flex; align-items:center; justify-content:center;
+}
+.list-root .icon img,
+.grid-root .icon img{ width:100%; height:100%; object-fit:contain; }
+
 .name{ 
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; 
   text-align: var(--items-name-text-align, left);
 }
+
+/* ================ DETAILS VIEW ONLY ================ */
+.details-root{
+  --padX: var(--space-sm);
+  --padY: var(--space-xs);
+  --gap:  var(--space-xs);
+  --iconW: calc(1em * 1.4);
+  --hdrH: 36px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                 /* makes inner scroller size correctly */
+}
+
+/* Header with outer gutters only */
+.details-header{
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  height: var(--hdrH);
+
+  /* same gutters as rows, PLUS measured scrollbar width on the right */
+  padding-inline: var(--items-gutter-left, 5%)
+                  calc(var(--items-gutter-right, 5%) + var(--sbw, 0px));
+
+  background: transparent;
+  border-radius: var(--local-radius);
+  box-sizing: border-box;
+}
+
+.details-header::before{ display:none; }
+
+/* Grid lives inside */
+.details-header-inner{
+  position: relative;
+  height: var(--hdrH);
+  display: grid;
+  grid-template-columns: var(--cols);
+  gap: var(--gap);
+  align-items: center;
+  padding: 0 var(--padX);
+  min-width: 0;
+  background: var(--items-header-bg, var(--surface-2,#222));
+  border-radius: var(--local-radius);
+  overflow: visible;
+}
+
+/* Separators between header cells */
+.details-header-inner > .th + .th{
+  border-left: 1px solid var(--items-col-sep);
+  padding-left: var(--space-xs);
+}
+
+/* Header cells - NOW WITH BACKGROUND */
+.th{
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--padY) 0;        /* side padding comes from header-inner */
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font-weight: 600;
+  min-width: 0;                  /* labels can ellipsize */
+}
+
+.th .th-label{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.th-size,.th-mod{ justify-content:flex-end; text-align:right; }
+
+
+
+/* Column separators */
+:root, :host{ --items-col-sep: color-mix(in oklab, var(--fg,#fff) 18%, transparent); }
+.details-grid   .row > .td + .td{ border-left: 1px solid var(--items-col-sep); padding-left: var(--space-xs); }
+
+/* Resizer handles (not on last column) */
+/* Resize handle stays on top and on the actual track edge */
+.resize-handle{
+  position:absolute; top:0; right:-6px; width:12px; height:100%;
+  cursor:col-resize; z-index:2;
+}
+.resize-handle::after{
+  content:""; position:absolute; top:0; bottom:0; left:50%;
+  transform:translateX(-0.5px);
+  width:1px; background: color-mix(in oklab, var(--fg,#fff) 28%, transparent);
+}
+.th:hover .resize-handle::after{
+  background: color-mix(in oklab, var(--accent,#4ea1ff) 55%, transparent);
+}
+
+/* ----- INTERACTIVE PLANE (rows + marquee) lives BELOW the header ----- */
+/* Rows (unchanged, just here for context) */
+.details-grid{ display: grid; gap: var(--space-xs); }
+.details-grid .row{
+  display:grid;
+  grid-template-columns: var(--cols);
+  gap: var(--gap);
+  align-items:center;
+  border:1px solid var(--items-border);
+  background: var(--items-bg);
+  border-radius: var(--local-radius);
+  min-height: calc(var(--base-font-size) * 2.4);
+  padding: var(--padY) var(--padX);
+  box-sizing:border-box;
+  cursor:pointer;
+  font-size: var(--local-font-md);
+}
+
+/* Cells */
+.td-name{ display:flex; align-items:center; gap:var(--space-sm); min-width:0; }
+.td-ext, .td-size, .td-mod{
+  opacity:.9; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:var(--local-font-sm);
+}
+
+/* Make the renamable name region span the full available width.
+   The rename overlay anchors to the element with data-rename-id (".name"),
+   so if it only sizes to its text content, the overlay becomes too narrow. */
+.details-grid .td-name .name,
+.list-root .row .name,
+.grid-root .row .name{
+  flex: 1 1 auto;
+  min-width: 0;
+  display: block;
+}
+
+/* Numeric alignment */
+.td-size, .td-mod{ font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1; }
+.td-size{ display:flex; justify-content:flex-end; gap:var(--space-xs); }
+.td-mod{ display:flex; justify-content:flex-end; gap:var(--space-sm); }
+
+/* Details icon size (scoped!) */
+.details-grid .row > .td + .td{ border-left: 1px solid var(--items-col-sep); padding-left: var(--space-xs); }
+
+/* icon sizing scoped to details */
+.details-grid .td-name .icon{
+  width:var(--iconW);
+  height:var(--iconW);
+  flex:0 0 var(--iconW);
+  display:flex; align-items:center; justify-content:center; text-align:center;
+}
+.details-grid .td-name .icon img{
+  width:100%; height:100%; object-fit:contain;
+}
+
+/* ================ LIST / GRID CONTAINERS ================ */
+.list-root{ display:grid; gap:var(--space-xs); }
 
 /* ================ Messages ================ */
 .msg,.err{ padding:var(--space-md); font-size:var(--local-font-md); }
