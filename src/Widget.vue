@@ -329,7 +329,6 @@ const geo: GeometryAdapter = {
   // Viewport rect in scroller-viewport space
   contentRect() {
     const sc = detailsScrollEl.value!;
-    console.log('shitcaca')
     return { x: 0, y: 0, w: sc.clientWidth, h: sc.clientHeight };
   },
 
@@ -725,11 +724,15 @@ function onSurfacePointerUp(ev: PointerEvent) {
 
 async function applyExternalCwd(path: string, opts?: { mode?: 'push' | 'replace'; focus?: boolean }) {
   if (!path) return
-  
-  // Apply and load
+
+  engine.replaceSelection([], { reason: 'nav:external-cwd' })
+  focusIndex.value = null
+  anchorIndex.value = null
+
   cwd.value = path
   await loadDir(path)
 }
+
 
 
 function onSurfaceClick(ev: MouseEvent) {
@@ -924,13 +927,18 @@ watch(
   () => merged.value.rpath,
   async (rp) => {
     if (!rp) return
-    // initialize cwd + load entries
+
+    // clear stale selection when navigating
+    engine.replaceSelection([], { reason: 'nav:rpath-changed' })
+    focusIndex.value = null
+    anchorIndex.value = null
+
     cwd.value = rp
     await loadDir(rp)
-    // (cwd watcher already emits 'cwd-changed' to host)
   },
   { immediate: true }
 )
+
 
 // Helper: current header cell widths (px)
 function measureHeaderColsPx() {
