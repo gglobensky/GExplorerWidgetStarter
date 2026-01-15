@@ -313,6 +313,25 @@ function onHeaderClickFiltered(nextKey: SortKey, ev: MouseEvent) {
 }
 
 /* -----------------------------------------------
+   Surface Event Handlers (forward to parent)
+------------------------------------------------ */
+function onSurfacePointerDown(ev: PointerEvent) {
+  emit('surfacePointerDown', ev)
+}
+
+function onSurfacePointerMove(ev: PointerEvent) {
+  emit('surfacePointerMove', ev)
+}
+
+function onSurfacePointerUp(ev: PointerEvent) {
+  emit('surfacePointerUp', ev)
+}
+
+function onSurfaceClick(ev: MouseEvent) {
+  emit('surfaceClick', ev)
+}
+
+/* -----------------------------------------------
    Lifecycle
 ------------------------------------------------ */
 onMounted(() => {
@@ -375,12 +394,24 @@ defineExpose({
       class="details-scroll"
       ref="detailsScrollEl"
       tabindex="0"
-      @pointerdown="(ev) => emit('surfacePointerDown', ev)"
-      @pointermove="(ev) => emit('surfacePointerMove', ev)"
-      @pointerup="(ev) => emit('surfacePointerUp', ev)"
-      @click.capture="(ev) => emit('surfaceClick', ev)"
+      @pointerdown="onSurfacePointerDown"
+      @pointermove="onSurfacePointerMove"
+      @pointerup="onSurfacePointerUp"
+      @click.capture="onSurfaceClick"
       @scroll.passive="(ev) => emit('planeScroll', ev)"
     >
+      <!-- Marquee overlay (inside scroll container for proper positioning) -->
+      <div
+        v-if="marqueeRect"
+        class="marquee"
+        :style="{
+          left: marqueeRect.x + 'px',
+          top: marqueeRect.y + 'px',
+          width: marqueeRect.w + 'px',
+          height: marqueeRect.h + 'px'
+        }"
+      />
+
       <!-- gutters live inside here to match header inner -->
       <div class="details-pad" ref="padEl">
         <div class="details-grid">
@@ -427,19 +458,7 @@ defineExpose({
           </button>
         </div>
       </div>
-      
-      <!-- Marquee overlay -->
-      <div
-        v-if="marqueeRect"
-        class="marquee"
-        :style="{
-          left:  marqueeRect.x + 'px',
-          top:   marqueeRect.y + 'px',
-          width: marqueeRect.w + 'px',
-          height: marqueeRect.h + 'px'
-        }"
-      />
-    </div>
+  </div>
   </div>
 </template>
 
