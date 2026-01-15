@@ -271,37 +271,43 @@ const isResizing = ref(false)
 const geo: GeometryAdapter = {
   // Viewport rect in scroller-viewport space
   contentRect() {
-    const sc = detailsScrollEl.value!;
-    return { x: 0, y: 0, w: sc.clientWidth, h: sc.clientHeight };
+    const layout = merged.value.layout
+    const sc = layout === 'details' ? detailsScrollEl.value! : scrollEl.value!
+    return { x: 0, y: 0, w: sc.clientWidth, h: sc.clientHeight }
   },
 
   // Item rects in the same scroller-viewport space
   itemRects() {
-    const sc = detailsScrollEl.value!;
-    const scR = sc.getBoundingClientRect();
-    const root = padEl.value ?? sc;
-    const rows = root.querySelectorAll<HTMLElement>('.row[data-path]');
-    const arr: Array<{ id: string; rect: Rect }> = [];
+    const layout = merged.value.layout
+    const sc = layout === 'details' ? detailsScrollEl.value! : scrollEl.value!
+    const scR = sc.getBoundingClientRect()
+    const root = layout === 'details' ? (padEl.value ?? sc) : sc
+    const rows = root.querySelectorAll<HTMLElement>('.row[data-path]')
+    const arr: Array<{ id: string; rect: Rect }> = []
+    
     rows.forEach(row => {
-      const rr = row.getBoundingClientRect();
+      const rr = row.getBoundingClientRect()
       arr.push({
         id: row.dataset.path!,
         rect: {
           x: rr.left - scR.left,
-          y: rr.top  - scR.top,
+          y: rr.top - scR.top,
           w: rr.width,
           h: rr.height,
         },
-      });
-    });
-    return arr;
+      })
+    })
+    return arr
   },
 
   // Pointer in the same scroller-viewport space
   pointFromClient(clientX, clientY) {
-    const sc = detailsScrollEl.value!;
-    const scR = sc.getBoundingClientRect();
-    return { x: clientX - scR.left, y: clientY - scR.top };
+    const layout = merged.value.layout
+    const sc = layout === 'details' ? detailsScrollEl.value! : scrollEl.value!
+    const scR = sc.getBoundingClientRect()
+    
+    // Work in container space - no padding adjustments needed
+    return { x: clientX - scR.left, y: clientY - scR.top }
   },
 };
 
@@ -366,9 +372,17 @@ const driver = createMarqueeDriver(
   {
     rectChanged: (r) => {
       if (r) {
-        const st = detailsScrollEl.value?.scrollTop ?? 0; // current scrollTop of .details-scroll
-        marqueeRect.value = { x: r.x, y: r.y + st, w: r.w, h: r.h };
-        squelchNextPlaneClick = (r.w > 0 || r.h > 0);
+        const layout = merged.value.layout
+        const st = (layout === 'details' ? detailsScrollEl.value : scrollEl.value)?.scrollTop ?? 0
+        
+        // No padding offset needed - working in container space
+        marqueeRect.value = { 
+          x: r.x, 
+          y: r.y + st, 
+          w: r.w, 
+          h: r.h 
+        }
+        squelchNextPlaneClick = (r.w > 0 || r.h > 0)
       } else {
         marqueeRect.value = null;
       }
@@ -589,12 +603,34 @@ function isOnScrollbar(el: HTMLElement, ev: PointerEvent) {
   return ev.clientX >= (r.right - sb - 1);
 }
 
+function onScrollContainerPointerDown(ev: PointerEvent) {
+  const layout = merged.value.layout
+  
+  // For List/Grid, handle marquee on scroll container
+  if (layout === 'list' || layout === 'grid') {
+    onSurfacePointerDown(ev)
+  } else {
+    // For Details/other, just handle focus
+    ;(ev.currentTarget as HTMLElement)?.focus?.({ preventScroll: true })
+  }
+}
+
 function onSurfacePointerDown(ev: PointerEvent) {
-  if (merged.value.layout !== 'details' || ev.button !== 0) return;
-  const t = ev.target as HTMLElement | null;
-  const plane = detailsScrollEl.value!;
-  if (t?.closest('.row[data-path], [draggable="true"]')) return;
-  if (isOnScrollbar(plane, ev)) return;
+  const layout = merged.value.layout
+  
+  // Check if event is from Details internal scroll (via emit) or from outer container (List/Grid)
+  const fromDetailsInternal = layout === 'details' && detailsScrollEl.value && ev.currentTarget === detailsScrollEl.value
+  const fromOuterContainer = (layout === 'list' || layout === 'grid') && ev.currentTarget === scrollEl.value
+  
+  // Only handle if from appropriate source
+  if (!fromDetailsInternal && !fromOuterContainer) return
+  if (ev.button !== 0) return
+  
+  const t = ev.target as HTMLElement | null
+  const plane = layout === 'details' ? detailsScrollEl.value! : scrollEl.value!
+  
+  if (t?.closest('.row[data-path], [draggable="true"]')) return
+  if (isOnScrollbar(plane, ev)) return
 
   (ev.currentTarget as Element)?.setPointerCapture?.(ev.pointerId);
 
@@ -602,7 +638,7 @@ function onSurfacePointerDown(ev: PointerEvent) {
   scrollEl.value?.focus({ preventScroll: true })
 
   lastClientX = ev.clientX; lastClientY = ev.clientY;
-  lastScrollTopForDrag = detailsScrollEl.value!.scrollTop;  // add this
+  lastScrollTopForDrag = plane.scrollTop
   driver.pointerDown(ev, modsFromEvent(ev));
 
   window.addEventListener('pointerup', onSurfacePointerUp, { once: true });
@@ -625,12 +661,15 @@ function isOverSelectedRowAtPoint(cx: number, cy: number) {
 }
 
 function onPlaneScroll() {
-  if (!marqueeActive.value) return;
-  const sc = detailsScrollEl.value!;
-  const dy = sc.scrollTop - lastScrollTopForDrag;
+  if (!marqueeActive.value) return
+  
+  const layout = merged.value.layout
+  const sc = layout === 'details' ? detailsScrollEl.value! : scrollEl.value!
+  
+  const dy = sc.scrollTop - lastScrollTopForDrag
   if (dy) {
-    driver.adjustForScroll(dy);                 // existing
-    lastScrollTopForDrag = sc.scrollTop;
+    driver.adjustForScroll(dy)
+    lastScrollTopForDrag = sc.scrollTop
   }
 }
 
@@ -640,15 +679,17 @@ function onSurfacePointerMove(ev: PointerEvent) {
 }
 
 function onSurfacePointerUp(ev: PointerEvent) {
-  const wasMarquee = marqueeActive.value; // snapshot before driver clears it
+  const wasMarquee = marqueeActive.value
 
   if (wasMarquee) {
-    const sc = detailsScrollEl.value!;
-    const dy = sc.scrollTop - lastScrollTopForDrag;
+    const layout = merged.value.layout
+    const sc = layout === 'details' ? detailsScrollEl.value! : scrollEl.value!
+    
+    const dy = sc.scrollTop - lastScrollTopForDrag
     if (dy) {
-      driver.adjustForScroll(dy);
-      lastScrollTopForDrag = sc.scrollTop;
-      driver.recomputeNow('plane:flush-before-up'); // optional
+      driver.adjustForScroll(dy)
+      lastScrollTopForDrag = sc.scrollTop
+      driver.recomputeNow('plane:flush-before-up')
     }
   }
 
@@ -1249,8 +1290,24 @@ defineExpose({ applyExternalCwd, getNavState })
       ref="scrollEl"
       tabindex="0"
       @keydown="onKeyDown"
-      @pointerdown.self="() => { scrollEl?.value?.focus?.({ preventScroll: true }); }"
+      @pointerdown="onScrollContainerPointerDown"
+      @pointermove="onSurfacePointerMove"
+      @pointerup="onSurfacePointerUp"
+      @click.capture="onSurfaceClick"
+      @scroll.passive="onPlaneScroll"
     >
+      <!-- Marquee overlay for List/Grid (Details renders its own internally) -->
+      <div
+        v-if="(merged.layout === 'list' || merged.layout === 'grid') && marqueeRect && (marqueeRect.w > 0 || marqueeRect.h > 0)"
+        class="marquee"
+        :style="{
+          left: marqueeRect.x + 'px',
+          top: marqueeRect.y + 'px',
+          width: marqueeRect.w + 'px',
+          height: marqueeRect.h + 'px'
+        }"
+      />
+
       <div v-if="loading" class="msg">Loading…</div>
       <div v-else-if="error" class="err">{{ error }}</div>
       <div v-else-if="!merged.rpath" class="msg">(no path)</div>

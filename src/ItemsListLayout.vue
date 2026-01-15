@@ -130,6 +130,7 @@ function handleDragEnd() {
 <style scoped>
 /* ================ LIST CONTAINER ================ */
 .list-root { 
+  position: relative;
   display: grid; 
   gap: var(--space-xs); 
 }
