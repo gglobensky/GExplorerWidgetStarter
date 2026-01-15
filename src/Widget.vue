@@ -8,7 +8,6 @@ import {
   fsValidate,
   shortcutsProbe,
   fsRename,
-  fsMove,
   onFsQueueUpdate,
 } from '/src/widgets/fs'
 import { sendWidgetMessage, onWidgetMessage } from '/src/widgets/instances'
@@ -18,15 +17,6 @@ import { createSelectionEngine, type ItemsAdapter, type Mods } from '/src/widget
 import { createMarqueeDriver, type GeometryAdapter, type ScrollerAdapter, type Rect } from '/src/widgets/selection/marquee-driver';
 import { PickerMode, FileFilter, PickerSurfaceAdapter } from '/src/widgets/pickers/api';
 
-import {
-  createGexPayload,
-  setGexPayload,
-  createDragPreview,
-  hasGexPayload,
-  extractGexPayload,
-  authorizeFileRefs
-} from 'gexplorer/widgets'
-
 import { buildVfsInfo } from '/src/contextmenu/context'
 import { startRename } from '/src/widgets/renameOverlay' 
 import { getItemsLayoutService, type ViewConfig } from './layout-service'
@@ -34,6 +24,7 @@ import ItemsListLayout from './ItemsListLayout.vue'
 import ItemsGridLayout from './ItemsGridLayout.vue'
 import ItemsDetailsLayout from './ItemsDetailsLayout.vue'
 import { useItemsSort, type SortKey } from './useItemsSort'
+import { useItemsDragDrop } from './useItemsDragDrop'
 
 const contextMenuOptions = computed(() => {
   const selectedPaths = Array.from(selected.value)
@@ -1008,7 +999,27 @@ const hostVars = computed(() => ({
   '--items-bg':         props.theme?.bg        || 'var(--surface-2, transparent)',
   '--items-header-sep': props.theme?.headerSep || 'rgba(255,255,255,.22)',
 }) as Record<string, string>)
-
+/* -----------------------------------------------
+   Drag & drop composable
+------------------------------------------------ */
+const {
+  isDragging,
+  isDropActive,
+  onItemDragStart,
+  onItemDragEnd,
+  onRootDragOver,
+  onRootDragLeave,
+  onRootDrop
+} = useItemsDragDrop({
+  sourceId: props.sourceId,
+  entries,
+  selected,
+  cwd,
+  merged,
+  marqueeActive,
+  loadDir,
+  emit
+})
 /* -----------------------------------------------
    Drag & drop (unchanged; suppress when marqueeing)
 ------------------------------------------------ */
@@ -1017,239 +1028,6 @@ function normalizeDir(p: string | null | undefined): string {
   if (!p) return ''
   // Normalize to backslashes and trim trailing separators, then lowercase
   return p.replace(/[\\/]+/g, '\\').replace(/[\\]+$/, '').toLowerCase()
-}
-
-const isDragging = ref(false)
-const isDropActive = ref(false)
-
-function onItemDragStart(e: any, event: DragEvent) {
-  if (!event.dataTransfer) return;
-  if (marqueeActive.value) { event.preventDefault(); return; } // ← suppress when marqueeing
-
-  isDragging.value = true;
-
-  try {
-    const paths = (selected.value.size > 0 ? [...selected.value] : [e.FullPath]);
-
-    const payload = createGexPayload(
-      'gex/file-refs',
-      paths.map(p => ({
-        path: p,
-        name: entries.value.find(x => x.FullPath === p)?.Name ?? '',
-        size: entries.value.find(x => x.FullPath === p)?.Size ?? 0,
-        mimeType: guessMimeType(p),
-        isDirectory: entries.value.find(x => x.FullPath === p)?.Kind === 'dir',
-      })),
-      { widgetType: 'items', widgetId: props.sourceId }
-    );
-
-    setGexPayload(event.dataTransfer, payload);
-
-    event.dataTransfer.effectAllowed = 'copyMove';
-
-    const preview = createDragPreview({
-      label: (selected.value.size > 1 ? `${paths.length} items` : e.Name),
-      icon: e.Kind === 'dir' ? '📁' : '📄',
-      count: paths.length
-    });
-    event.dataTransfer.setDragImage(preview, 0, 0);
-    setTimeout(() => preview.remove(), 0);
-  } catch (err) {
-    console.error('[Items] drag failed:', err);
-  }
-}
-
-
-function onItemDragEnd() {
-  isDragging.value = false;
-}
-
-/**
- * Root drag-over handler: detect our DnD payload and highlight the pane.
- * We only react to gexplorer payloads and ignore our own widget as source.
- */
-function onRootDragOver(ev: DragEvent) {
-  const dt = ev.dataTransfer
-  if (!dt) return
-
-  const has = hasGexPayload(dt)
-
-  // Optional debug:
-  // console.log('[Items] dragover', { types: Array.from(dt.types || []), has })
-
-  if (!has) return
-
-  ev.preventDefault()
-  dt.dropEffect = 'move'
-  isDropActive.value = true
-}
-
-function onRootDragLeave(ev: DragEvent) {
-  const current = ev.currentTarget as HTMLElement | null;
-  const related = ev.relatedTarget as HTMLElement | null;
-
-  if (current && related && current.contains(related)) return;
-
-  isDropActive.value = false;
-}
-
-async function onRootDrop(ev: DragEvent) {
-  const payload = extractGexPayload(ev)
-  isDropActive.value = false
-
-  if (!payload || payload.type !== 'gex/file-refs') return
-
-  const srcId = (payload as any).source?.widgetId
-  if (srcId === props.sourceId) {
-    // Dropping back onto the same pane → ignore
-    return
-  }
-
-  ev.preventDefault()
-  ev.stopPropagation()
-
-  try {
-    // 1) Run the DnD auth layer (same as before)
-    const auth = await authorizeFileRefs('items', props.sourceId, payload)
-    if (!auth?.ok) {
-      console.warn('[Items] Drop not authorized:', auth?.reason)
-      return
-    }
-
-    const refs = payload.data || []
-    if (!refs.length) return
-
-    const target = cwd.value || merged.value.rpath || ''
-    if (!target) {
-      console.warn('[Items] Drop ignored: no cwd')
-      return
-    }
-
-    const destNorm = normalizeDir(target)
-    const sources: string[] = []
-
-    for (const r of refs as any[]) {
-      const p = String(r?.path ?? '')
-      if (!p) continue
-      // simple dirname
-      const m = p.match(/^(.*[\\/])[^\\/]+$/)
-      const parentNorm = normalizeDir(m ? m[1] : '')
-      if (parentNorm === destNorm) {
-        // already in this folder → no-op
-        continue
-      }
-      sources.push(p)
-    }
-
-    if (!sources.length) {
-      console.debug('[Items] drop: all refs already in target; nothing to copy')
-      return
-    }
-
-    // 2) Kick off the fs.copy job via the fs API
-    //    This will:
-    //      - ensure widget hash
-    //      - ensure consent (ticketFor -> ensureConsent)
-    //      - enqueue a queued fs.copy job
-    const items = sources.map(from => ({ from, to: target }))
-
-    // Optional: listen to global queue updates for this job
-    const jobPromise = fsMove(items, 'items', props.sourceId)
-
-    // If you want per-widget events:
-    const off = onFsQueueUpdate(job => {
-      // Narrow to our job if you want; here we just echo all updates.
-      if (job.op.kind === 'fs.move') {
-        emit('event', {
-          type: 'fs-job:update',
-          payload: {
-            jobId: job.id,
-            state: job.state,
-            progress: job.progress,
-            error: job.error,
-          },
-        })
-
-        if (
-          job.state === 'succeeded' ||
-          job.state === 'failed' ||
-          job.state === 'cancelled'
-        ) {
-          off()
-          emit('event', {
-            type: 'fs-job:finished',
-            payload: {
-              jobId: job.id,
-              state: job.state,
-              error: job.error,
-            },
-          })
-        }
-      }
-    })
-
-    // Also emit a started event immediately if you like
-    emit('event', {
-      type: 'fs-job:started',
-      payload: {
-        kind: 'fs.move',   // 🔁 was 'fs.copy'
-        target,
-        items,
-      },
-    })
-
-    jobPromise
-    .then(async job => {
-      console.log('[Items] fsMove done:', {
-        state: job.state,
-        error: job.error,
-        op: job.op,
-      })
-
-      if (job.state === 'succeeded') {
-        // 🔄 1) Refresh *this* pane’s cwd
-        const path = cwd.value || merged.value.rpath || ''
-        if (path) {
-          await loadDir(path)
-        }
-        console.log('srcId:', srcId)
-        // 🔔 2) Ask the *source* widget to refresh itself too
-        //      (srcId is captured from outer scope)
-        if (srcId && srcId !== props.sourceId) {
-        console.log('trying')
-          sendWidgetMessage({
-            from: props.sourceId,
-            to: srcId,
-            topic: 'fs:refresh-after-drop',
-            payload: {
-              kind: 'fs.move',
-              target: path,                 // dest folder after drop
-            },
-          })
-        }
-      }
-    })
-    .catch(err => {
-      console.error('[Items] fsMove crashed:', err)
-    })
-
-
-  } catch (err) {
-    console.error('[Items] drop failed:', err)
-  }
-}
-
-
-function guessMimeType(filename: string): string {
-  const ext = filename.toLowerCase().split('.').pop() || ''
-  const map: Record<string, string> = {
-    mp3: 'audio/mpeg', ogg: 'audio/ogg', oga: 'audio/ogg', wav: 'audio/wav',
-    flac: 'audio/flac', m4a: 'audio/mp4', aac: 'audio/aac', webm: 'audio/webm', opus: 'audio/opus',
-    mp4: 'video/mp4', mkv: 'video/x-matroska',
-    jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp',
-    txt: 'text/plain', json: 'application/json', pdf: 'application/pdf'
-  }
-  return map[ext] || 'application/octet-stream'
 }
 
 /**
