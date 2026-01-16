@@ -23,7 +23,7 @@ import { getItemsLayoutService, type ViewConfig } from './layout-service'
 import ItemsListLayout from './ItemsListLayout.vue'
 import ItemsGridLayout from './ItemsGridLayout.vue'
 import ItemsDetailsLayout from './ItemsDetailsLayout.vue'
-import { useItemsSort, type SortKey } from './useItemsSort'
+import { useItemsSort, type SortKey, type SortDir } from './useItemsSort'
 import { useItemsDragDrop } from './useItemsDragDrop'
 
 const contextMenuOptions = computed(() => {
@@ -170,13 +170,35 @@ const entries = ref<Array<{
   Name: string; FullPath: string; Kind?: string; Ext?: string; Size?: number; ModifiedAt?: number; IconKey?: string
 }>>([])
 
-// ---- Use Sort Composable ----
-const { sortKey, sortDir, sortedEntries, onHeaderClick } = useItemsSort({
-  entries,
-  initialSortKey: (props.config?.view?.sortKey as any) || 'name',
-  initialSortDir: (props.config?.view?.sortDir as any) || 'asc',
-  activeFilter
-})
+// ---- Sort State (backend sorting) ----
+const sortKey = ref<SortKey>((props.config?.view?.sortKey as any) || 'name')
+const sortDir = ref<SortDir>((props.config?.view?.sortDir as any) || 'asc')
+
+// When sort changes, reload from backend with new params
+function onHeaderClick(nextKey: SortKey) {
+  console.log('[Widget] onHeaderClick START:', { 
+    nextKey, 
+    currentKey: sortKey.value, 
+    currentDir: sortDir.value 
+  })
+  
+  if (sortKey.value === nextKey) {
+    // Toggle direction
+    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    // New key, default to ascending
+    sortKey.value = nextKey
+    sortDir.value = 'asc'
+  }
+  
+  console.log('[Widget] onHeaderClick AFTER UPDATE:', { 
+    sortKey: sortKey.value, 
+    sortDir: sortDir.value 
+  })
+  
+  // Reload with new sort
+  loadDir(cwd.value)
+}
 
 
 
@@ -523,7 +545,7 @@ function measureScrollbarWidth() {
 }
 
 function selectOnly(idx: number) {
-  const path = sortedEntries.value[idx]?.FullPath
+  const path = entries.value[idx]?.FullPath
   if (!path) return
   selected.value = new Set([path])
   focusIndex.value = idx
@@ -571,7 +593,7 @@ function scrollRowIntoView(idx: number) {
 }
 
 function onKeyDown(ev: KeyboardEvent) {
-  if (!sortedEntries.value.length) return
+  if (!entries.value.length) return
   
   // F2 = Rename selected item
   if (ev.key === 'F2') {
@@ -869,25 +891,44 @@ async function loadDir(path?: string) {
     entries.value = []
     return
   }
+  
+  console.log('[Widget] loadDir START:', { 
+    path: p, 
+    sortKey: sortKey.value, 
+    sortDir: sortDir.value 
+  })
+  
   loading.value = true
   error.value = ''
 
   try {
-    // Centralized lazy-consent logic lives in fsListDirSmart now
-    const res = await fsListDirSmart('items', props.sourceId, p)
+    // Get current filter
+    const filterExts = activeFilter.value?.exts?.length 
+      ? activeFilter.value.exts 
+      : undefined
+
+    console.log('[Widget] Calling fsListDirSmart with:', {
+      sortBy: sortKey.value,
+      sortDir: sortDir.value,
+      filterExts
+    })
+
+    // Call with backend sorting + filtering
+    const res = await fsListDirSmart('items', props.sourceId, p, {
+      sortBy: sortKey.value,     // Backend sorts for us!
+      sortDir: sortDir.value,
+      filterExts                 // Backend filters too
+    })
 
     let list = Array.isArray((res as any).entries) ? (res as any).entries : []
+    
+    // Optional: Hide hidden files (if not done on backend)
     if (!merged.value.showHidden) {
       list = list.filter((e: any) => !String(e?.Name || '').startsWith('.'))
     }
 
-    entries.value = list.sort((a: any, b: any) =>
-      String(a?.Name ?? '').localeCompare(
-        String(b?.Name ?? ''),
-        undefined,
-        { numeric: true, sensitivity: 'base' },
-      )
-    )
+    // No need to sort - already sorted by backend!
+    entries.value = list
 
     const lnks = entries.value
       .filter(e =>
@@ -1416,7 +1457,7 @@ defineExpose({ applyExternalCwd, getNavState })
       <ItemsDetailsLayout
         v-else-if="merged.layout === 'details'"
         ref="detailsLayoutRef"
-        :entries="sortedEntries"
+        :entries="entries"
         :selected="selected"
         :icons-tick="iconsTick"
         :source-id="props.sourceId"
@@ -1442,7 +1483,7 @@ defineExpose({ applyExternalCwd, getNavState })
       <!-- LIST VIEW -->
       <ItemsListLayout
         v-else-if="merged.layout === 'list'"
-        :entries="sortedEntries"
+        :entries="entries"
         :selected="selected"
         :icons-tick="iconsTick"
         :source-id="props.sourceId"
@@ -1458,7 +1499,7 @@ defineExpose({ applyExternalCwd, getNavState })
       <!-- GRID VIEW -->
       <ItemsGridLayout
         v-else-if="merged.layout === 'grid'"
-        :entries="sortedEntries"
+        :entries="entries"
         :selected="selected"
         :icons-tick="iconsTick"
         :source-id="props.sourceId"
