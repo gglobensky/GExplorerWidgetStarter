@@ -602,6 +602,7 @@ defineExpose({
   box-sizing: border-box;
   cursor: pointer;
   font-size: var(--local-font-md);
+  text-align: var(--items-row-text-align, left);
   content-visibility: auto;
   contain-intrinsic-size: 32px;
 }
@@ -670,6 +671,7 @@ defineExpose({
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-align: var(--items-name-text-align, left);
 }
 
 /* Numeric alignment */

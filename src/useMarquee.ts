@@ -122,6 +122,8 @@ function isOverSelectedRow(selected: Set<string>, cx: number, cy: number): boole
 export function useMarquee(options: UseMarqueeOptions): UseMarqueeReturn {
   const { scrollEl, containerEl, engine, layout, selected } = options
   
+  console.log('[marquee] useMarquee initialized for layout:', layout.value)
+  
   // ---- State ----
   const marqueeRect = ref<Rect | null>(null)
   let squelchNextPlaneClick = false
@@ -131,7 +133,8 @@ export function useMarquee(options: UseMarqueeOptions): UseMarqueeReturn {
   
   const marqueeActive = computed(() => {
     const r = marqueeRect.value
-    return !!r && (r.w > 0 || r.h > 0)
+    const active = !!r && (r.w > 0 || r.h > 0)
+    return active
   })
   
   // ---- Geometry Adapter ----
@@ -224,8 +227,19 @@ export function useMarquee(options: UseMarqueeOptions): UseMarqueeReturn {
         if (r) {
           const st = scrollEl.value?.scrollTop ?? 0
           marqueeRect.value = { x: r.x, y: r.y + st, w: r.w, h: r.h }
-          squelchNextPlaneClick = (r.w > 0 || r.h > 0)
+          const hasSize = (r.w > 0 || r.h > 0)
+          console.log('[marquee] rectChanged - marquee active:', {
+            layout: layout.value,
+            rect: r,
+            hasSize,
+            scrollTop: st
+          })
+          squelchNextPlaneClick = hasSize
         } else {
+          console.log('[marquee] rectChanged - marquee ended:', {
+            layout: layout.value,
+            squelchFlag: squelchNextPlaneClick
+          })
           marqueeRect.value = null
         }
       },
@@ -240,11 +254,27 @@ export function useMarquee(options: UseMarqueeOptions): UseMarqueeReturn {
     const t = ev.target as HTMLElement | null
     const plane = scrollEl.value!
     
+    console.log('[marquee] onPointerDown:', {
+      layout: layout.value,
+      target: t?.tagName,
+      targetClass: t?.className,
+      isRow: !!t?.closest('.row[data-path]'),
+      isDraggable: !!t?.closest('[draggable="true"]')
+    })
+    
     // Don't start marquee if clicking on a row or draggable element
-    if (t?.closest('.row[data-path], [draggable="true"]')) return
+    if (t?.closest('.row[data-path], [draggable="true"]')) {
+      console.log('[marquee] onPointerDown - ignoring (row or draggable)')
+      return
+    }
     
     // Don't start marquee if clicking on scrollbar
-    if (isOnScrollbar(plane, ev)) return
+    if (isOnScrollbar(plane, ev)) {
+      console.log('[marquee] onPointerDown - ignoring (scrollbar)')
+      return
+    }
+    
+    console.log('[marquee] onPointerDown - starting marquee')
     
     // Capture pointer for smooth tracking
     ;(ev.currentTarget as Element)?.setPointerCapture?.(ev.pointerId)
@@ -268,6 +298,13 @@ export function useMarquee(options: UseMarqueeOptions): UseMarqueeReturn {
   function onPointerUp(ev: PointerEvent) {
     const wasMarquee = marqueeActive.value
     
+    console.log('[marquee] onPointerUp (before driver):', {
+      layout: layout.value,
+      wasMarquee,
+      squelchFlag: squelchNextPlaneClick,
+      marqueeRect: marqueeRect.value
+    })
+    
     // Adjust for any scroll that happened during marquee
     if (wasMarquee) {
       const sc = scrollEl.value!
@@ -282,10 +319,23 @@ export function useMarquee(options: UseMarqueeOptions): UseMarqueeReturn {
     driver.pointerUp(ev)
     window.removeEventListener('pointerup', onPointerUp)
     
+    console.log('[marquee] onPointerUp (after driver):', {
+      layout: layout.value,
+      wasMarquee,
+      squelchFlag: squelchNextPlaneClick,
+      marqueeStillActive: marqueeActive.value
+    })
+    
     // Only treat as a "click" if no marquee was shown
     if (!wasMarquee) {
       const inside = isInsideScrollRect(scrollEl.value, ev.clientX, ev.clientY)
       const overSelected = isOverSelectedRow(selected.value, ev.clientX, ev.clientY)
+      console.log('[marquee] onPointerUp - no marquee, checking for deselect:', {
+        layout: layout.value,
+        inside,
+        overSelected,
+        willDeselect: inside && !overSelected
+      })
       if (inside && !overSelected) {
         engine.replaceSelection([], { reason: 'plane:click-up-outside' })
       }
@@ -293,10 +343,27 @@ export function useMarquee(options: UseMarqueeOptions): UseMarqueeReturn {
   }
   
   function onClick(ev: MouseEvent) {
-    if (squelchNextPlaneClick) return
+    console.log('[marquee] onClick:', {
+      layout: layout.value,
+      squelchFlag: squelchNextPlaneClick,
+      willSquelch: squelchNextPlaneClick
+    })
+    
+    if (squelchNextPlaneClick) {
+      console.log('[marquee] onClick - SQUELCHED')
+      return
+    }
     
     const t = ev.target as HTMLElement | null
-    if (!t?.closest('.row[data-path]')) {
+    const isRow = !!t?.closest('.row[data-path]')
+    console.log('[marquee] onClick - checking target:', {
+      layout: layout.value,
+      isRow,
+      willDeselect: !isRow
+    })
+    
+    if (!isRow) {
+      console.log('[marquee] onClick - deselecting (not on row)')
       engine.replaceSelection([], { reason: 'plane:clear' })
     }
   }

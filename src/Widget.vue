@@ -382,8 +382,16 @@ const driver = createMarqueeDriver(
           w: r.w, 
           h: r.h 
         }
-        squelchNextPlaneClick = (r.w > 0 || r.h > 0)
+        const hasSize = (r.w > 0 || r.h > 0)
+        squelchNextPlaneClick = hasSize
+        console.log('[Widget] rectChanged - marquee active:', {
+          layout,
+          rect: r,
+          hasSize,
+          squelchFlag: squelchNextPlaneClick
+        })
       } else {
+        console.log('[Widget] rectChanged - marquee ended, squelch flag:', squelchNextPlaneClick)
         marqueeRect.value = null;
       }
     },
@@ -618,21 +626,50 @@ function onScrollContainerPointerDown(ev: PointerEvent) {
 function onSurfacePointerDown(ev: PointerEvent) {
   const layout = merged.value.layout
   
+  console.log('[Widget] onSurfacePointerDown:', {
+    layout,
+    target: (ev.target as HTMLElement)?.tagName,
+    currentTarget: (ev.currentTarget as HTMLElement)?.className
+  })
+  
   // Check if event is from Details internal scroll (via emit) or from outer container (List/Grid)
   const fromDetailsInternal = layout === 'details' && detailsScrollEl.value && ev.currentTarget === detailsScrollEl.value
   const fromOuterContainer = (layout === 'list' || layout === 'grid') && ev.currentTarget === scrollEl.value
   
   // Only handle if from appropriate source
-  if (!fromDetailsInternal && !fromOuterContainer) return
-  if (ev.button !== 0) return
+  if (!fromDetailsInternal && !fromOuterContainer) {
+    console.log('[Widget] onSurfacePointerDown - ignoring (wrong source)')
+    return
+  }
+  if (ev.button !== 0) {
+    console.log('[Widget] onSurfacePointerDown - ignoring (not left button)')
+    return
+  }
   
   const t = ev.target as HTMLElement | null
   const plane = layout === 'details' ? detailsScrollEl.value! : scrollEl.value!
   
-  if (t?.closest('.row[data-path], [draggable="true"]')) return
-  if (isOnScrollbar(plane, ev)) return
+  const isRow = !!t?.closest('.row[data-path], [draggable="true"]')
+  const onScrollbar = isOnScrollbar(plane, ev)
+  
+  console.log('[Widget] onSurfacePointerDown - checks:', {
+    isRow,
+    onScrollbar,
+    willStart: !isRow && !onScrollbar
+  })
+  
+  if (isRow) {
+    console.log('[Widget] onSurfacePointerDown - ignoring (row or draggable)')
+    return
+  }
+  if (onScrollbar) {
+    console.log('[Widget] onSurfacePointerDown - ignoring (scrollbar)')
+    return
+  }
 
-  (ev.currentTarget as Element)?.setPointerCapture?.(ev.pointerId);
+  console.log('[Widget] onSurfacePointerDown - starting marquee')
+  
+  ;(ev.currentTarget as Element)?.setPointerCapture?.(ev.pointerId);
 
   // Ensure the widget owns focus on any left click in the canvas
   scrollEl.value?.focus({ preventScroll: true })
@@ -674,15 +711,37 @@ function onPlaneScroll() {
 }
 
 function onSurfacePointerMove(ev: PointerEvent) {
+  const layout = merged.value.layout
+  
+  // In details mode, only handle from details-scroll (via emit), not outer container
+  if (layout === 'details' && ev.currentTarget === scrollEl.value) {
+    return
+  }
+  
   lastClientX = ev.clientX; lastClientY = ev.clientY;   // keep coords
   driver.pointerMove(ev);
 }
 
 function onSurfacePointerUp(ev: PointerEvent) {
+  const layout = merged.value.layout
+  
+  // In details mode, only handle from details-scroll (via emit), not outer container
+  if (layout === 'details' && ev.currentTarget === scrollEl.value) {
+    console.log('[Widget] onSurfacePointerUp - ignoring (details mode, outer container)')
+    return
+  }
+  
   const wasMarquee = marqueeActive.value
 
+  console.log('[Widget] onSurfacePointerUp (before driver):', {
+    layout: merged.value.layout,
+    wasMarquee,
+    squelchFlag: squelchNextPlaneClick,
+    marqueeRect: marqueeRect.value,
+    currentTarget: ev.currentTarget
+  })
+
   if (wasMarquee) {
-    const layout = merged.value.layout
     const sc = layout === 'details' ? detailsScrollEl.value! : scrollEl.value!
     
     const dy = sc.scrollTop - lastScrollTopForDrag
@@ -696,10 +755,22 @@ function onSurfacePointerUp(ev: PointerEvent) {
   driver.pointerUp(ev);
   window.removeEventListener('pointerup', onSurfacePointerUp);
 
+  console.log('[Widget] onSurfacePointerUp (after driver):', {
+    layout: merged.value.layout,
+    wasMarquee,
+    squelchFlag: squelchNextPlaneClick,
+    marqueeStillActive: marqueeActive.value
+  })
+
   // Only treat as a "click" if no marquee was shown
   if (!wasMarquee) {
     const inside = isInsideScrollRect(ev.clientX, ev.clientY);
     const overSelected = isOverSelectedRowAtPoint(ev.clientX, ev.clientY);
+    console.log('[Widget] onSurfacePointerUp - no marquee, checking for deselect:', {
+      inside,
+      overSelected,
+      willDeselect: inside && !overSelected
+    })
     if (inside && !overSelected) {
       engine.replaceSelection([], { reason: 'plane:click-up-outside' });
     }
@@ -720,10 +791,39 @@ async function applyExternalCwd(path: string, opts?: { mode?: 'push' | 'replace'
 
 
 function onSurfaceClick(ev: MouseEvent) {
-  if (squelchNextPlaneClick) return;
-  const t = ev.target as HTMLElement | null;
-  if (!t?.closest('.row[data-path]')) {
-    engine.replaceSelection([], { reason: 'plane:clear' });
+  const layout = merged.value.layout
+  
+  // In details mode, only handle clicks from the details-scroll element (via emit)
+  // Ignore clicks from the outer scroll container
+  if (layout === 'details' && ev.currentTarget === scrollEl.value) {
+    console.log('[Widget] onSurfaceClick - ignoring (details mode, outer container)')
+    return
+  }
+  
+  console.log('[Widget] onSurfaceClick:', {
+    layout: merged.value.layout,
+    squelchFlag: squelchNextPlaneClick,
+    willSquelch: squelchNextPlaneClick,
+    target: (ev.target as HTMLElement)?.tagName,
+    currentTarget: ev.currentTarget
+  })
+  
+  if (squelchNextPlaneClick) {
+    console.log('[Widget] onSurfaceClick - SQUELCHED')
+    squelchNextPlaneClick = false // Clear flag after squelching
+    return
+  }
+  
+  const t = ev.target as HTMLElement | null
+  const isRow = !!t?.closest('.row[data-path]')
+  console.log('[Widget] onSurfaceClick - checking target:', {
+    isRow,
+    willDeselect: !isRow
+  })
+  
+  if (!isRow) {
+    console.log('[Widget] onSurfaceClick - deselecting')
+    engine.replaceSelection([], { reason: 'plane:clear' })
   }
 }
 
