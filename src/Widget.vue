@@ -9,6 +9,8 @@ import {
   shortcutsProbe,
   fsRename,
   onFsQueueUpdate,
+  fsCopy, 
+  fsMove
 } from '/src/widgets/fs'
 import { sendWidgetMessage, onWidgetMessage } from '/src/widgets/instances'
 import { loadIconPack, iconFor, ensureIconsFor } from '/src/icons/index.ts'
@@ -16,6 +18,11 @@ import { ensureConsent } from '/src/consent/service'
 import { createSelectionEngine, type ItemsAdapter, type Mods } from '/src/widgets/selection/selection-engine'
 import { createMarqueeDriver, type GeometryAdapter, type ScrollerAdapter, type Rect } from '/src/widgets/selection/marquee-driver';
 import { PickerMode, FileFilter, PickerSurfaceAdapter } from '/src/widgets/pickers/api';
+import { 
+    clipboardCopyFiles, 
+    clipboardCutFiles, 
+    clipboardGetFiles 
+} from '/src/widgets/clipboard/index.ts'
 
 import { buildVfsInfo } from '/src/contextmenu/context'
 import { startRename } from '/src/widgets/renameOverlay' 
@@ -25,6 +32,170 @@ import ItemsGridLayout from './ItemsGridLayout.vue'
 import ItemsDetailsLayout from './ItemsDetailsLayout.vue'
 import { useItemsSort, type SortKey, type SortDir } from './useItemsSort'
 import { useItemsDragDrop } from './useItemsDragDrop'
+
+/* -----------------------------------------------
+   Smart Directory Reload with Debouncing
+------------------------------------------------ */
+let reloadDebounceTimer: number | null = null
+let pauseFileWatcher = false
+
+/**
+ * Debounced directory reload - waits for activity to settle
+ */
+function scheduleReload(path: string, delayMs = 500) {
+  if (pauseFileWatcher) {
+    console.log('[items] fs:changed → PAUSED (batch operation in progress)')
+    return
+  }
+  
+  if (reloadDebounceTimer) {
+    clearTimeout(reloadDebounceTimer)
+  }
+  
+  reloadDebounceTimer = window.setTimeout(() => {
+    console.log('[items] fs:changed → reloading (after quiet period)')
+    loadDir(path)
+    reloadDebounceTimer = null
+  }, delayMs)
+}
+
+/* -----------------------------------------------
+   Clipboard Operations
+------------------------------------------------ */
+function basename(path: string): string {
+  const normalized = path.replace(/[\\/]+$/, '')
+  const idx = Math.max(
+    normalized.lastIndexOf('\\'),
+    normalized.lastIndexOf('/')
+  )
+  return idx < 0 ? normalized : normalized.slice(idx + 1)
+}
+
+/**
+ * Copy selected items to clipboard
+ */
+async function copyToClipboard() {
+  const paths = Array.from(selected.value)
+  
+  if (paths.length === 0) {
+    console.log('[Items] No items selected for copy')
+    return
+  }
+  
+  try {
+    console.log('[Items] Copying to clipboard:', paths)
+    await clipboardCopyFiles(paths, 'items', props.instanceId)
+    console.log(`[Items] ✅ Copied ${paths.length} item(s) to clipboard`)
+    
+    // Update clipboard state to show paste button
+    await updateClipboardState()
+  } catch (err: any) {
+    console.error('[Items] Failed to copy:', err.message)
+  }
+}
+
+/**
+ * Cut selected items to clipboard
+ */
+async function cutToClipboard() {
+  const paths = Array.from(selected.value)
+  
+  if (paths.length === 0) {
+    console.log('[Items] No items selected for cut')
+    return
+  }
+  
+  try {
+    console.log('[Items] Cutting to clipboard:', paths)
+    
+    // Use new widget API
+    await clipboardCutFiles(paths, 'items', props.instanceId)
+    
+    console.log(`[Items] ✅ Cut ${paths.length} item(s) to clipboard`)
+  } catch (err: any) {
+    console.error('[Items] Failed to cut:', err.message)
+  }
+}
+
+/**
+ * Check clipboard state (debugging only)
+ */
+async function checkClipboard() {
+  try {
+    // Use new widget API
+    const state = await clipboardGetFiles('items', props.instanceId)
+    
+    console.log('[Items] Clipboard state:', state)
+  } catch (err: any) {
+    console.error('[Items] Failed to check clipboard:', err.message)
+  }
+}
+
+/**
+ * Paste files from clipboard to current directory
+ */
+async function pasteFromClipboard() {
+  try {
+    const state = await clipboardGetFiles('items', props.instanceId)
+    
+    if (!state.hasFiles || state.count === 0) {
+      console.log('[Items] No files in clipboard to paste')
+      return
+    }
+    
+    const targetDir = cwd.value
+    if (!targetDir) {
+      console.log('[Items] No target directory')
+      return
+    }
+    
+    console.log('[Items] Pasting from clipboard:', {
+      operation: state.operation,
+      count: state.count,
+      sources: state.paths,
+      targetDir
+    })
+    
+    const items = state.paths.map(sourcePath => {
+      const fileName = basename(sourcePath)
+      const targetPath = joinPath(targetDir, fileName)
+      return { from: sourcePath, to: targetPath }
+    })
+    
+    // 🎯 PAUSE FILE WATCHING
+    pauseFileWatcher = true
+    
+    try {
+      if (state.operation === 'cut') {
+        console.log('[Items] Executing MOVE operation')
+        await fsMove(items, 'items', props.instanceId)
+        console.log('[Items] ✅ Moved', state.count, 'item(s)')
+      } else {
+        console.log('[Items] Executing COPY operation')
+        await fsCopy(items, 'items', props.instanceId)
+        console.log('[Items] ✅ Copied', state.count, 'item(s)')
+      }
+      
+      // 🎯 ONE FINAL RELOAD (not 388 reloads!)
+      await loadDir(targetDir)
+      
+      selected.value = new Set()
+      engine.replaceSelection([], { reason: 'paste:complete' })
+      await updateClipboardState()
+      
+    } catch (err: any) {
+      console.error('[Items] Paste operation failed:', err.message)
+      // Still reload on error to show current state
+      await loadDir(targetDir)
+    } finally {
+      // 🎯 RESUME FILE WATCHING
+      pauseFileWatcher = false
+    }
+    
+  } catch (err: any) {
+    console.error('[Items] Failed to paste:', err.message)
+  }
+}
 
 const contextMenuOptions = computed(() => {
   const selectedPaths = Array.from(selected.value)
@@ -116,6 +287,43 @@ const detailsScrollEl = ref<HTMLElement | null>(null)
 const headerEl = ref<HTMLElement|null>(null)
 const padEl    = ref<HTMLElement|null>(null)
 const sbw = ref(0)
+
+// Track clipboard state for paste button
+const clipboardHasContent = ref(false)
+
+/**
+ * Update clipboard state for paste button visibility
+ */
+async function updateClipboardState() {
+  try {
+    const state = await clipboardGetFiles('items', props.instanceId)
+    clipboardHasContent.value = state.canPaste
+  } catch {
+    clipboardHasContent.value = false
+  }
+}
+
+// Update on mount and when widget gets focus
+onMounted(() => {
+  updateClipboardState()
+  window.addEventListener('focus', updateClipboardState)
+})
+
+onBeforeUnmount(() => {
+ // Clear any pending reload timer
+  if (reloadDebounceTimer) {
+    clearTimeout(reloadDebounceTimer)
+    reloadDebounceTimer = null
+  }
+  
+  window.removeEventListener('focus', updateClipboardState)
+
+  try {
+    if (typeof offRefresh === 'function') offRefresh()
+  } catch (e) {
+    console.warn('[items] offRefresh cleanup failed', e)
+  }
+})
 
 // Sync refs from Details component when it mounts/updates
 watch(detailsLayoutRef, (component) => {
@@ -1328,10 +1536,11 @@ onMounted(async () => {
       console.log('[items] fs:changed candidate', {
         rootNorm: normalizeDir(root),
         currentNorm: normalizeDir(current),
+        paused: pauseFileWatcher
       })
       if (root && normalizeDir(root) === normalizeDir(current)) {
-        console.log('[items] fs:changed → reloading', current)
-        loadDir(current)
+        // Use debounced reload instead of immediate
+        scheduleReload(current)
       }
     }
   })
@@ -1395,34 +1604,54 @@ defineExpose({ applyExternalCwd, getNavState })
     @dragleave="onRootDragLeave"
     @drop="onRootDrop"
   >
-    <!-- Edit mode toolbar -->
-    <div
-      v-if="editMode"
-      class="edit-toolbar"
-      @pointerdown.stop
-    >
-    <!-- Validate if deprecated -->
-      <div class="edit-group">
-        <span class="edit-label">Layout:</span>
-        <button class="edit-btn" @click.stop="cycleLayout" :title="`Current: ${merged.layout}`">
-          {{ merged.layout === 'list' ? '☰' : merged.layout === 'grid' ? '▦' : '▤' }}
-        </button>
-      </div>
-
-      <div v-if="merged.layout === 'grid'" class="edit-group">
-        <span class="edit-label">Columns:</span>
-        <button class="edit-btn" @click.stop="updateColumns(-1)" :disabled="merged.columns <= 1">−</button>
-        <span class="edit-value">{{ merged.columns }}</span>
-        <button class="edit-btn" @click.stop="updateColumns(1)" :disabled="merged.columns >= 8">+</button>
-      </div>
-
-      <div class="edit-group">
-        <span class="edit-label">Size:</span>
-        <button class="edit-btn" @click.stop="cycleItemSize" :title="`Current: ${merged.itemSize}`">
-          {{ merged.itemSize.toUpperCase() }}
-        </button>
-      </div>
-    </div>
+ <!-- Clipboard toolbar -->
+<div
+  v-if="selected.size > 0 || clipboardHasContent"
+  class="clipboard-toolbar"
+  @pointerdown.stop
+>
+  <!-- Show selection info when items selected -->
+  <span v-if="selected.size > 0" class="clipboard-label">
+    {{ selected.size }} selected
+  </span>
+  
+  <!-- Copy/Cut buttons (only when items selected) -->
+  <button 
+    v-if="selected.size > 0"
+    class="clipboard-btn" 
+    @click.stop="copyToClipboard"
+    title="Copy to clipboard (Ctrl+C)"
+  >
+    📋 Copy
+  </button>
+  <button 
+    v-if="selected.size > 0"
+    class="clipboard-btn" 
+    @click.stop="cutToClipboard"
+    title="Cut to clipboard (Ctrl+X)"
+  >
+    ✂️ Cut
+  </button>
+  
+  <!-- Paste button (shows when clipboard has files) -->
+  <button 
+    v-if="clipboardHasContent"
+    class="clipboard-btn" 
+    @click.stop="pasteFromClipboard"
+    title="Paste from clipboard (Ctrl+V)"
+  >
+    📄 Paste
+  </button>
+  
+  <!-- Debug button -->
+  <button 
+    class="clipboard-btn" 
+    @click.stop="checkClipboard"
+    title="Debug: Check clipboard"
+  >
+    👁️ Check
+  </button>
+</div>
 
     <!-- Make the scroller focusable + capture keyboard -->
     <div
@@ -1517,6 +1746,49 @@ defineExpose({ applyExternalCwd, getNavState })
 </template>
 
 <style scoped>
+  /* Clipboard toolbar */
+.clipboard-toolbar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  background: var(--color-surface, #2a2a2a);
+  border: 1px solid var(--color-border, #444);
+  border-radius: 6px;
+  padding: 6px 10px;
+  z-index: 10;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.clipboard-label {
+  font-size: 12px;
+  color: var(--color-text-dim, #888);
+  margin-right: 4px;
+}
+
+.clipboard-btn {
+  padding: 4px 10px;
+  background: var(--color-surface, #333);
+  border: 1px solid var(--color-border, #555);
+  color: var(--color-text, #e0e0e0);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  transition: all 0.15s ease;
+}
+
+.clipboard-btn:hover {
+  background: var(--color-hover, #404040);
+  border-color: var(--color-accent, #4ea1ff);
+}
+
+.clipboard-btn:active {
+  transform: translateY(1px);
+}
+
 .items-root.drop-active {
   outline: 2px dashed rgba(255, 255, 255, 0.4);
   outline-offset: -2px;
