@@ -72,66 +72,6 @@ function basename(path: string): string {
 }
 
 /**
- * Copy selected items to clipboard
- */
-async function copyToClipboard() {
-  const paths = Array.from(selected.value)
-  
-  if (paths.length === 0) {
-    console.log('[Items] No items selected for copy')
-    return
-  }
-  
-  try {
-    console.log('[Items] Copying to clipboard:', paths)
-    await clipboardCopyFiles(paths, 'items', props.instanceId)
-    console.log(`[Items] ✅ Copied ${paths.length} item(s) to clipboard`)
-    
-    // Update clipboard state to show paste button
-    await updateClipboardState()
-  } catch (err: any) {
-    console.error('[Items] Failed to copy:', err.message)
-  }
-}
-
-/**
- * Cut selected items to clipboard
- */
-async function cutToClipboard() {
-  const paths = Array.from(selected.value)
-  
-  if (paths.length === 0) {
-    console.log('[Items] No items selected for cut')
-    return
-  }
-  
-  try {
-    console.log('[Items] Cutting to clipboard:', paths)
-    
-    // Use new widget API
-    await clipboardCutFiles(paths, 'items', props.instanceId)
-    
-    console.log(`[Items] ✅ Cut ${paths.length} item(s) to clipboard`)
-  } catch (err: any) {
-    console.error('[Items] Failed to cut:', err.message)
-  }
-}
-
-/**
- * Check clipboard state (debugging only)
- */
-async function checkClipboard() {
-  try {
-    // Use new widget API
-    const state = await clipboardGetFiles('items', props.instanceId)
-    
-    console.log('[Items] Clipboard state:', state)
-  } catch (err: any) {
-    console.error('[Items] Failed to check clipboard:', err.message)
-  }
-}
-
-/**
  * Paste files from clipboard to current directory
  */
 async function pasteFromClipboard() {
@@ -181,7 +121,6 @@ async function pasteFromClipboard() {
       
       selected.value = new Set()
       engine.replaceSelection([], { reason: 'paste:complete' })
-      await updateClipboardState()
       
     } catch (err: any) {
       console.error('[Items] Paste operation failed:', err.message)
@@ -210,16 +149,6 @@ const contextMenuOptions = computed(() => {
     selection: selectedPaths,
     widgetConfig: props.config
   }
-  
-  // 🐛 DEBUG
-  console.log('[items] contextMenuOptions computed:', {
-    selectedValue: selected.value,
-    selectedSize: selected.value.size,
-    selectedPaths,
-    hasSelection,
-    target: opts.target,
-    selection: opts.selection
-  })
   
   return opts
 })
@@ -288,35 +217,12 @@ const headerEl = ref<HTMLElement|null>(null)
 const padEl    = ref<HTMLElement|null>(null)
 const sbw = ref(0)
 
-// Track clipboard state for paste button
-const clipboardHasContent = ref(false)
-
-/**
- * Update clipboard state for paste button visibility
- */
-async function updateClipboardState() {
-  try {
-    const state = await clipboardGetFiles('items', props.instanceId)
-    clipboardHasContent.value = state.canPaste
-  } catch {
-    clipboardHasContent.value = false
-  }
-}
-
-// Update on mount and when widget gets focus
-onMounted(() => {
-  updateClipboardState()
-  window.addEventListener('focus', updateClipboardState)
-})
-
 onBeforeUnmount(() => {
  // Clear any pending reload timer
   if (reloadDebounceTimer) {
     clearTimeout(reloadDebounceTimer)
     reloadDebounceTimer = null
   }
-  
-  window.removeEventListener('focus', updateClipboardState)
 
   try {
     if (typeof offRefresh === 'function') offRefresh()
@@ -842,6 +748,8 @@ function isOnScrollbar(el: HTMLElement, ev: PointerEvent) {
 }
 
 function onScrollContainerPointerDown(ev: PointerEvent) {
+  if (ev.button !== 0) return
+
   const layout = merged.value.layout
   
   // For List/Grid, handle marquee on scroll container
@@ -854,6 +762,8 @@ function onScrollContainerPointerDown(ev: PointerEvent) {
 }
 
 function onSurfacePointerDown(ev: PointerEvent) {
+  if (ev.button !== 0) return
+
   const layout = merged.value.layout
   
   console.log('[Widget] onSurfacePointerDown:', {
@@ -953,6 +863,8 @@ function onSurfacePointerMove(ev: PointerEvent) {
 }
 
 function onSurfacePointerUp(ev: PointerEvent) {
+  if (ev.button !== 0) return
+
   const layout = merged.value.layout
   
   // In details mode, only handle from details-scroll (via emit), not outer container
@@ -1021,6 +933,8 @@ async function applyExternalCwd(path: string, opts?: { mode?: 'push' | 'replace'
 
 
 function onSurfaceClick(ev: MouseEvent) {
+  if (ev.button !== 0) return
+  
   const layout = merged.value.layout
   
   // In details mode, only handle clicks from the details-scroll element (via emit)
@@ -1551,7 +1465,7 @@ onMounted(async () => {
   })
 })
 
-// Listen for refresh and rename messages from context menu
+// Listen for refresh, rename and paste messages from context menu
 const offRefresh = onWidgetMessage(props.sourceId, async (msg) => {
   if (msg.topic === 'items:refresh') {
     console.debug('[items] Refreshing from context menu, current cwd:', cwd.value)
@@ -1565,6 +1479,12 @@ const offRefresh = onWidgetMessage(props.sourceId, async (msg) => {
       console.debug('[items] Starting rename for:', path)
       startItemRename(path)
     }
+  }
+
+  // Handle paste requests from context menu
+  if (msg.topic === 'items:paste') {
+    console.debug('[items] Paste triggered from context menu')
+    await pasteFromClipboard()
   }
 })
 
@@ -1604,55 +1524,7 @@ defineExpose({ applyExternalCwd, getNavState })
     @dragleave="onRootDragLeave"
     @drop="onRootDrop"
   >
- <!-- Clipboard toolbar -->
-<div
-  v-if="selected.size > 0 || clipboardHasContent"
-  class="clipboard-toolbar"
-  @pointerdown.stop
->
-  <!-- Show selection info when items selected -->
-  <span v-if="selected.size > 0" class="clipboard-label">
-    {{ selected.size }} selected
-  </span>
   
-  <!-- Copy/Cut buttons (only when items selected) -->
-  <button 
-    v-if="selected.size > 0"
-    class="clipboard-btn" 
-    @click.stop="copyToClipboard"
-    title="Copy to clipboard (Ctrl+C)"
-  >
-    📋 Copy
-  </button>
-  <button 
-    v-if="selected.size > 0"
-    class="clipboard-btn" 
-    @click.stop="cutToClipboard"
-    title="Cut to clipboard (Ctrl+X)"
-  >
-    ✂️ Cut
-  </button>
-  
-  <!-- Paste button (shows when clipboard has files) -->
-  <button 
-    v-if="clipboardHasContent"
-    class="clipboard-btn" 
-    @click.stop="pasteFromClipboard"
-    title="Paste from clipboard (Ctrl+V)"
-  >
-    📄 Paste
-  </button>
-  
-  <!-- Debug button -->
-  <button 
-    class="clipboard-btn" 
-    @click.stop="checkClipboard"
-    title="Debug: Check clipboard"
-  >
-    👁️ Check
-  </button>
-</div>
-
     <!-- Make the scroller focusable + capture keyboard -->
     <div
       class="items-scroll-container"
