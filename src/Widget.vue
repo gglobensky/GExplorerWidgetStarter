@@ -265,6 +265,7 @@ const cfg = computed(() => ({
 
 type ItemsFilter = {
   exts?: string[];   // lowercased, no dots, e.g. ["mp3", "wav"]
+  activeOptions?: string[];
 }
 
 const activeFilter = computed<ItemsFilter | null>(() => {
@@ -360,6 +361,7 @@ watch(
     // Clear selection when filter changes
     selected.value = new Set()
     engine.replaceSelection([], { reason: 'filter-changed' })
+    if (cwd.value) loadDir(cwd.value)
   }
 )
 
@@ -1029,17 +1031,23 @@ async function loadDir(path?: string) {
       ? activeFilter.value.exts 
       : undefined
 
+    const activeOptions = activeFilter.value?.activeOptions?.length
+      ? activeFilter.value.activeOptions
+      : undefined
+
     console.log('[Widget] Calling fsListDirSmart with:', {
       sortBy: sortKey.value,
       sortDir: sortDir.value,
-      filterExts
+      filterExts,
+      activeOptions 
     })
 
     // Call with backend sorting + filtering
     const res = await fsListDirSmart('items', props.sourceId, p, {
-      sortBy: sortKey.value,     // Backend sorts for us!
+      sortBy: sortKey.value,     // Backend sorts for us
       sortDir: sortDir.value,
-      filterExts                 // Backend filters too
+      filterExts,                 // Backend filters too
+      activeOptions              
     })
 
     let list = Array.isArray((res as any).entries) ? (res as any).entries : []
