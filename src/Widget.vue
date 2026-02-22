@@ -1494,6 +1494,36 @@ const offRefresh = onWidgetMessage(props.sourceId, async (msg) => {
     console.debug('[items] Paste triggered from context menu')
     await pasteFromClipboard()
   }
+
+  if (msg.topic === 'items:reloadAndRename') {
+      const path = msg.payload?.path
+      if (!path) return
+      console.debug('[items] reloadAndRename received, path:', path)
+      
+      await loadDir(cwd.value)
+      console.debug('[items] loadDir complete, entries count:', entries.value.length)
+      console.debug('[items] looking for entry:', entries.value.find(e => e.FullPath === path))
+      
+      await nextTick()
+      console.debug('[items] after nextTick, searching DOM for data-rename-id:', path)
+      
+      // Check what's actually in the DOM
+      const allRenameEls = document.querySelectorAll('[data-rename-id]')
+      console.debug('[items] all data-rename-id elements:', 
+          Array.from(allRenameEls).map(el => ({
+              id: el.getAttribute('data-rename-id'),
+              widgetId: el.getAttribute('data-widget-id'),
+          }))
+      )
+      
+      const match = Array.from(allRenameEls).find(el => 
+          el.getAttribute('data-rename-id') === path &&
+          el.getAttribute('data-widget-id') === props.sourceId
+      )
+      console.debug('[items] found matching element:', match)
+      
+      startItemRename(path)
+  }
 })
 
 onBeforeUnmount(() => {
