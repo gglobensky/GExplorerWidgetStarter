@@ -136,21 +136,25 @@ async function pasteFromClipboard() {
   }
 }
 
+// NOTE: also add these two lines to onMounted / onUnmounted if you want
+// to support custom widget-specific contexts in future (not needed yet
+// since the items widget only uses the four built-in contexts):
+//
+// onMounted:   registerContextDetector(props.sourceId, myDetectorFn)
+// onUnmounted: unregisterContextDetector(props.sourceId)
+
 const contextMenuOptions = computed(() => {
-  const selectedPaths = Array.from(selected.value)
-  const hasSelection = selectedPaths.length > 0
-  
-  const opts = {
-    widgetType: 'items',
-    widgetId: props.sourceId,
-    location: { area: 'grid' as const },
-    target: hasSelection ? ('selection' as const) : ('background' as const),
-    vfs: buildVfsInfo(cwd.value || merged.value.rpath || ''),
-    selection: selectedPaths,
-    widgetConfig: props.config
-  }
-  
-  return opts
+    const selectedPaths = Array.from(selected.value)
+    return {
+        widgetType:   'items',
+        widgetId:     props.sourceId,
+        location:     { area: 'grid' as const },
+        target:       selectedPaths.length > 0 ? ('selection' as const) : ('background' as const),
+        vfs:          buildVfsInfo(cwd.value || merged.value.rpath || ''),
+        selection:    selectedPaths,
+        widgetConfig: props.config,
+        entries:      entries.value,
+    }
 })
 
 /* -----------------------------------------------
