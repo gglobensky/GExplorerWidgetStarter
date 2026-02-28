@@ -8,6 +8,7 @@ import { fileRefsToPlaylistItems } from '/src/widgets/dnd/utils'
 import { useKeyboardNav } from './useKeyboardNav'
 import CompactLayout from './CompactLayout.vue'
 import ExpandedLayout from './ExpandedLayout.vue'
+import { onWidgetMessage } from '/src/widgets/instances'
 
 import {
   extractGexPayload,
@@ -34,6 +35,8 @@ const props = defineProps<{
   editMode?: boolean
   sourceId: string
 }>()
+
+const offWidgetMsg = ref<(() => void) | null>(null)
 
 const onMediaError = (e: Event) => {
   const t = e.target as HTMLMediaElement
@@ -495,6 +498,7 @@ function hydrateFromHandle() {
 let resizeObserver: ResizeObserver | null = null
 
 onMounted(async () => {
+  console.log('[local-player] mounted with sourceId:', props.sourceId)
   state.music.addEventListener('play', onMediaPlay)
   state.music.addEventListener('pause', onMediaPause)
   state.music.addEventListener('timeupdate', onTimeUpdate)
@@ -526,7 +530,53 @@ onMounted(async () => {
   hydrateFromHandle()
 
   applyPlaybackRate()
+
 })
+
+
+async function onWidgetAction(msg: any) {
+    console.log('[local-player] handler fired, sourceId:', props.sourceId)
+    if (msg.topic !== 'widget:action') return
+    console.log('[local-player] widget:action received', msg.payload)
+
+    const { actionId, tokens } = msg.payload
+    const path: string = tokens?.path ?? ''
+    console.log('[local-player] path:', path)
+    if (!path) return
+
+    const syntheticRef: FileRefData = {
+        name: path.split(/[\\/]/).pop() ?? path,
+        path,
+        kind: 'file',
+    }
+    console.log('[local-player] syntheticRef:', syntheticRef)
+
+    const authorized = await authorizeFileRefs(
+        'local-player',
+        props.sourceId,
+        { type: 'gex/file-refs', data: [syntheticRef] },
+        { requiredCaps: ['Read'] }
+    )
+    console.log('[local-player] authorized:', authorized)
+    if (!authorized.ok) return
+
+    const tracks = await refsToTracks([syntheticRef], 'local-player', props.sourceId)
+    console.log('[local-player] tracks:', tracks)
+    if (!tracks.length) return
+
+      if (actionId === 'play') {
+          // Replace queue and start from the new track
+          state.queue.value = tracks
+          state.playlists.setItems(state.sel, state.toPlaylistItems(), { keepCurrent: false })
+          await play(0)
+      } else if (actionId === 'enqueue') {
+          await appendTracks(tracks)
+          // If queue was empty, start playing
+          if (state.queue.value.length === tracks.length) {
+              await play(0)
+          }
+      }
+  }
 
 onBeforeUnmount(() => {
   if (rafForWidth) cancelAnimationFrame(rafForWidth)
@@ -543,6 +593,7 @@ onBeforeUnmount(() => {
   state.playlists.unbind(state.sel)
   dnd.sortable?.destroy()
 })
+  defineExpose({ onWidgetAction })
 </script>
 
 <template>

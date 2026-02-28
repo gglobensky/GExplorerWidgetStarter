@@ -8,8 +8,9 @@ import {
   fsValidate,
   shortcutsProbe,
   fsRename,
-  fsMove,
   onFsQueueUpdate,
+  fsCopy, 
+  fsMove
 } from '/src/widgets/fs'
 import { sendWidgetMessage, onWidgetMessage } from '/src/widgets/instances'
 import { loadIconPack, iconFor, ensureIconsFor } from '/src/icons/index.ts'
@@ -17,45 +18,143 @@ import { ensureConsent } from '/src/consent/service'
 import { createSelectionEngine, type ItemsAdapter, type Mods } from '/src/widgets/selection/selection-engine'
 import { createMarqueeDriver, type GeometryAdapter, type ScrollerAdapter, type Rect } from '/src/widgets/selection/marquee-driver';
 import { PickerMode, FileFilter, PickerSurfaceAdapter } from '/src/widgets/pickers/api';
-
-import {
-  createGexPayload,
-  setGexPayload,
-  createDragPreview,
-  hasGexPayload,
-  extractGexPayload,
-  authorizeFileRefs
-} from 'gexplorer/widgets'
+import { 
+    clipboardCopyFiles, 
+    clipboardCutFiles, 
+    clipboardGetFiles 
+} from '/src/widgets/clipboard/index.ts'
 
 import { buildVfsInfo } from '/src/contextmenu/context'
 import { startRename } from '/src/widgets/renameOverlay' 
 import { getItemsLayoutService, type ViewConfig } from './layout-service'
+import ItemsListLayout from './ItemsListLayout.vue'
+import ItemsGridLayout from './ItemsGridLayout.vue'
+import ItemsDetailsLayout from './ItemsDetailsLayout.vue'
+import { useItemsSort, type SortKey, type SortDir } from './useItemsSort'
+import { useItemsDragDrop } from './useItemsDragDrop'
 
-const contextMenuOptions = computed(() => {
-  const selectedPaths = Array.from(selected.value)
-  const hasSelection = selectedPaths.length > 0
-  
-  const opts = {
-    widgetType: 'items',
-    widgetId: props.sourceId,
-    location: { area: 'grid' as const },
-    target: hasSelection ? ('selection' as const) : ('background' as const),
-    vfs: buildVfsInfo(cwd.value || merged.value.rpath || ''),
-    selection: selectedPaths,
-    widgetConfig: props.config
+/* -----------------------------------------------
+   Smart Directory Reload with Debouncing
+------------------------------------------------ */
+let reloadDebounceTimer: number | null = null
+let pauseFileWatcher = false
+
+/**
+ * Debounced directory reload - waits for activity to settle
+ */
+function scheduleReload(path: string, delayMs = 500) {
+  if (pauseFileWatcher) {
+    console.log('[items] fs:changed → PAUSED (batch operation in progress)')
+    return
   }
   
-  // 🐛 DEBUG
-  console.log('[items] contextMenuOptions computed:', {
-    selectedValue: selected.value,
-    selectedSize: selected.value.size,
-    selectedPaths,
-    hasSelection,
-    target: opts.target,
-    selection: opts.selection
-  })
+  if (reloadDebounceTimer) {
+    clearTimeout(reloadDebounceTimer)
+  }
   
-  return opts
+  reloadDebounceTimer = window.setTimeout(() => {
+    console.log('[items] fs:changed → reloading (after quiet period)')
+    loadDir(path)
+    reloadDebounceTimer = null
+  }, delayMs)
+}
+
+/* -----------------------------------------------
+   Clipboard Operations
+------------------------------------------------ */
+function basename(path: string): string {
+  const normalized = path.replace(/[\\/]+$/, '')
+  const idx = Math.max(
+    normalized.lastIndexOf('\\'),
+    normalized.lastIndexOf('/')
+  )
+  return idx < 0 ? normalized : normalized.slice(idx + 1)
+}
+
+/**
+ * Paste files from clipboard to current directory
+ */
+async function pasteFromClipboard() {
+  try {
+    const state = await clipboardGetFiles('items', props.instanceId)
+    
+    if (!state.hasFiles || state.count === 0) {
+      console.log('[Items] No files in clipboard to paste')
+      return
+    }
+    
+    const targetDir = cwd.value
+    if (!targetDir) {
+      console.log('[Items] No target directory')
+      return
+    }
+    
+    console.log('[Items] Pasting from clipboard:', {
+      operation: state.operation,
+      count: state.count,
+      sources: state.paths,
+      targetDir
+    })
+    
+    const items = state.paths.map(sourcePath => {
+      const fileName = basename(sourcePath)
+      const targetPath = joinPath(targetDir, fileName)
+      return { from: sourcePath, to: targetPath }
+    })
+    
+    // 🎯 PAUSE FILE WATCHING
+    pauseFileWatcher = true
+    
+    try {
+      if (state.operation === 'cut') {
+        console.log('[Items] Executing MOVE operation')
+        await fsMove(items, 'items', props.instanceId)
+        console.log('[Items] ✅ Moved', state.count, 'item(s)')
+      } else {
+        console.log('[Items] Executing COPY operation')
+        await fsCopy(items, 'items', props.instanceId)
+        console.log('[Items] ✅ Copied', state.count, 'item(s)')
+      }
+      
+      // 🎯 ONE FINAL RELOAD (not 388 reloads!)
+      await loadDir(targetDir)
+      
+      selected.value = new Set()
+      engine.replaceSelection([], { reason: 'paste:complete' })
+      
+    } catch (err: any) {
+      console.error('[Items] Paste operation failed:', err.message)
+      // Still reload on error to show current state
+      await loadDir(targetDir)
+    } finally {
+      // 🎯 RESUME FILE WATCHING
+      pauseFileWatcher = false
+    }
+    
+  } catch (err: any) {
+    console.error('[Items] Failed to paste:', err.message)
+  }
+}
+
+// NOTE: also add these two lines to onMounted / onUnmounted if you want
+// to support custom widget-specific contexts in future (not needed yet
+// since the items widget only uses the four built-in contexts):
+//
+// onMounted:   registerContextDetector(props.sourceId, myDetectorFn)
+// onUnmounted: unregisterContextDetector(props.sourceId)
+
+const contextMenuOptions = computed(() => {
+    const selectedPaths = Array.from(selected.value)
+    return {
+        widgetType:   'items',
+        widgetId:     props.sourceId,
+        location:     { area: 'grid' as const },
+        target:       selectedPaths.length > 0 ? ('selection' as const) : ('background' as const),
+        vfs:          buildVfsInfo(cwd.value || merged.value.rpath || ''),
+        selection:    selectedPaths,
+        widgetConfig: props.config,
+        entries:      entries.value,
+    }
 })
 
 /* -----------------------------------------------
@@ -86,12 +185,6 @@ const emit = defineEmits<{
   (e: 'event', payload: any): void
 }>()
 
-type SortKey = 'name' | 'kind' | 'ext' | 'size' | 'modified'
-type SortDir = 'asc' | 'desc'
-
-const sortKey = ref<SortKey>((props.config?.view?.sortKey as SortKey) || 'name')
-const sortDir = ref<SortDir>((props.config?.view?.sortDir as SortDir) || 'asc')
-
 const offWidgetMsg = ref<null | (() => void)>(null)
 
 const iconsTick = ref(0)
@@ -120,11 +213,37 @@ let lastScrollTopForDrag = 0;
 const selected = ref<Set<string>>(new Set());   // now driven by engine
 const focusIndex = ref<number | null>(null);
 
+// Refs to Details layout component and its internal elements
+const detailsLayoutRef = ref<any>(null)
 const headerH = ref(36)
 const detailsScrollEl = ref<HTMLElement | null>(null)
 const headerEl = ref<HTMLElement|null>(null)
 const padEl    = ref<HTMLElement|null>(null)
 const sbw = ref(0)
+
+onBeforeUnmount(() => {
+ // Clear any pending reload timer
+  if (reloadDebounceTimer) {
+    clearTimeout(reloadDebounceTimer)
+    reloadDebounceTimer = null
+  }
+
+  try {
+    if (typeof offRefresh === 'function') offRefresh()
+  } catch (e) {
+    console.warn('[items] offRefresh cleanup failed', e)
+  }
+})
+
+// Sync refs from Details component when it mounts/updates
+watch(detailsLayoutRef, (component) => {
+  if (component && merged.value.layout === 'details') {
+    detailsScrollEl.value = component.detailsScrollEl
+    detailsRootEl.value = component.detailsRootEl
+    headerEl.value = component.headerEl
+    padEl.value = component.padEl
+  }
+}, { flush: 'post' })
 
 const selectedMap = computed<Record<string, true>>(() => {
   const m: Record<string, true> = {};
@@ -143,75 +262,6 @@ const error = ref('')
 
 const S = computed(() => sizeTokens(merged.value.itemSize))
 
-const sortedEntries = computed(() => {
-  const k = sortKey.value
-  const dir = sortDir.value === 'asc' ? 1 : -1
-
-  const cmp = (a: string, b: string) =>
-    String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' })
-
-  // Start from raw directory entries
-  let data = entries.value.slice()
-
-  // ---- Apply extension filter (from dialog / other callers) ----
-  const f = activeFilter.value
-  if (f?.exts && f.exts.length) {
-    const allowed = new Set(
-      f.exts
-        .map(e => (e || '').toString().toLowerCase())
-        .filter(e => e && e !== '*')    // treat "*" as "no restriction"
-    )
-
-    if (allowed.size) {
-      data = data.filter((e: any) => {
-        const kindStr = String(e?.Kind || '').toLowerCase()
-        const isDir =
-          kindStr.includes('dir') ||   // "Dir", "Directory"
-          kindStr === 'folder'
-
-        // Never hide folders – matches OS dialogs
-        if (isDir) return true
-
-        const ext = String(e?.Ext || '')
-          .toLowerCase()
-          .replace(/^\./, '')          // ".mp3" -> "mp3"
-
-        if (!ext) return false         // files with no ext are hidden under filtered view
-        return allowed.has(ext)
-      })
-    }
-  }
-
-  // ---- Then sort the filtered set ----
-  data.sort((A, B) => {
-    if (k === 'name')
-      return cmp(A?.Name || '', B?.Name || '') * dir
-
-    if (k === 'ext') {
-      const c = cmp(A?.Ext || '', B?.Ext || '')
-      return (c || cmp(A?.Name || '', B?.Name || '')) * dir
-    }
-
-    if (k === 'size') {
-      const sa = (A?.Size ?? 0), sb = (B?.Size ?? 0)
-      const c = sa === sb ? 0 : (sa < sb ? -1 : 1)
-      return (c || cmp(A?.Name || '', B?.Name || '')) * dir
-    }
-
-    if (k === 'modified') {
-      const ta = A?.ModifiedAt ? +new Date(A.ModifiedAt) : 0
-      const tb = B?.ModifiedAt ? +new Date(B.ModifiedAt) : 0
-      const c = ta === tb ? 0 : (ta < tb ? -1 : 1)
-      return (c || cmp(A?.Name || '', B?.Name || '')) * dir
-    }
-
-    return 0
-  })
-
-  return data
-})
-
-
 const cfg = computed(() => ({
   data: props.config?.data ?? {},
   view: props.config?.view ?? {},
@@ -219,6 +269,7 @@ const cfg = computed(() => ({
 
 type ItemsFilter = {
   exts?: string[];   // lowercased, no dots, e.g. ["mp3", "wav"]
+  activeOptions?: string[];
 }
 
 const activeFilter = computed<ItemsFilter | null>(() => {
@@ -232,6 +283,43 @@ const activeFilter = computed<ItemsFilter | null>(() => {
 
   return null
 })
+
+// Entries ref (must be declared before useItemsSort)
+const entries = ref<Array<{
+  Name: string; FullPath: string; Kind?: string; Ext?: string; Size?: number; ModifiedAt?: number; IconKey?: string
+}>>([])
+
+// ---- Sort State (backend sorting) ----
+const sortKey = ref<SortKey>((props.config?.view?.sortKey as any) || 'name')
+const sortDir = ref<SortDir>((props.config?.view?.sortDir as any) || 'asc')
+
+// When sort changes, reload from backend with new params
+function onHeaderClick(nextKey: SortKey) {
+  console.log('[Widget] onHeaderClick START:', { 
+    nextKey, 
+    currentKey: sortKey.value, 
+    currentDir: sortDir.value 
+  })
+  
+  if (sortKey.value === nextKey) {
+    // Toggle direction
+    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    // New key, default to ascending
+    sortKey.value = nextKey
+    sortDir.value = 'asc'
+  }
+  
+  console.log('[Widget] onHeaderClick AFTER UPDATE:', { 
+    sortKey: sortKey.value, 
+    sortDir: sortDir.value 
+  })
+  
+  // Reload with new sort
+  loadDir(cwd.value)
+}
+
+
 
 
 const autoColumns = computed(() => {
@@ -277,12 +365,9 @@ watch(
     // Clear selection when filter changes
     selected.value = new Set()
     engine.replaceSelection([], { reason: 'filter-changed' })
+    if (cwd.value) loadDir(cwd.value)
   }
 )
-
-const entries = ref<Array<{
-  Name: string; FullPath: string; Kind?: string; Ext?: string; Size?: number; ModifiedAt?: number; IconKey?: string
-}>>([])
 
 function emitSelectionChanged() {
   // Build a lookup from FullPath → entry
@@ -328,37 +413,43 @@ const isResizing = ref(false)
 const geo: GeometryAdapter = {
   // Viewport rect in scroller-viewport space
   contentRect() {
-    const sc = detailsScrollEl.value!;
-    return { x: 0, y: 0, w: sc.clientWidth, h: sc.clientHeight };
+    const layout = merged.value.layout
+    const sc = layout === 'details' ? detailsScrollEl.value! : scrollEl.value!
+    return { x: 0, y: 0, w: sc.clientWidth, h: sc.clientHeight }
   },
 
   // Item rects in the same scroller-viewport space
   itemRects() {
-    const sc = detailsScrollEl.value!;
-    const scR = sc.getBoundingClientRect();
-    const root = padEl.value ?? sc;
-    const rows = root.querySelectorAll<HTMLElement>('.row[data-path]');
-    const arr: Array<{ id: string; rect: Rect }> = [];
+    const layout = merged.value.layout
+    const sc = layout === 'details' ? detailsScrollEl.value! : scrollEl.value!
+    const scR = sc.getBoundingClientRect()
+    const root = layout === 'details' ? (padEl.value ?? sc) : sc
+    const rows = root.querySelectorAll<HTMLElement>('.row[data-path]')
+    const arr: Array<{ id: string; rect: Rect }> = []
+    
     rows.forEach(row => {
-      const rr = row.getBoundingClientRect();
+      const rr = row.getBoundingClientRect()
       arr.push({
         id: row.dataset.path!,
         rect: {
           x: rr.left - scR.left,
-          y: rr.top  - scR.top,
+          y: rr.top - scR.top,
           w: rr.width,
           h: rr.height,
         },
-      });
-    });
-    return arr;
+      })
+    })
+    return arr
   },
 
   // Pointer in the same scroller-viewport space
   pointFromClient(clientX, clientY) {
-    const sc = detailsScrollEl.value!;
-    const scR = sc.getBoundingClientRect();
-    return { x: clientX - scR.left, y: clientY - scR.top };
+    const layout = merged.value.layout
+    const sc = layout === 'details' ? detailsScrollEl.value! : scrollEl.value!
+    const scR = sc.getBoundingClientRect()
+    
+    // Work in container space - no padding adjustments needed
+    return { x: clientX - scR.left, y: clientY - scR.top }
   },
 };
 
@@ -423,10 +514,26 @@ const driver = createMarqueeDriver(
   {
     rectChanged: (r) => {
       if (r) {
-        const st = detailsScrollEl.value?.scrollTop ?? 0; // current scrollTop of .details-scroll
-        marqueeRect.value = { x: r.x, y: r.y + st, w: r.w, h: r.h };
-        squelchNextPlaneClick = (r.w > 0 || r.h > 0);
+        const layout = merged.value.layout
+        const st = (layout === 'details' ? detailsScrollEl.value : scrollEl.value)?.scrollTop ?? 0
+        
+        // No padding offset needed - working in container space
+        marqueeRect.value = { 
+          x: r.x, 
+          y: r.y + st, 
+          w: r.w, 
+          h: r.h 
+        }
+        const hasSize = (r.w > 0 || r.h > 0)
+        squelchNextPlaneClick = hasSize
+        console.log('[Widget] rectChanged - marquee active:', {
+          layout,
+          rect: r,
+          hasSize,
+          squelchFlag: squelchNextPlaneClick
+        })
       } else {
+        console.log('[Widget] rectChanged - marquee ended, squelch flag:', squelchNextPlaneClick)
         marqueeRect.value = null;
       }
     },
@@ -558,7 +665,7 @@ function measureScrollbarWidth() {
 }
 
 function selectOnly(idx: number) {
-  const path = sortedEntries.value[idx]?.FullPath
+  const path = entries.value[idx]?.FullPath
   if (!path) return
   selected.value = new Set([path])
   focusIndex.value = idx
@@ -606,7 +713,7 @@ function scrollRowIntoView(idx: number) {
 }
 
 function onKeyDown(ev: KeyboardEvent) {
-  if (!sortedEntries.value.length) return
+  if (!entries.value.length) return
   
   // F2 = Rename selected item
   if (ev.key === 'F2') {
@@ -646,20 +753,75 @@ function isOnScrollbar(el: HTMLElement, ev: PointerEvent) {
   return ev.clientX >= (r.right - sb - 1);
 }
 
-function onSurfacePointerDown(ev: PointerEvent) {
-  if (merged.value.layout !== 'details' || ev.button !== 0) return;
-  const t = ev.target as HTMLElement | null;
-  const plane = detailsScrollEl.value!;
-  if (t?.closest('.row[data-path], [draggable="true"]')) return;
-  if (isOnScrollbar(plane, ev)) return;
+function onScrollContainerPointerDown(ev: PointerEvent) {
+  if (ev.button !== 0) return
 
-  (ev.currentTarget as Element)?.setPointerCapture?.(ev.pointerId);
+  const layout = merged.value.layout
+  
+  // For List/Grid, handle marquee on scroll container
+  if (layout === 'list' || layout === 'grid') {
+    onSurfacePointerDown(ev)
+  } else {
+    // For Details/other, just handle focus
+    ;(ev.currentTarget as HTMLElement)?.focus?.({ preventScroll: true })
+  }
+}
+
+function onSurfacePointerDown(ev: PointerEvent) {
+  if (ev.button !== 0) return
+
+  const layout = merged.value.layout
+  
+  console.log('[Widget] onSurfacePointerDown:', {
+    layout,
+    target: (ev.target as HTMLElement)?.tagName,
+    currentTarget: (ev.currentTarget as HTMLElement)?.className
+  })
+  
+  // Check if event is from Details internal scroll (via emit) or from outer container (List/Grid)
+  const fromDetailsInternal = layout === 'details' && detailsScrollEl.value && ev.currentTarget === detailsScrollEl.value
+  const fromOuterContainer = (layout === 'list' || layout === 'grid') && ev.currentTarget === scrollEl.value
+  
+  // Only handle if from appropriate source
+  if (!fromDetailsInternal && !fromOuterContainer) {
+    console.log('[Widget] onSurfacePointerDown - ignoring (wrong source)')
+    return
+  }
+  if (ev.button !== 0) {
+    console.log('[Widget] onSurfacePointerDown - ignoring (not left button)')
+    return
+  }
+  
+  const t = ev.target as HTMLElement | null
+  const plane = layout === 'details' ? detailsScrollEl.value! : scrollEl.value!
+  
+  const isRow = !!t?.closest('.row[data-path], [draggable="true"]')
+  const onScrollbar = isOnScrollbar(plane, ev)
+  
+  console.log('[Widget] onSurfacePointerDown - checks:', {
+    isRow,
+    onScrollbar,
+    willStart: !isRow && !onScrollbar
+  })
+  
+  if (isRow) {
+    console.log('[Widget] onSurfacePointerDown - ignoring (row or draggable)')
+    return
+  }
+  if (onScrollbar) {
+    console.log('[Widget] onSurfacePointerDown - ignoring (scrollbar)')
+    return
+  }
+
+  console.log('[Widget] onSurfacePointerDown - starting marquee')
+  
+  ;(ev.currentTarget as Element)?.setPointerCapture?.(ev.pointerId);
 
   // Ensure the widget owns focus on any left click in the canvas
   scrollEl.value?.focus({ preventScroll: true })
 
   lastClientX = ev.clientX; lastClientY = ev.clientY;
-  lastScrollTopForDrag = detailsScrollEl.value!.scrollTop;  // add this
+  lastScrollTopForDrag = plane.scrollTop
   driver.pointerDown(ev, modsFromEvent(ev));
 
   window.addEventListener('pointerup', onSurfacePointerUp, { once: true });
@@ -682,40 +844,81 @@ function isOverSelectedRowAtPoint(cx: number, cy: number) {
 }
 
 function onPlaneScroll() {
-  if (!marqueeActive.value) return;
-  const sc = detailsScrollEl.value!;
-  const dy = sc.scrollTop - lastScrollTopForDrag;
+  if (!marqueeActive.value) return
+  
+  const layout = merged.value.layout
+  const sc = layout === 'details' ? detailsScrollEl.value! : scrollEl.value!
+  
+  const dy = sc.scrollTop - lastScrollTopForDrag
   if (dy) {
-    driver.adjustForScroll(dy);                 // existing
-    lastScrollTopForDrag = sc.scrollTop;
+    driver.adjustForScroll(dy)
+    lastScrollTopForDrag = sc.scrollTop
   }
 }
 
 function onSurfacePointerMove(ev: PointerEvent) {
+  const layout = merged.value.layout
+  
+  // In details mode, only handle from details-scroll (via emit), not outer container
+  if (layout === 'details' && ev.currentTarget === scrollEl.value) {
+    return
+  }
+  
   lastClientX = ev.clientX; lastClientY = ev.clientY;   // keep coords
   driver.pointerMove(ev);
 }
 
 function onSurfacePointerUp(ev: PointerEvent) {
-  const wasMarquee = marqueeActive.value; // snapshot before driver clears it
+  if (ev.button !== 0) return
+
+  const layout = merged.value.layout
+  
+  // In details mode, only handle from details-scroll (via emit), not outer container
+  if (layout === 'details' && ev.currentTarget === scrollEl.value) {
+    console.log('[Widget] onSurfacePointerUp - ignoring (details mode, outer container)')
+    return
+  }
+  
+  const wasMarquee = marqueeActive.value
+
+  console.log('[Widget] onSurfacePointerUp (before driver):', {
+    layout: merged.value.layout,
+    wasMarquee,
+    squelchFlag: squelchNextPlaneClick,
+    marqueeRect: marqueeRect.value,
+    currentTarget: ev.currentTarget
+  })
 
   if (wasMarquee) {
-    const sc = detailsScrollEl.value!;
-    const dy = sc.scrollTop - lastScrollTopForDrag;
+    const sc = layout === 'details' ? detailsScrollEl.value! : scrollEl.value!
+    
+    const dy = sc.scrollTop - lastScrollTopForDrag
     if (dy) {
-      driver.adjustForScroll(dy);
-      lastScrollTopForDrag = sc.scrollTop;
-      driver.recomputeNow('plane:flush-before-up'); // optional
+      driver.adjustForScroll(dy)
+      lastScrollTopForDrag = sc.scrollTop
+      driver.recomputeNow('plane:flush-before-up')
     }
   }
 
   driver.pointerUp(ev);
   window.removeEventListener('pointerup', onSurfacePointerUp);
 
+  console.log('[Widget] onSurfacePointerUp (after driver):', {
+    layout: merged.value.layout,
+    wasMarquee,
+    squelchFlag: squelchNextPlaneClick,
+    marqueeStillActive: marqueeActive.value
+  })
+
   // Only treat as a "click" if no marquee was shown
   if (!wasMarquee) {
     const inside = isInsideScrollRect(ev.clientX, ev.clientY);
     const overSelected = isOverSelectedRowAtPoint(ev.clientX, ev.clientY);
+    console.log('[Widget] onSurfacePointerUp - no marquee, checking for deselect:', {
+      inside,
+      overSelected,
+      willDeselect: inside && !overSelected
+    })
     if (inside && !overSelected) {
       engine.replaceSelection([], { reason: 'plane:click-up-outside' });
     }
@@ -724,18 +927,53 @@ function onSurfacePointerUp(ev: PointerEvent) {
 
 async function applyExternalCwd(path: string, opts?: { mode?: 'push' | 'replace'; focus?: boolean }) {
   if (!path) return
-  
-  // Apply and load
+
+  engine.replaceSelection([], { reason: 'nav:external-cwd' })
+  focusIndex.value = null
+  anchorIndex.value = null
+
   cwd.value = path
   await loadDir(path)
 }
 
 
+
 function onSurfaceClick(ev: MouseEvent) {
-  if (squelchNextPlaneClick) return;
-  const t = ev.target as HTMLElement | null;
-  if (!t?.closest('.row[data-path]')) {
-    engine.replaceSelection([], { reason: 'plane:clear' });
+  if (ev.button !== 0) return
+  
+  const layout = merged.value.layout
+  
+  // In details mode, only handle clicks from the details-scroll element (via emit)
+  // Ignore clicks from the outer scroll container
+  if (layout === 'details' && ev.currentTarget === scrollEl.value) {
+    console.log('[Widget] onSurfaceClick - ignoring (details mode, outer container)')
+    return
+  }
+  
+  console.log('[Widget] onSurfaceClick:', {
+    layout: merged.value.layout,
+    squelchFlag: squelchNextPlaneClick,
+    willSquelch: squelchNextPlaneClick,
+    target: (ev.target as HTMLElement)?.tagName,
+    currentTarget: ev.currentTarget
+  })
+  
+  if (squelchNextPlaneClick) {
+    console.log('[Widget] onSurfaceClick - SQUELCHED')
+    squelchNextPlaneClick = false // Clear flag after squelching
+    return
+  }
+  
+  const t = ev.target as HTMLElement | null
+  const isRow = !!t?.closest('.row[data-path]')
+  console.log('[Widget] onSurfaceClick - checking target:', {
+    isRow,
+    willDeselect: !isRow
+  })
+  
+  if (!isRow) {
+    console.log('[Widget] onSurfaceClick - deselecting')
+    engine.replaceSelection([], { reason: 'plane:clear' })
   }
 }
 
@@ -781,25 +1019,50 @@ async function loadDir(path?: string) {
     entries.value = []
     return
   }
+  
+  console.log('[Widget] loadDir START:', { 
+    path: p, 
+    sortKey: sortKey.value, 
+    sortDir: sortDir.value 
+  })
+  
   loading.value = true
   error.value = ''
 
   try {
-    // Centralized lazy-consent logic lives in fsListDirSmart now
-    const res = await fsListDirSmart('items', props.sourceId, p)
+    // Get current filter
+    const filterExts = activeFilter.value?.exts?.length 
+      ? activeFilter.value.exts 
+      : undefined
+
+    const activeOptions = activeFilter.value?.activeOptions?.length
+      ? activeFilter.value.activeOptions
+      : undefined
+
+    console.log('[Widget] Calling fsListDirSmart with:', {
+      sortBy: sortKey.value,
+      sortDir: sortDir.value,
+      filterExts,
+      activeOptions 
+    })
+
+    // Call with backend sorting + filtering
+    const res = await fsListDirSmart('items', props.sourceId, p, {
+      sortBy: sortKey.value,     // Backend sorts for us
+      sortDir: sortDir.value,
+      filterExts,                 // Backend filters too
+      activeOptions              
+    })
 
     let list = Array.isArray((res as any).entries) ? (res as any).entries : []
+    
+    // Optional: Hide hidden files (if not done on backend)
     if (!merged.value.showHidden) {
       list = list.filter((e: any) => !String(e?.Name || '').startsWith('.'))
     }
 
-    entries.value = list.sort((a: any, b: any) =>
-      String(a?.Name ?? '').localeCompare(
-        String(b?.Name ?? ''),
-        undefined,
-        { numeric: true, sensitivity: 'base' },
-      )
-    )
+    // No need to sort - already sorted by backend!
+    entries.value = list
 
     const lnks = entries.value
       .filter(e =>
@@ -923,13 +1186,18 @@ watch(
   () => merged.value.rpath,
   async (rp) => {
     if (!rp) return
-    // initialize cwd + load entries
+
+    // clear stale selection when navigating
+    engine.replaceSelection([], { reason: 'nav:rpath-changed' })
+    focusIndex.value = null
+    anchorIndex.value = null
+
     cwd.value = rp
     await loadDir(rp)
-    // (cwd watcher already emits 'cwd-changed' to host)
   },
   { immediate: true }
 )
+
 
 // Helper: current header cell widths (px)
 function measureHeaderColsPx() {
@@ -1041,18 +1309,33 @@ function modLabel(e: any) {
   return `${p.date} ${p.time}`
 }
 
-function onHeaderClick(nextKey: SortKey) {
-  if (sortKey.value === nextKey) sortDir.value = (sortDir.value === 'asc' ? 'desc' : 'asc')
-  else { sortKey.value = nextKey; sortDir.value = 'asc' }
-}
-
 const hostVars = computed(() => ({
   '--items-border':     props.theme?.border    || 'var(--border, #555)',
   '--items-fg':         props.theme?.fg        || 'var(--fg, #eee)',
   '--items-bg':         props.theme?.bg        || 'var(--surface-2, transparent)',
   '--items-header-sep': props.theme?.headerSep || 'rgba(255,255,255,.22)',
 }) as Record<string, string>)
-
+/* -----------------------------------------------
+   Drag & drop composable
+------------------------------------------------ */
+const {
+  isDragging,
+  isDropActive,
+  onItemDragStart,
+  onItemDragEnd,
+  onRootDragOver,
+  onRootDragLeave,
+  onRootDrop
+} = useItemsDragDrop({
+  sourceId: props.sourceId,
+  entries,
+  selected,
+  cwd,
+  merged,
+  marqueeActive,
+  loadDir,
+  emit
+})
 /* -----------------------------------------------
    Drag & drop (unchanged; suppress when marqueeing)
 ------------------------------------------------ */
@@ -1061,239 +1344,6 @@ function normalizeDir(p: string | null | undefined): string {
   if (!p) return ''
   // Normalize to backslashes and trim trailing separators, then lowercase
   return p.replace(/[\\/]+/g, '\\').replace(/[\\]+$/, '').toLowerCase()
-}
-
-const isDragging = ref(false)
-const isDropActive = ref(false)
-
-function onItemDragStart(e: any, event: DragEvent) {
-  if (!event.dataTransfer) return;
-  if (marqueeActive.value) { event.preventDefault(); return; } // ← suppress when marqueeing
-
-  isDragging.value = true;
-
-  try {
-    const paths = (selected.value.size > 0 ? [...selected.value] : [e.FullPath]);
-
-    const payload = createGexPayload(
-      'gex/file-refs',
-      paths.map(p => ({
-        path: p,
-        name: entries.value.find(x => x.FullPath === p)?.Name ?? '',
-        size: entries.value.find(x => x.FullPath === p)?.Size ?? 0,
-        mimeType: guessMimeType(p),
-        isDirectory: entries.value.find(x => x.FullPath === p)?.Kind === 'dir',
-      })),
-      { widgetType: 'items', widgetId: props.sourceId }
-    );
-
-    setGexPayload(event.dataTransfer, payload);
-
-    event.dataTransfer.effectAllowed = 'copyMove';
-
-    const preview = createDragPreview({
-      label: (selected.value.size > 1 ? `${paths.length} items` : e.Name),
-      icon: e.Kind === 'dir' ? '📁' : '📄',
-      count: paths.length
-    });
-    event.dataTransfer.setDragImage(preview, 0, 0);
-    setTimeout(() => preview.remove(), 0);
-  } catch (err) {
-    console.error('[Items] drag failed:', err);
-  }
-}
-
-
-function onItemDragEnd() {
-  isDragging.value = false;
-}
-
-/**
- * Root drag-over handler: detect our DnD payload and highlight the pane.
- * We only react to gexplorer payloads and ignore our own widget as source.
- */
-function onRootDragOver(ev: DragEvent) {
-  const dt = ev.dataTransfer
-  if (!dt) return
-
-  const has = hasGexPayload(dt)
-
-  // Optional debug:
-  // console.log('[Items] dragover', { types: Array.from(dt.types || []), has })
-
-  if (!has) return
-
-  ev.preventDefault()
-  dt.dropEffect = 'move'
-  isDropActive.value = true
-}
-
-function onRootDragLeave(ev: DragEvent) {
-  const current = ev.currentTarget as HTMLElement | null;
-  const related = ev.relatedTarget as HTMLElement | null;
-
-  if (current && related && current.contains(related)) return;
-
-  isDropActive.value = false;
-}
-
-async function onRootDrop(ev: DragEvent) {
-  const payload = extractGexPayload(ev)
-  isDropActive.value = false
-
-  if (!payload || payload.type !== 'gex/file-refs') return
-
-  const srcId = (payload as any).source?.widgetId
-  if (srcId === props.sourceId) {
-    // Dropping back onto the same pane → ignore
-    return
-  }
-
-  ev.preventDefault()
-  ev.stopPropagation()
-
-  try {
-    // 1) Run the DnD auth layer (same as before)
-    const auth = await authorizeFileRefs('items', props.sourceId, payload)
-    if (!auth?.ok) {
-      console.warn('[Items] Drop not authorized:', auth?.reason)
-      return
-    }
-
-    const refs = payload.data || []
-    if (!refs.length) return
-
-    const target = cwd.value || merged.value.rpath || ''
-    if (!target) {
-      console.warn('[Items] Drop ignored: no cwd')
-      return
-    }
-
-    const destNorm = normalizeDir(target)
-    const sources: string[] = []
-
-    for (const r of refs as any[]) {
-      const p = String(r?.path ?? '')
-      if (!p) continue
-      // simple dirname
-      const m = p.match(/^(.*[\\/])[^\\/]+$/)
-      const parentNorm = normalizeDir(m ? m[1] : '')
-      if (parentNorm === destNorm) {
-        // already in this folder → no-op
-        continue
-      }
-      sources.push(p)
-    }
-
-    if (!sources.length) {
-      console.debug('[Items] drop: all refs already in target; nothing to copy')
-      return
-    }
-
-    // 2) Kick off the fs.copy job via the fs API
-    //    This will:
-    //      - ensure widget hash
-    //      - ensure consent (ticketFor -> ensureConsent)
-    //      - enqueue a queued fs.copy job
-    const items = sources.map(from => ({ from, to: target }))
-
-    // Optional: listen to global queue updates for this job
-    const jobPromise = fsMove(items, 'items', props.sourceId)
-
-    // If you want per-widget events:
-    const off = onFsQueueUpdate(job => {
-      // Narrow to our job if you want; here we just echo all updates.
-      if (job.op.kind === 'fs.move') {
-        emit('event', {
-          type: 'fs-job:update',
-          payload: {
-            jobId: job.id,
-            state: job.state,
-            progress: job.progress,
-            error: job.error,
-          },
-        })
-
-        if (
-          job.state === 'succeeded' ||
-          job.state === 'failed' ||
-          job.state === 'cancelled'
-        ) {
-          off()
-          emit('event', {
-            type: 'fs-job:finished',
-            payload: {
-              jobId: job.id,
-              state: job.state,
-              error: job.error,
-            },
-          })
-        }
-      }
-    })
-
-    // Also emit a started event immediately if you like
-    emit('event', {
-      type: 'fs-job:started',
-      payload: {
-        kind: 'fs.move',   // 🔁 was 'fs.copy'
-        target,
-        items,
-      },
-    })
-
-    jobPromise
-    .then(async job => {
-      console.log('[Items] fsMove done:', {
-        state: job.state,
-        error: job.error,
-        op: job.op,
-      })
-
-      if (job.state === 'succeeded') {
-        // 🔄 1) Refresh *this* pane’s cwd
-        const path = cwd.value || merged.value.rpath || ''
-        if (path) {
-          await loadDir(path)
-        }
-        console.log('srcId:', srcId)
-        // 🔔 2) Ask the *source* widget to refresh itself too
-        //      (srcId is captured from outer scope)
-        if (srcId && srcId !== props.sourceId) {
-        console.log('trying')
-          sendWidgetMessage({
-            from: props.sourceId,
-            to: srcId,
-            topic: 'fs:refresh-after-drop',
-            payload: {
-              kind: 'fs.move',
-              target: path,                 // dest folder after drop
-            },
-          })
-        }
-      }
-    })
-    .catch(err => {
-      console.error('[Items] fsMove crashed:', err)
-    })
-
-
-  } catch (err) {
-    console.error('[Items] drop failed:', err)
-  }
-}
-
-
-function guessMimeType(filename: string): string {
-  const ext = filename.toLowerCase().split('.').pop() || ''
-  const map: Record<string, string> = {
-    mp3: 'audio/mpeg', ogg: 'audio/ogg', oga: 'audio/ogg', wav: 'audio/wav',
-    flac: 'audio/flac', m4a: 'audio/mp4', aac: 'audio/aac', webm: 'audio/webm', opus: 'audio/opus',
-    mp4: 'video/mp4', mkv: 'video/x-matroska',
-    jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp',
-    txt: 'text/plain', json: 'application/json', pdf: 'application/pdf'
-  }
-  return map[ext] || 'application/octet-stream'
 }
 
 /**
@@ -1364,6 +1414,22 @@ async function handleRenameCommit(oldPath: string, newName: string): Promise<voi
   }
 }
 
+function onWidgetAction(msg: any) {
+    if (msg.topic !== 'widget:action') return
+
+    if (msg.payload.actionId === 'navigate') {
+        const folder = msg.payload.tokens?.path ?? msg.payload.args?.path
+        if (folder) applyExternalCwd(folder)
+    }
+    if (msg.payload.actionId === 'reveal') {
+        const file = msg.payload.tokens?.path ?? msg.payload.args?.path
+        if (file) {
+            const dir = file.replace(/[/\\][^/\\]+$/, '')
+            applyExternalCwd(dir)
+            // TODO: highlight the file once navigation settles
+        }
+    }
+}
 /**
  * Start rename mode for a specific item.
  */
@@ -1371,6 +1437,7 @@ function startItemRename(itemPath: string): void {
   console.log('[items] startItemRename called with:', itemPath)
   
   startRename(itemPath, {
+    widgetId: props.sourceId,  // 👈 ADD THIS LINE
     selectBasename: true,
     onCommit: async (newName: string) => {
       console.log('[items] Rename commit:', { oldPath: itemPath, newName })
@@ -1411,10 +1478,11 @@ onMounted(async () => {
       console.log('[items] fs:changed candidate', {
         rootNorm: normalizeDir(root),
         currentNorm: normalizeDir(current),
+        paused: pauseFileWatcher
       })
       if (root && normalizeDir(root) === normalizeDir(current)) {
-        console.log('[items] fs:changed → reloading', current)
-        loadDir(current)
+        // Use debounced reload instead of immediate
+        scheduleReload(current)
       }
     }
   })
@@ -1425,7 +1493,7 @@ onMounted(async () => {
   })
 })
 
-// Listen for refresh and rename messages from context menu
+// Listen for refresh, rename and paste messages from context menu
 const offRefresh = onWidgetMessage(props.sourceId, async (msg) => {
   if (msg.topic === 'items:refresh') {
     console.debug('[items] Refreshing from context menu, current cwd:', cwd.value)
@@ -1439,6 +1507,42 @@ const offRefresh = onWidgetMessage(props.sourceId, async (msg) => {
       console.debug('[items] Starting rename for:', path)
       startItemRename(path)
     }
+  }
+
+  // Handle paste requests from context menu
+  if (msg.topic === 'items:paste') {
+    console.debug('[items] Paste triggered from context menu')
+    await pasteFromClipboard()
+  }
+
+  if (msg.topic === 'items:reloadAndRename') {
+      const path = msg.payload?.path
+      if (!path) return
+      console.debug('[items] reloadAndRename received, path:', path)
+      
+      await loadDir(cwd.value)
+      console.debug('[items] loadDir complete, entries count:', entries.value.length)
+      console.debug('[items] looking for entry:', entries.value.find(e => e.FullPath === path))
+      
+      await nextTick()
+      console.debug('[items] after nextTick, searching DOM for data-rename-id:', path)
+      
+      // Check what's actually in the DOM
+      const allRenameEls = document.querySelectorAll('[data-rename-id]')
+      console.debug('[items] all data-rename-id elements:', 
+          Array.from(allRenameEls).map(el => ({
+              id: el.getAttribute('data-rename-id'),
+              widgetId: el.getAttribute('data-widget-id'),
+          }))
+      )
+      
+      const match = Array.from(allRenameEls).find(el => 
+          el.getAttribute('data-rename-id') === path &&
+          el.getAttribute('data-widget-id') === props.sourceId
+      )
+      console.debug('[items] found matching element:', match)
+      
+      startItemRename(path)
   }
 })
 
@@ -1461,7 +1565,7 @@ onBeforeUnmount(() => {
 
 function getNavState() { return { canGoBack: false, canGoForward: false, cwd: cwd.value } }
 
-defineExpose({ applyExternalCwd, getNavState })
+defineExpose({ applyExternalCwd, getNavState, onWidgetAction  })
 </script>
 
 <template>
@@ -1478,35 +1582,7 @@ defineExpose({ applyExternalCwd, getNavState })
     @dragleave="onRootDragLeave"
     @drop="onRootDrop"
   >
-    <!-- Edit mode toolbar -->
-    <div
-      v-if="editMode"
-      class="edit-toolbar"
-      @pointerdown.stop
-    >
-    <!-- Validate if deprecated -->
-      <div class="edit-group">
-        <span class="edit-label">Layout:</span>
-        <button class="edit-btn" @click.stop="cycleLayout" :title="`Current: ${merged.layout}`">
-          {{ merged.layout === 'list' ? '☰' : merged.layout === 'grid' ? '▦' : '▤' }}
-        </button>
-      </div>
-
-      <div v-if="merged.layout === 'grid'" class="edit-group">
-        <span class="edit-label">Columns:</span>
-        <button class="edit-btn" @click.stop="updateColumns(-1)" :disabled="merged.columns <= 1">−</button>
-        <span class="edit-value">{{ merged.columns }}</span>
-        <button class="edit-btn" @click.stop="updateColumns(1)" :disabled="merged.columns >= 8">+</button>
-      </div>
-
-      <div class="edit-group">
-        <span class="edit-label">Size:</span>
-        <button class="edit-btn" @click.stop="cycleItemSize" :title="`Current: ${merged.itemSize}`">
-          {{ merged.itemSize.toUpperCase() }}
-        </button>
-      </div>
-    </div>
-
+  
     <!-- Make the scroller focusable + capture keyboard -->
     <div
       class="items-scroll-container"
@@ -1514,196 +1590,135 @@ defineExpose({ applyExternalCwd, getNavState })
       ref="scrollEl"
       tabindex="0"
       @keydown="onKeyDown"
-      @pointerdown.self="() => { scrollEl?.value?.focus?.({ preventScroll: true }); }"
+      @pointerdown="onScrollContainerPointerDown"
+      @pointermove="onSurfacePointerMove"
+      @pointerup="onSurfacePointerUp"
+      @click.capture="onSurfaceClick"
+      @scroll.passive="onPlaneScroll"
     >
+      <!-- Marquee overlay for List/Grid (Details renders its own internally) -->
+      <div
+        v-if="(merged.layout === 'list' || merged.layout === 'grid') && marqueeRect && (marqueeRect.w > 0 || marqueeRect.h > 0)"
+        class="marquee"
+        :style="{
+          left: marqueeRect.x + 'px',
+          top: marqueeRect.y + 'px',
+          width: marqueeRect.w + 'px',
+          height: marqueeRect.h + 'px'
+        }"
+      />
+
       <div v-if="loading" class="msg">Loading…</div>
       <div v-else-if="error" class="err">{{ error }}</div>
       <div v-else-if="!merged.rpath" class="msg">(no path)</div>
 
       <!-- DETAILS VIEW -->
-
-      <div
+      <ItemsDetailsLayout
         v-else-if="merged.layout === 'details'"
-        class="details-root"
-        :data-icons="iconsTick"
-        :style="{ '--cols': detailsCols, '--hdrH': headerH + 'px' }"
-        ref="detailsRootEl"
-      >
-        <!-- Header OUTSIDE the scroll container -->
-        <div class="details-header" ref="headerEl">
-          <div class="details-header-inner">
-            <button class="th th-name" @click="onHeaderClickFiltered('name', $event)">
-              <span class="th-label">Name</span>
-              <span v-if="sortKey==='name'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
-              <span class="resize-handle"
-                    @pointerdown.stop.prevent="startResize('name', $event)" />
-            </button>
-
-            <button class="th th-ext" @click="onHeaderClickFiltered('ext', $event)">
-              <span class="th-label">Ext</span>
-              <span v-if="sortKey==='ext'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
-              <span class="resize-handle"
-                    @pointerdown.stop.prevent="startResize('ext', $event)" />
-            </button>
-
-            <button class="th th-size" @click="onHeaderClickFiltered('size', $event)">
-              <span class="th-label">Size</span>
-              <span v-if="sortKey==='size'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
-              <span class="resize-handle"
-                    @pointerdown.stop.prevent="startResize('size', $event)" />
-            </button>
-
-            <button class="th th-mod" @click="onHeaderClickFiltered('modified', $event)">
-              <span class="th-label">Modified</span>
-              <span v-if="sortKey==='modified'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- Rows scroller (the interactive plane) -->
-        <div
-          class="details-scroll"
-          ref="detailsScrollEl"
-          tabindex="0"
-          @pointerdown="onSurfacePointerDown"
-          @pointermove="onSurfacePointerMove"
-          @pointerup="onSurfacePointerUp"
-          @click.capture="onSurfaceClick"
-          @scroll.passive="onPlaneScroll"
-        >
-          <!-- gutters live inside here to match header inner -->
-          <div class="details-pad" ref="padEl">
-            <div class="details-grid">
-              <button
-                class="row"
-                :key="e.FullPath"
-                :data-path="e.FullPath"
-                v-for="(e, i) in sortedEntries"
-                :class="{ selected: selected.has(e.FullPath) }"
-                draggable="true"
-                @pointerdown.stop="(ev) => engine.rowDownId(e.FullPath, modsFromEvent(ev))"
-                @pointermove.stop="(ev) => engine.rowMove?.(ev.clientX, ev.clientY)"
-                @click.stop.prevent="() => engine.rowUpId(e.FullPath)"
-                @dblclick.stop.prevent="() => { openEntry(e.FullPath) }"
-                @dragstart="(ev) => { engine.dragStart(); onItemDragStart(e, ev as DragEvent) }"
-                @dragend="() => { onItemDragEnd(); engine.dragEnd() }"
-              >
-                <div class="td td-name" :title="e.Name || e.FullPath">
-                  <span class="icon">
-                    <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
-                    <span v-else>{{ iconText(e) }}</span>
-                  </span>
-                  <span 
-                    class="name"
-                    :data-rename-id="e.FullPath"
-                    :data-rename-value="e.Name"
-                  >
-                    {{ e.Name || e.FullPath }}
-                  </span>
-                </div>
-
-                <div class="td td-ext" :title="e.Ext || ''">{{ e.Ext || '' }}</div>
-
-                <div class="td td-size" :title="sizeLabel(e)">
-                  <span class="num">{{ sizeParts(e?.Size).num }}</span>
-                  <span class="unit">{{ sizeParts(e?.Size).unit }}</span>
-                </div>
-
-                <div class="td td-mod" :title="modLabel(e)">
-                  <span class="date">{{ modLabel(e).split(' ')[0] }}</span>
-                  <span class="time">{{ modParts(e?.ModifiedAt).time }}</span>
-                </div>
-              </button>
-            </div>
-            
-          </div>
-          
-          <div
-            v-if="marqueeRect"
-            class="marquee"
-            :style="{
-              left:  marqueeRect.x + 'px',
-              top:   marqueeRect.y + 'px',
-              width: marqueeRect.w + 'px',
-              height: marqueeRect.h + 'px'
-            }"
-          />
-        </div>
-        
-      </div>
+        ref="detailsLayoutRef"
+        :entries="entries"
+        :selected="selected"
+        :icons-tick="iconsTick"
+        :source-id="props.sourceId"
+        :sort-key="sortKey"
+        :sort-dir="sortDir"
+        :initial-weights="colW"
+        :marquee-rect="marqueeRect"
+        @row-down="({ id, mods }) => engine.rowDownId(id, mods)"
+        @row-move="({ x, y }) => engine.rowMove?.(x, y)"
+        @row-up="({ id }) => engine.rowUpId(id)"
+        @dblclick="({ id }) => openEntry(id)"
+        @dragstart="({ entry, event }) => { engine.dragStart(); onItemDragStart(entry, event) }"
+        @dragend="() => { onItemDragEnd(); engine.dragEnd() }"
+        @header-click="(key) => onHeaderClick(key)"
+        @surface-pointer-down="onSurfacePointerDown"
+        @surface-pointer-move="onSurfacePointerMove"
+        @surface-pointer-up="onSurfacePointerUp"
+        @surface-click="onSurfaceClick"
+        @plane-scroll="onPlaneScroll"
+        @weights-changed="(w) => colW = w"
+      />
 
       <!-- LIST VIEW -->
-      <div v-else-if="merged.layout === 'list'" class="list-root" :data-icons="iconsTick">
-          <button
-            class="row"
-            :data-path="e.FullPath"
-            v-for="(e, i) in sortedEntries"
-            :class="{ selected: selectedMap[e.FullPath] }"
-            draggable="true"
-            @pointerdown.stop="(ev) => engine.rowDownId(e.FullPath, modsFromEvent(ev))"
-            @pointermove.stop="(ev) => engine.rowMove?.(ev.clientX, ev.clientY)"
-            @click.stop.prevent="() => engine.rowUpId(e.FullPath)"
-            @dblclick.stop.prevent="() => { openEntry(e.FullPath) }"
-            @dragstart="(ev) => { engine.dragStart(); onItemDragStart(e, ev as DragEvent) }"
-            @dragend="() => { onItemDragEnd(); engine.dragEnd() }"
-          >
-          <div class="icon">
-            <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
-            <span v-else>{{ iconText(e) }}</span>
-          </div>
-          <div 
-            class="name"
-            :data-rename-id="e.FullPath"
-            :data-rename-value="e.Name"
-          >
-            {{ e.Name || e.FullPath }}
-          </div>
-        </button>
-      </div>
+      <ItemsListLayout
+        v-else-if="merged.layout === 'list'"
+        :entries="entries"
+        :selected="selected"
+        :icons-tick="iconsTick"
+        :source-id="props.sourceId"
+        :S="S"
+        @row-down="({ id, mods }) => engine.rowDownId(id, mods)"
+        @row-move="({ x, y }) => engine.rowMove?.(x, y)"
+        @row-up="({ id }) => engine.rowUpId(id)"
+        @dblclick="({ id }) => openEntry(id)"
+        @dragstart="({ entry, event }) => { engine.dragStart(); onItemDragStart(entry, event) }"
+        @dragend="() => { onItemDragEnd(); engine.dragEnd() }"
+      />
 
       <!-- GRID VIEW -->
-      <div
+      <ItemsGridLayout
         v-else-if="merged.layout === 'grid'"
-        class="grid-root"
-        :data-icons="iconsTick"
-        :style="{
-          display: 'grid',
-          gap: S.gap + 'px',
-          padding: S.gap + 'px',
-          gridTemplateColumns: `repeat(${Math.max(1, merged.columns)}, minmax(0, 1fr))`
-        }"
-      >
-        <button
-          class="row"
-          :data-path="e.FullPath"
-          v-for="(e, i) in sortedEntries"
-          :class="{ selected: selectedMap[e.FullPath] }"
-          draggable="true"
-          @pointerdown.stop="(ev) => engine.rowDownId(e.FullPath, modsFromEvent(ev))"
-          @pointermove.stop="(ev) => engine.rowMove?.(ev.clientX, ev.clientY)"
-          @click.stop.prevent="() => engine.rowUpId(e.FullPath)"
-          @dblclick.stop.prevent="() => { openEntry(e.FullPath) }"
-          @dragstart="(ev) => { engine.dragStart(); onItemDragStart(e, ev as DragEvent) }"
-          @dragend="() => { onItemDragEnd(); engine.dragEnd() }"
-        >
-          <div class="icon">
-            <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
-            <span v-else>{{ iconText(e) }}</span>
-          </div>
-          <div 
-            class="name"
-            :data-rename-id="e.FullPath"
-            :data-rename-value="e.Name"
-          >
-            {{ e.Name || e.FullPath }}
-          </div>
-        </button>
-      </div>
+        :entries="entries"
+        :selected="selected"
+        :icons-tick="iconsTick"
+        :source-id="props.sourceId"
+        :columns="merged.columns"
+        :S="S"
+        @row-down="({ id, mods }) => engine.rowDownId(id, mods)"
+        @row-move="({ x, y }) => engine.rowMove?.(x, y)"
+        @row-up="({ id }) => engine.rowUpId(id)"
+        @dblclick="({ id }) => openEntry(id)"
+        @dragstart="({ entry, event }) => { engine.dragStart(); onItemDragStart(entry, event) }"
+        @dragend="() => { onItemDragEnd(); engine.dragEnd() }"
+      />
     </div>
   </div>
 </template>
 
 <style scoped>
+  /* Clipboard toolbar */
+.clipboard-toolbar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  background: var(--color-surface, #2a2a2a);
+  border: 1px solid var(--color-border, #444);
+  border-radius: 6px;
+  padding: 6px 10px;
+  z-index: 10;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.clipboard-label {
+  font-size: 12px;
+  color: var(--color-text-dim, #888);
+  margin-right: 4px;
+}
+
+.clipboard-btn {
+  padding: 4px 10px;
+  background: var(--color-surface, #333);
+  border: 1px solid var(--color-border, #555);
+  color: var(--color-text, #e0e0e0);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  transition: all 0.15s ease;
+}
+
+.clipboard-btn:hover {
+  background: var(--color-hover, #404040);
+  border-color: var(--color-accent, #4ea1ff);
+}
+
+.clipboard-btn:active {
+  transform: translateY(1px);
+}
+
 .items-root.drop-active {
   outline: 2px dashed rgba(255, 255, 255, 0.4);
   outline-offset: -2px;
@@ -1731,6 +1746,10 @@ defineExpose({ applyExternalCwd, getNavState })
 
   /* column separator color */
   --items-col-sep: color-mix(in oklab, var(--fg, #fff) 12%, transparent);
+
+  /* Alignment hooks (app can override per-widget via CSS vars) */
+  --items-row-text-align: left;
+  --items-name-text-align: left;
 
   height:100%;
   display:flex;
@@ -1761,20 +1780,6 @@ defineExpose({ applyExternalCwd, getNavState })
   padding: 0;                  /* remove side/top/bottom padding that was shrinking the inner scroller */
   border-top: 0;               /* optional: keep or drop these borders here */
   border-bottom: 0;            /* you can draw them on .details-pad if you like */
-}
-
-/* The scrollport: full height, stable end gutter only */
-.details-scroll{
-  position: relative;   /* the absolute marquee anchors here */
-  overflow-y: auto;
-  overflow-x: hidden;
-  scrollbar-gutter: stable;
-}
-
-/* ADD: the inner pad holds the side gutters + header spacing */
-.details-pad{
-  position: relative;
-  padding-inline: var(--items-gutter-left, 5%) var(--items-gutter-right, 5%);
 }
 
 .marquee{
@@ -1812,161 +1817,17 @@ defineExpose({ applyExternalCwd, getNavState })
   display:flex; flex-direction:row; gap:var(--local-spacing); align-items:center;
   min-height:calc(var(--base-font-size) * 2.4); padding:var(--space-xs) var(--space-sm);
   box-sizing:border-box; font-size:var(--local-font-md);
+  text-align: var(--items-row-text-align, left);
 }
 .row:focus, .row:focus-visible { outline: none !important; }
 .row[draggable="true"]{ cursor:grab; }
 .row[draggable="true"]:active{ cursor:grabbing; }
 .row.selected { box-shadow: inset 0 0 0 2px var(--accent,#4ea1ff) !important; }
 
-/* Base icon size for LIST/GRID (scoped to those layouts only) */
-.list-root .icon,
-.grid-root .icon{
-  width:calc(var(--base-font-size) * 1.4);
-  height:calc(var(--base-font-size) * 1.4);
-  flex:0 0 calc(var(--base-font-size) * 1.4);
-  display:flex; align-items:center; justify-content:center;
+.name{ 
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; 
+  text-align: var(--items-name-text-align, left);
 }
-.list-root .icon img,
-.grid-root .icon img{ width:100%; height:100%; object-fit:contain; }
-
-.name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-
-/* ================ DETAILS VIEW ONLY ================ */
-.details-root{
-  --padX: var(--space-sm);
-  --padY: var(--space-xs);
-  --gap:  var(--space-xs);
-  --iconW: calc(1em * 1.4);
-  --hdrH: 36px;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;                 /* makes inner scroller size correctly */
-}
-
-/* Header with outer gutters only */
-.details-header{
-  position: sticky;
-  top: 0;
-  z-index: 4;
-  height: var(--hdrH);
-
-  /* same gutters as rows, PLUS measured scrollbar width on the right */
-  padding-inline: var(--items-gutter-left, 5%)
-                  calc(var(--items-gutter-right, 5%) + var(--sbw, 0px));
-
-  background: transparent;
-  border-radius: var(--local-radius);
-  box-sizing: border-box;
-}
-
-.details-header::before{ display:none; }
-
-/* Grid lives inside */
-.details-header-inner{
-  position: relative;
-  height: var(--hdrH);
-  display: grid;
-  grid-template-columns: var(--cols);
-  gap: var(--gap);
-  align-items: center;
-  padding: 0 var(--padX);
-  min-width: 0;
-  background: var(--items-header-bg, var(--surface-2,#222));
-  border-radius: var(--local-radius);
-  overflow: visible;
-}
-
-/* Separators between header cells */
-.details-header-inner > .th + .th{
-  border-left: 1px solid var(--items-col-sep);
-  padding-left: var(--space-xs);
-}
-
-/* Header cells - NOW WITH BACKGROUND */
-.th{
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  padding: var(--padY) 0;        /* side padding comes from header-inner */
-  background: transparent;
-  border: 0;
-  color: inherit;
-  font-weight: 600;
-  min-width: 0;                  /* labels can ellipsize */
-}
-
-.th .th-label{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.th-size,.th-mod{ justify-content:flex-end; text-align:right; }
-
-
-
-/* Column separators */
-:root, :host{ --items-col-sep: color-mix(in oklab, var(--fg,#fff) 18%, transparent); }
-.details-grid   .row > .td + .td{ border-left: 1px solid var(--items-col-sep); padding-left: var(--space-xs); }
-
-/* Resizer handles (not on last column) */
-/* Resize handle stays on top and on the actual track edge */
-.resize-handle{
-  position:absolute; top:0; right:-6px; width:12px; height:100%;
-  cursor:col-resize; z-index:2;
-}
-.resize-handle::after{
-  content:""; position:absolute; top:0; bottom:0; left:50%;
-  transform:translateX(-0.5px);
-  width:1px; background: color-mix(in oklab, var(--fg,#fff) 28%, transparent);
-}
-.th:hover .resize-handle::after{
-  background: color-mix(in oklab, var(--accent,#4ea1ff) 55%, transparent);
-}
-
-/* ----- INTERACTIVE PLANE (rows + marquee) lives BELOW the header ----- */
-/* Rows (unchanged, just here for context) */
-.details-grid{ display: grid; gap: var(--space-xs); }
-.details-grid .row{
-  display:grid;
-  grid-template-columns: var(--cols);
-  gap: var(--gap);
-  align-items:center;
-  border:1px solid var(--items-border);
-  background: var(--items-bg);
-  border-radius: var(--local-radius);
-  min-height: calc(var(--base-font-size) * 2.4);
-  padding: var(--padY) var(--padX);
-  box-sizing:border-box;
-  cursor:pointer;
-  font-size: var(--local-font-md);
-}
-
-/* Cells */
-.td-name{ display:inline-flex; align-items:center; gap:var(--space-sm); min-width:0; }
-.td-ext, .td-size, .td-mod{
-  opacity:.9; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:var(--local-font-sm);
-}
-
-/* Numeric alignment */
-.td-size, .td-mod{ font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1; }
-.td-size{ display:flex; justify-content:flex-end; gap:var(--space-xs); }
-.td-mod{ display:flex; justify-content:flex-end; gap:var(--space-sm); }
-
-/* Details icon size (scoped!) */
-.details-grid .row > .td + .td{ border-left: 1px solid var(--items-col-sep); padding-left: var(--space-xs); }
-
-/* icon sizing scoped to details */
-.details-grid .td-name .icon{
-  width:var(--iconW);
-  height:var(--iconW);
-  flex:0 0 var(--iconW);
-  display:flex; align-items:center; justify-content:center; text-align:center;
-}
-.details-grid .td-name .icon img{
-  width:100%; height:100%; object-fit:contain;
-}
-
-/* ================ LIST / GRID CONTAINERS ================ */
-.list-root{ display:grid; gap:var(--space-xs); }
 
 /* ================ Messages ================ */
 .msg,.err{ padding:var(--space-md); font-size:var(--local-font-md); }
