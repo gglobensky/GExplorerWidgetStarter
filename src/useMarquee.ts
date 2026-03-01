@@ -1,185 +1,399 @@
-// useMarquee.ts - Marquee scroll logic for current track title
-import { ref, watch, computed, onMounted, onBeforeUnmount, nextTick, type Ref } from 'vue'
+import { ref, computed, type Ref, type ComputedRef } from '/runtime/vue.js'
+import { createMarqueeDriver, type GeometryAdapter, type ScrollerAdapter, type Rect } from '/src/widgets/selection/marquee-driver'
 
-export function useMarquee(
-  currentTitle: Ref<string>,
-  layoutClass: Ref<string>,
-  resizePhase: Ref<string | undefined>,
-  config?: Ref<Record<string, any> | undefined>
-) {
-  const marqueeBox = ref<HTMLElement | null>(null)
-  const marqueeCopy = ref<HTMLElement | null>(null)
-  const marqueeOn = ref(false)
+/**
+ * useMarquee - Composable for marquee selection
+ * 
+ * Extracts marquee logic so it can be shared across all layout types.
+ * Each layout provides its own scroll element reference and geometry adapter.
+ */
+
+export interface UseMarqueeOptions {
+  /**
+   * Ref to the scrolling element where marquee selection happens.
+   * For Details: detailsScrollEl
+   * For List/Grid: scrollEl (outer container)
+   */
+  scrollEl: Ref<HTMLElement | null>
   
-  const prefersReduced = ref(false)
-  const respectReduced = computed(() => config?.value?.respectReducedMotion ?? false)
-  const marqueeDir = computed(() => config?.value?.marqueeDirection ?? 'right')
-  const marqueeSpeed = computed(() => Number(config?.value?.marqueeSpeed ?? 35))
+  /**
+   * Ref to the container element used for measuring item positions.
+   * For Details: padEl (the inner container with rows)
+   * For List/Grid: scrollEl (same as scroll element)
+   */
+  containerEl: Ref<HTMLElement | null>
   
-  let marqueeRO: ResizeObserver | null = null
-  let rafId = 0
-  
-  function rafBatchIfIdle(fn: () => void) {
-    if (resizePhase.value === 'active') {
-        // do not measure or set styles; just suspend
-        marqueeOn.value = false
-        return
-    }
-    if (rafId) return
-    rafId = requestAnimationFrame(() => {
-      rafId = 0
-      fn()
-    })
+  /**
+   * Selection engine methods
+   */
+  engine: {
+    replaceSelection: (ids: string[], opts: { reason: string }) => void
+    getSelected: () => Set<string>
   }
   
-  function updateMarquee() {
-    if (resizePhase.value === 'active') return
-    
-    const box = marqueeBox.value
-    const copy = marqueeCopy.value
-    if (!box || !copy) {
-      marqueeOn.value = false
-      return
-    }
-    
-    const dir = marqueeDir.value
-    const boxW = Math.round(box.clientWidth)
-    const copyW = Math.ceil(copy.scrollWidth)
-    const needs = (!respectReduced.value || !prefersReduced.value) && copyW > boxW + 1
-    
-    // Set direction attribute for CSS keyframe selection
-    if (box.getAttribute('data-dir') !== dir) {
-      box.setAttribute('data-dir', dir)
-    }
-    
-    marqueeOn.value = needs
-    
-    if (!needs) {
-      // Stop animation
-      const track = box.querySelector('.marquee-track') as HTMLElement | null
-      if (track) {
-        track.style.animation = 'none'
-        track.style.transform = 'translate3d(0,0,0)'
-        requestAnimationFrame(() => {
-          if (track) track.style.animation = ''
-        })
-      }
-      return
-    }
-    
-    // Compute animation
-    const GAP_PX = Math.round(Math.max(28, boxW))
-    const travel = copyW + GAP_PX
-    const speed = Math.max(10, Number(marqueeSpeed.value || 35))
-    const durSec = travel / speed
-    
-    // Apply CSS vars
-    box.style.setProperty('--gap', `${GAP_PX}px`)
-    box.style.setProperty('--travel', `${travel}px`)
-    box.style.setProperty('--marquee-dur', `${durSec.toFixed(3)}s`)
+  /**
+   * Current layout type - affects coordinate calculations
+   */
+  layout: ComputedRef<string>
+  
+  /**
+   * Selected items set
+   */
+  selected: Ref<Set<string>>
+}
+
+export interface UseMarqueeReturn {
+  /**
+   * Current marquee rectangle (with scroll offset applied)
+   */
+  marqueeRect: Ref<Rect | null>
+  
+  /**
+   * Whether marquee is currently active
+   */
+  marqueeActive: ComputedRef<boolean>
+  
+  /**
+   * Event handlers to attach to scroll element
+   */
+  handlers: {
+    onPointerDown: (ev: PointerEvent) => void
+    onPointerMove: (ev: PointerEvent) => void
+    onPointerUp: (ev: PointerEvent) => void
+    onClick: (ev: MouseEvent) => void
+    onScroll: () => void
   }
   
-  function observeIfPossible(el: HTMLElement | null) {
-    if (el && marqueeRO) marqueeRO.observe(el)
+  /**
+   * Internal state for troubleshooting
+   */
+  state: {
+    lastClientX: number
+    lastClientY: number
+    squelchNextClick: boolean
   }
-  
-  function unobserveIfPossible(el: HTMLElement | null) {
-    if (el && marqueeRO) marqueeRO.unobserve(el)
+}
+
+/**
+ * Helper to package keyboard modifiers from events
+ */
+function modsFromEvent(e: PointerEvent | MouseEvent | KeyboardEvent) {
+  return { 
+    ctrl: e.ctrlKey || false, 
+    meta: (e as any).metaKey || false, 
+    shift: e.shiftKey || false, 
+    alt: e.altKey || false 
   }
+}
+
+/**
+ * Check if pointer is over scrollbar
+ */
+function isOnScrollbar(el: HTMLElement, ev: PointerEvent): boolean {
+  const r = el.getBoundingClientRect()
+  const scrollbarWidth = el.offsetWidth - el.clientWidth
+  if (scrollbarWidth <= 0) return false
   
-  // Watch resize phase
-  watch(() => resizePhase.value, phase => {
-    if (phase === 'active') {
-      marqueeOn.value = false
-    } else {
-      rafBatchIfIdle(updateMarquee)
-    }
+  // Check if click is in the right gutter (scrollbar area)
+  const clickX = ev.clientX - r.left
+  return clickX > el.clientWidth
+}
+
+/**
+ * Check if pointer is inside scroll rect
+ */
+function isInsideScrollRect(scrollEl: HTMLElement | null, cx: number, cy: number): boolean {
+  if (!scrollEl) return false
+  const r = scrollEl.getBoundingClientRect()
+  return cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom
+}
+
+/**
+ * Check if pointer is over a selected row
+ */
+function isOverSelectedRow(selected: Set<string>, cx: number, cy: number): boolean {
+  const el = document.elementFromPoint(cx, cy) as HTMLElement | null
+  const row = el?.closest('.row[data-path]') as HTMLElement | null
+  if (!row) return false
+  const id = row.dataset.path!
+  return selected.has(id)
+}
+
+export function useMarquee(options: UseMarqueeOptions): UseMarqueeReturn {
+  const { scrollEl, containerEl, engine, layout, selected } = options
+  
+  console.log('[marquee] useMarquee initialized for layout:', layout.value)
+  
+  // ---- State ----
+  const marqueeRect = ref<Rect | null>(null)
+  let squelchNextPlaneClick = false
+  let lastScrollTopForDrag = 0
+  let lastClientX = 0
+  let lastClientY = 0
+  
+  const marqueeActive = computed(() => {
+    const r = marqueeRect.value
+    const active = !!r && (r.w > 0 || r.h > 0)
+    return active
   })
   
-  // Watch dependencies
-  watch(
-    [currentTitle, () => layoutClass.value],
-    () => { rafBatchIfIdle(updateMarquee) },
-    { flush: 'post', immediate: true }
+  // ---- Geometry Adapter ----
+  const geo: GeometryAdapter = {
+    // Viewport rect in scroller-viewport space
+    contentRect() {
+      const sc = scrollEl.value!
+      return { x: 0, y: 0, w: sc.clientWidth, h: sc.clientHeight }
+    },
+    
+    // Item rects in the same scroller-viewport space
+    itemRects() {
+      const sc = scrollEl.value!
+      const scR = sc.getBoundingClientRect()
+      const root = containerEl.value ?? sc
+      const rows = root.querySelectorAll<HTMLElement>('.row[data-path]')
+      const arr: Array<{ id: string; rect: Rect }> = []
+      
+      rows.forEach(row => {
+        const rr = row.getBoundingClientRect()
+        arr.push({
+          id: row.dataset.path!,
+          rect: {
+            x: rr.left - scR.left,
+            y: rr.top - scR.top,
+            w: rr.width,
+            h: rr.height,
+          },
+        })
+      })
+      return arr
+    },
+    
+    // Pointer in the same scroller-viewport space
+    pointFromClient(clientX, clientY) {
+      const sc = scrollEl.value!
+      const scR = sc.getBoundingClientRect()
+      return { x: clientX - scR.left, y: clientY - scR.top }
+    },
+  }
+  
+  // ---- Scroller Adapter ----
+  const scroller: ScrollerAdapter = {
+    scrollTop() { 
+      return scrollEl.value!.scrollTop 
+    },
+    maxScrollTop() {
+      const el = scrollEl.value!
+      return Math.max(0, el.scrollHeight - el.clientHeight)
+    },
+    scrollBy(dy) {
+      // Only allow when the pointer is truly outside the viewport
+      const outside = !pointerInsideViewportFromClient(lastClientX, lastClientY)
+      if (!outside) return
+      scrollEl.value!.scrollTop += dy
+    },
+  }
+  
+  // Check if pointer is inside viewport (for autoscroll logic)
+  function pointerInsideViewportFromClient(cx: number, cy: number) {
+    const cr = geo.contentRect()
+    const p = geo.pointFromClient(cx, cy)
+    return p.x >= cr.x && p.x <= cr.x + cr.w && p.y >= cr.y && p.y <= cr.y + cr.h
+  }
+  
+  // ---- Marquee Driver ----
+  const driver = createMarqueeDriver(
+    {
+      enabled: true,
+      startThresholdPx: 6,
+      fps: 30,
+      guardTopPx: 0,
+      autoscroll: { 
+        enabled: true, 
+        baseSpeed: 2400, 
+        speedMultiplier: 1.75, 
+        maxDistancePx: 240 
+      },
+      combine: 'auto', // Shift→add, Ctrl/Cmd→toggle, else replace
+      policy: /Mac/i.test(navigator.platform) ? 'mac' : 'windows',
+    },
+    geo,
+    scroller,
+    {
+      replaceSelection: (...args) => engine.replaceSelection(...args as any),
+      getSelected: () => engine.getSelected(),
+    },
+    {
+      rectChanged: (r) => {
+        if (r) {
+          const st = scrollEl.value?.scrollTop ?? 0
+          marqueeRect.value = { x: r.x, y: r.y + st, w: r.w, h: r.h }
+          const hasSize = (r.w > 0 || r.h > 0)
+          console.log('[marquee] rectChanged - marquee active:', {
+            layout: layout.value,
+            rect: r,
+            hasSize,
+            scrollTop: st
+          })
+          squelchNextPlaneClick = hasSize
+        } else {
+          console.log('[marquee] rectChanged - marquee ended:', {
+            layout: layout.value,
+            squelchFlag: squelchNextPlaneClick
+          })
+          marqueeRect.value = null
+        }
+      },
+      log: (e) => console.debug('[marquee]', e),
+    }
   )
   
-  // Watch refs
-  watch([marqueeBox, marqueeCopy], ([box, copy], [prevBox, prevCopy]) => {
-    if (marqueeRO) {
-      unobserveIfPossible(prevBox)
-      unobserveIfPossible(prevCopy)
-      observeIfPossible(box)
-      observeIfPossible(copy)
-    }
-    rafBatchIfIdle(updateMarquee)
-  }, { flush: 'post' })
-  
-  // Watch marquee on/off state
-  watch(marqueeOn, (running) => {
-    const box = marqueeBox.value
-    const copy = marqueeCopy.value
-    if (!marqueeRO || !box || !copy) return
+  // ---- Event Handlers ----
+  function onPointerDown(ev: PointerEvent) {
+    if (ev.button !== 0) return
     
-    if (resizePhase.value === 'active') {
-      unobserveIfPossible(box)
-      unobserveIfPossible(copy)
+    const t = ev.target as HTMLElement | null
+    const plane = scrollEl.value!
+    
+    console.log('[marquee] onPointerDown:', {
+      layout: layout.value,
+      target: t?.tagName,
+      targetClass: t?.className,
+      isRow: !!t?.closest('.row[data-path]'),
+      isDraggable: !!t?.closest('[draggable="true"]')
+    })
+    
+    // Don't start marquee if clicking on a row or draggable element
+    if (t?.closest('.row[data-path], [draggable="true"]')) {
+      console.log('[marquee] onPointerDown - ignoring (row or draggable)')
       return
     }
     
-    if (running) {
-      observeIfPossible(box)
-      observeIfPossible(copy)
-    } else {
-      unobserveIfPossible(box)
-      unobserveIfPossible(copy)
+    // Don't start marquee if clicking on scrollbar
+    if (isOnScrollbar(plane, ev)) {
+      console.log('[marquee] onPointerDown - ignoring (scrollbar)')
+      return
     }
-  }, { flush: 'post', immediate: true })
+    
+    console.log('[marquee] onPointerDown - starting marquee')
+    
+    // Capture pointer for smooth tracking
+    ;(ev.currentTarget as Element)?.setPointerCapture?.(ev.pointerId)
+    
+    lastClientX = ev.clientX
+    lastClientY = ev.clientY
+    lastScrollTopForDrag = scrollEl.value!.scrollTop
+    
+    driver.pointerDown(ev, modsFromEvent(ev))
+    
+    window.addEventListener('pointerup', onPointerUp, { once: true })
+    ev.preventDefault()
+  }
   
-  onMounted(() => {
-    // Setup ResizeObserver
-    marqueeRO = new ResizeObserver(() => {
-      rafBatchIfIdle(updateMarquee)
+  function onPointerMove(ev: PointerEvent) {
+    lastClientX = ev.clientX
+    lastClientY = ev.clientY
+    driver.pointerMove(ev)
+  }
+  
+  function onPointerUp(ev: PointerEvent) {
+    const wasMarquee = marqueeActive.value
+    
+    console.log('[marquee] onPointerUp (before driver):', {
+      layout: layout.value,
+      wasMarquee,
+      squelchFlag: squelchNextPlaneClick,
+      marqueeRect: marqueeRect.value
     })
     
-    // Check for reduced motion preference
-    const mq = window.matchMedia?.('(prefers-reduced-motion: reduce)')
-    if (mq) {
-      prefersReduced.value = mq.matches
-      const onChange = (e: MediaQueryListEvent) => {
-        prefersReduced.value = e.matches
-        rafBatchIfIdle(updateMarquee)
+    // Adjust for any scroll that happened during marquee
+    if (wasMarquee) {
+      const sc = scrollEl.value!
+      const dy = sc.scrollTop - lastScrollTopForDrag
+      if (dy) {
+        driver.adjustForScroll(dy)
+        lastScrollTopForDrag = sc.scrollTop
+        driver.recomputeNow('plane:flush-before-up')
       }
-      mq.addEventListener?.('change', onChange)
-      
-      onBeforeUnmount(() => mq.removeEventListener?.('change', onChange))
     }
     
-    // Initial update
-    nextTick(() => {
-      rafBatchIfIdle(updateMarquee)
+    driver.pointerUp(ev)
+    window.removeEventListener('pointerup', onPointerUp)
+    
+    console.log('[marquee] onPointerUp (after driver):', {
+      layout: layout.value,
+      wasMarquee,
+      squelchFlag: squelchNextPlaneClick,
+      marqueeStillActive: marqueeActive.value
     })
-  })
-  
-  onBeforeUnmount(() => {
-    marqueeRO?.disconnect()
-    if (rafId) cancelAnimationFrame(rafId)
-  })
-  
-  // Template ref setters (rock-solid)
-  function setMarqueeBox(el: Element | null) {
-    marqueeBox.value = (el as HTMLElement) || null
+    
+    // Only treat as a "click" if no marquee was shown
+    if (!wasMarquee) {
+      const inside = isInsideScrollRect(scrollEl.value, ev.clientX, ev.clientY)
+      const overSelected = isOverSelectedRow(selected.value, ev.clientX, ev.clientY)
+      console.log('[marquee] onPointerUp - no marquee, checking for deselect:', {
+        layout: layout.value,
+        inside,
+        overSelected,
+        willDeselect: inside && !overSelected
+      })
+      if (inside && !overSelected) {
+        engine.replaceSelection([], { reason: 'plane:click-up-outside' })
+      }
+    }
   }
   
-  function setMarqueeCopy(el: Element | null) {
-    marqueeCopy.value = (el as HTMLElement) || null
+  function onClick(ev: MouseEvent) {
+    console.log('[marquee] onClick:', {
+      layout: layout.value,
+      squelchFlag: squelchNextPlaneClick,
+      willSquelch: squelchNextPlaneClick
+    })
+    
+    if (squelchNextPlaneClick) {
+      console.log('[marquee] onClick - SQUELCHED')
+      return
+    }
+    
+    const t = ev.target as HTMLElement | null
+    const isRow = !!t?.closest('.row[data-path]')
+    console.log('[marquee] onClick - checking target:', {
+      layout: layout.value,
+      isRow,
+      willDeselect: !isRow
+    })
+    
+    if (!isRow) {
+      console.log('[marquee] onClick - deselecting (not on row)')
+      engine.replaceSelection([], { reason: 'plane:clear' })
+    }
   }
   
+  function onScroll() {
+    if (!marqueeActive.value) return
+    
+    const sc = scrollEl.value!
+    const dy = sc.scrollTop - lastScrollTopForDrag
+    if (dy) {
+      driver.adjustForScroll(dy)
+      lastScrollTopForDrag = sc.scrollTop
+    }
+  }
+  
+  // ---- Return ----
   return {
-    marqueeBox,
-    marqueeCopy,
-    marqueeOn,
-    marqueeDir,
-    setMarqueeBox,
-    setMarqueeCopy
+    marqueeRect,
+    marqueeActive,
+    handlers: {
+      onPointerDown,
+      onPointerMove,
+      onPointerUp,
+      onClick,
+      onScroll,
+    },
+    state: {
+      get lastClientX() { return lastClientX },
+      get lastClientY() { return lastClientY },
+      get squelchNextClick() { return squelchNextPlaneClick },
+    },
   }
 }

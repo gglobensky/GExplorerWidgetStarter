@@ -36,18 +36,18 @@ export default {
 	  },
 	},
 	actions: [
-    {
-        id: 'play',
-        label: 'Play',
-        accepts: { extensions: ['.mp3', '.flac', '.wav', '.mp4'] },
-        contextMenu: { label: 'Play in Local Player', icon: '▶', submenuLabel: 'Local Player' },
-    },
-    {
-        id: 'enqueue',
-        label: 'Add to queue',
-        accepts: { extensions: ['.mp3', '.flac', '.wav'] },
-        contextMenu: { label: 'Enqueue', icon: '➕', submenuLabel: 'Local Player' },
-    }
+		{
+			id: 'play',
+			label: 'Play',
+			accepts: { contexts: ['file'], extensions: ['.mp3', '.flac', '.wav', '.mp4'] },
+			contextMenu: { label: 'Play in Local Player', icon: '▶', submenuLabel: 'Local Player' },
+		},
+		{
+			id: 'enqueue',
+			label: 'Add to queue',
+			accepts: { contexts: ['file'], extensions: ['.mp3', '.flac', '.wav'] },
+			contextMenu: { label: 'Enqueue', icon: '➕', submenuLabel: 'Local Player' },
+		}
 	],
   defaults: {
     queueName: 'Queue',
