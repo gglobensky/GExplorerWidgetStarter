@@ -20,6 +20,7 @@ const props = defineProps<{
   sortKey: SortKey
   sortDir: SortDir
   initialWeights: DetailWeights
+  folderDropTarget?: string | null  
   marqueeRect: { x: number; y: number; w: number; h: number } | null
 }>()
 
@@ -420,7 +421,10 @@ defineExpose({
             :key="e.FullPath"
             :data-path="e.FullPath"
             v-for="(e, i) in entries"
-            :class="{ selected: selected.has(e.FullPath) }"
+            :class="{ 
+              selected: selected.has(e.FullPath),
+              'folder-drop-target': e.FullPath === props.folderDropTarget
+              }"
             draggable="true"
             @pointerdown.stop="(ev) => handleRowDown(e.FullPath, ev)"
             @pointermove.stop="(ev) => handleRowMove(ev.clientX, ev.clientY)"
@@ -463,6 +467,13 @@ defineExpose({
 </template>
 
 <style scoped>
+  .row.folder-drop-target {
+  /* Inset ring in accent color — matches .row.selected but distinct */
+  box-shadow: inset 0 0 0 2px var(--accent, #4ea1ff),
+              inset 0 0 0 4px color-mix(in oklab, var(--accent, #4ea1ff) 25%, transparent) !important;
+  background: color-mix(in oklab, var(--accent, #4ea1ff) 10%, transparent) !important;
+}
+
 /* ================ DETAILS VIEW ================ */
 .details-root {
   --padX: var(--space-sm);

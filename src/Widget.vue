@@ -1,1852 +1,678 @@
 <script setup lang="ts">
-/* -----------------------------------------------
-   Imports
------------------------------------------------- */
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineExpose, onUnmounted } from '/runtime/vue.js'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
+import { usePlayerState } from './usePlayerState'
+import { usePlaylist, INPUT_ACCEPT } from './usePlaylist'
+import { useMarquee } from './useMarquee'
+import { useDnD } from './useDnD'
+import { fileRefsToPlaylistItems } from '/src/widgets/dnd/utils'
+import { useKeyboardNav } from './useKeyboardNav'
+import CompactLayout from './CompactLayout.vue'
+import ExpandedLayout from './ExpandedLayout.vue'
+import { onWidgetMessage } from '/src/widgets/instances'
+
 import {
-  fsListDirSmart,
-  fsValidate,
-  shortcutsProbe,
-  fsRename,
-  onFsQueueUpdate,
-  fsCopy, 
-  fsMove
-} from '/src/widgets/fs'
-import { sendWidgetMessage, onWidgetMessage } from '/src/widgets/instances'
-import { loadIconPack, iconFor, ensureIconsFor } from '/src/icons/index.ts'
-import { createSelectionEngine, type ItemsAdapter, type Mods } from '/src/widgets/selection/selection-engine'
-import { createMarqueeDriver, type GeometryAdapter, type ScrollerAdapter, type Rect } from '/src/widgets/selection/marquee-driver';
-import { PickerMode, FileFilter, PickerSurfaceAdapter } from '/src/widgets/pickers/api';
-import { 
-    clipboardCopyFiles, 
-    clipboardCutFiles, 
-    clipboardGetFiles 
-} from '/src/widgets/clipboard/index.ts'
-
-import { buildVfsInfo } from '/src/contextmenu/context'
-import { startRename } from '/src/widgets/renameOverlay' 
-import { getItemsLayoutService, type ViewConfig } from './layout-service'
-import ItemsListLayout from './ItemsListLayout.vue'
-import ItemsGridLayout from './ItemsGridLayout.vue'
-import ItemsDetailsLayout from './ItemsDetailsLayout.vue'
-import { useItemsSort, type SortKey, type SortDir } from './useItemsSort'
-import { useItemsDragDrop } from './useItemsDragDrop'
-
-/* -----------------------------------------------
-   Smart Directory Reload with Debouncing
------------------------------------------------- */
-let reloadDebounceTimer: number | null = null
-let pauseFileWatcher = false
-
-/**
- * Debounced directory reload - waits for activity to settle
- */
-function scheduleReload(path: string, delayMs = 500) {
-  if (pauseFileWatcher) {
-    console.log('[items] fs:changed → PAUSED (batch operation in progress)')
-    return
-  }
-  
-  if (reloadDebounceTimer) {
-    clearTimeout(reloadDebounceTimer)
-  }
-  
-  reloadDebounceTimer = window.setTimeout(() => {
-    console.log('[items] fs:changed → reloading (after quiet period)')
-    loadDir(path)
-    reloadDebounceTimer = null
-  }, delayMs)
-}
-
-/* -----------------------------------------------
-   Clipboard Operations
------------------------------------------------- */
-function basename(path: string): string {
-  const normalized = path.replace(/[\\/]+$/, '')
-  const idx = Math.max(
-    normalized.lastIndexOf('\\'),
-    normalized.lastIndexOf('/')
-  )
-  return idx < 0 ? normalized : normalized.slice(idx + 1)
-}
-
-/**
- * Paste files from clipboard to current directory
- */
-async function pasteFromClipboard() {
-  try {
-    const state = await clipboardGetFiles('items', props.instanceId)
-    
-    if (!state.hasFiles || state.count === 0) {
-      console.log('[Items] No files in clipboard to paste')
-      return
-    }
-    
-    const targetDir = cwd.value
-    if (!targetDir) {
-      console.log('[Items] No target directory')
-      return
-    }
-    
-    console.log('[Items] Pasting from clipboard:', {
-      operation: state.operation,
-      count: state.count,
-      sources: state.paths,
-      targetDir
-    })
-    
-    const items = state.paths.map(sourcePath => {
-      const fileName = basename(sourcePath)
-      const targetPath = joinPath(targetDir, fileName)
-      return { from: sourcePath, to: targetPath }
-    })
-    
-    // 🎯 PAUSE FILE WATCHING
-    pauseFileWatcher = true
-    
-    try {
-      if (state.operation === 'cut') {
-        console.log('[Items] Executing MOVE operation')
-        await fsMove(items, 'items', props.instanceId)
-        console.log('[Items] ✅ Moved', state.count, 'item(s)')
-      } else {
-        console.log('[Items] Executing COPY operation')
-        await fsCopy(items, 'items', props.instanceId)
-        console.log('[Items] ✅ Copied', state.count, 'item(s)')
-      }
-      
-      // 🎯 ONE FINAL RELOAD (not 388 reloads!)
-      await loadDir(targetDir)
-      
-      selected.value = new Set()
-      engine.replaceSelection([], { reason: 'paste:complete' })
-      
-    } catch (err: any) {
-      console.error('[Items] Paste operation failed:', err.message)
-      // Still reload on error to show current state
-      await loadDir(targetDir)
-    } finally {
-      // 🎯 RESUME FILE WATCHING
-      pauseFileWatcher = false
-    }
-    
-  } catch (err: any) {
-    console.error('[Items] Failed to paste:', err.message)
-  }
-}
-
-// NOTE: also add these two lines to onMounted / onUnmounted if you want
-// to support custom widget-specific contexts in future (not needed yet
-// since the items widget only uses the four built-in contexts):
-//
-// onMounted:   registerContextDetector(props.sourceId, myDetectorFn)
-// onUnmounted: unregisterContextDetector(props.sourceId)
-
-const contextMenuOptions = computed(() => {
-    const selectedPaths = Array.from(selected.value)
-    return {
-        widgetType:   'items',
-        widgetId:     props.sourceId,
-        location:     { area: 'grid' as const },
-        target:       selectedPaths.length > 0 ? ('selection' as const) : ('background' as const),
-        vfs:          buildVfsInfo(cwd.value || merged.value.rpath || ''),
-        selection:    selectedPaths,
-        widgetConfig: props.config,
-        entries:      entries.value,
-    }
-})
-
-/* -----------------------------------------------
-   Types
------------------------------------------------- */
-type HostAction =
-  | { type: 'nav'; to: string; replace?: boolean; sourceId?: string }
-  | { type: 'open'; path: string }
-
-  
-type ResCol = keyof DetailWeights
+  extractGexPayload,
+  hasGexPayload,
+  authorizeFileRefs,
+  FileRefData
+} from 'gexplorer/widgets'
 
 const props = defineProps<{
-  sourceId: string
-  instanceId: string
-  config?: { data?: any; view?: any }
-  theme?: Record<string, string>
-  runAction?: (a: HostAction) => void
+  config?: Record<string, any>
   placement?: {
     context: 'grid' | 'sidebar' | 'embedded'
-    size: { cols?: number; rows?: number; width?: number; height?: number }
+    layout: string
+    size?: any
+    resizing: boolean
+    resizePhase?: 'active' | 'idle'
   }
-  editMode?: boolean,
+  runAction?: (a: any) => void
+  context?: 'sidebar' | 'grid'
+  variant?: 'compact' | 'expanded' | 'collapsed'
+  width?: number
+  height?: number
+  theme?: string
+  editMode?: boolean
+  sourceId: string
 }>()
 
-const emit = defineEmits<{ 
-  (e: 'updateConfig', config: any): void 
-  (e: 'event', payload: any): void
-}>()
-
-const offWidgetMsg = ref<null | (() => void)>(null)
-
-const iconsTick = ref(0)
-
-const NAME_MIN = 140
-const EXT_MIN  = 70
-const SIZE_MIN = 90
-// put this near your other constants
-const MIN_MOD_PX = 150; // min width for "Modified" col
-
-/* -----------------------------------------------
-   Selection marquee with rAF autoscroll
-   Rules:
-   - Do NOT scroll while pointer is inside the scroll rect.
-   - When pointer is outside, scroll speed grows with distance
-     (quadratic), capped at MAX_SPEED.
------------------------------------------------- */
-const rootEl   = ref<HTMLElement | null>(null)
-const scrollEl = ref<HTMLElement | null>(null)
-
-// tie driver to the engine you already created
-const marqueeRect = ref<Rect | null>(null);
-
-let squelchNextPlaneClick = false;
-let lastScrollTopForDrag = 0;
-
-const selected = ref<Set<string>>(new Set());   // now driven by engine
-const focusIndex = ref<number | null>(null);
-
-// Refs to Details layout component and its internal elements
-const detailsLayoutRef = ref<any>(null)
-const headerH = ref(36)
-const detailsScrollEl = ref<HTMLElement | null>(null)
-const headerEl = ref<HTMLElement|null>(null)
-const padEl    = ref<HTMLElement|null>(null)
-const sbw = ref(0)
-
-onBeforeUnmount(() => {
- // Clear any pending reload timer
-  if (reloadDebounceTimer) {
-    clearTimeout(reloadDebounceTimer)
-    reloadDebounceTimer = null
-  }
-
-  try {
-    if (typeof offRefresh === 'function') offRefresh()
-  } catch (e) {
-    console.warn('[items] offRefresh cleanup failed', e)
-  }
-})
-
-// Sync refs from Details component when it mounts/updates
-watch(detailsLayoutRef, (component) => {
-  if (component && merged.value.layout === 'details') {
-    detailsScrollEl.value = component.detailsScrollEl
-    detailsRootEl.value = component.detailsRootEl
-    headerEl.value = component.headerEl
-    padEl.value = component.padEl
-  }
-}, { flush: 'post' })
-
-const selectedMap = computed<Record<string, true>>(() => {
-  const m: Record<string, true> = {};
-  for (const id of selected.value) m[id] = true;
-  return m;
-});
-
-const marqueeActive = computed(() => {
-  const r = marqueeRect.value;
-  return !!r && (r.w > 0 || r.h > 0);
-});
-
-const detailsRootEl = ref<HTMLElement|null>(null)
-const loading = ref(false)
-const error = ref('')
-
-const S = computed(() => sizeTokens(merged.value.itemSize))
-
-const cfg = computed(() => ({
-  data: props.config?.data ?? {},
-  view: props.config?.view ?? {},
-}))
-
-type ItemsFilter = {
-  exts?: string[];   // lowercased, no dots, e.g. ["mp3", "wav"]
-  activeOptions?: string[];
-}
-
-const activeFilter = computed<ItemsFilter | null>(() => {
-  const raw = cfg.value.data?.filters
-  if (!raw) return null
-
-  // Be forgiving: accept plain objects that look like { exts?: string[] }
-  if (typeof raw === 'object' && !Array.isArray(raw)) {
-    return raw as ItemsFilter
-  }
-
-  return null
-})
-
-// Entries ref (must be declared before useItemsSort)
-const entries = ref<Array<{
-  Name: string; FullPath: string; Kind?: string; Ext?: string; Size?: number; ModifiedAt?: number; IconKey?: string
-}>>([])
-
-// ---- Sort State (backend sorting) ----
-const sortKey = ref<SortKey>((props.config?.view?.sortKey as any) || 'name')
-const sortDir = ref<SortDir>((props.config?.view?.sortDir as any) || 'asc')
-
-// When sort changes, reload from backend with new params
-function onHeaderClick(nextKey: SortKey) {
-  console.log('[Widget] onHeaderClick START:', { 
-    nextKey, 
-    currentKey: sortKey.value, 
-    currentDir: sortDir.value 
-  })
-  
-  if (sortKey.value === nextKey) {
-    // Toggle direction
-    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
-  } else {
-    // New key, default to ascending
-    sortKey.value = nextKey
-    sortDir.value = 'asc'
-  }
-  
-  console.log('[Widget] onHeaderClick AFTER UPDATE:', { 
-    sortKey: sortKey.value, 
-    sortDir: sortDir.value 
-  })
-  
-  // Reload with new sort
-  loadDir(cwd.value)
-}
-
-
-
-
-const autoColumns = computed(() => {
-  if (props.placement?.context === 'sidebar') return 1
-  const gridCols = props.placement?.size?.cols || 4
-  if (gridCols <= 2) return 1
-  if (gridCols <= 3) return 2
-  if (gridCols <= 5) return 3
-  if (gridCols <= 8) return 4
-  return 5
-})
-
-const autoItemSize = computed(() => {
-  const gridCols = props.placement?.size?.cols || 4
-  if (gridCols <= 3) return 'sm'
-  if (gridCols <= 6) return 'md'
-  return 'lg'
-})
-
-const merged = computed(() => ({
-  rpath: String(cfg.value.data.rpath ?? ''),
-  layout: String(cfg.value.view.layout ?? 'list'),
-  columns: cfg.value.view.columns || autoColumns.value,
-  itemSize: cfg.value.view.itemSize || autoItemSize.value,
-  showHidden: !!(cfg.value.view.showHidden ?? false),
-  navigateMode: String(cfg.value.view.navigateMode ?? 'tab').toLowerCase(),
-}))
-
-const cwd = ref<string>('')
-
-function isInternalHistory() {
-  return (merged.value.navigateMode || 'internal') === 'internal'
-}
-
-// ---- PathBar ownership announce ----
-watch(cwd, (v) => {
-  emit('event', { type: 'cwd-changed', payload: { sourceId: props.sourceId, cwd: v } })
-})
-
-watch(
-  () => cfg.value.data?.filters,
-  () => {
-    // Clear selection when filter changes
-    selected.value = new Set()
-    engine.replaceSelection([], { reason: 'filter-changed' })
-    if (cwd.value) loadDir(cwd.value)
-  }
-)
-
-function emitSelectionChanged() {
-  // Build a lookup from FullPath → entry
-  const byPath = new Map<string, (typeof entries.value)[number]>()
-  for (const e of entries.value) byPath.set(e.FullPath, e)
-
-  const payload: Array<{
-    path: string
-    kind: 'file' | 'folder'
-    name?: string
-    size?: number
-    mtime?: number
-  }> = []
-
-  for (const fullPath of selected.value) {
-    const entry = byPath.get(fullPath)
-    if (!entry) {
-      payload.push({ path: fullPath, kind: 'file' })
-      continue
-    }
-
-    const kindStr = entry.Kind?.toLowerCase?.() ?? ''
-    const isFolder =
-      kindStr.includes('dir') ||   // "Dir", "Directory"
-      kindStr === 'folder'
-
-    payload.push({
-      path: entry.FullPath,
-      kind: isFolder ? 'folder' : 'file',
-      name: entry.Name,
-      size: entry.Size,
-      mtime: entry.ModifiedAt,
-    })
-  }
-
-  emit('event', { type: 'selectionChanged', payload })
-}
-
-// ----- Resizer drag -----
-const isResizing = ref(false)
-
-// Adapters
-const geo: GeometryAdapter = {
-  // Viewport rect in scroller-viewport space
-  contentRect() {
-    const layout = merged.value.layout
-    const sc = layout === 'details' ? detailsScrollEl.value! : scrollEl.value!
-    return { x: 0, y: 0, w: sc.clientWidth, h: sc.clientHeight }
-  },
-
-  // Item rects in the same scroller-viewport space
-  itemRects() {
-    const layout = merged.value.layout
-    const sc = layout === 'details' ? detailsScrollEl.value! : scrollEl.value!
-    const scR = sc.getBoundingClientRect()
-    const root = layout === 'details' ? (padEl.value ?? sc) : sc
-    const rows = root.querySelectorAll<HTMLElement>('.row[data-path]')
-    const arr: Array<{ id: string; rect: Rect }> = []
-    
-    rows.forEach(row => {
-      const rr = row.getBoundingClientRect()
-      arr.push({
-        id: row.dataset.path!,
-        rect: {
-          x: rr.left - scR.left,
-          y: rr.top - scR.top,
-          w: rr.width,
-          h: rr.height,
-        },
-      })
-    })
-    return arr
-  },
-
-  // Pointer in the same scroller-viewport space
-  pointFromClient(clientX, clientY) {
-    const layout = merged.value.layout
-    const sc = layout === 'details' ? detailsScrollEl.value! : scrollEl.value!
-    const scR = sc.getBoundingClientRect()
-    
-    // Work in container space - no padding adjustments needed
-    return { x: clientX - scR.left, y: clientY - scR.top }
-  },
-};
-
-const scroller: ScrollerAdapter = {
-  scrollTop() { return (detailsScrollEl.value ?? scrollEl.value)!.scrollTop; },
-  maxScrollTop() {
-    const el = (detailsScrollEl.value ?? scrollEl.value)!;
-    return Math.max(0, el.scrollHeight - el.clientHeight);
-  },
-  scrollBy(dy) {
-    // Only allow when the pointer is truly outside the viewport,
-    // measured in the same coordinate space (pad-space) as the driver.
-    const outside = !pointerInsideViewportFromClient(lastClientX, lastClientY);
-    if (!outside) return;
-    (detailsScrollEl.value ?? scrollEl.value)!.scrollTop += dy;
-  },
-};
-
-let lastClientX = 0, lastClientY = 0;
-
-// Reuse the adapter's math so we're 100% consistent with pad-space
-function pointerInsideViewportFromClient(cx: number, cy: number) {
-  const cr = geo.contentRect();
-  const p  = geo.pointFromClient(cx, cy);
-  return p.x >= cr.x && p.x <= cr.x + cr.w && p.y >= cr.y && p.y <= cr.y + cr.h;
-}
-
-function createItemsAdapter(vm): PickerSurfaceAdapter {
-  return {
-    getCwd: () => vm.cwd,
-    getSelection: () => [...vm.selectionAbs],
-    setSelection: paths => vm.setSelectionByPaths(paths),
-
-    navigateTo: path => vm.navigateTo(path),
-
-    onCwdChange: cb => vm.on('cwd-changed', cb),
-    onSelectionChange: cb => vm.on('selection-changed', cb),
-    onItemActivate: cb => vm.on('item-activate', cb),
-
-    setPickerMode: mode => vm.setPickerMode(mode),
-    setFilters: (filters, idx) => vm.setFilters(filters, idx),
-    setSuggestedName: name => vm.setSuggestedName(name),
-  };
-}
-
-const driver = createMarqueeDriver(
-  {
-    enabled: true,
-    startThresholdPx: 6,
-    fps: 30,                   // ← your SELECTION_FPS
-    guardTopPx: 0,             // set to header height if needed
-    autoscroll: { enabled: true, baseSpeed: 2400, speedMultiplier: 1.75, maxDistancePx: 240 },
-    combine: 'auto',           // Shift→add, Ctrl/Cmd→toggle, else replace
-    policy: /Mac/i.test(navigator.platform) ? 'mac' : 'windows',
-  },
-  geo,
-  scroller,
-  {
-    replaceSelection: (...args) => engine.replaceSelection(...args as any),
-    getSelected: () => engine.getSelected(),
-  },
-  {
-    rectChanged: (r) => {
-      if (r) {
-        const layout = merged.value.layout
-        const st = (layout === 'details' ? detailsScrollEl.value : scrollEl.value)?.scrollTop ?? 0
-        
-        // No padding offset needed - working in container space
-        marqueeRect.value = { 
-          x: r.x, 
-          y: r.y + st, 
-          w: r.w, 
-          h: r.h 
-        }
-        const hasSize = (r.w > 0 || r.h > 0)
-        squelchNextPlaneClick = hasSize
-        console.log('[Widget] rectChanged - marquee active:', {
-          layout,
-          rect: r,
-          hasSize,
-          squelchFlag: squelchNextPlaneClick
-        })
-      } else {
-        console.log('[Widget] rectChanged - marquee ended, squelch flag:', squelchNextPlaneClick)
-        marqueeRect.value = null;
-      }
-    },
-    log: (e) => console.debug('[marquee]', e),
-  }
-);
-
-function sizeTokens(Size?: string) {
-  const s = (Size || 'md').toLowerCase()
-  if (s === 'sm') return { padY: 8, padX: 10, radius: 8, gap: 6, font: 0.95, title: 600 }
-  if (s === 'lg') return { padY: 14, padX: 14, radius: 12, gap: 10, font: 1.05, title: 650 }
-  return { padY: 10, padX: 12, radius: 10, gap: 8, font: 1.0, title: 600 }
-}
-
-// helper to package modifiers
-function modsFromEvent(e: PointerEvent | MouseEvent | KeyboardEvent) {
-  return { ctrl: e.ctrlKey || false, meta: (e as any).metaKey || false, shift: e.shiftKey || false, alt: e.altKey || false };
-}
-// Engine
-const itemsAdapter: ItemsAdapter = {
-  orderedIds() {
-    // strictly order by the current DOM rows; no layout needed
-    const root = padEl.value ?? detailsScrollEl.value ?? scrollEl.value;
-    if (!root) return [];
-    const rows = root.querySelectorAll<HTMLElement>('.row[data-path]');
-    return Array.from(rows).map(r => r.dataset.path!).filter(Boolean);
-  }
-};
-
-const engine = createSelectionEngine(
-  {
-    dragThresholdPx: 6,
-    policy: /Mac/i.test(navigator.platform) ? 'mac' : 'windows'
-  },
-  itemsAdapter,
-  {
-    selectionChanged: (set) => {
-      selected.value = new Set(set)
-      emitSelectionChanged()
-    },
-    focusChanged: (i) => { focusIndex.value = i; },
-    //log: (e) => console.debug('[sel]', e.reason, e.selected, e),
-  }
-);
-
-watch(focusIndex, (idx) => {
-  if (idx != null) scrollRowIntoView(idx);
-});
-
-function planeEl(): HTMLElement {
-  return (merged.value.layout === 'details' && detailsScrollEl.value)
-    ? detailsScrollEl.value
-    : (scrollEl.value as HTMLElement)
-}
-
-// --- Column widths now include NAME so each divider moves the column under it ---
-type DetailWeights = { name: number; ext: number; size: number; mod: number }
-const defaultPx = { name: 420, ext: 110, size: 130, mod: 220 }
-
-// Normalize any numbers to a nice total (100) for persistence/readability.
-function normalizeWeights<T extends Record<string, number>>(o: T): DetailWeights {
-  const sum = Math.max(
-    1,
-    (o.name ?? 0) + (o.ext ?? 0) + (o.size ?? 0) + (o.mod ?? 0)
-  )
-  const scale = 100 / sum
-  return {
-    name: (o.name ?? 0) * scale,
-    ext:  (o.ext  ?? 0) * scale,
-    size: (o.size ?? 0) * scale,
-    mod:  (o.mod  ?? 0) * scale,
-  }
-}
-
-// One-time migration: prefer saved weights; else derive from old px (detailCols); else defaults.
-function initialWeights(): DetailWeights {
-  const saved = props.config?.view?.detailWeights as Partial<DetailWeights> | undefined
-  if (saved && typeof saved.name === 'number') return normalizeWeights(saved as any)
-
-  const oldPx = props.config?.view?.detailCols as Partial<Record<keyof DetailWeights, number>> | undefined
-  if (oldPx && typeof oldPx.name === 'number') return normalizeWeights(oldPx as any)
-
-  return normalizeWeights(defaultPx)
-}
-
-// Our reactive weights
-const colW = ref<DetailWeights>(initialWeights())
-
-// computed CSS value for details grid
-const detailsCols = computed(() =>
-  `minmax(${NAME_MIN}px, ${colW.value.name}fr) ` +
-  `minmax(${EXT_MIN }px, ${colW.value.ext }fr) ` +
-  `minmax(${SIZE_MIN}px, ${colW.value.size}fr) ` +
-  `minmax(${MIN_MOD_PX}px, ${colW.value.mod }fr)`
-)
-
-const anchorIndex = ref<number | null>(null)   // selection anchor for Shift-range
-
-// --- Focus management: keep focus on the scroller so rows don't show the white ring
-function refocusScrollerAfterEvent(ev?: Event) {
-  const t = (ev?.currentTarget as HTMLElement | null)
-  // blur the clicked button first (prevents UA ring from sticking)
-  t?.blur?.()
-  // then return focus to the scroll area on the next frame
-  requestAnimationFrame(() => {
-    scrollEl.value?.focus?.({ preventScroll: true })
+const offWidgetMsg = ref<(() => void) | null>(null)
+
+const onMediaError = (e: Event) => {
+  const t = e.target as HTMLMediaElement
+  console.error('[Widget] Media error:', {
+    src: t.currentSrc || t.src,
+    error: t.error?.code,
+    errorMessage: t.error?.message,
+    currentTrack: state.current.value?.name,
+    currentIndex: state.currentIndex.value
   })
 }
 
-function measureScrollbarWidth() {
-  const el = detailsScrollEl.value;
-  const host = detailsRootEl.value;
-  if (!el || !host) return;
-
-  // What the browser is actually reserving for the end gutter / scrollbar.
-  const raw = Math.max(0, el.offsetWidth - el.clientWidth);
-
-  // If we’re basically at the minimum possible grid width, don’t add extra header padding.
-  // This avoids the “compensates twice when there’s no room left” look.
-  const minSum = NAME_MIN + EXT_MIN + SIZE_MIN + MIN_MOD_PX;     // track mins
-  const gap =  (parseFloat(getComputedStyle(host).getPropertyValue('--space-xs')) || 6) * 3; // 3 gaps
-  const padX = (parseFloat(getComputedStyle(host).getPropertyValue('--space-sm')) || 8) * 2; // left+right
-  const contentW = contentGridWidth();                            // your helper (header/rows width)
-  const atMinish = contentW <= (minSum + gap + padX + 1);
-
-  const width = atMinish ? 0 : raw;
-  sbw.value = width;
-  host.style.setProperty('--sbw', `${width}px`);
+type Track = {
+  id: string
+  url: string
+  name: string
+  type?: string
 }
 
-function selectOnly(idx: number) {
-  const path = entries.value[idx]?.FullPath
-  if (!path) return
-  selected.value = new Set([path])
-  focusIndex.value = idx
-  anchorIndex.value = idx
-}
+const expandedLayoutRef = ref<InstanceType<typeof ExpandedLayout> | null>(null)
 
-function contentGridWidth(): number {
-  const hdrInner = headerEl.value?.querySelector<HTMLElement>('.details-header-inner')
-  if (hdrInner) return hdrInner.clientWidth
-  const pad = padEl.value
-  if (pad) {
-    const cs = getComputedStyle(pad)
-    const pl = parseFloat(cs.paddingLeft) || 0
-    const pr = parseFloat(cs.paddingRight) || 0
-    return pad.clientWidth - pl - pr
-  }
-  const el = planeEl()
-  return el ? el.clientWidth : 0
-}
+// ===== PLAYER STATE =====
+const state = usePlayerState(props.sourceId)
 
-function onRowDblClick(e: { FullPath: string }, idx: number, ev?: MouseEvent) {
-  selectOnly(idx)
-  refocusScrollerAfterEvent(ev)
-  openEntry(e.FullPath)
-}
+// ===== LAYOUT =====
+const widgetRootEl = ref<HTMLElement | null>(null)
+const containerWidth = ref(0)
 
-// =========================
-// Keyboard navigation
-// =========================
-function scrollRowIntoView(idx: number) {
-  const el = planeEl()
-  if (!el) return
-  const rows = el.querySelectorAll<HTMLElement>('.row[data-path]')
-  const row = rows[idx]
-  if (!row) return
-
-  const cr = el.getBoundingClientRect()
-  const rr = row.getBoundingClientRect()
-
-  // Header lives inside the same scroller, so sticky top is 0 here.
-  const stickyTopPx = 0
-
-  if (rr.top < cr.top + stickyTopPx) el.scrollTop -= (cr.top + stickyTopPx - rr.top)
-  else if (rr.bottom > cr.bottom)    el.scrollTop += (rr.bottom - cr.bottom)
-}
-
-function onKeyDown(ev: KeyboardEvent) {
-  if (!entries.value.length) return
-  
-  // F2 = Rename selected item
-  if (ev.key === 'F2') {
-    ev.preventDefault()
-    ev.stopPropagation()
-    
-    const selectedPaths = Array.from(selected.value)
-    console.debug('[items] F2 pressed, selected:', selectedPaths)
-    
-    if (selectedPaths.length === 1) {
-      console.debug('[items] Starting rename for:', selectedPaths[0])
-      startItemRename(selectedPaths[0])
-    } else if (selectedPaths.length === 0) {
-      console.debug('[items] F2: No selection')
-    } else {
-      console.debug('[items] F2: Multiple selection, cannot rename')
-    }
-    return  // Don't continue to arrow key handling
-  }
-  
-  const key =
-    ev.key === 'ArrowDown' ? 'Down' :
-    ev.key === 'ArrowUp'   ? 'Up'   :
-    ev.key === 'Home'      ? 'Home' :
-    ev.key === 'End'       ? 'End'  : null
-  if (!key) return
-
-  ev.preventDefault()
-  ev.stopPropagation()
-  engine.kbd(key as any, modsFromEvent(ev))
-}
-
-function isOnScrollbar(el: HTMLElement, ev: PointerEvent) {
-  const r = el.getBoundingClientRect();
-  const sb = sbw.value || 0;             // you already measure this
-  // treat the last sb px on the end as the scrollbar gutter
-  return ev.clientX >= (r.right - sb - 1);
-}
-
-function onScrollContainerPointerDown(ev: PointerEvent) {
-  if (ev.button !== 0) return
-
-  const layout = merged.value.layout
-  
-  // For List/Grid, handle marquee on scroll container
-  if (layout === 'list' || layout === 'grid') {
-    onSurfacePointerDown(ev)
-  } else {
-    // For Details/other, just handle focus
-    ;(ev.currentTarget as HTMLElement)?.focus?.({ preventScroll: true })
-  }
-}
-
-function onSurfacePointerDown(ev: PointerEvent) {
-  if (ev.button !== 0) return
-
-  const layout = merged.value.layout
-  
-  console.log('[Widget] onSurfacePointerDown:', {
-    layout,
-    target: (ev.target as HTMLElement)?.tagName,
-    currentTarget: (ev.currentTarget as HTMLElement)?.className
-  })
-  
-  // Check if event is from Details internal scroll (via emit) or from outer container (List/Grid)
-  const fromDetailsInternal = layout === 'details' && detailsScrollEl.value && ev.currentTarget === detailsScrollEl.value
-  const fromOuterContainer = (layout === 'list' || layout === 'grid') && ev.currentTarget === scrollEl.value
-  
-  // Only handle if from appropriate source
-  if (!fromDetailsInternal && !fromOuterContainer) {
-    console.log('[Widget] onSurfacePointerDown - ignoring (wrong source)')
-    return
-  }
-  if (ev.button !== 0) {
-    console.log('[Widget] onSurfacePointerDown - ignoring (not left button)')
-    return
-  }
-  
-  const t = ev.target as HTMLElement | null
-  const plane = layout === 'details' ? detailsScrollEl.value! : scrollEl.value!
-  
-  const isRow = !!t?.closest('.row[data-path], [draggable="true"]')
-  const onScrollbar = isOnScrollbar(plane, ev)
-  
-  console.log('[Widget] onSurfacePointerDown - checks:', {
-    isRow,
-    onScrollbar,
-    willStart: !isRow && !onScrollbar
-  })
-  
-  if (isRow) {
-    console.log('[Widget] onSurfacePointerDown - ignoring (row or draggable)')
-    return
-  }
-  if (onScrollbar) {
-    console.log('[Widget] onSurfacePointerDown - ignoring (scrollbar)')
-    return
-  }
-
-  console.log('[Widget] onSurfacePointerDown - starting marquee')
-  
-  ;(ev.currentTarget as Element)?.setPointerCapture?.(ev.pointerId);
-
-  // Ensure the widget owns focus on any left click in the canvas
-  scrollEl.value?.focus({ preventScroll: true })
-
-  lastClientX = ev.clientX; lastClientY = ev.clientY;
-  lastScrollTopForDrag = plane.scrollTop
-  driver.pointerDown(ev, modsFromEvent(ev));
-
-  window.addEventListener('pointerup', onSurfacePointerUp, { once: true });
-  ev.preventDefault();
-}
-
-function isInsideScrollRect(cx: number, cy: number) {
-  const sc = detailsScrollEl.value;
-  if (!sc) return false;
-  const r = sc.getBoundingClientRect();
-  return cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom;
-}
-
-function isOverSelectedRowAtPoint(cx: number, cy: number) {
-  const el = document.elementFromPoint(cx, cy) as HTMLElement | null;
-  const row = el?.closest('.row[data-path]') as HTMLElement | null;
-  if (!row) return false;
-  const id = row.dataset.path!;
-  return selected.value.has(id);
-}
-
-function onPlaneScroll() {
-  if (!marqueeActive.value) return
-  
-  const layout = merged.value.layout
-  const sc = layout === 'details' ? detailsScrollEl.value! : scrollEl.value!
-  
-  const dy = sc.scrollTop - lastScrollTopForDrag
-  if (dy) {
-    driver.adjustForScroll(dy)
-    lastScrollTopForDrag = sc.scrollTop
-  }
-}
-
-function onSurfacePointerMove(ev: PointerEvent) {
-  const layout = merged.value.layout
-  
-  // In details mode, only handle from details-scroll (via emit), not outer container
-  if (layout === 'details' && ev.currentTarget === scrollEl.value) {
-    return
-  }
-  
-  lastClientX = ev.clientX; lastClientY = ev.clientY;   // keep coords
-  driver.pointerMove(ev);
-}
-
-function onSurfacePointerUp(ev: PointerEvent) {
-  if (ev.button !== 0) return
-
-  const layout = merged.value.layout
-  
-  // In details mode, only handle from details-scroll (via emit), not outer container
-  if (layout === 'details' && ev.currentTarget === scrollEl.value) {
-    console.log('[Widget] onSurfacePointerUp - ignoring (details mode, outer container)')
-    return
-  }
-  
-  const wasMarquee = marqueeActive.value
-
-  console.log('[Widget] onSurfacePointerUp (before driver):', {
-    layout: merged.value.layout,
-    wasMarquee,
-    squelchFlag: squelchNextPlaneClick,
-    marqueeRect: marqueeRect.value,
-    currentTarget: ev.currentTarget
-  })
-
-  if (wasMarquee) {
-    const sc = layout === 'details' ? detailsScrollEl.value! : scrollEl.value!
-    
-    const dy = sc.scrollTop - lastScrollTopForDrag
-    if (dy) {
-      driver.adjustForScroll(dy)
-      lastScrollTopForDrag = sc.scrollTop
-      driver.recomputeNow('plane:flush-before-up')
-    }
-  }
-
-  driver.pointerUp(ev);
-  window.removeEventListener('pointerup', onSurfacePointerUp);
-
-  console.log('[Widget] onSurfacePointerUp (after driver):', {
-    layout: merged.value.layout,
-    wasMarquee,
-    squelchFlag: squelchNextPlaneClick,
-    marqueeStillActive: marqueeActive.value
-  })
-
-  // Only treat as a "click" if no marquee was shown
-  if (!wasMarquee) {
-    const inside = isInsideScrollRect(ev.clientX, ev.clientY);
-    const overSelected = isOverSelectedRowAtPoint(ev.clientX, ev.clientY);
-    console.log('[Widget] onSurfacePointerUp - no marquee, checking for deselect:', {
-      inside,
-      overSelected,
-      willDeselect: inside && !overSelected
-    })
-    if (inside && !overSelected) {
-      engine.replaceSelection([], { reason: 'plane:click-up-outside' });
-    }
-  }
-}
-
-async function applyExternalCwd(path: string, opts?: { mode?: 'push' | 'replace'; focus?: boolean }) {
-  if (!path) return
-
-  engine.replaceSelection([], { reason: 'nav:external-cwd' })
-  focusIndex.value = null
-  anchorIndex.value = null
-
-  cwd.value = path
-  await loadDir(path)
-}
-
-
-
-function onSurfaceClick(ev: MouseEvent) {
-  if (ev.button !== 0) return
-  
-  const layout = merged.value.layout
-  
-  // In details mode, only handle clicks from the details-scroll element (via emit)
-  // Ignore clicks from the outer scroll container
-  if (layout === 'details' && ev.currentTarget === scrollEl.value) {
-    console.log('[Widget] onSurfaceClick - ignoring (details mode, outer container)')
-    return
-  }
-  
-  console.log('[Widget] onSurfaceClick:', {
-    layout: merged.value.layout,
-    squelchFlag: squelchNextPlaneClick,
-    willSquelch: squelchNextPlaneClick,
-    target: (ev.target as HTMLElement)?.tagName,
-    currentTarget: ev.currentTarget
-  })
-  
-  if (squelchNextPlaneClick) {
-    console.log('[Widget] onSurfaceClick - SQUELCHED')
-    squelchNextPlaneClick = false // Clear flag after squelching
-    return
-  }
-  
-  const t = ev.target as HTMLElement | null
-  const isRow = !!t?.closest('.row[data-path]')
-  console.log('[Widget] onSurfaceClick - checking target:', {
-    isRow,
-    willDeselect: !isRow
-  })
-  
-  if (!isRow) {
-    console.log('[Widget] onSurfaceClick - deselecting')
-    engine.replaceSelection([], { reason: 'plane:clear' })
-  }
-}
-
-/* -----------------------------------------------
-   Data / sorting / UI (unchanged)
------------------------------------------------- */
-void loadIconPack()
-
-function iconText(e: any) {
-  return iconFor({ kind: e?.Kind, ext: e?.Ext, iconKey: e?.IconKey }, 32)
-}
-function iconIsImg(e: any) {
-  const v = iconFor({ kind: e?.Kind, ext: e?.Ext, iconKey: e?.IconKey }, 32)
-  return typeof v === 'string' && v.startsWith('data:image/')
-}
-function iconSrc(e: any) {
-  return iconFor({ kind: e?.Kind, ext: e?.Ext, iconKey: e?.IconKey }, 32)
-}
-
-function sizeParts(bytes?: number | null): { num: string; unit: string } {
-  if (bytes == null || bytes < 0) return { num: '', unit: '' }
-  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
-  let n = bytes
+// utility: common parent dir
+function commonDir(paths: string[]) {
+  const parts = paths.map(p => p.replace(/\\/g, '/').split('/'))
   let i = 0
-  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++ }
-  const num = i === 0
-    ? Math.round(n).toString()
-    : (n < 10 ? n.toFixed(1) : Math.round(n).toString())
-  return { num, unit: units[i] }
-}
-
-const hour12Pref = new Intl.DateTimeFormat().resolvedOptions().hour12 ?? false
-const FMT_DATE = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' })
-const FMT_TIME = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: hour12Pref })
-function modParts(ms?: number | null): { date: string; time: string } {
-  if (ms == null || ms <= 0) return { date: '', time: '' }
-  const d = new Date(ms)
-  return { date: FMT_DATE.format(d), time: FMT_TIME.format(d) }
-}
-async function loadDir(path?: string) {
-  const p = String(path ?? cwd.value ?? '')
-  if (!p) {
-    entries.value = []
-    return
+  while (true) {
+    const seg = parts[0][i]
+    if (!seg) break
+    if (!parts.every(a => a[i] === seg)) break
+    i++
   }
-  
-  console.log('[Widget] loadDir START:', { 
-    path: p, 
-    sortKey: sortKey.value, 
-    sortDir: sortDir.value 
-  })
-  
-  loading.value = true
-  error.value = ''
+  const shared = parts[0].slice(0, i).join('/')
+  return shared.endsWith(':') ? shared + '/' : shared || '/'
+}
 
-  try {
-    // Get current filter
-    const filterExts = activeFilter.value?.exts?.length 
-      ? activeFilter.value.exts 
-      : undefined
+// Convert file-refs → streaming playlist items (gex://) → Tracks
+async function refsToTracks(
+  refs: FileRefData[],
+  receiverWidgetType: string,
+  receiverWidgetId: string
+): Promise<Track[]> {
+  const items = await fileRefsToPlaylistItems(refs, receiverWidgetType, receiverWidgetId)
+  return items.map(it => ({
+    id: it.id || it.src,
+    url: it.src,
+    name: it.name || it.src.split(/[\\/]/).pop() || 'track',
+    type: it.type
+  }))
+}
 
-    const activeOptions = activeFilter.value?.activeOptions?.length
-      ? activeFilter.value.activeOptions
-      : undefined
+// Push tracks into queue and sync the underlying playlists engine
+async function appendTracks(tracks: Track[]) {
+  if (!tracks.length) return
+  state.queue.value = state.queue.value.concat(tracks)
+  state.playlists.setItems(state.sel, state.toPlaylistItems(), { keepCurrent: true })
+}
 
-    console.log('[Widget] Calling fsListDirSmart with:', {
-      sortBy: sortKey.value,
-      sortDir: sortDir.value,
-      filterExts,
-      activeOptions 
-    })
+// rAF + idle-gated width pipeline ------------------------------------------
+let pendingWidth: number | null = null
+let rafForWidth = 0
 
-    // Call with backend sorting + filtering
-    const res = await fsListDirSmart('items', props.sourceId, p, {
-      sortBy: sortKey.value,     // Backend sorts for us
-      sortDir: sortDir.value,
-      filterExts,                 // Backend filters too
-      activeOptions              
-    })
+function commitWidth(w: number) {
+  if (Math.abs(w - containerWidth.value) < 1) return
+  containerWidth.value = w | 0
+}
 
-    let list = Array.isArray((res as any).entries) ? (res as any).entries : []
-    
-    // Optional: Hide hidden files (if not done on backend)
-    if (!merged.value.showHidden) {
-      list = list.filter((e: any) => !String(e?.Name || '').startsWith('.'))
+function scheduleWidth(w: number, src: 'host' | 'ro' = 'ro') {
+  pendingWidth = w | 0
+  if (props.placement?.resizePhase === 'active' && src === 'ro') return
+  if (rafForWidth) return
+  rafForWidth = requestAnimationFrame(() => {
+    rafForWidth = 0
+    if (pendingWidth != null) {
+      commitWidth(pendingWidth)
+      pendingWidth = null
     }
+  })
+}
 
-    // No need to sort - already sorted by backend!
-    entries.value = list
+function seedMeasureNow() {
+  const el = widgetRootEl.value
+  if (!el) return
+  const w = Math.round(el.getBoundingClientRect().width || 0)
+  if (w) scheduleWidth(w)
+}
 
-    const lnks = entries.value
-      .filter(e =>
-        e?.Kind === 'link' &&
-        e?.Ext === '.lnk' &&
-        (!e.IconKey || !String(e.IconKey).startsWith('link:'))
-      )
-      .map(e => e.FullPath)
+watch(() => props.placement?.resizePhase, (phase) => {
+  if (phase === 'idle' && pendingWidth != null) {
+    commitWidth(pendingWidth)
+    pendingWidth = null
+  }
+})
+// ---------------------------------------------------------------------------
 
-    if (lnks.length) {
-      try {
-        const r = await shortcutsProbe(lnks)
-        const arr = (r?.results ?? []) as Array<{ path: string; IconKey: string }>
-        if (arr.length) {
-          const map = new Map(arr.map(x => [x.path, x.IconKey]))
-          for (const e of entries.value) {
-            const k = map.get(e.FullPath)
-            if (k) e.IconKey = k
-          }
-        }
-      } catch {
-        // ignore
+const hostContext = computed<'grid' | 'sidebar' | 'embedded'>(() =>
+  props.placement?.context ?? props.context ?? 'sidebar'
+)
+
+const hostLayout = computed<string>(() =>
+  // Priority order:
+  // 1. config.view.layout (set by WidgetHost via context menu or cycle button)
+  // 2. placement.layout (legacy GridLayout)
+  // 3. variant (Sidebar prop)
+  // 4. Default to 'expanded'
+  props.config?.view?.layout ??
+  props.placement?.layout ?? 
+  props.variant ?? 
+  'expanded'
+)
+
+const hostWidth = computed(() => {
+  const p = props.placement?.size
+  return typeof p?.width === 'number' && p.width > 0
+    ? p.width
+    : typeof props.width === 'number' && props.width > 0
+      ? props.width
+      : 0
+})
+watch(hostWidth, (w) => {
+  if (w > 0) scheduleWidth(Math.round(w), 'host')
+})
+
+const layoutClass = computed(() => {
+  const w = containerWidth.value || hostWidth.value || 0
+  if (w <= 160) return 'micro'
+  if (w <= 260) return 'ultra'
+  if (w <= 320) return 'narrow'
+  if (w <= 400) return 'medium'
+  return 'wide'
+})
+
+watch(() => hostLayout.value, () => {
+  nextTick(() => {
+    if (hostLayout.value !== 'compact') seedMeasureNow()
+  })
+})
+
+// ===== DND (list reordering) =====
+const showQueue = state.life.cell<boolean>('ui.showQueue', true)
+const dnd = useDnD(
+  state.queue,
+  state.currentIndex,
+  showQueue,
+  () => expandedLayoutRef.value?.queueEl || null,
+  state.toPlaylistItems,
+  state.playlists,
+  state.sel
+)
+
+// ===== PLAYLIST OPS =====
+const playlist = usePlaylist(
+  state.queue,
+  state.currentIndex,
+  state.queueName,
+  state.isPlaying,
+  state.music,
+  state.playlists,
+  state.sel,
+  state.toPlaylistItems,
+  () => dnd.ensureSortable(),           // <- if your useDnD exposes ensureDnD()
+  'local-player',                  // <- receiverWidgetType
+  props.sourceId                   // <- receiverWidgetId
+)
+
+
+// ===== KEYBOARD NAV =====
+const keyboard = useKeyboardNav(
+  state.queue,
+  state.selectedIndex,
+  state.hasTracks,
+  play
+)
+
+// ===== MARQUEE =====
+const marquee = useMarquee(
+  state.currentTitle,
+  layoutClass,
+  computed(() => props.placement?.resizePhase),
+  computed(() => props.config)
+)
+
+// Rack index → sync current/selected
+type RackIndexEvt = CustomEvent<{
+  listId: string
+  index?: number
+  item?: { id?: string; url?: string } | null
+}>
+const onRackIndex = (e: Event) => {
+  const d = (e as RackIndexEvt).detail
+  let real = typeof d.index === 'number' ? d.index : -1
+  if (real < 0 && d.item) {
+    const { id, url } = d.item
+    if (id) real = state.queue.value.findIndex(t => t.id === id)
+    if (real < 0 && url) real = state.queue.value.findIndex(t => t.url === url)
+  }
+  if (real >= 0) {
+    if (state.currentIndex.value !== real) state.currentIndex.value = real
+    if (state.selectedIndex.value !== real) state.selectedIndex.value = real
+  }
+}
+
+// ===== PLAYER CONTROLS =====
+async function play(index?: number) {
+  await state.prime()
+  state.isLoading.value = true
+
+  if (typeof index === 'number') {
+    if (index >= 0 && index < state.queue.value.length && state.queue.value[index]?.url) {
+      const idx = await state.playlists.playIndex(state.sel, index, state.music)
+      if (idx >= 0) {
+        state.currentIndex.value = idx
+        state.selectedIndex.value = idx
+        state.isPlaying.value = true
       }
     }
-
-    const n = await ensureIconsFor(
-      entries.value.map(e => ({ iconKey: e.IconKey })),
-      32
-    )
-    if (n > 0) iconsTick.value++
-
-  } catch (e: any) {
-    error.value = String(e?.message ?? e ?? 'Error')
-    entries.value = []
-  } finally {
-    loading.value = false
+    state.isLoading.value = false
+    return
   }
+
+  if (state.currentIndex.value === -1) {
+    const first = state.queue.value.findIndex(t => !!t.url)
+    if (first >= 0) {
+      const idx = await state.playlists.playIndex(state.sel, first, state.music)
+      if (idx >= 0) {
+        state.currentIndex.value = idx
+        state.selectedIndex.value = idx
+        state.isPlaying.value = true
+      }
+      state.isLoading.value = false
+      return
+    }
+  }
+
+  try { await state.music.play(); state.isPlaying.value = true } catch { state.isPlaying.value = false }
+  setTimeout(() => { state.isLoading.value = false }, 300)
 }
 
+function pause() {
+  state.music.pause()
+  state.isPlaying.value = false
+}
 
-async function openEntry(FullPath: string) {
-  if (!FullPath) return
+function togglePlay() {
+  if (!state.hasTracks.value) return
+  state.isPlaying.value ? pause() : play()
+}
 
-  try {
-    const v = await fsValidate(FullPath)
-    const isDir = !!v?.isDir
-
-    if (isDir) {
-      // Widget-level rule: folders → nav
-      props.runAction?.({ type: 'nav', to: FullPath })
+function next() {
+  state.playlists.next(state.sel, state.music).then((idx: number) => {
+    if (idx >= 0) {
+      state.currentIndex.value = idx
+      state.selectedIndex.value = idx
     } else {
-      // Widget-level rule: files → open
-      props.runAction?.({ type: 'open', path: FullPath })
-    }
-  } catch (err) {
-    console.error('[items] openEntry failed:', err)
-  }
-}
-
-
-watch(
-  detailsScrollEl,
-  (el, _prev, onCleanup) => {
-    if (!el || !detailsRootEl.value) return
-
-    //measureScrollbarWidth()
-
-    // ⚡ PERFORMANCE: Debounce to only measure after resize settles
-    let timeoutId: number | undefined
-    
-    const debouncedMeasure = () => {
-      clearTimeout(timeoutId)
-      timeoutId = window.setTimeout(() => {
-        measureScrollbarWidth()
-      }, 150) // Wait 150ms after last resize
-    }
-
-    const ro = new ResizeObserver(debouncedMeasure)
-    ro.observe(el)
-    
-    onCleanup(() => {
-      ro.disconnect()
-      clearTimeout(timeoutId)
-    })
-  },
-  { flush: 'post' }
-)
-
-// persist on change (optional)
-watch(colW, (w) => {
-  emit('updateConfig', {
-    ...props.config,
-    view: {
-      ...props.config?.view,
-      // Save the ratios going forward
-      detailWeights: { ...normalizeWeights(w) },
-      // (Optional) you can drop detailCols entirely once you no longer need backward compat
-    }
-  })
-}, { deep: true })
-
-
-watch(
-  () => [props.config?.view?.sortKey, props.config?.view?.sortDir],
-  ([k, d]) => {
-    if (k && ['name', 'kind', 'ext', 'size', 'modified'].includes(k as string)) sortKey.value = k as SortKey
-    if (d && (d === 'asc' || d === 'desc')) sortDir.value = d
-  }
-)
-
-// Helper: which pair does this handle separate?
-function pairForHandle(col: ResCol): [ResCol, ResCol] {
-  if (col === 'name') return ['name', 'ext']
-  if (col === 'ext')  return ['ext',  'size']
-  if (col === 'size') return ['size', 'mod']
-  // 'mod' has no right-side handle
-  return ['mod', 'mod']
-}
-
-watch(
-  () => merged.value.rpath,
-  async (rp) => {
-    if (!rp) return
-
-    // clear stale selection when navigating
-    engine.replaceSelection([], { reason: 'nav:rpath-changed' })
-    focusIndex.value = null
-    anchorIndex.value = null
-
-    cwd.value = rp
-    await loadDir(rp)
-  },
-  { immediate: true }
-)
-
-
-// Helper: current header cell widths (px)
-function measureHeaderColsPx() {
-  const root = headerEl.value?.querySelector<HTMLElement>('.details-header-inner')
-  if (!root) return { name: 0, ext: 0, size: 0, mod: 0 }
-  const q = (sel: string) => root.querySelector<HTMLElement>(sel)?.getBoundingClientRect().width || 0
-  return {
-    name: q('.th-name'),
-    ext:  q('.th-ext'),
-    size: q('.th-size'),
-    mod:  q('.th-mod'),
-  }
-}
-
-let resizing: null | {
-  left: ResCol
-  right: ResCol
-  startX: number
-  // px at drag start
-  startLeftPx: number
-  startRightPx: number
-  pairPx: number
-  // weights at drag start
-  startLeftW: number
-  startRightW: number
-  pairW: number
-} = null
-
-function startResize(col: ResCol, ev: PointerEvent) {
-  const [left, right] = pairForHandle(col)
-  if (left === 'mod' && right === 'mod') return
-
-  const px = measureHeaderColsPx()
-
-  const startLeftPx  = px[left]
-  const startRightPx = px[right]
-  const pairPx = Math.max(1, startLeftPx + startRightPx) // avoid div-by-zero
-
-  const startLeftW  = colW.value[left]
-  const startRightW = colW.value[right]
-  const pairW = Math.max(0.0001, startLeftW + startRightW)
-
-  const target = ev.currentTarget as HTMLElement
-  target.setPointerCapture?.(ev.pointerId)
-
-  resizing = {
-    left, right, startX: ev.clientX,
-    startLeftPx, startRightPx, pairPx,
-    startLeftW, startRightW, pairW
-  }
-  isResizing.value = true
-  window.addEventListener('pointermove', onResizeMove)
-  window.addEventListener('pointerup', onResizeEnd, { once: true })
-  ev.preventDefault()
-  ev.stopPropagation()
-}
-
-function onResizeMove(ev: PointerEvent) {
-  if (!resizing) return
-  const dx = ev.clientX - resizing.startX
-
-  // pixel mins for the pair
-  const minBy: Record<ResCol, number> = {
-    name: NAME_MIN, ext: EXT_MIN, size: SIZE_MIN, mod: MIN_MOD_PX
-  }
-
-  // desired new left px, clamped so both columns respect their mins
-  const minLeft  = minBy[resizing.left]
-  const minRight = minBy[resizing.right]
-  const maxLeft  = Math.max(minLeft, resizing.pairPx - minRight)
-  const newLeftPx = Math.min(Math.max(resizing.startLeftPx + dx, minLeft), maxLeft)
-
-  // Convert px back to weights using the pair’s px↔weight ratio captured at drag start
-  const k = resizing.pairW / resizing.pairPx // weight per pixel within the pair at drag-start
-  const newLeftW  = newLeftPx * k
-  const newRightW = resizing.pairW - newLeftW
-
-  colW.value = {
-    ...colW.value,
-    [resizing.left]:  newLeftW,
-    [resizing.right]: newRightW,
-  } as DetailWeights
-}
-
-function onResizeEnd() {
-  window.removeEventListener('pointermove', onResizeMove)
-  isResizing.value = false
-  // Optional: normalize so the saved numbers are tidy
-  if (colW.value) colW.value = normalizeWeights(colW.value)
-  resizing = null
-}
-
-// swap your onHeaderClickSafe with this:
-function onHeaderClickFiltered(nextKey: SortKey, ev: MouseEvent) {
-  // if the click started on a resizer (or inside it), ignore
-  const t = ev.target as HTMLElement | null
-  if (t && t.closest('.resize-handle')) return
-  onHeaderClick(nextKey)
-}
-
-function sizeLabel(e: any) {
-  const p = sizeParts(e?.Size)
-  if (!p.num) return ''
-  return `${p.num} ${p.unit}`
-}
-function modLabel(e: any) {
-  const p = modParts(e?.ModifiedAt)
-  if (!p.date && !p.time) return ''
-  return `${p.date} ${p.time}`
-}
-
-const hostVars = computed(() => ({
-  '--items-border':     props.theme?.border    || 'var(--border, #555)',
-  '--items-fg':         props.theme?.fg        || 'var(--fg, #eee)',
-  '--items-bg':         props.theme?.bg        || 'var(--surface-2, transparent)',
-  '--items-header-sep': props.theme?.headerSep || 'rgba(255,255,255,.22)',
-}) as Record<string, string>)
-/* -----------------------------------------------
-   Drag & drop composable
------------------------------------------------- */
-const {
-  isDragging,
-  isDropActive,
-  folderDropTarget,   
-  onItemPointerDown,
-  onItemDragStart,
-  dispose
-} = useItemsDragDrop({
-  sourceId: props.sourceId,
-  entries,
-  selected,
-  cwd,
-  merged,
-  marqueeActive,
-  rootEl,
-  loadDir,
-  emit
-})
-/* -----------------------------------------------
-   Drag & drop (unchanged; suppress when marqueeing)
------------------------------------------------- */
-// Normalizes directory paths for comparison (same logic as TabContent)
-function normalizeDir(p: string | null | undefined): string {
-  if (!p) return ''
-  // Normalize to backslashes and trim trailing separators, then lowercase
-  return p.replace(/[\\/]+/g, '\\').replace(/[\\]+$/, '').toLowerCase()
-}
-
-/**
- * Get the directory portion of a path.
- */
-function dirname(path: string): string {
-  const normalized = path.replace(/[\\/]+$/, '')
-  const idx = Math.max(
-    normalized.lastIndexOf('\\'),
-    normalized.lastIndexOf('/')
-  )
-  return idx < 0 ? '' : normalized.slice(0, idx)
-}
-
-/**
- * Join path segments.
- */
-function joinPath(parent: string, name: string): string {
-  const sep = parent.includes('\\') ? '\\' : '/'
-  return parent.replace(/[\\/]+$/, '') + sep + name
-}
-
-/* -----------------------------------------------
-   Edit helpers
------------------------------------------------- */
-function updateColumns(delta: number) {
-  if (!props.editMode) return
-  const current = merged.value.columns
-  const next = Math.max(1, Math.min(8, current + delta))
-  emit('updateConfig', { ...props.config, view: { ...props.config?.view, columns: next } })
-}
-
-function cycleItemSize() {
-  if (!props.editMode) return
-  const sizes = ['sm', 'md', 'lg']
-  const i = sizes.indexOf(merged.value.itemSize)
-  emit('updateConfig', { ...props.config, view: { ...props.config?.view, itemSize: sizes[(i + 1) % sizes.length] } })
-}
-
-function cycleLayout() {
-  if (!props.editMode) return
-  const layouts = ['list', 'grid', 'details']
-  const i = layouts.indexOf(merged.value.layout)
-  emit('updateConfig', { ...props.config, view: { ...props.config?.view, layout: layouts[(i + 1) % layouts.length] } })
-}
-
-/**
- * Handle rename commit - perform the actual file rename.
- */
-async function handleRenameCommit(oldPath: string, newName: string): Promise<void> {
-  const parentDir = dirname(oldPath)
-  const newPath = joinPath(parentDir, newName)
-  
-  console.debug('[items] Renaming:', { oldPath, newPath, parentDir, newName })
-  
-  try {
-    // Use fsRename for same-directory rename operations
-    await fsRename(oldPath, newPath, 'items', props.sourceId)
-    
-    console.debug('[items] Rename successful')
-    
-    // Refresh the current directory
-    await loadDir(cwd.value)
-    
-  } catch (err) {
-    console.error('[items] Rename failed:', err)
-    // TODO: Show error notification to user
-  }
-}
-
-function onWidgetAction(msg: any) {
-    if (msg.topic !== 'widget:action') return
-
-    if (msg.payload.actionId === 'navigate') {
-        const folder = msg.payload.tokens?.path ?? msg.payload.args?.path
-        if (folder) applyExternalCwd(folder)
-    }
-    if (msg.payload.actionId === 'reveal') {
-        const file = msg.payload.tokens?.path ?? msg.payload.args?.path
-        if (file) {
-            const dir = file.replace(/[/\\][^/\\]+$/, '')
-            applyExternalCwd(dir)
-            // TODO: highlight the file once navigation settles
-        }
-    }
-}
-/**
- * Start rename mode for a specific item.
- */
-function startItemRename(itemPath: string): void {
-  console.log('[items] startItemRename called with:', itemPath)
-  
-  startRename(itemPath, {
-    widgetId: props.sourceId,  // 👈 ADD THIS LINE
-    selectBasename: true,
-    onCommit: async (newName: string) => {
-      console.log('[items] Rename commit:', { oldPath: itemPath, newName })
-      await handleRenameCommit(itemPath, newName)
-    },
-    onCancel: () => {
-      console.log('[items] Rename cancelled for:', itemPath)
+      pause()
     }
   })
 }
+
+function prev() {
+  state.playlists.prev(state.sel, state.music).then((idx: number) => {
+    if (idx >= 0) {
+      state.currentIndex.value = idx
+      state.selectedIndex.value = idx
+    } else {
+      pause()
+    }
+  })
+}
+
+function seek(e: Event) {
+  if (!state.duration.value) return
+  const v = parseFloat((e.target as HTMLInputElement).value)
+  state.music.currentTime = v * state.duration.value
+}
+
+function adjustSpeed(delta: number) {
+  const newRate = Math.max(0.25, Math.min(3.0, state.playbackRate.value + delta))
+  state.playbackRate.value = newRate
+  applyPlaybackRate()
+}
+
+function applyPlaybackRate() {
+  const r = Number(state.playbackRate.value ?? 1)
+  // defaultPlaybackRate helps survive source changes in some browsers / flows
+  ;(state.music as any).defaultPlaybackRate = r
+  state.music.playbackRate = r
+}
+
+function setVolume(v: number) {
+  const clamped = Math.min(1, Math.max(0, v))
+  state.volume.value = clamped
+  if (clamped > 0) state.lastNonZeroVolume.value = clamped
+  state.music.volume = clamped
+}
+
+function toggleMute() {
+  setVolume(state.volume.value > 0 ? 0 : state.lastNonZeroVolume.value || 0.5)
+}
+
+function volInput(v: number) {
+  setVolume(v)
+}
+
+function toggleShuffle() {
+  state.shuffle.value = !state.shuffle.value
+  state.playlists.setOptions(state.sel, { shuffle: state.shuffle.value })
+}
+
+function toggleRepeat() {
+  state.repeat.value = state.repeat.value === 'off' ? 'all' : state.repeat.value === 'all' ? 'one' : 'off'
+  state.playlists.setOptions(state.sel, { repeat: state.repeat.value })
+}
+
+async function clickPick() {
+  // Prefer host dialog; falls back to browser picker or <input> inside the hook.
+  await playlist.loadAndMerge()
+}
+
+function toggleQueue() {
+  showQueue.value = !showQueue.value
+}
+
+// ===== QUEUE RENAME =====
+const renaming = ref(false)
+const draftQueueName = ref('')
+const nameInput = ref<HTMLInputElement | null>(null)
+
+function beginRename() {
+  draftQueueName.value = state.queueName.value
+  renaming.value = true
+  nextTick(() => {
+    nameInput.value?.focus()
+    nameInput.value?.select()
+  })
+}
+
+function cancelRename() {
+  renaming.value = false
+}
+
+function commitRename() {
+  const v = draftQueueName.value.trim()
+  if (v) state.queueName.value = v
+  renaming.value = false
+}
+
+// ===== ROW INTERACTIONS =====
+async function onRowDblClick(track: any) {
+  if (dnd.sortableState.value.isDragging) return
+  const realIdx = state.queue.value.findIndex(t => t.id === track.id)
+  const idx = await state.playlists.playIndex(state.sel, realIdx, state.music)
+  if (idx >= 0) {
+    state.currentIndex.value = idx
+    state.selectedIndex.value = idx
+  }
+}
+
+function onRowClick(index: number) {
+  keyboard.selectRow(index)
+}
+
+// ===== DRAG & DROP (FILES) =====
+const draggingOver = ref(false)
+
+function prevent(e: Event) { e.preventDefault(); e.stopPropagation() }
+function onDragEnter(e: DragEvent) { prevent(e); draggingOver.value = true }
+function onDragOver(e: DragEvent) { prevent(e) }
+function onDragLeave(e: DragEvent) { prevent(e); draggingOver.value = false }
+
+async function onDrop(e: DragEvent) {
+  prevent(e)
+  draggingOver.value = false
+
+  if (hasGexPayload(e)) {
+    const payload = extractGexPayload(e)
+    if (!payload) return
+
+    if (payload.type === 'gex/file-refs') {
+      const auth = await authorizeFileRefs(
+        'local-player',
+        props.sourceId,
+        payload,
+        { requiredCaps: ['Read'] }
+      )
+      if (!auth.ok) return
+
+      const tracks = await refsToTracks(
+        payload.data as FileRefData[],
+        'local-player',
+        props.sourceId
+      )
+
+      await appendTracks(tracks)
+
+      if (state.queue.value.length === tracks.length && tracks.length) {
+        await play(0)
+      }
+      return
+    }
+  }
+
+  if (e.dataTransfer?.files?.length) {
+    await playlist.addFiles(e.dataTransfer.files)
+  }
+}
+
+// ===== MEDIA EVENTS =====
+const onMediaPlay = () => { applyPlaybackRate(); state.isPlaying.value = true }
+const onMediaPause = () => { state.isPlaying.value = false }
+const onTimeUpdate = async () => {
+  state.currentTime.value = state.music.currentTime || 0
+}
+
+const onLoadedMeta = (e: Event) => {
+  applyPlaybackRate()
+  const t = e.target as HTMLMediaElement | null
+  const raw = t?.duration ?? state.music.duration
+  const dur = Number.isFinite(raw) ? raw : 0
+
+  state.duration.value = dur
+
+  // ✅ Persist duration onto the current track so the list can show it
+  const curId = state.current.value?.id
+  if (curId) {
+    const tr = state.queue.value.find(x => x.id === curId)
+    if (tr) tr.duration = dur
+  } else {
+    const idx = state.currentIndex.value
+    const tr = idx >= 0 ? state.queue.value[idx] : null
+    if (tr) tr.duration = dur
+  }
+}
+
+
+const onVolumeChange = () => {
+  const v = state.music.volume
+  if (v !== state.volume.value) {
+    state.volume.value = v
+    if (v > 0) state.lastNonZeroVolume.value = v
+  }
+}
+
+function hydrateFromHandle() {
+  state.volume.value = state.music.volume
+  if (state.volume.value > 0) state.lastNonZeroVolume.value = state.volume.value
+  state.isPlaying.value = !state.music.paused
+  state.currentTime.value = state.music.currentTime || 0
+  state.duration.value = state.music.duration || 0
+}
+
+// ===== LIFECYCLE =====
+let resizeObserver: ResizeObserver | null = null
 
 onMounted(async () => {
-  console.log('[items] mount, sourceId =', props.sourceId)
+  console.log('[local-player] mounted with sourceId:', props.sourceId)
+  state.music.addEventListener('play', onMediaPlay)
+  state.music.addEventListener('pause', onMediaPause)
+  state.music.addEventListener('timeupdate', onTimeUpdate)
+  state.music.addEventListener('loadedmetadata', onLoadedMeta as any)
+  state.music.addEventListener('volumechange', onVolumeChange)
+  state.music.addEventListener('error', onMediaError)
+  state.music.addEventListener('rack:playlistindex', onRackIndex as EventListener)
 
-  offWidgetMsg.value = onWidgetMessage(props.sourceId, (msg) => {
-    const current = cwd.value || merged.value.rpath || ''
-    console.log('[items] onWidgetMessage', {
-      sourceId: props.sourceId,
-      topic: msg.topic,
-      payload: msg.payload,
-      current,
-      cwd: cwd.value,
-      rpath: merged.value.rpath,
-    })
-
-    if (!current) return
-
-    if (msg.topic === 'fs:refresh-after-drop') {
-      const target = String(msg.payload?.target || '')
-      if (target && normalizeDir(target) !== normalizeDir(current)) {
-        console.log('[items] fs:refresh-after-drop → reloading', current)
-        loadDir(current)
-      }
-    }
-
-    if (msg.topic === 'fs:changed') {
-      const root = String(msg.payload?.root || '')
-      console.log('[items] fs:changed candidate', {
-        rootNorm: normalizeDir(root),
-        currentNorm: normalizeDir(current),
-        paused: pauseFileWatcher
-      })
-      if (root && normalizeDir(root) === normalizeDir(current)) {
-        // Use debounced reload instead of immediate
-        scheduleReload(current)
-      }
-    }
+  state.playlists.register(state.sel, state.toPlaylistItems(), {
+    autoNext: 'linear',
+    repeat: state.repeat.value,
+    shuffle: state.shuffle.value,
+    dedupe: false
   })
+  state.playlists.setItems(state.sel, state.toPlaylistItems(), { keepCurrent: true })
+  state.playlists.bindToHandle(state.sel, state.music)
 
   await nextTick()
-  requestAnimationFrame(() => {
-    measureScrollbarWidth()
+  seedMeasureNow()
+  resizeObserver = new ResizeObserver((entries) => {
+    const e = entries[0]
+    const w = 'contentBoxSize' in e && e.contentBoxSize
+      ? (Array.isArray(e.contentBoxSize) ? e.contentBoxSize[0].inlineSize : e.contentBoxSize.inlineSize)
+      : e.contentRect.width
+    scheduleWidth(Math.round(w), 'ro')
   })
+  if (widgetRootEl.value) resizeObserver.observe(widgetRootEl.value)
+
+  hydrateFromHandle()
+
+  applyPlaybackRate()
+
 })
 
-// Listen for refresh, rename and paste messages from context menu
-const offRefresh = onWidgetMessage(props.sourceId, async (msg) => {
-  if (msg.topic === 'items:refresh') {
-    console.debug('[items] Refreshing from context menu, current cwd:', cwd.value)
-    await loadDir(cwd.value)
-  }
-  
-  // NEW: Handle rename requests
-  if (msg.topic === 'items:startRename') {
-    const path = msg.payload?.path
-    if (path) {
-      console.debug('[items] Starting rename for:', path)
-      startItemRename(path)
+
+async function onWidgetAction(msg: any) {
+    console.log('[local-player] handler fired, sourceId:', props.sourceId)
+    if (msg.topic !== 'widget:action') return
+    console.log('[local-player] widget:action received', msg.payload)
+
+    const { actionId, tokens } = msg.payload
+    const path: string = tokens?.path ?? ''
+    console.log('[local-player] path:', path)
+    if (!path) return
+
+    const syntheticRef: FileRefData = {
+        name: path.split(/[\\/]/).pop() ?? path,
+        path,
+        kind: 'file',
     }
-  }
+    console.log('[local-player] syntheticRef:', syntheticRef)
 
-  // Handle paste requests from context menu
-  if (msg.topic === 'items:paste') {
-    console.debug('[items] Paste triggered from context menu')
-    await pasteFromClipboard()
-  }
+    const authorized = await authorizeFileRefs(
+        'local-player',
+        props.sourceId,
+        { type: 'gex/file-refs', data: [syntheticRef] },
+        { requiredCaps: ['Read'] }
+    )
+    console.log('[local-player] authorized:', authorized)
+    if (!authorized.ok) return
 
-  if (msg.topic === 'items:reloadAndRename') {
-      const path = msg.payload?.path
-      if (!path) return
-      console.debug('[items] reloadAndRename received, path:', path)
-      
-      await loadDir(cwd.value)
-      console.debug('[items] loadDir complete, entries count:', entries.value.length)
-      console.debug('[items] looking for entry:', entries.value.find(e => e.FullPath === path))
-      
-      await nextTick()
-      console.debug('[items] after nextTick, searching DOM for data-rename-id:', path)
-      
-      // Check what's actually in the DOM
-      const allRenameEls = document.querySelectorAll('[data-rename-id]')
-      console.debug('[items] all data-rename-id elements:', 
-          Array.from(allRenameEls).map(el => ({
-              id: el.getAttribute('data-rename-id'),
-              widgetId: el.getAttribute('data-widget-id'),
-          }))
-      )
-      
-      const match = Array.from(allRenameEls).find(el => 
-          el.getAttribute('data-rename-id') === path &&
-          el.getAttribute('data-widget-id') === props.sourceId
-      )
-      console.debug('[items] found matching element:', match)
-      
-      startItemRename(path)
+    const tracks = await refsToTracks([syntheticRef], 'local-player', props.sourceId)
+    console.log('[local-player] tracks:', tracks)
+    if (!tracks.length) return
+
+      if (actionId === 'play') {
+          // Replace queue and start from the new track
+          state.queue.value = tracks
+          state.playlists.setItems(state.sel, state.toPlaylistItems(), { keepCurrent: false })
+          await play(0)
+      } else if (actionId === 'enqueue') {
+          await appendTracks(tracks)
+          // If queue was empty, start playing
+          if (state.queue.value.length === tracks.length) {
+              await play(0)
+          }
+      }
   }
-})
 
 onBeforeUnmount(() => {
-  try {
-    if (typeof offRefresh === 'function') offRefresh()
-  } catch (e) {
-    console.warn('[items] offRefresh cleanup failed', e)
-  }
+  if (rafForWidth) cancelAnimationFrame(rafForWidth)
+  resizeObserver?.disconnect()
 
-  try {
-    offWidgetMsg.value?.()
-    offWidgetMsg.value = null
-  } catch {}
+  state.music.removeEventListener('play', onMediaPlay)
+  state.music.removeEventListener('pause', onMediaPause)
+  state.music.removeEventListener('timeupdate', onTimeUpdate)
+  state.music.removeEventListener('loadedmetadata', onLoadedMeta as any)
+  state.music.removeEventListener('volumechange', onVolumeChange)
+  state.music.removeEventListener('error', onMediaError)
+  state.music.removeEventListener('rack:playlistindex', onRackIndex as EventListener)
 
-  try {
-    engine.destroy()
-    dispose()
-  } catch {}
+  state.playlists.unbind(state.sel)
+  dnd.sortable?.destroy()
 })
-
-function getNavState() { return { canGoBack: false, canGoForward: false, cwd: cwd.value } }
-
-// Capture-phase row pointerdown — fires before draggable rows see the event,
-// starting watchDragThreshold before the browser's drag machinery arms itself.
-function onRowPointerDownCapture(ev: PointerEvent) {
-  if (ev.button !== 0) return
-  const row = (ev.target as HTMLElement | null)?.closest('.row[data-path]') as HTMLElement | null
-  if (!row) return
-  const path = row.dataset.path
-  if (!path) return
-  const entry = entries.value.find(e => e.FullPath === path)
-  if (!entry) return
-  onItemPointerDown(entry, ev)
-}
-
-defineExpose({ applyExternalCwd, getNavState, onWidgetAction  })
+  defineExpose({ onWidgetAction })
 </script>
 
 <template>
   <div
-  ref="rootEl"
-  class="items-root"
-  v-context-menu="contextMenuOptions"
-  :style="hostVars"
-    :class="{
-      dragging: isDragging,
-      'drag-selecting': marqueeActive,
-      'drop-active': isDropActive,
-    }"
+    ref="widgetRootEl"
+    class="widget-root"
+    :style="{ '--widget-w': (containerWidth || hostWidth) + 'px' }"
   >
-  
-    <!-- Make the scroller focusable + capture keyboard -->
-    <div
-      class="items-scroll-container"
-      :class="{ 'is-details': merged.layout === 'details' }"
-      ref="scrollEl"
-      tabindex="0"
-      @keydown="onKeyDown"
-      @pointerdown.capture="onRowPointerDownCapture"
-      @pointerdown="onScrollContainerPointerDown"
-      @pointermove="onSurfacePointerMove"
-      @pointerup="onSurfacePointerUp"
-      @click.capture="onSurfaceClick"
-      @scroll.passive="onPlaneScroll"
-    >
-      <!-- Marquee overlay for List/Grid (Details renders its own internally) -->
-      <div
-        v-if="(merged.layout === 'list' || merged.layout === 'grid') && marqueeRect && (marqueeRect.w > 0 || marqueeRect.h > 0)"
-        class="marquee"
-        :style="{
-          left: marqueeRect.x + 'px',
-          top: marqueeRect.y + 'px',
-          width: marqueeRect.w + 'px',
-          height: marqueeRect.h + 'px'
-        }"
-      />
+    <!-- Compact Layout -->
+    <CompactLayout
+      v-if="hostLayout === 'compact'"
+      :current="state.current.value"
+      :has-tracks="state.hasTracks.value"
+      :is-playing="state.isPlaying.value"
+      :volume="state.volume.value"
+      :volume-icon="state.volumeIcon.value"
+      :play-tooltip="`${state.isPlaying.value ? 'Pause' : 'Play'}${state.current.value ? '\n' + state.current.value.name : ''}`"
+      @toggle-play="togglePlay"
+      @click-pick="clickPick"
+      @vol-input="volInput"
+    />
 
-      <div v-if="loading" class="msg">Loading…</div>
-      <div v-else-if="error" class="err">{{ error }}</div>
-      <div v-else-if="!merged.rpath" class="msg">(no path)</div>
-
-      <!-- DETAILS VIEW -->
-      <ItemsDetailsLayout
-        v-else-if="merged.layout === 'details'"
-        ref="detailsLayoutRef"
-        :entries="entries"
-        :selected="selected"
-        :icons-tick="iconsTick"
-        :source-id="props.sourceId"
-        :sort-key="sortKey"
-        :sort-dir="sortDir"
-        :initial-weights="colW"
-        :folder-drop-target="folderDropTarget"  
-        :marquee-rect="marqueeRect"
-        @row-down="({ id, mods }) => engine.rowDownId(id, mods)"
-        @row-move="({ x, y }) => engine.rowMove?.(x, y)"
-        @row-up="({ id }) => engine.rowUpId(id)"
-        @dblclick="({ id }) => openEntry(id)"
-        @dragstart="({ entry, event }) => { engine.dragStart(); onItemDragStart(entry, event) }"
-        @dragend="() => engine.dragEnd()"
-        @header-click="(key) => onHeaderClick(key)"
-        @surface-pointer-down="onSurfacePointerDown"
-        @surface-pointer-move="onSurfacePointerMove"
-        @surface-pointer-up="onSurfacePointerUp"
-        @surface-click="onSurfaceClick"
-        @plane-scroll="onPlaneScroll"
-        @weights-changed="(w) => colW = w"
-      />
-
-      <!-- LIST VIEW -->
-      <ItemsListLayout
-        v-else-if="merged.layout === 'list'"
-        :entries="entries"
-        :selected="selected"
-        :icons-tick="iconsTick"
-        :source-id="props.sourceId"
-        :folder-drop-target="folderDropTarget"  
-        :S="S"
-        @row-down="({ id, mods }) => engine.rowDownId(id, mods)"
-        @row-move="({ x, y }) => engine.rowMove?.(x, y)"
-        @row-up="({ id }) => engine.rowUpId(id)"
-        @dblclick="({ id }) => openEntry(id)"
-        @dragstart="({ entry, event }) => { engine.dragStart(); onItemDragStart(entry, event) }"
-        @dragend="() => engine.dragEnd()"
-      />
-
-      <!-- GRID VIEW -->
-      <ItemsGridLayout
-        v-else-if="merged.layout === 'grid'"
-        :entries="entries"
-        :selected="selected"
-        :icons-tick="iconsTick"
-        :source-id="props.sourceId"
-        :columns="merged.columns"
-        :folder-drop-target="folderDropTarget"  
-        :S="S"
-        @row-down="({ id, mods }) => engine.rowDownId(id, mods)"
-        @row-move="({ x, y }) => engine.rowMove?.(x, y)"
-        @row-up="({ id }) => engine.rowUpId(id)"
-        @dblclick="({ id }) => openEntry(id)"
-        @dragstart="({ entry, event }) => { engine.dragStart(); onItemDragStart(entry, event) }"
-        @dragend="() => engine.dragEnd()"
-      />
-    </div>
+    <!-- Expanded Layout -->
+    <ExpandedLayout
+      v-else
+      ref="expandedLayoutRef"
+      :queue="state.queue.value"
+      :display-queue="dnd.displayQueue.value"
+      :current-index="state.currentIndex.value"
+      :selected-index="state.selectedIndex.value"
+      :current="state.current.value"
+      :has-tracks="state.hasTracks.value"
+      :can-prev="state.canPrev.value"
+      :can-next="state.canNext.value"
+      :is-playing="state.isPlaying.value"
+      :is-loading="state.isLoading.value"
+      :current-time="state.currentTime.value"
+      :duration="state.duration.value"
+      :volume="state.volume.value"
+      :repeat="state.repeat.value"
+      :shuffle="state.shuffle.value"
+      :queue-name="state.queueName.value"
+      :volume-icon="state.volumeIcon.value"
+      :playback-rate="state.playbackRate.value"
+      :playback-rate-label="state.playbackRateLabel.value"
+      :sortable-state="dnd.sortableState.value"
+      :layout-class="layoutClass"
+      :show-queue="showQueue"
+      :renaming="renaming"
+      :draft-queue-name="draftQueueName"
+      :marquee-on="marquee.marqueeOn.value"
+      :marquee-dir="marquee.marqueeDir.value"
+      :resize-phase="props.placement?.resizePhase"
+      :set-marquee-box="marquee.setMarqueeBox"
+      :set-marquee-copy="marquee.setMarqueeCopy"
+      @toggle-play="togglePlay"
+      @prev="prev"
+      @next="next"
+      @seek="seek"
+      @adjust-speed="adjustSpeed"
+      @toggle-shuffle="toggleShuffle"
+      @toggle-repeat="toggleRepeat"
+      @click-pick="clickPick"
+      @toggle-mute="toggleMute"
+      @vol-input="volInput"
+      @toggle-queue="toggleQueue"
+      @begin-rename="beginRename"
+      @cancel-rename="cancelRename"
+      @commit-rename="commitRename"
+      @update:draft-queue-name="(v) => draftQueueName = v"
+      @save-playlist="playlist.savePlaylistGexm"
+      @row-dblclick="onRowDblClick"
+      @row-click="onRowClick"
+      @start-row-drag="dnd.startRowDrag"
+      @remove-at="playlist.removeAt"
+      @drag-enter="onDragEnter"
+      @drag-over="onDragOver"
+      @drag-leave="onDragLeave"
+      @drop="onDrop"
+    />
   </div>
 </template>
-
-<style scoped>
-  /* Clipboard toolbar */
-.clipboard-toolbar {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  background: var(--color-surface, #2a2a2a);
-  border: 1px solid var(--color-border, #444);
-  border-radius: 6px;
-  padding: 6px 10px;
-  z-index: 10;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-}
-
-.clipboard-label {
-  font-size: 12px;
-  color: var(--color-text-dim, #888);
-  margin-right: 4px;
-}
-
-.clipboard-btn {
-  padding: 4px 10px;
-  background: var(--color-surface, #333);
-  border: 1px solid var(--color-border, #555);
-  color: var(--color-text, #e0e0e0);
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 12px;
-  line-height: 1;
-  transition: all 0.15s ease;
-}
-
-.clipboard-btn:hover {
-  background: var(--color-hover, #404040);
-  border-color: var(--color-accent, #4ea1ff);
-}
-
-.clipboard-btn:active {
-  transform: translateY(1px);
-}
-
-.items-root.drop-active {
-  outline: 2px dashed rgba(255, 255, 255, 0.4);
-  outline-offset: -2px;
-}
-/* Details list rows */
-.row {
-  content-visibility: auto;
-  /* Approximate row height; adjust to match your actual row */
-  contain-intrinsic-size: 32px;
-}
-/* ================= THEME / ROOT ================= */
-.items-root{
-  font-size:var(--font-md);
-  color:var(--items-fg);
-  --local-font-sm:calc(1em * .85);
-  --local-font-md:1em;
-  --local-font-lg:calc(1em * 1.15);
-  --local-spacing:var(--space-sm);
-  --local-radius:var(--radius-md);
-
-  /* gutters for marquee space inside the scroller */
-  --items-gutter-left: 5%;
-  --items-gutter-right: 5%;
-  --items-pad-block: 6px;
-
-  /* column separator color */
-  --items-col-sep: color-mix(in oklab, var(--fg, #fff) 12%, transparent);
-
-  /* Alignment hooks (app can override per-widget via CSS vars) */
-  --items-row-text-align: left;
-  --items-name-text-align: left;
-
-  height:100%;
-  display:flex;
-  flex-direction:column;
-  overflow:hidden;
-  box-sizing:border-box;
-  position:relative;
-}
-
-/* Scroller: focusable, with left/right gutters */
-.items-scroll-container{
-  flex:1;
-  overflow-y:auto;
-  overflow-x:hidden;
-  position:relative;
-  padding-block: var(--items-pad-block, 6px);
-  padding-inline: var(--items-gutter-left, 5%) var(--items-gutter-right, 5%);
-  z-index:1;
-  outline:none;
-  border-top: 1px solid var(--items-header-sep);
-  border-bottom: 1px solid var(--items-header-sep);
-  border-radius: var(--local-radius);
-}
-.items-scroll-container:hover{ overscroll-behavior:contain; }
-
-.items-scroll-container.is-details{
-  overflow: hidden;            /* stop the outer one from scrolling */
-  padding: 0;                  /* remove side/top/bottom padding that was shrinking the inner scroller */
-  border-top: 0;               /* optional: keep or drop these borders here */
-  border-bottom: 0;            /* you can draw them on .details-pad if you like */
-}
-
-.marquee{
-  position: absolute;
-  box-sizing: border-box;    /* already present */
-  pointer-events: none;
-  z-index: 2;
-  border: 1px solid var(--accent,#4ea1ff);
-  background: color-mix(in oklab, var(--accent,#4ea1ff) 18%, transparent);
-  border-radius: 4px;
-}
-
-.items-root.dragging{ user-select:none; }
-
-.drag-selecting { user-select: none; }
-/* ================ EDIT TOOLBAR ================ */
-.edit-toolbar{
-  display:flex; gap:var(--space-md); padding:var(--space-sm);
-  background:var(--surface-1,#1a1a1a); border-bottom:1px solid var(--border,#555);
-  align-items:center; flex-shrink:0; font-size:var(--font-sm);
-  position:sticky; top:0; z-index:5; pointer-events:auto;
-}
-.edit-label{ font-size:var(--local-font-sm);opacity:.7;font-weight:500; }
-.edit-value{ font-size:var(--local-font-md);font-weight:600;min-width:20px;text-align:center; }
-.edit-btn{
-  padding:var(--space-xs) var(--space-sm); border-radius:var(--radius-sm);
-  border:1px solid var(--border,#555); background:var(--surface-2,#222); color:var(--fg,#eee);
-  cursor:pointer; font-size:var(--local-font-sm); transition:all .15s ease; min-width:28px;text-align:center;
-}
-
-/* ================ GENERIC ROW (List/Grid base) ================ */
-.row{
-  border:1px solid var(--items-border); background:var(--items-bg); color:inherit;
-  border-radius:var(--local-radius);
-  display:flex; flex-direction:row; gap:var(--local-spacing); align-items:center;
-  min-height:calc(var(--base-font-size) * 2.4); padding:var(--space-xs) var(--space-sm);
-  box-sizing:border-box; font-size:var(--local-font-md);
-  text-align: var(--items-row-text-align, left);
-}
-.row:focus, .row:focus-visible { outline: none !important; }
-.row[draggable="true"]{ cursor:grab; }
-.row[draggable="true"]:active{ cursor:grabbing; }
-.row.selected { box-shadow: inset 0 0 0 2px var(--accent,#4ea1ff) !important; }
-
-.name{ 
-  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; 
-  text-align: var(--items-name-text-align, left);
-}
-
-/* ================ Messages ================ */
-.msg,.err{ padding:var(--space-md); font-size:var(--local-font-md); }
-.err{ color:#f77; }
-
-</style>
