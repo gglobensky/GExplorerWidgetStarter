@@ -1,238 +1,170 @@
 // src/widgets/items/useItemsDragDrop.ts
-//
-// Drag & drop for the items widget.
-// Uses useItemDropTarget from the DnD API for hover-target tracking —
-// same composable a sticky-notes or playlist widget would use.
-//
-// Handles:
-//   - Dragging files/folders out (creates GexDnDPayload)
-//   - Dropping onto the widget root → move into cwd
-//   - Dropping onto a specific folder row → move into that folder
-//     Works for both inter-widget and intra-widget drops.
-//   - Visual feedback: isDropActive (root), dropTargetKey (specific row)
 
-import { ref, type Ref, type ComputedRef } from '/runtime/vue.js'
-import {
-    createGexPayload,
-    setGexPayload,
-    createDragPreview,
-    hasGexPayload,
-    extractGexPayload,
-    authorizeFileRefs,
-} from 'gexplorer/widgets'
-import { useItemDropTarget } from '/src/widgets/dnd/useItemDropTarget'
-import { fsMove, onFsQueueUpdate } from '/src/widgets/fs'
+import { ref, onMounted, onBeforeUnmount, type Ref, type ComputedRef } from 'vue'
+import { authorizeFileRefs } from '/src/widgets/dnd/receiver'
+import { createGexPayload } from '/src/widgets/dnd/sender'
+import type { GexDnDPayload } from '/src/widgets/dnd/types'
+import { startNativeDrag, watchDragThreshold } from '/src/widgets/dnd/native'
+import { registerDropWidget, unregisterDropWidget, findWidgetAtPoint } from '/src/widgets/dnd/widgetRegistry'
+import { fsMove } from '/src/widgets/fs'
 import { sendWidgetMessage } from '/src/widgets/instances'
 
 export interface UseItemsDragDropOptions {
     sourceId: string
-    entries: Ref<any[]>
+    entries:  Ref<any[]>
     selected: Ref<Set<string>>
-    cwd: Ref<string>
-    merged: ComputedRef<any>
+    cwd:      Ref<string>
+    merged:   ComputedRef<any>
     marqueeActive: ComputedRef<boolean>
-    loadDir: (path: string) => Promise<void>
-    emit: (event: string, payload: any) => void
+    rootEl:   Ref<HTMLElement | null>   // ref to the .items-root element
+    loadDir:  (path: string) => Promise<void>
+    emit:     (event: string, payload: any) => void
 }
 
 export interface UseItemsDragDropReturn {
-    isDragging: Ref<boolean>
-    isDropActive: Ref<boolean>
-    /** FullPath of the folder row currently being hovered as a drop target, or null */
+    isDragging:       Ref<boolean>
+    isDropActive:     Ref<boolean>
     folderDropTarget: Ref<string | null>
-    onItemDragStart: (entry: any, event: DragEvent) => void
-    onItemDragEnd: () => void
-    onRootDragOver: (event: DragEvent) => void
-    onRootDragLeave: (event: DragEvent) => void
-    onRootDrop: (event: DragEvent) => Promise<void>
+    onItemPointerDown: (entry: any, event: PointerEvent) => void
+    onItemDragStart:   (entry: any, event: DragEvent) => void
+    onItemDragEnd:     () => void
+    dispose:           () => void
 }
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
 function normalizeDir(p: string | null | undefined): string {
     if (!p) return ''
     return p.replace(/[\\/]+/g, '\\').replace(/[\\]+$/, '').toLowerCase()
 }
 
-function dirname(path: string): string {
-    const normalized = path.replace(/[\\/]+$/, '')
-    const idx = Math.max(normalized.lastIndexOf('\\'), normalized.lastIndexOf('/'))
-    return idx < 0 ? '' : normalized.slice(0, idx)
-}
-
 function guessMimeType(filename: string): string {
     const ext = filename.toLowerCase().split('.').pop() || ''
     const map: Record<string, string> = {
-        mp3: 'audio/mpeg', ogg: 'audio/ogg', oga: 'audio/ogg', wav: 'audio/wav',
-        flac: 'audio/flac', m4a: 'audio/mp4', aac: 'audio/aac', webm: 'audio/webm', opus: 'audio/opus',
+        mp3: 'audio/mpeg', ogg: 'audio/ogg', wav: 'audio/wav', flac: 'audio/flac',
+        m4a: 'audio/mp4', aac: 'audio/aac', webm: 'audio/webm', opus: 'audio/opus',
         mp4: 'video/mp4', mkv: 'video/x-matroska',
-        jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp',
+        jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+        gif: 'image/gif', webp: 'image/webp',
         txt: 'text/plain', json: 'application/json', pdf: 'application/pdf',
     }
     return map[ext] || 'application/octet-stream'
 }
 
+/**
+ * Walk up from startEl looking for the nearest folder row.
+ * Only searches within entries for this widget instance.
+ */
+function findFolderRow(startEl: Element | null, entries: any[]): string | null {
+    let el: Element | null = startEl
+    while (el) {
+        if (el instanceof HTMLElement && el.matches('.row[data-path]')) {
+            const path = el.dataset.path
+            if (path) {
+                const entry = entries.find(e => e.FullPath === path)
+                if (entry?.Kind === 'dir') return path
+            }
+        }
+        el = el.parentElement
+    }
+    return null
+}
+
+// ── Composable ─────────────────────────────────────────────────────────────────
+
 export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDragDropReturn {
-    const { sourceId, entries, selected, cwd, merged, marqueeActive, loadDir, emit } = options
+    const { sourceId, entries, selected, cwd, merged, marqueeActive, rootEl, loadDir } = options
 
-    // ── State ─────────────────────────────────────────────────────────────────
+    const isDragging       = ref(false)
+    const isDropActive     = ref(false)
+    const folderDropTarget = ref<string | null>(null)
 
-    const isDragging = ref(false)
-    const isDropActive = ref(false)
+    let currentPayload: GexDnDPayload | null = null
+    let cleanupDrag: (() => void) | null = null
 
-    // ── Folder hover targeting (via generic DnD API) ──────────────────────────
-    //
-    // canDrop rules:
-    //   - Target must be a directory
-    //   - Inter-widget: always ok if it's a dir
-    //   - Intra-widget (same widget): ok only if at least one dragged item
-    //     is not already a direct child of the target folder
+    // ── Widget registry ────────────────────────────────────────────────────────
+    // Register this pane so cross-pane drops can find us by bounding rect.
 
-    const {
-        dropTargetKey: folderDropTarget,
-        onTargetDragOver,
-        onTargetDragLeave,
-        resolveDropTarget,
-    } = useItemDropTarget<string>(
-        {
-            rowSelector: '.row[data-path]',
-            getKey: el => el.dataset.path ?? null,
-            canDrop: (key, payload) => {
-                // Must be a directory
-                const entry = entries.value.find(e => e.FullPath === key)
-                if (!entry || entry.Kind !== 'dir') return false
+    onMounted(() => {
+        registerDropWidget(sourceId, () => cwd.value, () => rootEl.value)
+    })
 
-                // During dragover payload is null — dir check is enough for hover highlight
-                if (!payload) return true
+    onBeforeUnmount(() => {
+        unregisterDropWidget(sourceId)
+    })
 
-                const refs = (payload.data ?? []) as Array<{ path: string }>
+    // ── State reset ────────────────────────────────────────────────────────────
 
-                // Inter-widget: always fine
-                if (payload.source.widgetId !== sourceId) return true
-
-                // Intra-widget: allow only if at least one item moves to a new parent
-                const targetNorm = normalizeDir(key)
-                return refs.some(r => normalizeDir(dirname(r.path)) !== targetNorm)
-            },
-        }
-    )
-
-    // ── Drag Start ────────────────────────────────────────────────────────────
-
-    function onItemDragStart(entry: any, event: DragEvent) {
-        if (!event.dataTransfer) return
-
-        if (marqueeActive.value) {
-            event.preventDefault()
-            return
-        }
-
-        isDragging.value = true
-
-        try {
-            const paths = selected.value.size > 0
-                ? [...selected.value]
-                : [entry.FullPath]
-
-            const payload = createGexPayload(
-                'gex/file-refs',
-                paths.map(p => ({
-                    path: p,
-                    name: entries.value.find(x => x.FullPath === p)?.Name ?? '',
-                    size: entries.value.find(x => x.FullPath === p)?.Size ?? 0,
-                    mimeType: guessMimeType(p),
-                    isDirectory: entries.value.find(x => x.FullPath === p)?.Kind === 'dir',
-                })),
-                { widgetType: 'items', widgetId: sourceId }
-            )
-
-            setGexPayload(event.dataTransfer, payload)
-            event.dataTransfer.effectAllowed = 'copyMove'
-
-            const preview = createDragPreview({
-                label: selected.value.size > 1 ? `${paths.length} items` : entry.Name,
-                icon: entry.Kind === 'dir' ? '📁' : '📄',
-                count: paths.length,
-            })
-            event.dataTransfer.setDragImage(preview, 0, 0)
-            setTimeout(() => preview.remove(), 0)
-        } catch (err) {
-            console.error('[Items] drag failed:', err)
-        }
+    function resetDragState() {
+        isDragging.value       = false
+        isDropActive.value     = false
+        folderDropTarget.value = null
+        currentPayload         = null
+        cleanupDrag?.()
+        cleanupDrag = null
     }
 
-    // ── Drag End ──────────────────────────────────────────────────────────────
+    // ── IPC drag callbacks ─────────────────────────────────────────────────────
 
-    function onItemDragEnd() {
-        isDragging.value = false
+    function onNativeDragOver(x: number, y: number) {
+        isDropActive.value     = true
+        // elementFromPoint is reliable for same-pane folder-row detection since
+        // we're just reading the DOM, not relying on pointer event routing.
+        folderDropTarget.value = findFolderRow(document.elementFromPoint(x, y), entries.value)
+    }
+
+    function onNativeDragLeave() {
+        isDropActive.value     = false
         folderDropTarget.value = null
     }
 
-    // ── Drag Over ─────────────────────────────────────────────────────────────
-    //
-    // Two layers:
-    //   1. Specific folder row → handled by useItemDropTarget (highlights row)
-    //   2. Container background → handled here (highlights root outline)
-    //
-    // Both call preventDefault so the browser allows the drop.
-
-    function onRootDragOver(ev: DragEvent) {
-        if (!hasGexPayload(ev)) return
-
-        // Let the item-level targeting run first (updates folderDropTarget)
-        onTargetDragOver(ev)
-
-        // Always allow the drop on the root too — background drops go to cwd
-        ev.preventDefault()
-        if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move'
-        isDropActive.value = true
-    }
-
-    // ── Drag Leave ────────────────────────────────────────────────────────────
-
-    function onRootDragLeave(ev: DragEvent) {
-        const current = ev.currentTarget as HTMLElement | null
-        const related = ev.relatedTarget as HTMLElement | null
-        if (current && related && current.contains(related)) return
-
-        isDropActive.value = false
-        onTargetDragLeave(ev)
-    }
-
-    // ── Drop ──────────────────────────────────────────────────────────────────
-
-    async function onRootDrop(ev: DragEvent) {
-        isDropActive.value = false
-
-        const payload = extractGexPayload(ev)
+    async function onNativeDrop(x: number, y: number) {
+        const payload = currentPayload
+        resetDragState()
         if (!payload || payload.type !== 'gex/file-refs') return
 
-        // Resolve the specific folder target (clears folderDropTarget ref)
-        const specificTarget = resolveDropTarget(ev)
-        const srcId = payload.source?.widgetId
+        // Use the registry to find which widget the drop landed in —
+        // getBoundingClientRect() is reliable even during OLE drag.
+        const dropWidget = findWidgetAtPoint(x, y)
+        const droppedOnSelf = !dropWidget || dropWidget.widgetId === sourceId
 
-        // Block same-widget drops UNLESS they're targeting a specific subfolder
-        if (srcId === sourceId && !specificTarget) return
+        // Check for a folder row target (works for same-pane drops onto folders)
+        const folderTarget = findFolderRow(document.elementFromPoint(x, y), entries.value)
 
-        ev.preventDefault()
-        ev.stopPropagation()
+        if (droppedOnSelf && !folderTarget) {
+            console.debug('[Items] drop: background of own widget, ignoring')
+            return
+        }
+
+        const target = folderTarget ?? dropWidget?.cwd ?? null
+        const targetWidgetId = dropWidget?.widgetId ?? null
+        await executeDrop(payload, target, targetWidgetId)
+    }
+
+    async function onExternalResult(effect: string) {
+        const refreshDir = cwd.value || merged.value?.rpath || ''
+        resetDragState()
+        if (effect === 'move' && refreshDir) {
+            await loadDir(refreshDir)
+        }
+    }
+
+    // ── Core drop logic ────────────────────────────────────────────────────────
+
+    async function executeDrop(
+        payload: GexDnDPayload,
+        target: string | null,
+        targetWidgetId: string | null
+    ) {
+        if (!target) return
 
         try {
             const auth = await authorizeFileRefs('items', sourceId, payload)
-            if (!auth?.ok) {
-                console.warn('[Items] Drop not authorized:', auth?.reason)
-                return
-            }
+            if (!auth?.ok) { console.warn('[Items] Drop not authorized:', auth?.reason); return }
 
             const refs = (payload.data ?? []) as any[]
             if (!refs.length) return
 
-            // specificTarget wins over cwd (folder row drop vs background drop)
-            const target = specificTarget ?? cwd.value ?? merged.value.rpath ?? ''
-            if (!target) {
-                console.warn('[Items] Drop ignored: no target')
-                return
-            }
-
-            // Filter out items already in the target directory
             const destNorm = normalizeDir(target)
             const sources = refs
                 .map(r => String(r?.path ?? ''))
@@ -242,64 +174,90 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
                     return normalizeDir(m ? m[1] : '') !== destNorm
                 })
 
-            if (!sources.length) {
-                console.debug('[Items] drop: all refs already in target; nothing to move')
-                return
-            }
+            if (!sources.length) { console.debug('[Items] drop: all refs already in target'); return }
 
-            const items = sources.map(from => ({ from, to: target }))
-            const jobPromise = fsMove(items, 'items', sourceId)
+            const sep = target.includes('\\') || target.includes('\\') ? '\\' : '/'
+            const items = sources.map(from => {
+                const name = from.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? ''
+                return { from, to: target.replace(/[\\/]+$/, '') + sep + name }
+            })
+            await fsMove(items, 'items', sourceId)
+            await loadDir(cwd.value || merged.value?.rpath || '')
 
-            const off = onFsQueueUpdate(job => {
-                if (job.op.kind !== 'fs.move') return
-
-                emit('event', {
-                    type: 'fs-job:update',
-                    payload: { jobId: job.id, state: job.state, progress: job.progress, error: job.error },
+            if (targetWidgetId && targetWidgetId !== sourceId) {
+                sendWidgetMessage({
+                    from: sourceId,
+                    to: targetWidgetId,
+                    topic: 'fs:refresh-after-drop',
+                    payload: { kind: 'fs.move', target },
                 })
-
-                if (job.state === 'succeeded' || job.state === 'failed' || job.state === 'cancelled') {
-                    off()
-                    emit('event', {
-                        type: 'fs-job:finished',
-                        payload: { jobId: job.id, state: job.state, error: job.error },
-                    })
-                }
-            })
-
-            emit('event', {
-                type: 'fs-job:started',
-                payload: { kind: 'fs.move', target, items },
-            })
-
-            const job = await jobPromise
-            console.log('[Items] fsMove done:', { state: job.state, error: job.error })
-
-            if (job.state === 'succeeded') {
-                await loadDir(cwd.value || merged.value.rpath || '')
-
-                if (srcId && srcId !== sourceId) {
-                    sendWidgetMessage({
-                        from: sourceId,
-                        to: srcId,
-                        topic: 'fs:refresh-after-drop',
-                        payload: { kind: 'fs.move', target },
-                    })
-                }
             }
         } catch (err) {
             console.error('[Items] drop failed:', err)
         }
     }
 
+    // ── Drag initiation ────────────────────────────────────────────────────────
+
+    function onItemPointerDown(entry: any, ev: PointerEvent) {
+        if (ev.button !== 0 || marqueeActive.value) return
+
+        watchDragThreshold(ev, {
+            onThresholdCrossed(moveEv) {
+                if (isDragging.value) return false
+
+                const paths = selected.value.size > 0 ? [...selected.value] : [entry.FullPath]
+
+                currentPayload = createGexPayload(
+                    'gex/file-refs',
+                    paths.map(p => {
+                        const e = entries.value.find(x => x.FullPath === p)
+                        return {
+                            path: p,
+                            name: e?.Name ?? '',
+                            size: e?.Size ?? 0,
+                            mimeType: guessMimeType(p),
+                            isDirectory: e?.Kind === 'dir',
+                        }
+                    }),
+                    { widgetType: 'items', widgetId: sourceId }
+                )
+
+                isDragging.value = true
+
+                cleanupDrag = startNativeDrag(
+                    paths,
+                    {
+                        label: paths.length > 1 ? `${paths.length} items` : entry.Name,
+                        icon: entry.Kind === 'dir' ? '📁' : '📄',
+                        count: paths.length,
+                    },
+                    {
+                        onDragOver:       onNativeDragOver,
+                        onDragLeave:      onNativeDragLeave,
+                        onDrop:           onNativeDrop,
+                        onExternalResult: onExternalResult,
+                    },
+                    moveEv.clientX,
+                    moveEv.clientY
+                )
+            },
+        })
+    }
+
+    // Muzzle Chromium's own drag so OLE can take exclusive mouse capture
+    function onItemDragStart(_entry: any, ev: DragEvent) { ev.preventDefault() }
+    function onItemDragEnd() {}
+
+    function dispose() { resetDragState() }
+
     return {
         isDragging,
         isDropActive,
         folderDropTarget,
+        onItemPointerDown,
         onItemDragStart,
         onItemDragEnd,
-        onRootDragOver,
-        onRootDragLeave,
-        onRootDrop,
+        dispose,
     }
 }

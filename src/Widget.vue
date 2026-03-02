@@ -14,7 +14,6 @@ import {
 } from '/src/widgets/fs'
 import { sendWidgetMessage, onWidgetMessage } from '/src/widgets/instances'
 import { loadIconPack, iconFor, ensureIconsFor } from '/src/icons/index.ts'
-import { ensureConsent } from '/src/consent/service'
 import { createSelectionEngine, type ItemsAdapter, type Mods } from '/src/widgets/selection/selection-engine'
 import { createMarqueeDriver, type GeometryAdapter, type ScrollerAdapter, type Rect } from '/src/widgets/selection/marquee-driver';
 import { PickerMode, FileFilter, PickerSurfaceAdapter } from '/src/widgets/pickers/api';
@@ -202,6 +201,7 @@ const MIN_MOD_PX = 150; // min width for "Modified" col
    - When pointer is outside, scroll speed grows with distance
      (quadratic), capped at MAX_SPEED.
 ------------------------------------------------ */
+const rootEl   = ref<HTMLElement | null>(null)
 const scrollEl = ref<HTMLElement | null>(null)
 
 // tie driver to the engine you already created
@@ -1322,11 +1322,10 @@ const {
   isDragging,
   isDropActive,
   folderDropTarget,   
+  onItemPointerDown,
   onItemDragStart,
   onItemDragEnd,
-  onRootDragOver,
-  onRootDragLeave,
-  onRootDrop
+  dispose
 } = useItemsDragDrop({
   sourceId: props.sourceId,
   entries,
@@ -1334,6 +1333,7 @@ const {
   cwd,
   merged,
   marqueeActive,
+  rootEl,
   loadDir,
   emit
 })
@@ -1561,16 +1561,31 @@ onBeforeUnmount(() => {
 
   try {
     engine.destroy()
+    dispose()
   } catch {}
 })
 
 function getNavState() { return { canGoBack: false, canGoForward: false, cwd: cwd.value } }
+
+// Capture-phase row pointerdown — fires before draggable rows see the event,
+// starting watchDragThreshold before the browser's drag machinery arms itself.
+function onRowPointerDownCapture(ev: PointerEvent) {
+  if (ev.button !== 0) return
+  const row = (ev.target as HTMLElement | null)?.closest('.row[data-path]') as HTMLElement | null
+  if (!row) return
+  const path = row.dataset.path
+  if (!path) return
+  const entry = entries.value.find(e => e.FullPath === path)
+  if (!entry) return
+  onItemPointerDown(entry, ev)
+}
 
 defineExpose({ applyExternalCwd, getNavState, onWidgetAction  })
 </script>
 
 <template>
   <div
+  ref="rootEl"
   class="items-root"
   v-context-menu="contextMenuOptions"
   :style="hostVars"
@@ -1579,9 +1594,6 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction  })
       'drag-selecting': marqueeActive,
       'drop-active': isDropActive,
     }"
-    @dragover="onRootDragOver"
-    @dragleave="onRootDragLeave"
-    @drop="onRootDrop"
   >
   
     <!-- Make the scroller focusable + capture keyboard -->
@@ -1591,6 +1603,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction  })
       ref="scrollEl"
       tabindex="0"
       @keydown="onKeyDown"
+      @pointerdown.capture="onRowPointerDownCapture"
       @pointerdown="onScrollContainerPointerDown"
       @pointermove="onSurfacePointerMove"
       @pointerup="onSurfacePointerUp"
