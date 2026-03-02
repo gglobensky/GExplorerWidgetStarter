@@ -1324,7 +1324,6 @@ const {
   folderDropTarget,   
   onItemPointerDown,
   onItemDragStart,
-  onItemDragEnd,
   dispose
 } = useItemsDragDrop({
   sourceId: props.sourceId,
@@ -1644,7 +1643,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction  })
         @row-up="({ id }) => engine.rowUpId(id)"
         @dblclick="({ id }) => openEntry(id)"
         @dragstart="({ entry, event }) => { engine.dragStart(); onItemDragStart(entry, event) }"
-        @dragend="() => { onItemDragEnd(); engine.dragEnd() }"
+        @dragend="() => engine.dragEnd()"
         @header-click="(key) => onHeaderClick(key)"
         @surface-pointer-down="onSurfacePointerDown"
         @surface-pointer-move="onSurfacePointerMove"
@@ -1668,7 +1667,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction  })
         @row-up="({ id }) => engine.rowUpId(id)"
         @dblclick="({ id }) => openEntry(id)"
         @dragstart="({ entry, event }) => { engine.dragStart(); onItemDragStart(entry, event) }"
-        @dragend="() => { onItemDragEnd(); engine.dragEnd() }"
+        @dragend="() => engine.dragEnd()"
       />
 
       <!-- GRID VIEW -->
@@ -1686,7 +1685,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction  })
         @row-up="({ id }) => engine.rowUpId(id)"
         @dblclick="({ id }) => openEntry(id)"
         @dragstart="({ entry, event }) => { engine.dragStart(); onItemDragStart(entry, event) }"
-        @dragend="() => { onItemDragEnd(); engine.dragEnd() }"
+        @dragend="() => engine.dragEnd()"
       />
     </div>
   </div>
