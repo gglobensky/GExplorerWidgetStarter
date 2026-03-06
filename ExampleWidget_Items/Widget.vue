@@ -1323,7 +1323,6 @@ const {
   isDropActive,
   folderDropTarget,   
   onItemPointerDown,
-  onItemDragStart,
   dispose
 } = useItemsDragDrop({
   sourceId: props.sourceId,
@@ -1333,8 +1332,7 @@ const {
   merged,
   marqueeActive,
   rootEl,
-  loadDir,
-  emit
+  loadDir
 })
 /* -----------------------------------------------
    Drag & drop (unchanged; suppress when marqueeing)
@@ -1569,14 +1567,19 @@ function getNavState() { return { canGoBack: false, canGoForward: false, cwd: cw
 // Capture-phase row pointerdown — fires before draggable rows see the event,
 // starting watchDragThreshold before the browser's drag machinery arms itself.
 function onRowPointerDownCapture(ev: PointerEvent) {
-  if (ev.button !== 0) return
-  const row = (ev.target as HTMLElement | null)?.closest('.row[data-path]') as HTMLElement | null
-  if (!row) return
-  const path = row.dataset.path
-  if (!path) return
-  const entry = entries.value.find(e => e.FullPath === path)
-  if (!entry) return
-  onItemPointerDown(entry, ev)
+    if (ev.button !== 0) return
+    const row = (ev.target as HTMLElement | null)?.closest('.row[data-path]') as HTMLElement | null
+    console.log('[items] onRowPointerDownCapture', { 
+        hasRow: !!row, 
+        path: row?.dataset.path,
+    })
+    if (!row) return
+    const path = row.dataset.path
+    if (!path) return
+    const entry = entries.value.find(e => e.FullPath === path)
+    console.log('[items] entry lookup', { path, found: !!entry, entriesLen: entries.value.length })
+    if (!entry) return
+    onItemPointerDown(entry, ev)
 }
 
 defineExpose({ applyExternalCwd, getNavState, onWidgetAction  })
@@ -1642,7 +1645,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction  })
         @row-move="({ x, y }) => engine.rowMove?.(x, y)"
         @row-up="({ id }) => engine.rowUpId(id)"
         @dblclick="({ id }) => openEntry(id)"
-        @dragstart="({ entry, event }) => { engine.dragStart(); onItemDragStart(entry, event) }"
+        @dragstart="({ entry, event }) => { engine.dragStart(); }"
         @dragend="() => engine.dragEnd()"
         @header-click="(key) => onHeaderClick(key)"
         @surface-pointer-down="onSurfacePointerDown"
@@ -1666,7 +1669,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction  })
         @row-move="({ x, y }) => engine.rowMove?.(x, y)"
         @row-up="({ id }) => engine.rowUpId(id)"
         @dblclick="({ id }) => openEntry(id)"
-        @dragstart="({ entry, event }) => { engine.dragStart(); onItemDragStart(entry, event) }"
+        @dragstart="({ entry, event }) => { engine.dragStart(); }"
         @dragend="() => engine.dragEnd()"
       />
 
@@ -1684,7 +1687,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction  })
         @row-move="({ x, y }) => engine.rowMove?.(x, y)"
         @row-up="({ id }) => engine.rowUpId(id)"
         @dblclick="({ id }) => openEntry(id)"
-        @dragstart="({ entry, event }) => { engine.dragStart(); onItemDragStart(entry, event) }"
+        @dragstart="({ entry, event }) => { engine.dragStart(); }"
         @dragend="() => engine.dragEnd()"
       />
     </div>

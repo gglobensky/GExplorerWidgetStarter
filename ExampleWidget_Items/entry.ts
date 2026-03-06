@@ -60,6 +60,7 @@ export default {
     id:      'items',
     version: '0.3.1',
     Component: Widget,
+    dropAccepts: ['gex/file-refs'],
 
     // ── Context declarations ────────────────────────────────────────────────
     // Static metadata consumed by:

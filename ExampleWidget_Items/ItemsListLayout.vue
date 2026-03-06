@@ -107,13 +107,10 @@ function handleDragEnd() {
         selected: selectedMap[e.FullPath],
         'folder-drop-target': e.FullPath === props.folderDropTarget,
       }"
-      draggable="true"
       @pointerdown.stop="(ev) => handleRowDown(e.FullPath, ev)"
       @pointermove.stop="(ev) => handleRowMove(ev.clientX, ev.clientY)"
       @click.stop.prevent="() => handleRowUp(e.FullPath)"
       @dblclick.stop.prevent="() => handleDblClick(e.FullPath)"
-      @dragstart="(ev) => handleDragStart(e, ev as DragEvent)"
-      @dragend="() => handleDragEnd()"
     >
       <div class="icon">
         <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
@@ -185,13 +182,8 @@ function handleDragEnd() {
   outline: none !important; 
 }
 
-.row[draggable="true"] { 
-  cursor: grab; 
-}
-
-.row[draggable="true"]:active { 
-  cursor: grabbing; 
-}
+.row { cursor: grab; }
+.row:active { cursor: grabbing; }
 
 .row.selected { 
   box-shadow: inset 0 0 0 2px var(--accent, #4ea1ff) !important; 

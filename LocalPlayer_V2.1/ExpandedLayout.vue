@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
-import { createTipDirective } from 'gexplorer/widgets'
 import { useScrollHints, useSnapResize } from '/src/widgets/list-kit'
+import type { TooltipOptions } from '@/widgets/tooltip'
 import { createDragTrigger } from '/src/widgets/utils/click-drag.ts'
 import type { Track } from './usePlayerState'
-
-const vTip = createTipDirective({ force: true })
 
 const props = defineProps<{
   // State
@@ -184,16 +182,18 @@ watch(
   ([, , show]) => { if (show) measureAfterPaint() }
 )
 
-const playTooltip = computed(() => {
+const playTooltip = computed((): TooltipOptions => {
   const head = props.isPlaying ? 'Pause' : 'Play'
   const name = props.current?.name
   const timeLine = `${fmtTime(props.currentTime)} / ${fmtTime(props.duration || 0)}`
-  return name ? `${head}\n${name}\n${timeLine}` : head
+  return name
+    ? { content: head, detail: `${name}\n${timeLine}` }
+    : { content: head }
 })
 
-const seekTooltip = computed(() =>
-  fmtTime(props.currentTime) + ' / ' + fmtTime(props.duration || 0)
-)
+const seekTooltip = computed((): TooltipOptions => ({
+  content: fmtTime(props.currentTime) + ' / ' + fmtTime(props.duration || 0),
+}))
 
 function onBeginRenameDblClick(e: MouseEvent) {
   const el = e.currentTarget as HTMLElement
@@ -315,7 +315,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
           v-if="['wide', 'medium'].includes(layoutClass)"
           class="btn add-left narrow"
           type="button"
-          title="Add files"
+          v-gex-tooltip="'Add files to the queue'"
           @click.stop.prevent="emit('click-pick')"
         >
           + Add
@@ -327,7 +327,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
             class="btn transport-btn narrow"
             type="button"
             :disabled="!canPrev"
-            title="Previous track"
+            v-gex-tooltip="'Previous track'"
             @click="emit('prev')"
           >
             ⏮
@@ -337,7 +337,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
             :class="{ loading: isLoading }"
             type="button"
             :disabled="!hasTracks"
-            v-tip="playTooltip"
+            v-gex-tooltip="playTooltip"
             @click="emit('toggle-play')"
           >
             {{ isPlaying ? '⏸' : '▶' }}
@@ -346,7 +346,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
             class="btn transport-btn narrow"
             type="button"
             :disabled="!canNext"
-            title="Next track"
+            v-gex-tooltip="'Next track'"
             @click="emit('next')"
           >
             ⏭
@@ -358,7 +358,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
           v-if="['wide', 'medium'].includes(layoutClass)"
           class="btn narrow"
           type="button"
-          title="Playback speed"
+          v-gex-tooltip="{ content: 'Playback speed', detail: 'Left-click to increase · Right-click to decrease' }"
           @click="emit('adjust-speed', 0.1)"
           @contextmenu.prevent="emit('adjust-speed', -0.1)"
         >
@@ -370,7 +370,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
           class="btn narrow"
           :class="{ active: shuffle }"
           type="button"
-          title="Shuffle"
+          v-gex-tooltip="{ content: shuffle ? 'Shuffle: On' : 'Shuffle: Off', detail: 'Randomises playback order' }"
           @click="emit('toggle-shuffle')"
         >
           🔀
@@ -381,7 +381,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
           class="btn narrow"
           :class="{ active: repeat !== 'off' }"
           type="button"
-          :title="repeat === 'off' ? 'Repeat: Off' : repeat === 'all' ? 'Repeat: All' : 'Repeat: One'"
+          v-gex-tooltip="{ content: repeat === 'off' ? 'Repeat: Off' : repeat === 'all' ? 'Repeat: All' : 'Repeat: One', detail: 'Click to cycle: Off → All → One' }"
           @click="emit('toggle-repeat')"
         >
           {{ repeat === 'one' ? '🔂' : '🔁' }}
@@ -392,7 +392,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
           v-if="['ultra', 'micro'].includes(layoutClass)"
           class="btn add-right narrow"
           type="button"
-          title="Add files"
+          v-gex-tooltip="'Add files to the queue'"
           @click.stop.prevent="emit('click-pick')"
         >
           +
@@ -403,7 +403,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
           ref="volBtnEl"
           class="btn vol-btn narrow"
           type="button"
-          :title="`Volume: ${Math.round(volume * 100)}%`"
+          v-gex-tooltip="{ content: `Volume: ${Math.round(volume * 100)}%`, detail: 'Click to open volume slider' }"
           @click="toggleVolPop"
         >
           {{ volumeIcon }}
@@ -421,7 +421,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
             min="0"
             max="1"
             step="0.001"
-            v-tip="seekTooltip"
+            v-gex-tooltip="seekTooltip"
             :value="duration ? currentTime / duration : 0"
             :disabled="!hasTracks || !duration"
             @input="emit('seek', $event)"
@@ -449,7 +449,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
     <div v-if="queue.length" class="queue-header">
       <div class="qh-left">
         <template v-if="!renaming">
-          <strong class="qh-title" @dblclick="onBeginRenameDblClick" title="Double-click to rename">
+          <strong class="qh-title" @dblclick="onBeginRenameDblClick" v-gex-tooltip="{ content: 'Rename playlist', detail: 'Double-click to edit' }">
             {{ queueName }}
           </strong>
         </template>
@@ -473,15 +473,15 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
                 @blur="emit('commit-rename')"
             />
             <div class="ro-actions">
-                <button class="icon-btn" title="Save" @mousedown.prevent @click="emit('commit-rename')">✓</button>
-                <button class="icon-btn" title="Cancel" @mousedown.prevent @click="emit('cancel-rename')">✕</button>
+                <button class="icon-btn" v-gex-tooltip="'Save name'" @mousedown.prevent @click="emit('commit-rename')">✓</button>
+                <button class="icon-btn" v-gex-tooltip="'Cancel rename'" @mousedown.prevent @click="emit('cancel-rename')">✕</button>
             </div>
             </div>
         </template>
         <span class="count">{{ queue.length }}</span>
       </div>
       <div class="qh-actions">
-        <button class="icon-btn" title="Save playlist" @click="emit('save-playlist')">💾</button>
+        <button class="icon-btn" v-gex-tooltip="'Save playlist to file'" @click="emit('save-playlist')">💾</button>
       </div>
     </div>
 
@@ -492,7 +492,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
         v-if="showQueue && hasOverflow && !atTop"
         class="queue-top-hint clickable"
         @click="scrollByPage(-1)"
-        title="Scroll up"
+        v-gex-tooltip="'Scroll up'"
     >
         <svg width="24" height="10" viewBox="0 0 24 10">
         <path d="M3,8 L12,2 L21,8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -506,7 +506,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
         class="tab-btn"
         :aria-expanded="showQueue"
         @click="emit('toggle-queue')"
-        :title="showQueue ? 'Hide list' : 'Show list'">
+        v-gex-tooltip="showQueue ? 'Hide queue' : 'Show queue'">
         <span v-if="showQueue">▴</span><span v-else>▾</span>
     </button>
 
@@ -515,7 +515,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
         v-if="showQueue && hasOverflow && !atTop"
         class="queue-top-hint clickable"
         @click="scrollByPage(-1)"
-        title="Scroll up"
+        v-gex-tooltip="'Scroll up'"
     >
         <svg width="24" height="10" viewBox="0 0 24 10">
         <path d="M3,8 L12,2 L21,8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -571,7 +571,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
         <template v-else>
             {{ t.name }}
         </template>
-        <span v-if="t.missing" class="skip-tag" title="File not found">[missing]</span>
+        <span v-if="t.missing" class="skip-tag" v-gex-tooltip="'File not found on disk'">[missing]</span>
         </span>
 
         <span class="dur">
@@ -586,7 +586,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
         <button
             class="icon-btn"
             type="button"
-            title="Remove"
+            v-gex-tooltip="'Remove from queue'"
             @click.stop="emit('remove-at', i)"
         >
             ✕
@@ -601,7 +601,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
     class="queue-resize-handle"
     @pointerdown="onQueueHandlePointerDown"
     @click.stop="onQueueHandleClick"
-    :title="hasOverflow && !atBottom ? 'Scroll down (or drag to resize)' : 'Drag to resize list height'"
+    v-gex-tooltip="hasOverflow && !atBottom ? { content: 'Scroll down', detail: 'Drag to resize the list height' } : 'Drag to resize list height'"
     >
     <!-- down chevron when more below; line when at end -->
     <svg v-if="hasOverflow && !atBottom" width="24" height="10" viewBox="0 0 24 10">

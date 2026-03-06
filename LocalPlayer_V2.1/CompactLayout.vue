@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
-import { createTipDirective } from 'gexplorer/widgets'
-
-const vTip = createTipDirective({ force: true })
+import type { TooltipOptions } from '@/widgets/tooltip'
 
 const props = defineProps<{
   current: any
@@ -10,7 +8,7 @@ const props = defineProps<{
   isPlaying: boolean
   volume: number
   volumeIcon: string
-  playTooltip: string
+  playTooltip: TooltipOptions
 }>()
 
 const emit = defineEmits<{
@@ -76,13 +74,13 @@ defineExpose({ onDocClick, onKeydown })
 <template>
   <div class="compact">
     <!-- Title strip with volume button at right -->
-    <div class="compact-title" :title="playTooltip">
+    <div class="compact-title" v-gex-tooltip="playTooltip">
       <span class="title-text">{{ current?.name || 'No track' }}</span>
       <button
         ref="volBtnEl"
         class="btn vol-in-title"
         :class="{ active: volume === 0 }"
-        :title="`Volume: ${Math.round(volume * 100)}%`"
+        v-gex-tooltip="{ content: `Volume: ${Math.round(volume * 100)}%`, detail: 'Click to open volume slider' }"
         :aria-expanded="showVolPop ? 'true' : 'false'"
         @click.stop="toggleVolPop"
       >
@@ -105,10 +103,10 @@ defineExpose({ onDocClick, onKeydown })
 
     <!-- Single-row controls -->
     <div class="compact-controls">
-      <button class="btn" v-tip="playTooltip" :disabled="!hasTracks" @click="emit('toggle-play')">
+      <button class="btn" v-gex-tooltip="playTooltip" :disabled="!hasTracks" @click="emit('toggle-play')">
         <span v-if="isPlaying">⏸</span><span v-else>▶</span>
       </button>
-      <button class="btn" title="Add files…" @click="emit('click-pick')">+</button>
+      <button class="btn" v-gex-tooltip="'Add files to the queue'" @click="emit('click-pick')">+</button>
     </div>
   </div>
 </template>
