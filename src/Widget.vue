@@ -9,6 +9,7 @@ import { useKeyboardNav } from './useKeyboardNav'
 import CompactLayout from './CompactLayout.vue'
 import ExpandedLayout from './ExpandedLayout.vue'
 import { onWidgetMessage } from '/src/widgets/instances'
+import { GexDnDPayload } from '/src/widgets/dnd/types'
 
 import {
   extractGexPayload,
@@ -16,6 +17,8 @@ import {
   authorizeFileRefs,
   FileRefData
 } from 'gexplorer/widgets'
+
+const isDropActive = ref(false)
 
 const props = defineProps<{
   config?: Record<string, any>
@@ -412,42 +415,23 @@ function prevent(e: Event) { e.preventDefault(); e.stopPropagation() }
 function onDragEnter(e: DragEvent) { prevent(e); draggingOver.value = true }
 function onDragOver(e: DragEvent) { prevent(e) }
 function onDragLeave(e: DragEvent) { prevent(e); draggingOver.value = false }
+// Replace the existing onDrop and add onWidgetMessage wiring
+
+async function handleFileRefs(payload: any) {
+    const auth = await authorizeFileRefs(
+        'local-player', props.sourceId, payload, { requiredCaps: ['Read'] }
+    )
+    if (!auth.ok) return
+    const tracks = await refsToTracks(payload.data as FileRefData[], 'local-player', props.sourceId)
+    await appendTracks(tracks)
+    if (state.queue.value.length === tracks.length && tracks.length) await play(0)
+}
 
 async function onDrop(e: DragEvent) {
-  prevent(e)
-  draggingOver.value = false
+    prevent(e)
+    draggingOver.value = false
 
-  if (hasGexPayload(e)) {
-    const payload = extractGexPayload(e)
-    if (!payload) return
-
-    if (payload.type === 'gex/file-refs') {
-      const auth = await authorizeFileRefs(
-        'local-player',
-        props.sourceId,
-        payload,
-        { requiredCaps: ['Read'] }
-      )
-      if (!auth.ok) return
-
-      const tracks = await refsToTracks(
-        payload.data as FileRefData[],
-        'local-player',
-        props.sourceId
-      )
-
-      await appendTracks(tracks)
-
-      if (state.queue.value.length === tracks.length && tracks.length) {
-        await play(0)
-      }
-      return
-    }
-  }
-
-  if (e.dataTransfer?.files?.length) {
-    await playlist.addFiles(e.dataTransfer.files)
-  }
+    if (e.dataTransfer?.files?.length) await playlist.addFiles(e.dataTransfer.files)
 }
 
 // ===== MEDIA EVENTS =====
@@ -531,6 +515,17 @@ onMounted(async () => {
 
   applyPlaybackRate()
 
+  onWidgetMessage(props.sourceId, async (msg: any) => {
+      if (msg.topic === 'dnd:drop') {
+          const payload = msg.payload?.data
+          if (payload?.type === 'gex/file-refs') {
+              await handleFileRefs(payload)
+          }
+      }
+      if (msg.topic === 'widget:action') {
+          await onWidgetAction(msg)
+      }
+  })
 })
 
 
@@ -591,6 +586,7 @@ onBeforeUnmount(() => {
   state.music.removeEventListener('rack:playlistindex', onRackIndex as EventListener)
 
   state.playlists.unbind(state.sel)
+  offWidgetMsg.value?.()
   dnd.sortable?.destroy()
 })
   defineExpose({ onWidgetAction })
@@ -610,6 +606,7 @@ onBeforeUnmount(() => {
       :is-playing="state.isPlaying.value"
       :volume="state.volume.value"
       :volume-icon="state.volumeIcon.value"
+      :is-drop-active="isDropActive"
       :play-tooltip="`${state.isPlaying.value ? 'Pause' : 'Play'}${state.current.value ? '\n' + state.current.value.name : ''}`"
       @toggle-play="togglePlay"
       @click-pick="clickPick"
@@ -633,6 +630,7 @@ onBeforeUnmount(() => {
       :current-time="state.currentTime.value"
       :duration="state.duration.value"
       :volume="state.volume.value"
+      :is-drop-active="isDropActive"
       :repeat="state.repeat.value"
       :shuffle="state.shuffle.value"
       :queue-name="state.queueName.value"
