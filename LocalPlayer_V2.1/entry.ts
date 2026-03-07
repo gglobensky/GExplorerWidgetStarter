@@ -7,6 +7,7 @@ export default {
     id:      'local-player',
     version: '1.0.0',
     Component: Widget,
+    dropAccepts: ['gex/file-refs'],
 
     menuContexts: [
         { id: 'player.track',      label: 'Track in queue', icon: '🎵', builtin: false },

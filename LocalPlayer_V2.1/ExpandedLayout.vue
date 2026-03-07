@@ -33,6 +33,7 @@ const props = defineProps<{
   showQueue: boolean
   renaming: boolean
   draftQueueName: string
+  isDropActive: boolean
   
   // Marquee
   marqueeOn: boolean
@@ -65,10 +66,6 @@ const emit = defineEmits<{
   (e: 'row-click', index: number): void
   (e: 'start-row-drag', index: number, event: MouseEvent): void
   (e: 'remove-at', index: number): void
-  (e: 'drag-enter', event: DragEvent): void
-  (e: 'drag-over', event: DragEvent): void
-  (e: 'drag-leave', event: DragEvent): void
-  (e: 'drop', event: DragEvent): void
 }>()
 
 // Measure row height from DOM (used for snap resize step)
@@ -117,7 +114,6 @@ const volBtnEl = ref<HTMLElement | null>(null)
 const showVolPop = ref(false)
 const volPopStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' })
 const isPressing = ref(false)
-const draggingOver = ref(false)
 
 // ===== LIST-KIT: SCROLL HINTS =====
 const {
@@ -299,12 +295,8 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
 <template>
   <div
     class="player-root"
-    :class="[layoutClass, { 'drag-over': draggingOver, dragging: sortableState.isDragging, pressing: isPressing }]"
+    :class="[layoutClass, { 'drag-over': isDropActive, dragging: sortableState.isDragging, pressing: isPressing }]"
     @pointerdown="onPointerDown"
-    @dragenter="emit('drag-enter', $event)"
-    @dragover="emit('drag-over', $event)"
-    @dragleave="emit('drag-leave', $event)"
-    @drop="emit('drop', $event)"
   >
     <!-- Controls -->
     <div class="controls" :class="layoutClass" ref="controlsEl">

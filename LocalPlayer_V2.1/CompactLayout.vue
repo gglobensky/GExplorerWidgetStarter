@@ -8,7 +8,9 @@ const props = defineProps<{
   isPlaying: boolean
   volume: number
   volumeIcon: string
+  layoutClass: string
   playTooltip: TooltipOptions
+  isDropActive: boolean
 }>()
 
 const emit = defineEmits<{
@@ -72,7 +74,10 @@ defineExpose({ onDocClick, onKeydown })
 </script>
 
 <template>
-  <div class="compact">
+  <div 
+    class="compact"
+    :class="[layoutClass, { 'drag-over': isDropActive }]"
+  >
     <!-- Title strip with volume button at right -->
     <div class="compact-title" v-gex-tooltip="playTooltip">
       <span class="title-text">{{ current?.name || 'No track' }}</span>
