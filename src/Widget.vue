@@ -206,7 +206,6 @@ const playlist = usePlaylist(
   state.playlists,
   state.sel,
   state.toPlaylistItems,
-  () => dnd.ensureSortable(),           // <- if your useDnD exposes ensureDnD()
   'local-player',                  // <- receiverWidgetType
   props.sourceId                   // <- receiverWidgetId
 )
@@ -395,7 +394,7 @@ function commitRename() {
 
 // ===== ROW INTERACTIONS =====
 async function onRowDblClick(track: any) {
-  if (dnd.sortableState.value.isDragging) return
+if (dnd.isDragging.value) return
   const realIdx = state.queue.value.findIndex(t => t.id === track.id)
   const idx = await state.playlists.playIndex(state.sel, realIdx, state.music)
   if (idx >= 0) {
@@ -587,7 +586,6 @@ onBeforeUnmount(() => {
 
   state.playlists.unbind(state.sel)
   offWidgetMsg.value?.()
-  dnd.sortable?.destroy()
 })
   defineExpose({ onWidgetAction })
 </script>
