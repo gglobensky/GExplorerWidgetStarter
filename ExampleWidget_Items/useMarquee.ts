@@ -1,5 +1,5 @@
 import { ref, computed, type Ref, type ComputedRef } from '/runtime/vue.js'
-import { createMarqueeDriver, type GeometryAdapter, type ScrollerAdapter, type Rect } from '/src/widgets/selection/marquee-driver'
+import { createMarqueeDriver, type GeometryAdapter, type ScrollerAdapter, type Rect } from 'gexplorer/widgets'
 
 /**
  * useMarquee - Composable for marquee selection

@@ -10,22 +10,30 @@ import {
   fsRename,
   onFsQueueUpdate,
   fsCopy, 
-  fsMove
-} from '/src/widgets/fs'
+  fsMove,
+  loadIconPack, 
+  iconFor, 
+  ensureIconsFor,
+  createSelectionEngine, 
+  type ItemsAdapter, 
+  type Mods,
+  createMarqueeDriver, 
+  type GeometryAdapter, 
+  type ScrollerAdapter, 
+  type Rect,
+  PickerMode, 
+  FileFilter, 
+  PickerSurfaceAdapter,
+  clipboardCopyFiles, 
+  clipboardCutFiles, 
+  clipboardGetFiles,
+  startRename,
+  createWidgetMessaging,
+  type ScopedMessaging,
+} from 'gexplorer/widgets'
 import { sendWidgetMessage, onWidgetMessage } from '/src/widgets/instances'
-import { loadIconPack, iconFor, ensureIconsFor } from '/src/icons/index.ts'
-import { createSelectionEngine, type ItemsAdapter, type Mods } from '/src/widgets/selection/selection-engine'
-import { createMarqueeDriver, type GeometryAdapter, type ScrollerAdapter, type Rect } from '/src/widgets/selection/marquee-driver';
-import { PickerMode, FileFilter, PickerSurfaceAdapter } from '/src/widgets/pickers/api';
-import { 
-    clipboardCopyFiles, 
-    clipboardCutFiles, 
-    clipboardGetFiles 
-} from '/src/widgets/clipboard/index.ts'
 
 import { buildVfsInfo } from '/src/contextmenu/context'
-import { startRename } from '/src/widgets/renameOverlay' 
-import { getItemsLayoutService, type ViewConfig } from './layout-service'
 import ItemsListLayout from './ItemsListLayout.vue'
 import ItemsGridLayout from './ItemsGridLayout.vue'
 import ItemsDetailsLayout from './ItemsDetailsLayout.vue'
@@ -149,7 +157,7 @@ const contextMenuOptions = computed(() => {
         widgetId:     props.sourceId,
         location:     { area: 'grid' as const },
         target:       selectedPaths.length > 0 ? ('selection' as const) : ('background' as const),
-        vfs:          buildVfsInfo(cwd.value || merged.value.rpath || ''),
+        path:         cwd.value || merged.value.rpath || '',   // host resolves VFS
         selection:    selectedPaths,
         widgetConfig: props.config,
         entries:      entries.value,
@@ -184,7 +192,8 @@ const emit = defineEmits<{
   (e: 'event', payload: any): void
 }>()
 
-const offWidgetMsg = ref<null | (() => void)>(null)
+const messaging = createWidgetMessaging(props.sourceId)
+const { send, on, cleanup } = messaging
 
 const iconsTick = ref(0)
 
@@ -220,20 +229,6 @@ const detailsScrollEl = ref<HTMLElement | null>(null)
 const headerEl = ref<HTMLElement|null>(null)
 const padEl    = ref<HTMLElement|null>(null)
 const sbw = ref(0)
-
-onBeforeUnmount(() => {
- // Clear any pending reload timer
-  if (reloadDebounceTimer) {
-    clearTimeout(reloadDebounceTimer)
-    reloadDebounceTimer = null
-  }
-
-  try {
-    if (typeof offRefresh === 'function') offRefresh()
-  } catch (e) {
-    console.warn('[items] offRefresh cleanup failed', e)
-  }
-})
 
 // Sync refs from Details component when it mounts/updates
 watch(detailsLayoutRef, (component) => {
@@ -1321,11 +1316,12 @@ const hostVars = computed(() => ({
 const {
   isDragging,
   isDropActive,
-  folderDropTarget,   
+  folderDropTarget,
   onItemPointerDown,
   dispose
 } = useItemsDragDrop({
   sourceId: props.sourceId,
+  messaging,
   entries,
   selected,
   cwd,
@@ -1450,40 +1446,24 @@ function startItemRename(itemPath: string): void {
 onMounted(async () => {
   console.log('[items] mount, sourceId =', props.sourceId)
 
-  offWidgetMsg.value = onWidgetMessage(props.sourceId, (msg) => {
+on('fs:refresh-after-drop', (msg) => {
     const current = cwd.value || merged.value.rpath || ''
-    console.log('[items] onWidgetMessage', {
-      sourceId: props.sourceId,
-      topic: msg.topic,
-      payload: msg.payload,
-      current,
-      cwd: cwd.value,
-      rpath: merged.value.rpath,
-    })
-
     if (!current) return
-
-    if (msg.topic === 'fs:refresh-after-drop') {
-      const target = String(msg.payload?.target || '')
-      if (target && normalizeDir(target) !== normalizeDir(current)) {
+    const target = String(msg.payload?.target || '')
+    if (target && normalizeDir(target) !== normalizeDir(current)) {
         console.log('[items] fs:refresh-after-drop → reloading', current)
         loadDir(current)
-      }
     }
+})
 
-    if (msg.topic === 'fs:changed') {
-      const root = String(msg.payload?.root || '')
-      console.log('[items] fs:changed candidate', {
-        rootNorm: normalizeDir(root),
-        currentNorm: normalizeDir(current),
-        paused: pauseFileWatcher
-      })
-      if (root && normalizeDir(root) === normalizeDir(current)) {
-        // Use debounced reload instead of immediate
+on('fs:changed', (msg) => {
+    const current = cwd.value || merged.value.rpath || ''
+    if (!current) return
+    const root = String(msg.payload?.root || '')
+    if (root && normalizeDir(root) === normalizeDir(current)) {
         scheduleReload(current)
-      }
     }
-  })
+})
 
   await nextTick()
   requestAnimationFrame(() => {
@@ -1492,74 +1472,37 @@ onMounted(async () => {
 })
 
 // Listen for refresh, rename and paste messages from context menu
-const offRefresh = onWidgetMessage(props.sourceId, async (msg) => {
-  if (msg.topic === 'items:refresh') {
+on('items:refresh', async (_msg) => {
     console.debug('[items] Refreshing from context menu, current cwd:', cwd.value)
     await loadDir(cwd.value)
-  }
-  
-  // NEW: Handle rename requests
-  if (msg.topic === 'items:startRename') {
+})
+
+on('items:startRename', async (msg) => {
     const path = msg.payload?.path
     if (path) {
-      console.debug('[items] Starting rename for:', path)
-      startItemRename(path)
+        console.debug('[items] Starting rename for:', path)
+        startItemRename(path)
     }
-  }
+})
 
-  // Handle paste requests from context menu
-  if (msg.topic === 'items:paste') {
+on('items:paste', async (_msg) => {
     console.debug('[items] Paste triggered from context menu')
     await pasteFromClipboard()
-  }
+})
 
-  if (msg.topic === 'items:reloadAndRename') {
-      const path = msg.payload?.path
-      if (!path) return
-      console.debug('[items] reloadAndRename received, path:', path)
-      
-      await loadDir(cwd.value)
-      console.debug('[items] loadDir complete, entries count:', entries.value.length)
-      console.debug('[items] looking for entry:', entries.value.find(e => e.FullPath === path))
-      
-      await nextTick()
-      console.debug('[items] after nextTick, searching DOM for data-rename-id:', path)
-      
-      // Check what's actually in the DOM
-      const allRenameEls = document.querySelectorAll('[data-rename-id]')
-      console.debug('[items] all data-rename-id elements:', 
-          Array.from(allRenameEls).map(el => ({
-              id: el.getAttribute('data-rename-id'),
-              widgetId: el.getAttribute('data-widget-id'),
-          }))
-      )
-      
-      const match = Array.from(allRenameEls).find(el => 
-          el.getAttribute('data-rename-id') === path &&
-          el.getAttribute('data-widget-id') === props.sourceId
-      )
-      console.debug('[items] found matching element:', match)
-      
-      startItemRename(path)
-  }
+on('items:reloadAndRename', async (msg) => {
+    const path = msg.payload?.path
+    if (!path) return
+    console.debug('[items] reloadAndRename received, path:', path)
+    await loadDir(cwd.value)
+    await nextTick()
+    startItemRename(path)
 })
 
 onBeforeUnmount(() => {
-  try {
-    if (typeof offRefresh === 'function') offRefresh()
-  } catch (e) {
-    console.warn('[items] offRefresh cleanup failed', e)
-  }
-
-  try {
-    offWidgetMsg.value?.()
-    offWidgetMsg.value = null
-  } catch {}
-
-  try {
-    engine.destroy()
-    dispose()
-  } catch {}
+  try { engine.destroy() } catch {}
+  try { dispose() } catch {}
+  cleanup()   // unregisters all on() subscriptions including those in useItemsDragDrop
 })
 
 function getNavState() { return { canGoBack: false, canGoForward: false, cwd: cwd.value } }
