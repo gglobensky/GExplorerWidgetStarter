@@ -1,8 +1,10 @@
 // /src/widgets/favorites/useDragVisuals.ts
 import { ref, type Ref } from '/runtime/vue.js'
-import type { DropIntent } from '/src/widgets/sortable/engine'
 import type { RootRowId } from './favorites.model'
-import type { FavoriteTreeNode } from '/src/widgets/contracts/favorites'
+import type { 
+  DropIntent,
+  FavoriteTreeNode 
+} from 'gexplorer/widgets'
 
 export type UseDragVisualsOptions = {
   activeContainer: () => HTMLElement | null

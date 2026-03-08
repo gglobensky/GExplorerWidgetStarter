@@ -1,58 +1,76 @@
-// src/widgets/favorites/entry.ts
+// src/widgets/music/src/entry.ts
+
 import Widget from './Widget.vue'
 
 export default {
-  api: '1.0',
-  id: 'favorites',
-  version: '0.1.0',
-  Component: Widget,
+    api:     '1.0',
+    id:      'local-player',
+    version: '1.0.0',
+    Component: Widget,
+    dropAccepts: ['gex/file-refs'],
 
-  // Where this widget can live
-  contexts: {
-    // Toolbar strip (main intended place)
-    toolbar: {
-      // These are "grid-ish" units; tweak to taste once the toolbar host exists
-      minSize:     { cols: 4,  rows: 1 },
-      maxSize:     { cols: 24, rows: 1 },
-      defaultSize: { cols: 12, rows: 1 },
-    },
-
-    // Optional: allow dropping favorites in the main grid as a big widget
-    grid: {
-      minSize:     { cols: 2, rows: 1 },
-      maxSize:     { cols: 12, rows: 8 },
-      defaultSize: { cols: 4, rows: 2 },
-    },
-
-    // Optional: also usable in sidebar
-    sidebar: {
-      minHeight: 120,
-    },
-
-    // Widget-local layout modes (up to you & Widget.vue)
-    layouts: [
-      { id: 'toolbar', icon: '★', tooltip: 'Toolbar pills' },
-      { id: 'list',    icon: '☰', tooltip: 'Vertical list' },
+    menuContexts: [
+        { id: 'player.track',      label: 'Track in queue', icon: '🎵', builtin: false },
+        { id: 'player.background', label: 'Player area',    icon: '🖥',  builtin: false },
     ],
-  },
 
-  // Default config that will be passed as props.config
-  defaults: {
-    data: {
-      // Which logical favorites group to use in favorites/service
-      group: 'default',
-
-      // Future-you knobs:
-      // scope: 'global' | 'workspace' | 'profile' (if you ever want that)
-      showLabels: true,
-      maxVisible: 24,
+    contexts: {
+        grid: {
+            layouts: [
+                { id: 'compact',    icon: '─',  tooltip: 'Compact Player'   },
+                { id: 'expanded',   icon: '▦',  tooltip: 'Player + Queue'   },
+                { id: 'visualizer', icon: '〰', tooltip: 'Visualizer Mode'  },
+            ],
+            minSize: { cols: 2, rows: 2 },
+        },
+        sidebar: {
+            layouts: [
+                { id: 'compact',  icon: '─', tooltip: 'Mini Player' },
+                { id: 'expanded', icon: '▦', tooltip: 'Full Player' },
+            ],
+            minHeight: 120,
+        },
     },
-    view: {
-      layout: 'toolbar',  // must match one of contexts.layouts ids
-      dense: true,
-    },
-  },
 
-  // Capability tag so other code can discover "favorites providers" later
-  capabilities: ['favorites:provider'],
+    actions: [
+        {
+            id:    'play',
+            label: 'Play',
+            accepts: {
+                contexts:   ['file'],
+                extensions: ['.mp3', '.flac', '.wav', '.mp4'],
+            },
+            contextMenu: {
+                label:        'Play in Local Player',
+                icon:         '▶',
+                submenuLabel: 'Local Player',
+            },
+        },
+        {
+            id:    'enqueue',
+            label: 'Add to queue',
+            accepts: {
+                contexts:   ['file'],
+                extensions: ['.mp3', '.flac', '.wav'],
+            },
+            contextMenu: {
+                label:        'Enqueue',
+                icon:         '➕',
+                submenuLabel: 'Local Player',
+            },
+        },
+    ],
+
+    defaults: {
+        data: {
+            queueName: 'Queue',
+        },
+        view: {
+            volume:  0.9,
+            repeat:  'off',
+            shuffle: false,
+        },
+    },
+
+    capabilities: [],
 }

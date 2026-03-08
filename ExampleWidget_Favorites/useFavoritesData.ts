@@ -1,17 +1,12 @@
 // /src/widgets/favorites/useFavoritesData.ts
 import { ref, watch, onMounted, onBeforeUnmount } from '/runtime/vue.js'
-import type {
+import {
   FavoriteEntry,
   FavoriteTreeNode,
-} from '/src/widgets/contracts/favorites'
-import {
   getFavorites,
   getGlobalFavorites,
-} from '/src/widgets/favorites/service'
-import {
-  sendWidgetMessage,
-  onWidgetMessage,
-} from '/src/widgets/instances'
+  createWidgetMessaging
+} from 'gexplorer/widgets'
 import {
   buildRootRows,
   type RootRow,
@@ -26,6 +21,8 @@ export type UseFavoritesDataOptions = {
 
 export function useFavoritesData(opts: UseFavoritesDataOptions) {
   const { sourceId, configData, groupValue, instanceId } = opts
+
+  const { send, on, cleanup } = createWidgetMessaging(sourceId)
 
   // Core state
   const loading = ref(false)
@@ -46,11 +43,11 @@ export function useFavoritesData(opts: UseFavoritesDataOptions) {
   function broadcastFavoritesChanged(
     reason: 'add' | 'remove' | 'move' | 'folder-add' | 'folder-remove' | 'other' = 'other'
   ) {
-    sendWidgetMessage({
-      from: instanceId,
-      topic: 'favorites:changed',
-      payload: { reason },
-    })
+    send(
+      undefined,
+      'favorites:changed',
+      { reason },
+    )
   }
 
   /**
@@ -141,17 +138,16 @@ export function useFavoritesData(opts: UseFavoritesDataOptions) {
     await refreshRootFolders()
 
     // Listen for changes from other widget instances
-    offBus = onWidgetMessage((msg) => {
-      if (msg.topic !== 'favorites:changed') return
-      if (msg.from === instanceId) return
-      void refreshFavorites()
-      void refreshRootFolders()
+    offBus = on('favorites:changed', (msg) => {
+        if (msg.from === instanceId) return
+        void refreshFavorites()
+        void refreshRootFolders()
     })
   })
 
   onBeforeUnmount(() => {
     offBus?.()
-    offBus = null
+    cleanup()
   })
 
   // Watch for config group changes

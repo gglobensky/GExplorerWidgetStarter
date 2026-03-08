@@ -1,489 +1,354 @@
 // /src/widgets/favorites/useFavoritesSortable.ts
-import { ref, watch, onMounted, onBeforeUnmount, nextTick, type Ref } from '/runtime/vue.js'
+import { ref, type Ref } from '/runtime/vue.js'
+import { 
+  useSortable,
+  DropIntent,
+  applyFavoritesMove
+} from 'gexplorer/widgets'
 import {
-  snapshotFromNodes,
-  type SortableNodeRef,
-  type DropIntent,
-} from '/src/widgets/sortable/engine'
-import {
-  createSortableDriver,
-  type SortableModelAdapter,
-  type SortableGeometryAdapter,
-  type MoveEvent,
-  type SortableDriver,
-} from '/src/widgets/sortable/driver'
-import {
-  createSortableVisuals,
-  type SortableVisuals,
-} from '/src/widgets/sortable/ui-adapter'
-import { applyFavoritesMove } from '/src/widgets/favorites/service'
-import {
-  rowId,
-  menuRowId,
-  parseRootRowId,
-  type RootRow,
-  type RootRowId,
-  type MenuRow,
-  type OpenMenu,
+    rowId,
+    menuRowId,
+    parseRootRowId,
+    type RootRow,
+    type RootRowId,
+    type MenuRow,
+    type OpenMenu,
 } from './favorites.model'
 
 export type UseFavoritesSortableOptions = {
-  layout: () => 'list' | 'toolbar'
-  listEl: Ref<HTMLElement | null>
-  toolbarEl: Ref<HTMLElement | null>
-  baseRootRows: () => RootRow[]
-  openMenus: Ref<OpenMenu[]>
-  rowEls: Map<RootRowId, HTMLElement>
-  menuContainers: Map<string, HTMLElement>
-  lastDropIntent: Ref<DropIntent | null>
-  refreshFavorites: () => Promise<void>
-  refreshRootFolders: () => Promise<void>
-  broadcastFavoritesChanged: (reason: 'move' | 'other') => void
-  setupGhostForRow: (id: RootRowId, ev: PointerEvent) => void
-  updateGhostPosition: (ev: PointerEvent) => void
-  updateInsertBar: (intent: DropIntent | null, blocked: boolean) => void
-  handleDragHover: (intent: DropIntent | null) => void
-  teardownDragVisuals: () => void
-  clearHoverTimer: () => void
+    layout: () => 'list' | 'toolbar'
+    listEl: Ref<HTMLElement | null>
+    toolbarEl: Ref<HTMLElement | null>
+    rootRows: Ref<RootRow[]>
+    openMenus: Ref<OpenMenu[]>
+    rowEls: Map<RootRowId, HTMLElement>
+    menuContainers: Map<string, HTMLElement>
+    refreshFavorites: () => Promise<void>
+    refreshRootFolders: () => Promise<void>
+    broadcastFavoritesChanged: (reason: 'move' | 'other') => void
+    setupGhostForRow: (id: RootRowId, ev: { clientX: number; clientY: number }) => void
+    updateGhostPosition: (ev: PointerEvent) => void
+    updateInsertBar: (intent: DropIntent | null, blocked: boolean) => void
+    handleDragHover: (intent: DropIntent | null) => void
+    teardownDragVisuals: () => void
+    clearHoverTimer: () => void
 }
 
 export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
-  const {
-    layout,
-    listEl,
-    toolbarEl,
-    baseRootRows,
-    openMenus,
-    rowEls,
-    menuContainers,
-    lastDropIntent,
-    refreshFavorites,
-    refreshRootFolders,
-    broadcastFavoritesChanged,
-    setupGhostForRow,
-    updateGhostPosition,
-    updateInsertBar,
-    handleDragHover,
-    teardownDragVisuals,
-    clearHoverTimer,
-  } = opts
+    const {
+        layout,
+        listEl,
+        toolbarEl,
+        rootRows,
+        rowEls,
+        menuContainers,
+        refreshFavorites,
+        refreshRootFolders,
+        broadcastFavoritesChanged,
+        setupGhostForRow,
+        updateGhostPosition,
+        updateInsertBar,
+        handleDragHover,
+        teardownDragVisuals,
+        clearHoverTimer,
+    } = opts
 
-  // Driver and visuals
-  let driver: SortableDriver | null = null
-  let visuals: SortableVisuals | null = null
-  let activeContainer: HTMLElement | null = null
-  let activeLayout: 'list' | 'toolbar' | null = null
+    // ── Shared drag state ─────────────────────────────────────────────────
 
-  // Click swallow flag (prevents click-through after drag)
-  let dragJustEnded = false
+    let dragJustEnded = false
+    let currentDraggingId: RootRowId | null = null
 
-  // Simple state for template bindings
-  const sortableState = ref<{ isDragging: boolean; draggingId: RootRowId | null }>({
-    isDragging: false,
-    draggingId: null,
-  })
+    const sortableState = ref<{ isDragging: boolean; draggingId: RootRowId | null }>({
+        isDragging: false,
+        draggingId: null,
+    })
 
-  /**
-   * Set a row ref for hit-testing
-   */
-  function setRowRef(row: RootRow, el: HTMLElement | null) {
-    const id = rowId(row)
-    if (el) {
-      rowEls.set(id, el)
-    } else {
-      rowEls.delete(id)
-    }
-  }
+    // ── Shared hit test helpers ───────────────────────────────────────────
 
-  /**
-   * Tear down driver and visuals
-   */
-  function teardownSortable() {
-    driver?.cancel()
-    driver = null
-    visuals?.detach()
-    visuals = null
-    activeContainer = null
-    activeLayout = null
-  }
-
-  /**
-   * Ensure sortable driver is initialized and up-to-date
-   */
-  function ensureSortable() {
-    const containerEl = layout() === 'list' ? listEl.value : toolbarEl.value
-    if (!containerEl) {
-      teardownSortable()
-      return
-    }
-
-    const layoutKey: 'list' | 'toolbar' =
-      layout() === 'list' ? 'list' : 'toolbar'
-
-    // If nothing important changed, keep existing driver
-    if (driver && containerEl === activeContainer && layoutKey === activeLayout) {
-      return
-    }
-
-    teardownSortable()
-
-    activeContainer = containerEl
-    activeLayout = layoutKey
-
-    // --- MODEL ADAPTER ---
-    const model: SortableModelAdapter = {
-      snapshot() {
-        const roots = baseRootRows()
-
-        const rootNodes: SortableNodeRef[] = roots.map(row => ({
-          id: rowId(row),
-          parentId: null,
-          sortMode: 'manual',
-          isContainer: row.kind === 'folder',
-        }))
-
-        // Also include all rows from open menus as children of their folder
-        const menuNodes: SortableNodeRef[] = []
-        for (const menu of openMenus.value) {
-          if (!menu.folderId) continue
-          const parentId: RootRowId = `folder:${menu.folderId}`
-          for (const r of menu.rows) {
-            const id = menuRowId(r)
-            if (!id) continue
-            menuNodes.push({
-              id,
-              parentId,
-              sortMode: 'manual',
-              isContainer: r.type === 'folder',
-            })
-          }
+    function hitTestMenuRow(clientX: number, clientY: number): RootRowId | null {
+        for (const [id, el] of rowEls) {
+            if (!id.startsWith('menu:')) continue
+            const r = el.getBoundingClientRect()
+            if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
+                return id
+            }
         }
+        return null
+    }
 
-        return snapshotFromNodes([...rootNodes, ...menuNodes])
-      },
-
-      applyMove(move) {
-        console.log('[DEBUG] model.applyMove called', {
-          moveId: move.id,
-          dragJustEnded,
-          openMenusCount: openMenus.value.length,
-          timestamp: performance.now()
-        })
-
-        const intent = lastDropIntent.value
-        if (!intent || !intent.targetId) {
-          console.warn('[favorites] applyMove without intent – ignoring')
-          return
+    function hitTestMenuContainer(clientX: number, clientY: number): string | null {
+        for (const [folderId, el] of menuContainers) {
+            const r = el.getBoundingClientRect()
+            if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
+                return folderId
+            }
         }
+        return null
+    }
 
-        const movedRowId = String(move.id) as RootRowId
-        const targetRowId = String(intent.targetId) as RootRowId
-        const placement = (intent.placement as any) ?? 'after'
+    // Hit tests everything — root rows, menu rows, and folder containers.
+    // Used by the menu row raw pointer loop.
+    function resolveIntent(clientX: number, clientY: number): DropIntent | null {
+        // Root rows
+        for (const [id, el] of rowEls) {
+            if (id.startsWith('menu:')) continue
+            const r = el.getBoundingClientRect()
+            if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
+                const rel = (clientY - r.top) / (r.height || 1)
+                if (id.startsWith('folder:')) {
+                    if (rel < 0.3) return { targetId: id, placement: 'before' }
+                    if (rel > 0.7) return { targetId: id, placement: 'after' }
+                    return { targetId: id, placement: 'inside' }
+                }
+                return { targetId: id, placement: rel < 0.5 ? 'before' : 'after' }
+            }
+        }
+        // Menu rows
+        const menuRow = hitTestMenuRow(clientX, clientY)
+        if (menuRow) {
+            const el = rowEls.get(menuRow)!
+            const r = el.getBoundingClientRect()
+            const rel = (clientY - r.top) / (r.height || 1)
+            return { targetId: menuRow, placement: rel < 0.5 ? 'before' : 'after' }
+        }
+        // Empty folder containers
+        const folderId = hitTestMenuContainer(clientX, clientY)
+        if (folderId) return { targetId: `folder:${folderId}` as RootRowId, placement: 'inside' }
 
+        return null
+    }
+
+    // ── Shared apply move ─────────────────────────────────────────────────
+
+    async function applyMove(
+        movedRowId: RootRowId,
+        targetRowId: RootRowId,
+        placement: 'before' | 'after' | 'inside'
+    ) {
         const { kind: movedKind, key: movedKey } = parseRootRowId(movedRowId)
         const { kind: targetKind, key: targetKey } = parseRootRowId(targetRowId)
-
-        // Set dragJustEnded IMMEDIATELY so backdrop clicks are swallowed
         dragJustEnded = true
-        console.log('[DEBUG] Set dragJustEnded = true in applyMove')
-
-        void applyFavoritesMove({
-          movedKind,
-          movedKey,
-          targetKind,
-          targetKey,
-          placement,
-        })
-          .then(async () => {
-            console.log('[DEBUG] applyFavoritesMove completed, calling refreshRootFolders')
+        try {
+            await applyFavoritesMove({ movedKind, movedKey, targetKind, targetKey, placement })
             await refreshRootFolders()
             await refreshFavorites()
             broadcastFavoritesChanged('move')
-            console.log('[DEBUG] Refresh complete, openMenusCount:', openMenus.value.length)
-          })
-          .catch(err => {
+        } catch (err) {
             console.error('[favorites] applyFavoritesMove failed', err)
-          })
-      },
+        }
     }
 
-    // --- GEOMETRY ADAPTER ---
-    const geom: SortableGeometryAdapter = {
-      hitTest(evt: MoveEvent) {
-        const container = activeContainer
-        if (!container) return null
+    // ── Root row sortable (useSortable) ───────────────────────────────────
 
-        const x = (evt as PointerEvent).clientX
-        const y = (evt as PointerEvent).clientY
+    const { displayList: displayRootRows, isDragging, draggingId, startDrag } = useSortable(rootRows, {
+        identity: row => rowId(row),
+        orientation: () => layout() === 'list' ? 'vertical' : 'horizontal',
+        dragThresholdPx: 4,
+        scrollContainer: () => layout() === 'list' ? listEl.value : toolbarEl.value,
+        containerClassOnDrag: 'gex-fav-dragging',
+        rowSelector: '[data-fav-row-id]',
+        rowIdAttr: 'data-fav-row-id',
+        autoScroll: { marginPx: 40, maxSpeedPxPerSec: 600 },
+        isContainer: row => row.kind === 'folder',
 
-        const containerRect = container.getBoundingClientRect()
-
-        // 1) First, try to hit any known row (roots or menu rows)
-        for (const [id, el] of rowEls) {
-          const rect = el.getBoundingClientRect()
-          if (
-            x >= rect.left && x <= rect.right &&
-            y >= rect.top && y <= rect.bottom
-          ) {
-            const rel = layoutKey === 'list'
-              ? (y - rect.top) / (rect.height || 1)
-              : (x - rect.left) / (rect.width || 1)
-
-            const relClamped = Math.min(Math.max(rel, 0), 1)
-            return { id, relY: relClamped }
-          }
-        }
-
-        // 2) If no row was hit, check if we're inside any open folder menu.
-        //    This is how empty folders get an "inside" target.
-        for (const [folderId, el] of menuContainers) {
-          const rect = el.getBoundingClientRect()
-          if (
-            x >= rect.left && x <= rect.right &&
-            y >= rect.top && y <= rect.bottom
-          ) {
-            const id: RootRowId = `folder:${folderId}`
-            // relY doesn't really matter for "inside", middle is fine
-            return { id, relY: 0.5 }
-          }
-        }
-
-        // 3) Fallbacks for "after last root row"
-        const roots = baseRootRows()
-        if (!roots.length) {
-          return null
-        }
-        const last = roots[roots.length - 1]
-        const lastId = rowId(last)
-
-        // 3a) Pointer is inside the toolbar/list container but not on a pill:
-        //     treat this as "after last root item".
-        if (
-          x >= containerRect.left && x <= containerRect.right &&
-          y >= containerRect.top && y <= containerRect.bottom
-        ) {
-          return { id: lastId, relY: 1 }
-        }
-
-        // 3b) Toolbar-only: pointer is in the vertical band of the row but
-        //     *to the right* of the container → still "after last".
-        if (layoutKey === 'toolbar') {
-          const inVerticalBand =
-            y >= containerRect.top && y <= containerRect.bottom
-
-          if (inVerticalBand && x > containerRect.right) {
-            return { id: lastId, relY: 1 }
-          }
-        }
-
-        return null
-      },
-    }
-
-    // --- VISUALS ADAPTER ---
-    visuals = createSortableVisuals({
-      listEl: containerEl,
-      getRowEl: id => rowEls.get(String(id)) ?? null,
-    })
-
-    // --- DRIVER ---
-    driver = createSortableDriver({
-      model,
-      geom,
-      events: {
-        onState(s) {
-          visuals?.onState(s)
-          sortableState.value.isDragging = !!s.draggingId
-          sortableState.value.draggingId = (s.draggingId as RootRowId | null) ?? null
-
-          if (!s.draggingId) {
-            teardownDragVisuals()
-            clearHoverTimer()
-          }
+        onDragStart(row, startX, startY) {
+            const id = rowId(row)
+            currentDraggingId = id
+            sortableState.value.isDragging = true
+            sortableState.value.draggingId = id
+            setupGhostForRow(id, { clientX: startX, clientY: startY })
         },
 
-        onPreview(intent, { blocked }) {
-          visuals?.onPreview(intent, blocked)
-          updateInsertBar(intent, blocked)
-          handleDragHover(intent)
-        },
-
-        async onDrop(move, blocked) {
-          console.log('[DEBUG] onDrop called', {
-            hasMove: !!move,
-            blocked,
-            dragJustEnded,
-            openMenusCount: openMenus.value.length,
-            timestamp: performance.now()
-          })
-
-          // Normal case: driver accepted the move and already called model.applyMove
-          if (!blocked && move) {
-            dragJustEnded = true
-            console.log('[DEBUG] Set dragJustEnded = true in onDrop (normal path)')
-            teardownDragVisuals()
-            clearHoverTimer()
-            return
-          }
-
-          // Fallback: driver blocked the move (likely because targetId isn't in the snapshot),
-          // but we *do* have a meaningful drop intent we can apply at the tree level.
-          const draggingId = sortableState.value.draggingId as RootRowId | null
-          const intent = lastDropIntent.value
-
-          if (
-            blocked &&
-            draggingId &&
-            intent &&
-            intent.targetId
-          ) {
-            const targetRowId = String(intent.targetId) as RootRowId
-
-            // If the target is *also* a root row, let the block stand:
-            // we don't want to double-apply or fight the driver.
-            const isRootTarget = baseRootRows().some(r => rowId(r) === targetRowId)
-            if (!isRootTarget) {
-              // Set dragJustEnded IMMEDIATELY at the start of fallback path
-              // This ensures backdrop clicks are swallowed BEFORE async work completes
-              dragJustEnded = true
-              console.log('[DEBUG] Set dragJustEnded = true in onDrop (fallback - EARLY)')
-
-              console.log('[DEBUG] Entering fallback path in onDrop')
-              const { kind: movedKind, key: movedKey } = parseRootRowId(draggingId)
-              const { kind: targetKind, key: targetKey } = parseRootRowId(targetRowId)
-              const placement = (intent.placement as any) ?? 'after'
-
-              try {
-                await applyFavoritesMove({
-                  movedKind,
-                  movedKey,
-                  targetKind,
-                  targetKey,
-                  placement,
-                })
-
-                await refreshRootFolders()
-                await refreshFavorites()
-                broadcastFavoritesChanged('move')
-              } catch (err) {
-                console.error(
-                  '[favorites] applyFavoritesMove (fallback from onDrop) failed',
-                  err,
-                )
-              }
+        onPreview(intent, blocked, clientX, clientY) {
+            updateGhostPosition({ clientX, clientY } as PointerEvent)
+            let effectiveIntent = intent
+            if (!intent || blocked) {
+                const menuRow = hitTestMenuRow(clientX, clientY)
+                if (menuRow) {
+                    const el = rowEls.get(menuRow)
+                    if (el) {
+                        const r = el.getBoundingClientRect()
+                        const rel = (clientY - r.top) / (r.height || 1)
+                        effectiveIntent = { targetId: menuRow, placement: rel < 0.5 ? 'before' : 'after' }
+                    }
+                } else {
+                    const folderId = hitTestMenuContainer(clientX, clientY)
+                    if (folderId) {
+                        effectiveIntent = { targetId: `folder:${folderId}` as RootRowId, placement: 'inside' }
+                    }
+                }
             }
-          }
-
-          teardownDragVisuals()
-          clearHoverTimer()
+            updateInsertBar(effectiveIntent, blocked)
+            handleDragHover(effectiveIntent)
         },
-      },
+
+        onCommit(ordered, intent) {
+            const dragging = currentDraggingId
+            currentDraggingId = null
+            if (!dragging) return
+            teardownDragVisuals()
+            clearHoverTimer()
+            sortableState.value.isDragging = false
+            sortableState.value.draggingId = null
+            void applyMove(dragging, String(intent.targetId) as RootRowId, intent.placement as any)
+        },
+
+        onBlocked(row, intent, clientX, clientY) {
+            const dragging = currentDraggingId ?? rowId(row)
+            currentDraggingId = null
+            teardownDragVisuals()
+            clearHoverTimer()
+            sortableState.value.isDragging = false
+            sortableState.value.draggingId = null
+
+            if (intent && (intent.placement === 'inside' || intent.placement === 'before' || intent.placement === 'after')) {
+                void applyMove(dragging, String(intent.targetId) as RootRowId, intent.placement)
+                return
+            }
+            const menuRow = hitTestMenuRow(clientX, clientY)
+            if (menuRow) {
+                const el = rowEls.get(menuRow)
+                const r = el?.getBoundingClientRect()
+                const placement = r ? ((clientY - r.top) / (r.height || 1) < 0.5 ? 'before' : 'after') : 'after'
+                void applyMove(dragging, menuRow, placement)
+                return
+            }
+            const folderId = hitTestMenuContainer(clientX, clientY)
+            if (folderId) {
+                void applyMove(dragging, `folder:${folderId}` as RootRowId, 'inside')
+                return
+            }
+            dragJustEnded = true
+        },
     })
 
-    visuals.attach()
-  }
+    // ── Menu row raw pointer loop ─────────────────────────────────────────
+    // Menu rows are transient (open/close with folders) so they can't be
+    // managed by a sortable instance. A raw pointer loop hit-tests everything
+    // — root rows, sibling menu rows, folder containers — giving full freedom
+    // to reorder within a submenu, move items between submenus, or drag back
+    // to root level.
 
-  /**
-   * Start drag for a root row
-   */
-  function startRowDrag(row: RootRow, event: PointerEvent) {
-    ensureSortable()
-    if (!driver) return
+    const MENU_DRAG_THRESHOLD = 4
 
-    const id = rowId(row)
+    let menuDragId: RootRowId | null = null
+    let menuDragStartX = 0
+    let menuDragStartY = 0
+    let menuDragActive = false
 
-    // Create the ghost at the row's initial position
-    setupGhostForRow(id, event)
+    function startMenuRowDrag(row: MenuRow, folderId: string, event: PointerEvent) {
+        const id = menuRowId(row) as RootRowId | null
+        if (!id) return
 
-    driver.startDrag(id, event)
-    event.preventDefault()
-  }
+        menuDragId = id
+        menuDragStartX = event.clientX
+        menuDragStartY = event.clientY
+        menuDragActive = false
 
-  /**
-   * Start drag for a menu row
-   */
-  function startMenuRowDrag(row: MenuRow, event: PointerEvent) {
-    ensureSortable()
-    if (!driver) return
+        event.preventDefault()
+        document.addEventListener('pointermove', onMenuDragMove, true)
+        document.addEventListener('pointerup', onMenuDragUp, true)
+        document.addEventListener('pointercancel', onMenuDragCancel, true)
+    }
 
-    const id = menuRowId(row)
-    if (!id) return
+    function onMenuDragMove(ev: PointerEvent) {
+        if (!menuDragId) return
 
-    setupGhostForRow(id as RootRowId, event)
-    driver.startDrag(id as RootRowId, event)
-    event.preventDefault()
-  }
+        if (!menuDragActive) {
+            const dx = ev.clientX - menuDragStartX
+            const dy = ev.clientY - menuDragStartY
+            if (dx * dx + dy * dy < MENU_DRAG_THRESHOLD * MENU_DRAG_THRESHOLD) return
+            // Threshold crossed — start visual drag
+            menuDragActive = true
+            currentDraggingId = menuDragId
+            sortableState.value.isDragging = true
+            sortableState.value.draggingId = menuDragId
+            setupGhostForRow(menuDragId, { clientX: menuDragStartX, clientY: menuDragStartY })
+        }
 
-  /**
-   * Global pointer move handler
-   */
-  function handleGlobalPointerMove(ev: PointerEvent) {
-    updateGhostPosition(ev)
-    driver?.pointerMove(ev)
-  }
+        updateGhostPosition(ev)
+        const intent = resolveIntent(ev.clientX, ev.clientY)
+        updateInsertBar(intent, false)
+        handleDragHover(intent)
+    }
 
-  /**
-   * Global pointer up handler
-   */
-  function handleGlobalPointerUp(ev: PointerEvent) {
-    driver?.pointerUp(ev)
-  }
+    function onMenuDragUp(ev: PointerEvent) {
+        cleanupMenuDragListeners()
 
-  /**
-   * Check if drag just ended (for click swallowing)
-   */
-  function isDragJustEnded(): boolean {
-    return dragJustEnded
-  }
+        const dragging = menuDragId
+        const wasActive = menuDragActive
+        menuDragId = null
+        menuDragActive = false
+        currentDraggingId = null
+        sortableState.value.isDragging = false
+        sortableState.value.draggingId = null
+        teardownDragVisuals()
+        clearHoverTimer()
 
-  /**
-   * Reset drag just ended flag
-   */
-  function resetDragJustEnded() {
-    dragJustEnded = false
-  }
+        if (!dragging || !wasActive) { dragJustEnded = wasActive; return }
 
-  // Watch rootRows and re-initialize sortable when they change
-  watch(
-    () =>
-      baseRootRows()
-        .map(r =>
-          r.kind === 'folder'
-            ? `folder:${r.node.id}`
-            : `item:${r.entry.path}`
-        )
-        .join('|'),
-    () => ensureSortable()
-  )
+        const intent = resolveIntent(ev.clientX, ev.clientY)
+        if (!intent) { dragJustEnded = true; return }
 
-  // Lifecycle
-  onMounted(async () => {
-    // Ensure DOM refs exist before wiring sortable geometry/visuals
-    await nextTick()
-    ensureSortable()
+        void applyMove(dragging, String(intent.targetId) as RootRowId, intent.placement as any)
+    }
 
-    // Global pointer handlers (needed if driver relies on window-level move/up)
-    window.addEventListener('pointermove', handleGlobalPointerMove as any, { passive: true })
-    window.addEventListener('pointerup', handleGlobalPointerUp as any, { passive: true })
-  })
+    function onMenuDragCancel() {
+        cleanupMenuDragListeners()
+        menuDragId = null
+        menuDragActive = false
+        currentDraggingId = null
+        sortableState.value.isDragging = false
+        sortableState.value.draggingId = null
+        teardownDragVisuals()
+        clearHoverTimer()
+    }
 
-  onBeforeUnmount(() => {
-    window.removeEventListener('pointermove', handleGlobalPointerMove as any)
-    window.removeEventListener('pointerup', handleGlobalPointerUp as any)
+    function cleanupMenuDragListeners() {
+        document.removeEventListener('pointermove', onMenuDragMove, true)
+        document.removeEventListener('pointerup', onMenuDragUp, true)
+        document.removeEventListener('pointercancel', onMenuDragCancel, true)
+    }
 
-    teardownSortable()
-  })
+    // ── Row ref management ────────────────────────────────────────────────
 
-  return {
-    // State
-    sortableState,
+    function setRowRef(row: RootRow, el: HTMLElement | null) {
+        const id = rowId(row)
+        if (el) rowEls.set(id, el)
+        else rowEls.delete(id)
+    }
 
-    // Methods
-    setRowRef,
-    startRowDrag,
-    startMenuRowDrag,
-    ensureSortable,
-    isDragJustEnded,
-    resetDragJustEnded,
-  }
+    function setMenuRowRef(row: MenuRow, el: HTMLElement | null) {
+        const id = menuRowId(row)
+        if (!id) return
+        if (el) rowEls.set(id as RootRowId, el)
+        else rowEls.delete(id as RootRowId)
+    }
+
+    // ── Root row drag initiation ──────────────────────────────────────────
+
+    function startRowDrag(row: RootRow, event: PointerEvent) {
+        const idx = rootRows.value.indexOf(row)
+        if (idx < 0) return
+        event.preventDefault()
+        startDrag(idx, event)
+    }
+
+    // ── Click swallow ─────────────────────────────────────────────────────
+
+    function isDragJustEnded(): boolean { return dragJustEnded }
+    function resetDragJustEnded() { dragJustEnded = false }
+
+    return {
+        displayRootRows,
+        isDragging,
+        draggingId,
+        sortableState,
+        setRowRef,
+        setMenuRowRef,
+        startRowDrag,
+        startMenuRowDrag,
+        isDragJustEnded,
+        resetDragJustEnded,
+    }
 }

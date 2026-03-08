@@ -1,14 +1,14 @@
 // /src/widgets/favorites/useFavoritesDialog.ts
 import { ref, computed } from '/runtime/vue.js'
-import type { FavoriteTreeNode } from '/src/widgets/contracts/favorites'
 import {
   getGlobalFavorites,
   addFavorite,
   addFolder,
   removeFavorite,
   removeFolder,
-} from '/src/widgets/favorites/service'
-import { getCurrentPath } from '/src/widgets/nav/index'
+  getCurrentPath,
+  FavoriteTreeNode
+} from 'gexplorer/widgets'
 import { guessLabelFromPath } from './favorites.model'
 
 export type UseFavoritesDialogOptions = {

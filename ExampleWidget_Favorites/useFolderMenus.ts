@@ -1,6 +1,9 @@
 // /src/widgets/favorites/useFolderMenus.ts
 import { ref, computed } from '/runtime/vue.js'
-import type { FavoriteTreeNode, FavoriteEntry } from '/src/widgets/contracts/favorites'
+import type { 
+  FavoriteTreeNode, 
+  FavoriteEntry 
+} from 'gexplorer/widgets'
 import type { OpenMenu, MenuRow } from './favorites.model'
 import { buildMenuRows, menuRowId } from './favorites.model'
 

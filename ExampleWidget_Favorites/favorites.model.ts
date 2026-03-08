@@ -1,7 +1,7 @@
 import type {
   FavoriteEntry,
   FavoriteTreeNode,
-} from '/src/widgets/contracts/favorites'
+} from 'gexplorer/widgets'
 
 export type HostAction =
   | { type: 'nav'; to: string; replace?: boolean; sourceId?: string }

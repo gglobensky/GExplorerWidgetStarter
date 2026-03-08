@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, nextTick } from '/runtime/vue.js'
-import { useScrollHints, useSnapResize } from '/src/widgets/list-kit'
-import { createDragTrigger } from '/src/widgets/utils/click-drag.ts'
-
-import type {
+import { 
+  useScrollHints, 
+  useSnapResize,
   FavoritesConfig,
-} from '/src/widgets/contracts/favorites'
+  createDragTrigger 
+} from 'gexplorer/widgets'
 
 import { useFavoritesData } from './useFavoritesData'
 import { useDragVisuals } from './useDragVisuals'
@@ -51,10 +51,10 @@ const cfg = computed(() => {
 const editMode = computed(() => !!props.editMode)
 const group = computed(() => String((cfg.value.view as any)?.group ?? (cfg.value.data as any)?.group ?? 'main'))
 const isSidebar = computed(() => props.placement?.context === 'sidebar')
-const layout = computed(() =>
-  (cfg.value.view?.layout as 'list' | 'toolbar' | undefined) ??
-  (isSidebar.value ? 'list' : 'toolbar')
-)
+const layout = computed(() => {
+  if (isSidebar.value) return 'list'
+  return (cfg.value.view?.layout as 'list' | 'toolbar' | undefined) ?? 'toolbar'
+})
 const dense = computed(() => !!cfg.value.view?.dense)
 const showIcons = computed(() => cfg.value.view?.showIcons !== false)
 const showLabels = computed(() => cfg.value.data?.showLabels !== false)
@@ -206,7 +206,7 @@ const sortable = useFavoritesSortable({
   layout: () => layout.value,
   listEl,
   toolbarEl,
-  baseRootRows,
+  rootRows,
   openMenus,
   rowEls,
   menuContainers,
@@ -345,7 +345,7 @@ function onSidebarHandleClick() {
               v-for="row in displayRootRows"
               :key="row.kind === 'folder' ? row.node.id : row.entry.path"
               class="fav-row"
-              :class="{ 'folder-row': row.kind === 'folder' }"
+              :data-fav-row-id="rowId(row)"
               :ref="el => sortable.setRowRef(row, el as HTMLElement | null)"
             >
               <!-- Folder row -->
@@ -456,6 +456,7 @@ function onSidebarHandleClick() {
                 v-if="row.kind === 'folder'"
                 class="toolbar-folder-wrapper toolbar-sortable-item"
                 :ref="el => sortable.setRowRef(row, el as HTMLElement | null)"
+                :data-fav-row-id="rowId(row)"
                 @pointerdown.stop="sortable.startRowDrag(row, $event)"
               >
                 <button
@@ -487,6 +488,7 @@ function onSidebarHandleClick() {
                 v-else
                 class="toolbar-item-wrapper toolbar-sortable-item"
                 :ref="el => sortable.setRowRef(row, el as HTMLElement | null)"
+                :data-fav-row-id="rowId(row)"
                 @pointerdown.stop="sortable.startRowDrag(row, $event)"
               >
                 <button
@@ -673,7 +675,7 @@ function onSidebarHandleClick() {
           <button
             type="button"
             class="fav-menu-btn"
-            @pointerdown.stop="sortable.startMenuRowDrag(row, $event as PointerEvent)"
+            @pointerdown.stop="sortable.startMenuRowDrag(row, menu.folderId ?? '', $event as PointerEvent)"
             @click="handleFolderMenuClick(row, $event, level)"
           >
             <span class="fav-menu-label">
