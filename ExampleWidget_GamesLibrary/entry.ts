@@ -1,6 +1,6 @@
 // widgets/game-library/entry.ts
 import Widget from './Widget.vue'
-import { registerWidgetMenus } from '/src/contextmenu'
+import { registerWidgetMenus } from 'gexplorer/widgets'
 
 const menuConfig = {
   contributions: [

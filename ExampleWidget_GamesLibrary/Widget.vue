@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from '/runtime/vue.js'
-import { onWidgetMessage } from '/src/widgets/instances'
-import { buildVfsInfo } from '/src/contextmenu/context'
+import { onWidgetMessage } from 'gexplorer/widgets'
 
 // --- props/emits (copying your Items contract) ---
 type HostAction =
@@ -107,9 +106,6 @@ const contextMenuOptions = computed(() => {
     widgetId: props.sourceId,
     location: { area: (props.placement?.context ?? 'grid') as 'grid'|'sidebar' },
     target: hasSelection ? ('selection' as const) : ('background' as const),
-
-    // vfs not super relevant here, but your builder expects something; keep it harmless:
-    vfs: buildVfsInfo('home:'),
 
     selection: hasSelection ? [selected.value!.key] : [],
     widgetConfig: props.config
