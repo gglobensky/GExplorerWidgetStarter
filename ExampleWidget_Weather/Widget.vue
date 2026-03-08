@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from '/runtime/vue.js'
-import { networkFetch } from '/src/widgets/net'
+import { networkFetch } from 'gexplorer/widgets'
 
 const props = defineProps<{
   sourceId: string
