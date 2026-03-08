@@ -1,5 +1,5 @@
 // useMarquee.ts - Marquee scroll logic for current track title
-import { ref, watch, computed, onMounted, onBeforeUnmount, nextTick, type Ref } from 'vue'
+import { ref, watch, computed, onMounted, onBeforeUnmount, nextTick, type Ref } from '/runtime/vue.js '
 
 export function useMarquee(
   currentTitle: Ref<string>,

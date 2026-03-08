@@ -1,19 +1,16 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from '/runtime/vue.js '
 import { usePlayerState } from './usePlayerState'
 import { usePlaylist, INPUT_ACCEPT } from './usePlaylist'
 import { useMarquee } from './useMarquee'
 import { useDnD } from './useDnD'
-import { fileRefsToPlaylistItems } from '/src/widgets/dnd/utils'
 import { useKeyboardNav } from './useKeyboardNav'
 import CompactLayout from './CompactLayout.vue'
 import ExpandedLayout from './ExpandedLayout.vue'
-import { onWidgetMessage } from '/src/widgets/instances'
-import { GexDnDPayload } from '/src/widgets/dnd/types'
 
 import {
-  extractGexPayload,
-  hasGexPayload,
+  fileRefsToPlaylistItems,
+  createWidgetMessaging,
   authorizeFileRefs,
   FileRefData
 } from 'gexplorer/widgets'
@@ -60,6 +57,8 @@ type Track = {
 }
 
 const expandedLayoutRef = ref<InstanceType<typeof ExpandedLayout> | null>(null)
+
+const { send, on, cleanup } = createWidgetMessaging(props.sourceId)
 
 // ===== PLAYER STATE =====
 const state = usePlayerState(props.sourceId)
@@ -414,7 +413,6 @@ function prevent(e: Event) { e.preventDefault(); e.stopPropagation() }
 function onDragEnter(e: DragEvent) { prevent(e); draggingOver.value = true }
 function onDragOver(e: DragEvent) { prevent(e) }
 function onDragLeave(e: DragEvent) { prevent(e); draggingOver.value = false }
-// Replace the existing onDrop and add onWidgetMessage wiring
 
 async function handleFileRefs(payload: any) {
     const auth = await authorizeFileRefs(
@@ -514,16 +512,12 @@ onMounted(async () => {
 
   applyPlaybackRate()
 
-  onWidgetMessage(props.sourceId, async (msg: any) => {
-      if (msg.topic === 'dnd:drop') {
-          const payload = msg.payload?.data
-          if (payload?.type === 'gex/file-refs') {
-              await handleFileRefs(payload)
-          }
-      }
-      if (msg.topic === 'widget:action') {
-          await onWidgetAction(msg)
-      }
+  on('dnd:drop', async (msg: any) => {
+      const payload = msg.payload?.data
+      if (payload?.type === 'gex/file-refs') await handleFileRefs(payload)
+  })
+  on('widget:action', async (msg: any) => {
+      await onWidgetAction(msg)
   })
 })
 
@@ -585,7 +579,7 @@ onBeforeUnmount(() => {
   state.music.removeEventListener('rack:playlistindex', onRackIndex as EventListener)
 
   state.playlists.unbind(state.sel)
-  offWidgetMsg.value?.()
+  cleanup() 
 })
   defineExpose({ onWidgetAction })
 </script>

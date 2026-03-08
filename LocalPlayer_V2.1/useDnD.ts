@@ -1,6 +1,6 @@
 // useDnD.ts - Drag & drop for queue reordering
-import { computed, type Ref } from 'vue'
-import { useSortable } from '/src/widgets/sortable/useSortable'
+import { computed, type Ref } from '/runtime/vue.js'
+import { useSortable } from 'gexplorer/widgets'
 import type { Track } from './usePlayerState'
 
 export function useDnD(

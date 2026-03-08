@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
-import { useScrollHints, useSnapResize } from '/src/widgets/list-kit'
-import type { TooltipOptions } from '@/widgets/tooltip'
-import { createDragTrigger } from '/src/widgets/utils/click-drag.ts'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from '/runtime/vue.js'
+import { createDragTrigger, useScrollHints, useSnapResize } from 'gexplorer/widgets'
+import type { TooltipOptions } from 'gexplorer/widgets'
 import type { Track } from './usePlayerState'
 
 const props = defineProps<{

@@ -1,29 +1,37 @@
 // usePlaylist.ts - Queue operations (add, remove, save, load via host dialog)
-import { type Ref } from 'vue'
+import { type Ref } from '/runtime/vue.js '
 import type { Track } from './usePlayerState'
 
 // SDK bits for dialog + auth (static import ok)
-import { authorizeFileRefs, type FileRefData } from 'gexplorer/widgets'
+import { 
+  // fsReadText, 
+  fsWriteText,
+  authorizeFileRefs, 
+  fileRefsToPlaylistItems,
+  type FileRefData 
+} from 'gexplorer/widgets'
 import { useDialog } from '/src/dialog/useDialog'
-
 // Reuse converter (refs → gex:// items → tracks)
-import { fileRefsToPlaylistItems } from '/src/widgets/dnd/utils'
 
 // ---------- Lazy SDK import for FS wrappers (no Vue hooks here) ----------
-let _sdkP: Promise<any> | null = null
-function getSdk() {
-  return (_sdkP ??= import('gexplorer/widgets').catch(() => ({} as any)))
-}
-
+/*
 async function tryReadText(path: string): Promise<string | null> {
-  const sdk = await getSdk()
-  return sdk.fsReadText ? sdk.fsReadText(path) : null
+    try {
+        const results = await fsReadText([path])
+        return results[0]?.text ?? null
+    } catch {
+        return null
+    }
 }
-async function tryWriteText(path: string, text: string, mime?: string): Promise<boolean> {
-  const sdk = await getSdk()
-  if (!sdk.fsWriteText) return false
-  await sdk.fsWriteText(path, text, mime)
-  return true
+*/
+
+async function tryWriteText(path: string, text: string): Promise<boolean> {
+    try {
+        await fsWriteText(path, text)
+        return true
+    } catch {
+        return false
+    }
 }
 // ------------------------------------------------------------------------
 
@@ -69,8 +77,6 @@ export function usePlaylist(
   receiverWidgetId: string
 ) {
   ensureUnloadHook()
-  // optional: warm the SDK to reduce first-use latency (no await)
-  void getSdk()
 
   // ---- internal helpers (dialog-based) ----
   function toHostFilters(defs: Array<{ name: string; extensions: string[] }>) {

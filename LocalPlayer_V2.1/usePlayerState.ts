@@ -1,7 +1,10 @@
 // usePlayerState.ts - Core player state and audio rack integration
-import { ref, computed, onMounted } from 'vue'
-import { useAudio, createLifecycle } from 'gexplorer/widgets'
-import { mintStreamHttp } from '/src/widgets/fs'
+import { ref, computed, onMounted } from '/runtime/vue.js '
+import { 
+    mintStreamHttp,
+    useAudio, 
+    createLifecycle 
+} from 'gexplorer/widgets'
 export type Track = {
     id: string
     name: string
