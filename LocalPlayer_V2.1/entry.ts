@@ -72,5 +72,9 @@ export default {
         },
     },
 
-    capabilities: [],
+    capabilities: [
+        { cap: 'Read',  reason: 'Reads audio files and playlists chosen by the user' },
+        { cap: 'Write', reason: 'Saves playlists to disk' },
+        { cap: 'Media', reason: 'Streams audio files via HTTP for playback' },
+    ]
 }

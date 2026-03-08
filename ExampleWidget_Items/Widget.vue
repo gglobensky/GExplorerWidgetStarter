@@ -2,43 +2,54 @@
 /* -----------------------------------------------
    Imports
 ------------------------------------------------ */
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineExpose, onUnmounted } from '/runtime/vue.js'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineExpose, onUnmounted, inject } from '/runtime/vue.js'
 import {
-  fsListDirSmart,
   fsValidate,
-  shortcutsProbe,
-  fsRename,
-  onFsQueueUpdate,
-  fsCopy, 
-  fsMove,
   loadIconPack, 
   iconFor, 
   ensureIconsFor,
   createSelectionEngine, 
   type ItemsAdapter, 
-  type Mods,
   createMarqueeDriver, 
   type GeometryAdapter, 
   type ScrollerAdapter, 
   type Rect,
-  PickerMode, 
-  FileFilter, 
-  PickerSurfaceAdapter,
-  clipboardCopyFiles, 
-  clipboardCutFiles, 
-  clipboardGetFiles,
   startRename,
   createWidgetMessaging,
-  type ScopedMessaging,
+  type WidgetSdk,     
 } from 'gexplorer/widgets'
-import { sendWidgetMessage, onWidgetMessage } from '/src/widgets/instances'
 
-import { buildVfsInfo } from '/src/contextmenu/context'
 import ItemsListLayout from './ItemsListLayout.vue'
 import ItemsGridLayout from './ItemsGridLayout.vue'
 import ItemsDetailsLayout from './ItemsDetailsLayout.vue'
-import { useItemsSort, type SortKey, type SortDir } from './useItemsSort'
+import { type SortKey, type SortDir } from './useItemsSort'
 import { useItemsDragDrop } from './useItemsDragDrop'
+
+const sdk = inject<WidgetSdk>('widgetSdk')
+const {
+  fsListDirSmart,
+  shortcutsProbe,
+  fsRename,
+  fsCopy,
+  fsMove,
+  loadIconPack,
+  clipboardCopyFiles,
+  clipboardCutFiles,
+  clipboardGetFiles,
+} = sdk ?? {}
+
+const props = defineProps<{
+  sourceId: string
+  instanceId: string
+  config?: { data?: any; view?: any }
+  theme?: Record<string, string>
+  runAction?: (a: HostAction) => void
+  placement?: {
+    context: 'grid' | 'sidebar' | 'embedded'
+    size: { cols?: number; rows?: number; width?: number; height?: number }
+  }
+  editMode?: boolean
+}>()
 
 /* -----------------------------------------------
    Smart Directory Reload with Debouncing
@@ -174,18 +185,6 @@ type HostAction =
   
 type ResCol = keyof DetailWeights
 
-const props = defineProps<{
-  sourceId: string
-  instanceId: string
-  config?: { data?: any; view?: any }
-  theme?: Record<string, string>
-  runAction?: (a: HostAction) => void
-  placement?: {
-    context: 'grid' | 'sidebar' | 'embedded'
-    size: { cols?: number; rows?: number; width?: number; height?: number }
-  }
-  editMode?: boolean,
-}>()
 
 const emit = defineEmits<{ 
   (e: 'updateConfig', config: any): void 
@@ -470,24 +469,6 @@ function pointerInsideViewportFromClient(cx: number, cy: number) {
   const cr = geo.contentRect();
   const p  = geo.pointFromClient(cx, cy);
   return p.x >= cr.x && p.x <= cr.x + cr.w && p.y >= cr.y && p.y <= cr.y + cr.h;
-}
-
-function createItemsAdapter(vm): PickerSurfaceAdapter {
-  return {
-    getCwd: () => vm.cwd,
-    getSelection: () => [...vm.selectionAbs],
-    setSelection: paths => vm.setSelectionByPaths(paths),
-
-    navigateTo: path => vm.navigateTo(path),
-
-    onCwdChange: cb => vm.on('cwd-changed', cb),
-    onSelectionChange: cb => vm.on('selection-changed', cb),
-    onItemActivate: cb => vm.on('item-activate', cb),
-
-    setPickerMode: mode => vm.setPickerMode(mode),
-    setFilters: (filters, idx) => vm.setFilters(filters, idx),
-    setSuggestedName: name => vm.setSuggestedName(name),
-  };
 }
 
 const driver = createMarqueeDriver(
@@ -975,7 +956,7 @@ function onSurfaceClick(ev: MouseEvent) {
 /* -----------------------------------------------
    Data / sorting / UI (unchanged)
 ------------------------------------------------ */
-void loadIconPack()
+void loadIconPack?.()
 
 function iconText(e: any) {
   return iconFor({ kind: e?.Kind, ext: e?.Ext, iconKey: e?.IconKey }, 32)
@@ -1042,7 +1023,7 @@ async function loadDir(path?: string) {
     })
 
     // Call with backend sorting + filtering
-    const res = await fsListDirSmart('items', props.sourceId, p, {
+    const res = await fsListDirSmart(p, {
       sortBy: sortKey.value,     // Backend sorts for us
       sortDir: sortDir.value,
       filterExts,                 // Backend filters too
@@ -1320,15 +1301,15 @@ const {
   onItemPointerDown,
   dispose
 } = useItemsDragDrop({
-  sourceId: props.sourceId,
-  messaging,
-  entries,
-  selected,
-  cwd,
-  merged,
-  marqueeActive,
-  rootEl,
-  loadDir
+    sourceId: props.sourceId,
+    messaging,
+    entries,
+    selected,
+    cwd,
+    merged,
+    marqueeActive,
+    loadDir,
+    emit
 })
 /* -----------------------------------------------
    Drag & drop (unchanged; suppress when marqueeing)

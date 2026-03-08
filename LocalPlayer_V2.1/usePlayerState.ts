@@ -1,9 +1,9 @@
 // usePlayerState.ts - Core player state and audio rack integration
-import { ref, computed, onMounted } from '/runtime/vue.js '
+import { ref, computed, onMounted, inject } from '/runtime/vue.js '
 import { 
-    mintStreamHttp,
-    useAudio, 
-    createLifecycle 
+    createLifecycle,
+    useAudio,
+    WidgetSdk
 } from 'gexplorer/widgets'
 export type Track = {
     id: string
@@ -18,6 +18,9 @@ export type Track = {
     srcHint?: string
     _ownedBlob?: boolean
 }
+
+const { mintStreamHttp } = inject<WidgetSdk>('widgetSdk') ?? {}
+
 export function usePlayerState(sourceId: string) {
     const life = createLifecycle(sourceId)
     const { prime, acquireElement, playlists } = useAudio()

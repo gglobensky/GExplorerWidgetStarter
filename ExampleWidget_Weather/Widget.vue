@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { ref, computed } from '/runtime/vue.js'
-import { networkFetch } from 'gexplorer/widgets'
+import { ref, computed, inject } from '/runtime/vue.js'
+import { WidgetSdk  } from 'gexplorer/widgets'
+
+const { networkFetch } = inject<WidgetSdk>('widgetSdk') ?? {}
 
 const props = defineProps<{
   sourceId: string
@@ -33,7 +35,7 @@ async function fetchWeather() {
   try {
     const location = props.config?.data?.location || 'TOP/31,80'
     const url = `https://api.weather.gov/gridpoints/${location}/forecast`
-    const response = await networkFetch('weather', props.sourceId, url) // widgetType, widgetId
+    const response = await networkFetch(url)
     
     const data = await response.json()
     

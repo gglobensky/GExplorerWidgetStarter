@@ -28,5 +28,7 @@ export default {
     }
   },
   
-  capabilities: []
+  capabilities: [
+		{ cap: 'Metadata', reason: 'Reads drive capacity and filesystem info' },
+	]
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from '/runtime/vue.js '
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch, inject } from '/runtime/vue.js '
 import { usePlayerState } from './usePlayerState'
 import { usePlaylist, INPUT_ACCEPT } from './usePlaylist'
 import { useMarquee } from './useMarquee'
@@ -205,10 +205,9 @@ const playlist = usePlaylist(
   state.playlists,
   state.sel,
   state.toPlaylistItems,
-  'local-player',                  // <- receiverWidgetType
-  props.sourceId                   // <- receiverWidgetId
+  'local-player',
+  props.sourceId
 )
-
 
 // ===== KEYBOARD NAV =====
 const keyboard = useKeyboardNav(
@@ -416,7 +415,7 @@ function onDragLeave(e: DragEvent) { prevent(e); draggingOver.value = false }
 
 async function handleFileRefs(payload: any) {
     const auth = await authorizeFileRefs(
-        'local-player', props.sourceId, payload, { requiredCaps: ['Read'] }
+        'local-player', props.sourceId, payload, ['Read']
     )
     if (!auth.ok) return
     const tracks = await refsToTracks(payload.data as FileRefData[], 'local-player', props.sourceId)
@@ -543,7 +542,7 @@ async function onWidgetAction(msg: any) {
         'local-player',
         props.sourceId,
         { type: 'gex/file-refs', data: [syntheticRef] },
-        { requiredCaps: ['Read'] }
+        ['Read']
     )
     console.log('[local-player] authorized:', authorized)
     if (!authorized.ok) return

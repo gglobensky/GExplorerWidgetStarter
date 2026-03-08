@@ -135,5 +135,10 @@ export default {
         },
     },
 
-    capabilities: [],
+    capabilities: [
+		{ cap: 'Read',      reason: 'Lists directory contents and validates paths' },
+		{ cap: 'Write',     reason: 'Moves, copies, renames, and deletes files' },
+		{ cap: 'Metadata',  reason: 'Resolves file icons and shortcut targets' },
+		{ cap: 'Clipboard', reason: 'Copies and cuts files to the clipboard' },
+	]
 }

@@ -53,6 +53,8 @@ export default {
     },
   },
 
-  // Capability tag so other code can discover "favorites providers" later
-  capabilities: ['favorites:provider'],
+  capabilities: [
+		{ cap: 'Read',  reason: 'Reads favorite paths to display them' },
+		{ cap: 'Write', reason: 'Adds and removes favorites' },
+	]
 }

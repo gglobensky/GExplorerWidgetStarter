@@ -8,14 +8,14 @@
 //              No longer owns its own onPush listener.
 // ------------------------------------------------------------------
 
-import { ref, onUnmounted, type Ref, type ComputedRef } from 'vue'
+import { ref, onUnmounted, type Ref, type ComputedRef, inject } from '/runtime/vue.js'
 import {
     authorizeFileRefs,
     createGexPayload,
     setActiveDragPayload,
     clearActiveDragPayload,
     startNativeDrag,
-    fsMove,
+    WidgetSdk
 } from 'gexplorer/widgets'
 import type { GexDnDPayload, ScopedMessaging } from 'gexplorer/widgets'
 
@@ -77,7 +77,8 @@ function findFolderTarget(startEl: Element | null, entries: any[]): string | nul
 // ── Composable ─────────────────────────────────────────────────────────────────
 
 export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDragDropReturn {
-    const { sourceId, messaging, entries, selected, cwd, merged, marqueeActive, loadDir } = options
+    const { sourceId, messaging, entries, selected, cwd, merged, marqueeActive, loadDir  } = options
+    const { fsMove } = inject<WidgetSdk>('widgetSdk') ?? {}
     const { send, on } = messaging
 
     const isDragging       = ref(false)
@@ -140,7 +141,7 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
 
             if (!sources.length) return
 
-            await fsMove(sources.map(from => ({ from, to: target })), 'items', sourceId)
+            await fsMove?.(sources.map(from => ({ from, to: target })))
             await loadDir(cwd.value || merged.value?.rpath || '')
 
             // Notify source widget to refresh if cross-widget move
