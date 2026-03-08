@@ -71,7 +71,6 @@ export function usePlaylist(
   playlists: any,
   sel: any,
   toPlaylistItems: () => any[],
-  ensureDnD: () => void,
   // who we are (needed for file-ref authorization)
   receiverWidgetType: string,
   receiverWidgetId: string
@@ -107,7 +106,6 @@ export function usePlaylist(
     if (!tracks.length) return
     const startEmpty = queue.value.length === 0
     queue.value = queue.value.concat(tracks)
-    ensureDnD()
     playlists.setItems(sel, toPlaylistItems(), { keepCurrent: true })
     if (startEmpty) {
       const idx = await playlists.playIndex(sel, 0, music)
@@ -288,11 +286,11 @@ export function usePlaylist(
       'local-player',
       receiverWidgetId,
       { type: 'gex/file-refs', data: refs },
-      { requiredCaps: ['Read'] }
+      ['Read']
     )
     if (!auth.ok) return true
 
-    const tracks = await refsToTracks(refs, 'local-player', receiverWidgetId)
+    const tracks = await refsToTracks(refs)
     await appendTracks(tracks)
     if (queue.value.length === tracks.length && tracks.length) {
       const idx = await playlists.playIndex(sel, 0, music)
@@ -300,6 +298,7 @@ export function usePlaylist(
     }
     return true
   } catch (e) {
+      console.error('[open] openViaHostDialog threw:', e) 
       return false
     }
   }

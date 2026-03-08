@@ -127,25 +127,25 @@ onBeforeUnmount(() => {
     <div v-else class="toolbar-pills">
       <div
         v-for="drive in drives"
-        :key="drive.Root || drive.root"
+        :key="drive.root"
         class="drive-pill"
-        :title="`${drive.Name || drive.Root || drive.root}\n${
-          stats.get(drive.Root || drive.root) 
-            ? fmtBytes(stats.get(drive.Root || drive.root).free) + ' free of ' + fmtBytes(stats.get(drive.Root || drive.root).total)
+        :title="`${drive.root}\n${
+          stats.get(drive.root) 
+            ? fmtBytes(stats.get(drive.root).free) + ' free of ' + fmtBytes(stats.get(drive.root).total)
             : 'Loading...'
         }`"
         :style="{
           '--usage-color': getUsageColor(
-            stats.get(drive.Root || drive.root) 
-              ? fmtPct(stats.get(drive.Root || drive.root).used, stats.get(drive.Root || drive.root).total)
+            stats.get(drive.root) 
+              ? fmtPct(stats.get(drive.root).used, stats.get(drive.root).total)
               : null
           )
         }"
-        @click="navTo(drive.Root || drive.root)"
+        @click="navTo(drive.root)"
       >
-        <span class="pill-label">{{ drive.Name || drive.Root || drive.root }}</span>
-        <span v-if="stats.get(drive.Root || drive.root)" class="pill-pct">
-          {{ fmtPct(stats.get(drive.Root || drive.root).used, stats.get(drive.Root || drive.root).total) }}%
+        <span class="pill-label">{{  drive.root }}</span>
+        <span v-if="stats.get(drive.root)" class="pill-pct">
+          {{ fmtPct(stats.get(drive.root).used, stats.get(drive.root).total) }}%
         </span>
       </div>
     </div>
@@ -166,12 +166,12 @@ onBeforeUnmount(() => {
     >
       <div
         v-for="drive in drives"
-        :key="drive.Root || drive.root"
+        :key="drive.root"
         class="drive-card"
-        @click="navTo(drive.Root || drive.root)"
+        @click="navTo(drive.root)"
       >
         <div class="drive-header">
-          <div class="drive-name">{{ drive.Name || drive.name || drive.Root || drive.root }}</div>
+          <div class="drive-name">{{  drive.name || drive.root }}</div>
           <div v-if="cfg.showFsType" class="drive-fs">{{ drive.FsType || drive.fsType }}</div>
         </div>
         
@@ -180,17 +180,17 @@ onBeforeUnmount(() => {
             <div 
               class="usage-fill" 
               :style="{ 
-                width: `${stats.get(drive.Root || drive.root) 
-                  ? fmtPct(stats.get(drive.Root || drive.root).used, stats.get(drive.Root || drive.root).total) 
+                width: `${stats.get(drive.root) 
+                  ? fmtPct(stats.get(drive.root).used, stats.get(drive.root).total) 
                   : 0}%` 
               }"
             />
           </div>
           
-          <div v-if="stats.get(drive.Root || drive.root)" class="usage-text">
-            {{ fmtBytes(stats.get(drive.Root || drive.root).used) }} / 
-            {{ fmtBytes(stats.get(drive.Root || drive.root).total) }}
-            ({{ fmtPct(stats.get(drive.Root || drive.root).used, stats.get(drive.Root || drive.root).total) }}%)
+          <div v-if="stats.get(drive.root)" class="usage-text">
+            {{ fmtBytes(stats.get(drive.root).used) }} / 
+            {{ fmtBytes(stats.get(drive.root).total) }}
+            ({{ fmtPct(stats.get(drive.root).used, stats.get(drive.root).total) }}%)
           </div>
         </div>
       </div>
