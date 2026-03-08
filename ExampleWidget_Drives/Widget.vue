@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from '/runtime/vue.js'
+import { ref, computed, watch, onMounted, onBeforeUnmount, inject } from '/runtime/vue.js'
 import {
-  subscribeDrives,
   type DriveSnapshot,
-  fsDriveStats,
+  subscribeDrives,
+  WidgetSdk
 } from 'gexplorer/widgets'
+
+const { 
+  fsDriveStats
+} = inject<WidgetSdk>('widgetSdk') ?? {}
 
 type HostAction = { type: 'nav'; to: string }
 

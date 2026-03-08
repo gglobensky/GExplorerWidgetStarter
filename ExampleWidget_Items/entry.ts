@@ -49,8 +49,6 @@ const menuConfig = {
     ],
 }
 
-registerWidgetMenus('items', menuConfig)
-
 // ============================================================================
 // Widget definition
 // ============================================================================
@@ -61,6 +59,7 @@ export default {
     version: '0.3.1',
     Component: Widget,
     dropAccepts: ['gex/file-refs'],
+	menus: menuConfig,
 
     // ── Context declarations ────────────────────────────────────────────────
     // Static metadata consumed by:
