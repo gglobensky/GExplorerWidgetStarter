@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch, inject } from '/runtime/vue.js '
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch, inject } from 'vue'
 import { usePlayerState } from './usePlayerState'
 import { usePlaylist, INPUT_ACCEPT } from './usePlaylist'
 import { useMarquee } from './useMarquee'

@@ -1,356 +1,222 @@
 // types/widgets-sdk.d.ts
+// Public API surface for gexplorer widget development.
+// Copy this file into your widget project's types/ folder.
+
+import type { Ref, ShallowRef } from 'vue'
+
 declare module 'gexplorer/widgets' {
-  import type { Ref, ShallowRef } from 'vue';
 
-  /* ====================== AUDIO CORE ====================== */
+    import type { Ref, ShallowRef } from 'vue'
 
-  export type AudioCategory = 'music' | 'sfx' | 'voice' | 'custom';
-  export type SuspendPolicy = 'continue' | 'pause' | 'duck';
+    // ── Capability-gated SDK ───────────────────────────────────────────────
+    // Injected by WidgetHost. Never import directly — use inject():
+    //
+    //   import { inject } from 'vue'  // or /runtime/vue.js
+    //   import type { WidgetSdk } from 'gexplorer/widgets'
+    //   const sdk = inject<WidgetSdk>('widgetSdk')
+    //   const { fsMove, fsListDirSmart } = sdk ?? {}
 
-  export interface SpawnOptions {
-    ownerId: string;
-    category?: AudioCategory;
-    persistent?: boolean;
-    keepOnSidebarCollapse?: boolean;
-    suspendPolicy?: SuspendPolicy;
-    initialProps?: Partial<{
-      src: string;
-      loop: boolean;
-      volume: number;
-      muted: boolean;
-      preload: 'auto' | 'metadata' | 'none';
-    }>;
-  }
+    export type WidgetSdk = {
+        // Always available
+        fsValidate?:     (path: string) => Promise<{ ok: boolean; exists?: boolean; isDir?: boolean; error?: string }>
 
-  export interface AudioHandle {
-    id: string;
-    ownerId: string;
-    category: AudioCategory;
+        // Read cap
+        fsListDirSmart?: (path: string, options?: FsListDirOptions) => Promise<FsListDirResult>
+        shortcutsProbe?: (paths: string[]) => Promise<Record<string, string>>
+        authorizeFileRefs?: (sourceWidgetType: string, sourceWidgetId: string, payload: any, caps?: string[]) => Promise<{ ok: boolean; reason?: string }>
 
-    play(): Promise<void>;
-    pause(): void;
-    load(): void;
+        // Write cap
+        fsWriteText?:  (path: string, text: string, overwrite?: boolean) => Promise<void>
+        fsCopy?:       (items: Array<{ from: string; to: string }>) => Promise<void>
+        fsMove?:       (items: Array<{ from: string; to: string }>) => Promise<void>
+        fsRename?:     (oldPath: string, newPath: string) => Promise<{ ok: boolean; error?: string }>
 
-    readonly paused: boolean;
-    readonly readyState: number;
-    readonly duration: number;
+        // Metadata cap
+        fsDriveStats?:  (roots: string[]) => Promise<DriveStats[]>
+        loadIconPack?:  () => Promise<void>
 
-    addEventListener: HTMLMediaElement['addEventListener'];
-    removeEventListener: HTMLMediaElement['removeEventListener'];
+        // Media cap
+        mintStreamHttp?:          (path: string, mimeHint?: string) => Promise<string>
+        fileRefsToPlaylistItems?: (refs: FileRefData[], receiverWidgetType: string, receiverWidgetId: string) => Promise<PlaylistItem[]>
 
-    src: string;
-    currentTime: number;
-    volume: number;
-    muted: boolean;
-    loop: boolean;
-    playbackRate: number;
+        // Network cap
+        networkFetch?: (url: string, options?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<{
+            ok: boolean; status: number; statusText: string
+            json: () => Promise<any>; text: () => Promise<string>
+        }>
 
-    connectToCategory(cat: AudioCategory): void;
-    release(): void;
-  }
+        // Clipboard cap
+        clipboardCopyFiles?: (paths: string[]) => Promise<void>
+        clipboardCutFiles?:  (paths: string[]) => Promise<void>
+        clipboardGetFiles?:  () => Promise<ClipboardState>
+    }
 
-  /* ====================== PLAYLISTS ====================== */
+    // ── FS types ───────────────────────────────────────────────────────────
 
-  export type RepeatMode = 'off' | 'one' | 'all';
-  export type AutoNextMode = 'off' | 'linear';
+    export type FsListDirOptions = {
+        sortBy?:        'name' | 'kind' | 'ext' | 'size' | 'modified'
+        sortDir?:       'asc' | 'desc'
+        filterExts?:    string[]
+        activeOptions?: string[]
+        chunked?:       boolean
+        chunkSize?:     number
+    }
 
-  // Either a concrete id or a selector (id is `${ownerId}::${category}::${key}`)
-  export type PlaylistSelector =
-    | { ownerId: string; key: string; category?: AudioCategory }
-    | string;
+    export type FsEntry = {
+        Name:     string
+        FullPath: string
+        Kind:     'file' | 'dir'
+        Size?:    number
+        Modified?: string
+        Ext?:     string
+    }
 
-  export interface PlaylistItem {
-    id: string;           // stable id from your library/queue
-    src: string;          // playable URL (blob:, http(s):, etc.)
-    name?: string;
-    type?: string;
-    // ...extra metadata allowed
-  }
+    export type FsListDirResult = {
+        ok:       boolean
+        entries:  FsEntry[]
+        error?:   string
+    }
 
-  export interface PlaylistOptions {
-    autoNext?: AutoNextMode;
-    repeat?: RepeatMode;
-    shuffle?: boolean;
-    dedupe?: boolean;
-  }
+    export type DriveStats = {
+        root:    string
+        name:    string
+        fsType:  string
+        kind:    string
+        total?:  number
+        free?:   number
+    }
 
-  export interface PlaylistsApi {
-    /** Create/replace a list; returns the resolved listId */
-    register(sel: PlaylistSelector, items: PlaylistItem[], opts?: PlaylistOptions): string;
+    // ── Clipboard types ────────────────────────────────────────────────────
 
-    /** Replace items (optionally keep current by id; allow dedupe override) */
-    setItems(
-      sel: PlaylistSelector,
-      items: PlaylistItem[],
-      opts?: { keepCurrent?: boolean; dedupe?: boolean }
-    ): void;
+    export type ClipboardOperation = 'copy' | 'cut' | 'none'
 
-    /** Update options (partial) */
-    setOptions(sel: PlaylistSelector, opts: Partial<PlaylistOptions>): void;
+    export type ClipboardState = {
+        hasFiles:  boolean
+        operation: ClipboardOperation
+        paths:     string[]
+        count:     number
+        canPaste:  boolean
+    }
 
-    /** Read-only snapshot of current state (or null if not found) */
-    get(sel: PlaylistSelector): {
-      items: PlaylistItem[];
-      currentIdx: number;      // -1 if none
-      repeat: RepeatMode;
-      shuffle: boolean;
-      dedupe: boolean;
-      autoNext: AutoNextMode;
-      version: number;
-    } | null;
+    // ── DnD types ──────────────────────────────────────────────────────────
 
-    /** Wire an audio handle so 'ended' can auto-advance */
-    bindToHandle(sel: PlaylistSelector, handle: AudioHandle): void;
+    export type GexDnDType = 'gex/file-refs' | 'gex/text' | 'gex/url' | 'gex/custom'
 
-    /** Remove the auto-advance binding */
-    unbind(sel: PlaylistSelector): void;
+    export type GexDnDPayload<T = any> = {
+        type:   GexDnDType | string
+        data:   T
+        source: { widgetType: string; widgetId: string }
+        metadata?: Record<string, any>
+    }
 
-    /** Start a specific index; resolves to the effective index or -1 */
-    playIndex(sel: PlaylistSelector, index: number, handle: AudioHandle): Promise<number>;
+    export type FileRefData = {
+        path:         string
+        name:         string
+        size?:        number
+        mimeType?:    string
+        isDirectory?: boolean
+    }
 
-    /** Advance forward/back; resolve to new index or -1 if none */
-    next(sel: PlaylistSelector, handle?: AudioHandle): Promise<number>;
-    prev(sel: PlaylistSelector, handle?: AudioHandle): Promise<number>;
-  }
+    export type DnDValidator = (
+        payload: GexDnDPayload,
+        context: { widgetType: string; widgetId: string }
+    ) => Promise<{ ok: boolean; reason?: string }>
 
-  export function useAudio(): {
-    prime(): Promise<void>;
-    acquireElement(opts: SpawnOptions & { key: string }): AudioHandle;
-    playOneShot(
-      url: string,
-      opts: { ownerId: string; volume?: number; category?: AudioCategory }
-    ): Promise<AudioHandle | void>;
-    release(handleOrId: AudioHandle | string): void;
+    // ── Messaging ──────────────────────────────────────────────────────────
 
-    setBusVolume(cat: AudioCategory | 'master', v: number): void;
-    getBusVolume(cat: AudioCategory | 'master'): number;
+    export type ScopedMessaging = {
+        send:    (to: string, topic: string, payload?: any) => void
+        on:      (topic: string, handler: (msg: any) => void) => () => void
+        cleanup: () => void
+    }
 
-    setDucking(opts: Partial<{ on: boolean; when: AudioCategory[]; amountDb: number; releaseMs: number }>): void;
-    getDucking(): { on: boolean; when: AudioCategory[]; amountDb: number; releaseMs: number };
+    // ── Sortable / Selection ───────────────────────────────────────────────
 
-    muteBus(cat: 'master' | AudioCategory, on: boolean): void;
-    setDebug(on: boolean): void;
+    export type CreateSortableOptions = Record<string, any>
+    export type SortableHandle = Record<string, any>
+    export type ItemsAdapter  = Record<string, any>
+    export type Mods          = Record<string, any>
+    export type GeometryAdapter = Record<string, any>
+    export type ScrollerAdapter = Record<string, any>
+    export type Rect = { x: number; y: number; width: number; height: number }
+    export type DropIntent = 'before' | 'after' | 'into'
+    export type Cap = 'Read' | 'Write' | 'Metadata' | 'Media' | 'Network' | 'Clipboard' | 'Exec'
 
-    list(q?: { ownerId?: string }): Array<{ id: string; ownerId: string; category: AudioCategory; src?: string }>;
+    // ── Drives ─────────────────────────────────────────────────────────────
 
-    state: {
-      primed: Ref<boolean>;
-      nowPlaying: ShallowRef<{ id: string; ownerId: string; src?: string } | null>;
-      nowPlayingByCategory: Record<
-        AudioCategory | 'custom',
-        ShallowRef<{ id: string; ownerId: string; src?: string } | null>
-      >;
-    };
+    export type DriveSnapshot = {
+        root:   string
+        name:   string
+        fsType: string
+        kind:   string
+    }
 
-    playlists: PlaylistsApi;
-  };
+    // ── Favorites ──────────────────────────────────────────────────────────
 
-  /* ====================== LIFECYCLE ====================== */
+    export type FavoriteEntry = {
+        id:    string
+        label: string
+        path:  string
+        icon?: string
+    }
 
-  export type Visibility = 'visible' | 'collapsed';
+    export type FavoriteTreeNode = {
+        id:       string
+        label:    string
+        children: FavoriteTreeNode[]
+        entry?:   FavoriteEntry
+    }
 
-export interface Lifecycle {
-  visibility: import('vue').Ref<Visibility>;
+    export type FavoritesConfig = {
+        entries: FavoriteEntry[]
+    }
 
-  onSuspend(fn: () => void): () => void;
-  onResume(fn: () => void): () => void;
+    // ── Playlist ───────────────────────────────────────────────────────────
 
-  // live persistence
-  persistRef<T>(key: string, initial: T | (() => T)): import('vue').Ref<T>;
-  persistReactive<T extends object>(key: string, initial: T | (() => T)): T;
+    export type PlaylistItem = {
+        id:    string
+        src:   string
+        name?: string
+        type?: string
+    }
 
-  // ✨ sugar for persistRef
-  cell<T>(key: string, initial: T | (() => T)): import('vue').Ref<T>;
+    // ── Free utilities (import directly) ───────────────────────────────────
 
-  // edge snapshot/hydrate
-  bindRef<T>(key: string, target: import('vue').Ref<T>, opts?: { hydrate?: 'always' | 'once' | 'never' }): () => void;
-  bindReactive<T extends object>(key: string, target: T, opts?: { hydrate?: 'always' | 'once' | 'never'; deep?: boolean }): () => void;
-  snapshotNow(key?: string): void;
-  hydrateNow(key?: string): void;
-
-  keepInterval(fn: () => void, ms: number): () => void;
-  keepTimeout(fn: () => void, ms: number): () => void;
-
-  _hostSetVisibility(v: Visibility): void;
+    export function createLinearSortable(options: CreateSortableOptions): SortableHandle
+    export function useSortable(options: any): any
+    export function useScrollHints(options: any): any
+    export function useSnapResize(options: any): any
+    export function createDragTrigger(options: any): any
+    export function createSelectionEngine(adapter: ItemsAdapter): any
+    export function createMarqueeDriver(adapter: GeometryAdapter): any
+    export function fsValidate(path: string): Promise<{ ok: boolean; exists?: boolean; isDir?: boolean; error?: string }>
+    export function iconFor(path: string): string
+    export function ensureIconsFor(paths: string[]): Promise<void>
+    export function createGexPayload<T>(type: GexDnDType | string, data: T, source: { widgetType: string; widgetId: string }, metadata?: Record<string, any>): GexDnDPayload<T>
+    export function setGexPayload(dataTransfer: DataTransfer, payload: GexDnDPayload): void
+    export function createDragPreview(options: { label: string; icon?: string; count?: number }): HTMLElement
+    export function extractGexPayload(e: DragEvent): GexDnDPayload | null
+    export function hasGexPayload(e: DragEvent): boolean
+    export function authorizeFileRefs(widgetType: string, widgetId: string, payload: GexDnDPayload, caps?: string[]): Promise<{ ok: boolean; reason?: string }>
+    export function authorizeDrop(widgetType: string, widgetId: string, payload: GexDnDPayload, validator: DnDValidator): Promise<{ ok: boolean; reason?: string }>
+    export function fileRefsToPlaylistItems(refs: FileRefData[], receiverWidgetType: string, receiverWidgetId: string): Promise<PlaylistItem[]>
+    export function setActiveDragPayload(payload: GexDnDPayload, sourceId: string): void
+    export function clearActiveDragPayload(): void
+    export function startNativeDrag(paths: string[], preview: { label: string; icon?: string; count?: number }, callbacks: { onDragOver?: (x: number, y: number) => void; onDragLeave?: () => void; onDrop?: () => void; onExternalResult?: (effect: string) => void }, x: number, y: number): () => void
+    export function createWidgetMessaging(sourceId: string): ScopedMessaging
+    export function subscribeDrives(callback: (drives: DriveSnapshot[]) => void): () => void
+    export function getDrives(): DriveSnapshot[]
+    export function getFavorites(): FavoritesConfig
+    export function getGlobalFavorites(): FavoriteEntry[]
+    export function addFavorite(entry: FavoriteEntry): void
+    export function addFolder(node: FavoriteTreeNode): void
+    export function removeFavorite(id: string): void
+    export function removeFolder(id: string): void
+    export function applyFavoritesMove(from: number, to: number): void
+    export function getCurrentPath(): string | null
+    export function createLifecycle(ownerId: string): any
+    export function useAudio(): any
+    export function registerWidgetMenus(widgetType: string, config: any): void
+    export function startRename(options: any): any
+    export function useDialog(): any
 }
-
-  export function createLifecycle(ownerId: string): Lifecycle;
-
-  // Host/app-shell helpers
-  export function setSidebarCollapsed(collapsed: boolean): void;
-  export function hostSetOwnerCollapsed(ownerId: string, collapsed: boolean): void;
-  export function hostDestroyOwner(ownerId: string): void;
-
-  /* ====================== DnD ====================== */
-
-  export type DnDId = string | number;
-
-  export interface CreateDnDOptions<T> {
-    identity: (item: T) => DnDId;
-    getRef?: (item: T) => HTMLElement | null;
-    orientation?: 'vertical' | 'horizontal';
-    dragThresholdPx?: number;
-    minMoveDeltaPx?: number;
-    hoverThrottle?: 'rAF' | number;
-    rowSelector?: string;
-    onUpdate?: () => void;
-    containerClassOnDrag?: string;
-    scrollContainer?: HTMLElement | (() => HTMLElement | null) | null;
-    autoScroll?: {
-      marginPx?: number;
-      maxSpeedPxPerSec?: number;
-      ease?: (t: number) => number;
-    };
-  }
-
-  export interface DnDHandle<T = unknown> {
-    // data
-    getOrderedList(): T[];
-    getDisplayList(): T[];
-
-    // wiring
-    registerRef(item: T, ref: HTMLElement | null): void;
-    startDrag(displayIdx: number, startEvent?: PointerEvent | MouseEvent): void;
-
-    // mutations
-    setOrderedList(items: T[]): void;
-    insertAt(item: T, index: number, opts?: { shouldDedupe?: boolean }): void;
-    push(item: T): void;
-    unshift(item: T): void;
-    remove(item: T): void;
-
-    // utils
-    getIdx(item: T): number | null;
-    getFirst(): T | null;
-    getLast(): T | null;
-    getState(): { isDragging: boolean; draggingId: DnDId | null; hoverIdx: number | null };
-    updateHover(displayIdx: number): void;
-    commitDrag(): void;
-    cancelDrag(): void;
-    setScrollContainer(el: HTMLElement | null): void;
-    destroy(): void;
-  }
-
-  export function createDnD<T>(items: T[], options: CreateDnDOptions<T>): DnDHandle<T>;
-}
-
-/* ====================== INTER-WIDGET DND ====================== */
-
-/**
- * Standard GExplorer DnD payload types for inter-widget drops
- */
-export type GexDnDType = 
-  | 'gex/file-refs'      // File paths (need auth to access)
-  | 'gex/text'           // Plain text
-  | 'gex/url'            // Single URL
-  | 'gex/custom'         // Widget-specific data
-
-/**
- * Base DnD payload structure
- */
-export interface GexDnDPayload<T = any> {
-  type: GexDnDType | string
-  data: T
-  source: {
-    widgetType: string
-    widgetId: string
-  }
-  metadata?: Record<string, any>
-}
-
-/**
- * File reference payload (most common for file-based widgets)
- */
-export interface FileRefData {
-  path: string
-  name: string
-  size?: number
-  mimeType?: string
-  isDirectory?: boolean
-}
-
-/* ---- SENDER API (for dragging items out) ---- */
-
-/**
- * Create a GExplorer inter-widget DnD payload
- */
-export function createGexPayload<T>(
-  type: GexDnDType | string,
-  data: T,
-  source: { widgetType: string; widgetId: string },
-  metadata?: Record<string, any>
-): GexDnDPayload<T>
-
-/**
- * Serialize payload to dataTransfer (sets custom MIME type)
- */
-export function setGexPayload(
-  dataTransfer: DataTransfer,
-  payload: GexDnDPayload
-): void
-
-/**
- * Create a drag preview element with custom styling
- */
-export function createDragPreview(options: {
-  label: string
-  icon?: string
-  count?: number
-}): HTMLElement
-
-/* ---- RECEIVER API (for accepting drops) ---- */
-
-/**
- * Extract GExplorer payload from drop event
- */
-export function extractGexPayload(e: DragEvent): GexDnDPayload | null
-
-/**
- * Check if drop event contains GExplorer data
- */
-export function hasGexPayload(e: DragEvent): boolean
-
-/**
- * Custom validator function for advanced permission checks
- */
-export type DnDValidator = (
-  payload: GexDnDPayload,
-  context: { widgetType: string; widgetId: string }
-) => Promise<{ ok: boolean; reason?: string }>
-
-/**
- * Validate and authorize file access (for file-ref payloads)
- * Supports custom validators for extensibility
- */
-export function authorizeFileRefs(
-  widgetType: string,
-  widgetId: string,
-  payload: GexDnDPayload,
-  options?: {
-    requiredCaps?: string[]
-    customValidators?: DnDValidator[]
-  }
-): Promise<{ ok: boolean; reason?: string }>
-
-/**
- * Generic authorization for any payload type
- * Allows widgets to implement custom permission logic
- */
-export function authorizeDrop(
-  widgetType: string,
-  widgetId: string,
-  payload: GexDnDPayload,
-  validator: DnDValidator
-): Promise<{ ok: boolean; reason?: string }>
-
-/* ---- UTILITIES ---- */
-
-/**
- * Convert file-ref payload to File objects (via backend data URLs)
- * Requires Read permission for the paths
- */
-export function fileRefsToFiles(
-  fileRefs: FileRefData[],
-  widgetType: string,
-  widgetId: string
-): Promise<File[]>

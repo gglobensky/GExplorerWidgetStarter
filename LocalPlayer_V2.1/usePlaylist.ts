@@ -4,14 +4,16 @@ import type { Track } from './usePlayerState'
 
 // SDK bits for dialog + auth (static import ok)
 import { 
-  authorizeFileRefs, 
-  fileRefsToPlaylistItems,
   useDialog,
   WidgetSdk,
   type FileRefData 
 } from 'gexplorer/widgets'
 
-const { fsWriteText } = inject<WidgetSdk>('widgetSdk') ?? {}
+const { 
+  fsWriteText,
+  authorizeFileRefs, 
+  fileRefsToPlaylistItems
+ } = inject<WidgetSdk>('widgetSdk') ?? {}
 // Reuse converter (refs → gex:// items → tracks)
 
 // ---------- Lazy SDK import for FS wrappers (no Vue hooks here) ----------

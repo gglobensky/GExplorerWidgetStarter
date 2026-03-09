@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, inject } from '/runtime/vue.js'
-import { WidgetSdk  } from 'gexplorer/widgets'
+import { ref, computed, inject } from 'vue'
+import type { WidgetSdk } from 'gexplorer/widgets'
 
 const { networkFetch } = inject<WidgetSdk>('widgetSdk') ?? {}
 

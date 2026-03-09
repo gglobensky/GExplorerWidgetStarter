@@ -34,8 +34,9 @@ export default {
 
     actions: [
         {
-            id:    'play',
-            label: 'Play',
+            id:           'play',
+            label:        'Play',
+            targetWidget: 'items',
             accepts: {
                 contexts:   ['file'],
                 extensions: ['.mp3', '.flac', '.wav', '.mp4'],
@@ -47,8 +48,9 @@ export default {
             },
         },
         {
-            id:    'enqueue',
-            label: 'Add to queue',
+            id:           'enqueue',
+            label:        'Add to queue',
+            targetWidget: 'items',
             accepts: {
                 contexts:   ['file'],
                 extensions: ['.mp3', '.flac', '.wav'],
