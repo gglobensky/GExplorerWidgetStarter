@@ -2,10 +2,10 @@
 /* -----------------------------------------------
    Imports
 ------------------------------------------------ */
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineExpose, onUnmounted, inject } from '/runtime/vue.js'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineExpose, onUnmounted, inject } from 'vue'
 import {
   fsValidate,
-  loadIconPack, 
+  loadIconPack, // add to definition files
   iconFor, 
   ensureIconsFor,
   createSelectionEngine, 
