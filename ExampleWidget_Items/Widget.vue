@@ -36,6 +36,7 @@ const {
   clipboardCopyFiles,
   clipboardCutFiles,
   clipboardGetFiles,
+  fsWatch
 } = sdk ?? {}
 
 const props = defineProps<{
@@ -56,6 +57,7 @@ const props = defineProps<{
 ------------------------------------------------ */
 let reloadDebounceTimer: number | null = null
 let pauseFileWatcher = false
+let unwatchCurrent: (() => void) | null = null
 
 /**
  * Debounced directory reload - waits for activity to settle
@@ -334,7 +336,8 @@ const autoItemSize = computed(() => {
 })
 
 const merged = computed(() => ({
-  rpath: String(cfg.value.data.rpath ?? ''),
+  // Fallback to the live CWD if the static config is empty
+  rpath: String(cfg.value.data.rpath || cwd.value || ''), 
   layout: String(cfg.value.view.layout ?? 'list'),
   columns: cfg.value.view.columns || autoColumns.value,
   itemSize: cfg.value.view.itemSize || autoItemSize.value,
@@ -991,11 +994,20 @@ function modParts(ms?: number | null): { date: string; time: string } {
 }
 async function loadDir(path?: string) {
   const p = String(path ?? cwd.value ?? '')
+    console.log('[items] loadDir p:', JSON.stringify(p), 'cwd:', JSON.stringify(cwd.value), 'sourceId:', props.sourceId)
+    console.log('[items] !p value:', !p)
   if (!p) {
+    console.log('[items] fsWatch registered, unwatch:', !!unwatchCurrent)
     entries.value = []
     return
   }
   
+  unwatchCurrent?.()
+  unwatchCurrent = sdk?.fsWatch?.(p, () => { 
+      console.log('[items] watch callback fired for', p)
+      scheduleReload(p) 
+  }) ?? null
+
   console.log('[Widget] loadDir START:', { 
     path: p, 
     sortKey: sortKey.value, 
@@ -1411,6 +1423,7 @@ function onWidgetAction(msg: any) {
 function startItemRename(itemPath: string): void {
   console.log('[items] startItemRename called with:', itemPath)
   
+  // TODO REVISIT START RENAME SHOULD NOT PASS WIDGET ID, AND PARAMS ARE MALFORMED. I ALSO THINK WE SHOULD LIMIT UNDER HAS CREATE CAPS OR UPDATE
   startRename(itemPath, {
     widgetId: props.sourceId,  // 👈 ADD THIS LINE
     selectBasename: true,
@@ -1434,15 +1447,6 @@ on('fs:refresh-after-drop', (msg) => {
     if (target && normalizeDir(target) !== normalizeDir(current)) {
         console.log('[items] fs:refresh-after-drop → reloading', current)
         loadDir(current)
-    }
-})
-
-on('fs:changed', (msg) => {
-    const current = cwd.value || merged.value.rpath || ''
-    if (!current) return
-    const root = String(msg.payload?.root || '')
-    if (root && normalizeDir(root) === normalizeDir(current)) {
-        scheduleReload(current)
     }
 })
 
@@ -1481,6 +1485,7 @@ on('items:reloadAndRename', async (msg) => {
 })
 
 onBeforeUnmount(() => {
+  unwatchCurrent?.()
   try { engine.destroy() } catch {}
   try { dispose() } catch {}
   cleanup()   // unregisters all on() subscriptions including those in useItemsDragDrop

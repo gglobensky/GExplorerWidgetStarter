@@ -19,6 +19,7 @@ import {
 } from 'gexplorer/widgets'
 import type { GexDnDPayload, ScopedMessaging } from 'gexplorer/widgets'
 
+
 export interface UseItemsDragDropOptions {
     sourceId:       string
     messaging:      ScopedMessaging       // ← passed in from Widget.vue, not created here
@@ -78,7 +79,7 @@ function findFolderTarget(startEl: Element | null, entries: any[]): string | nul
 
 export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDragDropReturn {
     const { sourceId, messaging, entries, selected, cwd, merged, marqueeActive, loadDir  } = options
-    const { fsMove } = inject<WidgetSdk>('widgetSdk') ?? {}
+    const { fsMove, fsCopy } = inject<WidgetSdk>('widgetSdk') ?? {}
     const { send, on } = messaging
 
     const isDragging       = ref(false)
@@ -87,16 +88,22 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
 
     let cleanupDrag: (() => void) | null = null
 
+   // true while startNativeDrag resolves async VFS extraction —
+   // prevents resetDragState from firing before cleanupDrag is assigned
+   let extracting = false
+
     // ── Drag teardown ──────────────────────────────────────────────────────────
 
-    function resetDragState() {
-        isDragging.value      = false
-        isDropActive.value    = false
-        folderDropTarget.value = null
-        cleanupDrag?.()
-        cleanupDrag = null
-        clearActiveDragPayload()
-    }
+   function resetDragState() {
+       if (extracting) return
+       isDragging.value       = false
+    console.log('[items-dnd] resetDragState ran — isDragging now false')
+       isDropActive.value     = false
+       folderDropTarget.value = null
+       cleanupDrag?.()
+       cleanupDrag = null
+       clearActiveDragPayload()
+   }
 
     // ── Drop execution ─────────────────────────────────────────────────────────
 
@@ -141,6 +148,7 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
 
             if (!sources.length) return
 
+            // Single unified drop execution — fsMove handles VFS destinations internally
             await fsMove?.(sources.map(from => ({ from, to: target })))
             await loadDir(cwd.value || merged.value?.rpath || '')
 
@@ -148,6 +156,7 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
             if (srcId && srcId !== sourceId) {
                 send(srcId, 'fs:refresh-after-drop', { kind: 'fs.move', target })
             }
+            
         } catch (err) {
             console.error('[items] drop failed:', err)
         }
@@ -178,8 +187,11 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
     }
 
     async function onExternalResult(effect: string) {
+        console.log('[items-dnd] onExternalResult fired, effect:', effect, 'extracting:', extracting)
+        extracting = false
         const refreshDir = cwd.value || merged.value?.rpath || ''
         resetDragState()
+        console.log('[items-dnd] after resetDragState, isDragging:', isDragging.value)
         if (effect === 'move' && refreshDir) {
             await loadDir(refreshDir)
         }
@@ -231,7 +243,8 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
             setActiveDragPayload(payload, sourceId)
             isDragging.value = true
 
-            cleanupDrag = startNativeDrag(
+            extracting = true
+            startNativeDrag(
                 paths,
                 {
                     label: paths.length > 1 ? `${paths.length} items` : entry.Name,
@@ -245,8 +258,15 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
                     onExternalResult,
                 },
                 moveEv.clientX,
-                moveEv.clientY
-            )
+                moveEv.clientY,
+            ).then(({ cleanup, resolvedPaths }) => {
+                    extracting  = false
+                    cleanupDrag = cleanup
+                    console.log('[items-dnd] onItemPointerDown, isDragging:', isDragging.value)
+                }).catch(() => {
+                    extracting = false
+                    resetDragState()
+                })
         }
 
         function onUp() { teardown() }
@@ -264,9 +284,10 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
 
     // ── Cleanup ────────────────────────────────────────────────────────────────
 
-    function dispose() {
-        resetDragState()
-    }
+   function dispose() {
+       extracting = false
+       resetDragState()
+   }
 
     onUnmounted(() => dispose())
 
