@@ -10,7 +10,7 @@ export default {
     capabilities: [
         { cap: 'Read',    reason: 'Lists room contents via the virtual vault filesystem' },
         { cap: 'Write',   reason: 'Ingests files into the secure vault on drop' },
-        { cap: 'Network', reason: 'P2P room synchronization and peer file transfer' },
+        { cap: 'Network', reason: 'P2P room synchronization, peer file transfer, and chat' },
         { cap: 'P2P',     reason: 'Generates and accepts room invite tokens for peer connections' },
     ],
 

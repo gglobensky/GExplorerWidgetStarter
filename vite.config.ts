@@ -62,10 +62,11 @@ export default defineConfig({
       external: (id) => isHostExternal(id),
       output: {
         // Re-map 'vue' to the host shim URL in case an author imports 'vue'
-        paths: {
-          vue: '/runtime/vue.js',
-          'gexplorer/widgets': '/src/widgets/sdk-shim.ts',
-        },
+		paths: {
+			vue: '/runtime/vue.js',
+			'gexplorer/widgets': '/runtime/vue.js',
+			'/src/widgets/sdk-shim.ts': '/runtime/vue.js',
+		},
       },
     },
     esbuild: {

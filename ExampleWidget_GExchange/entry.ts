@@ -11,6 +11,7 @@ export default {
         { cap: 'Read',    reason: 'Lists room contents via the virtual vault filesystem' },
         { cap: 'Write',   reason: 'Ingests files into the secure vault on drop' },
         { cap: 'Network', reason: 'P2P room synchronization and peer file transfer' },
+        { cap: 'P2P',     reason: 'Generates and accepts room invite tokens for peer connections' },
     ],
 
     Component: ChatRoom,
@@ -51,7 +52,14 @@ export default {
             label:  'GExchange Secure Room',
             icon:   'mdi-chat-lock',
             resolver: 'backend',
-            ops: ['listDir', 'getMetadata', 'copy', 'delete', 'open', 'watch', 'extract'],
+            ops: ['listDir', 'getMetadata', 'copy', 'delete', 'open', 'watch', 'extract', 'mkdir'],
+            // Eventually remove ops to use the keys of the endpoints:
+            /*
+                    In the app
+                    const ops = def.resolver === 'backend'
+                    ? Object.keys(def.backendEndpoints ?? {}) as VfsOp[]
+                    : def.ops
+            */
             backendEndpoints: {
                 listDir:     'gexchange:listDir',
                 getMetadata: 'gexchange:getMetadata',
@@ -60,6 +68,7 @@ export default {
                 open:        'gexchange:open',
                 watch:       'gexchange:watch',
          		extract: 	 'gexchange:extract',
+                mkdir:       'gexchange:mkdir'
             },
         },
     ],
