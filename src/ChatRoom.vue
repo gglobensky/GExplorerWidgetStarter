@@ -4,7 +4,6 @@
         <!-- ── Header ─────────────────────────────────────────────────── -->
         <header class="gex-header">
             <div class="header-left">
-                <!-- Room picker -->
                 <div class="room-picker" ref="pickerRef" :class="{ open: pickerOpen }">
                     <button class="room-trigger" @click="togglePicker">
                         <span class="room-hash">#</span>
@@ -189,21 +188,14 @@
         <!-- ── Chat body ──────────────────────────────────────────────── -->
         <div v-else class="chat-body">
             <main class="chat-feed" ref="feedRef">
-                <!-- Welcome message -->
                 <div class="message system-msg">
                     <span class="msg-text">Welcome to <strong>#{{ activeRoom.canonicalName }}</strong></span>
                 </div>
 
-                <!-- Chat messages -->
                 <template v-for="msg in messages" :key="msg.id">
-                    <!-- Date separator when date changes -->
-                    <div
-                        v-if="shouldShowDateSep(msg, messages)"
-                        class="date-sep"
-                    >
+                    <div v-if="shouldShowDateSep(msg, messages)" class="date-sep">
                         <span>{{ formatDate(msg.sentAt) }}</span>
                     </div>
-
                     <div
                         class="message"
                         :class="{
@@ -211,7 +203,6 @@
                             'theirs': msg.senderId !== identity?.userId,
                         }"
                     >
-                        <!-- Show sender name when it changes or after a gap -->
                         <div
                             v-if="shouldShowSender(msg, messages)"
                             class="msg-sender"
@@ -226,7 +217,6 @@
                     </div>
                 </template>
 
-                <!-- Typing / loading indicator -->
                 <div v-if="chatLoading" class="message system-msg">
                     <span class="msg-text muted">Loading history…</span>
                 </div>
@@ -240,6 +230,10 @@
                             <span class="dot online"/>
                             {{ identity?.username ?? 'You' }}
                             <span class="you-tag">you</span>
+                        </li>
+                        <li v-for="peerId in activePeerIds" :key="peerId" class="user-row">
+                            <span class="dot online"/>
+                            {{ peerNames[peerId] ?? peerId }}
                         </li>
                     </ul>
                 </div>
@@ -266,12 +260,8 @@
         <!-- ── Footer ─────────────────────────────────────────────────── -->
         <footer v-if="activeRoom" class="chat-footer">
             <div class="plugin-tabs">
-                <button @click="showBoard = false" :class="{ active: !showBoard }" class="tab-btn">
-                    💬 Chat
-                </button>
-                <button @click="showBoard = true" :class="{ active: showBoard }" class="tab-btn">
-                    🛠️ Board
-                </button>
+                <button @click="showBoard = false" :class="{ active: !showBoard }" class="tab-btn">💬 Chat</button>
+                <button @click="showBoard = true"  :class="{ active: showBoard  }" class="tab-btn">🛠️ Board</button>
             </div>
             <div class="plugin-canvas">
                 <template v-if="!showBoard">
@@ -280,7 +270,9 @@
                             ref="inputRef"
                             v-model="draftText"
                             class="chat-input"
-                            :placeholder="activeRoom.isClosed ? 'This room is archived — read only' : 'Type a message… (Shift+Enter to send)'"
+                            :placeholder="activeRoom.isClosed
+                                ? 'This room is archived — read only'
+                                : 'Type a message… (Shift+Enter to send)'"
                             :disabled="activeRoom.isClosed || sending"
                             rows="1"
                             @keydown="onInputKeydown"
@@ -289,7 +281,9 @@
                         <div class="input-actions">
                             <label
                                 class="send-mode-toggle"
-                                v-gex-tooltip="shiftToSend ? 'Shift+Enter sends · Enter = new line' : 'Enter sends · Shift+Enter = new line'"
+                                v-gex-tooltip="shiftToSend
+                                    ? 'Shift+Enter sends · Enter = new line'
+                                    : 'Enter sends · Shift+Enter = new line'"
                             >
                                 <input type="checkbox" v-model="shiftToSend" />
                                 <span class="toggle-label">⇧ send</span>
@@ -352,47 +346,68 @@
         <div v-if="loading" class="loading-overlay">
             <div class="spinner"/>
         </div>
-
     </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, shallowRef, inject } from 'vue'
-import { startRename, WidgetSdk } from 'gexplorer/widgets'
-import type { ChatMessage } from 'gexplorer/widgets'
+import { startRename } from 'gexplorer/widgets'
+import type { WidgetSdk, ChatMessage } from 'gexplorer/widgets'
+import type { EdhtSession } from 'gexplorer/widgets'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-interface Room {
-    roomId:        string
-    canonicalName: string
-    displayName:   string
-    createdAt:     number
-    isOwner:       boolean
-    isAdmin:       boolean
-    isClosed:      boolean
-    closedReason:  string
+// RoomConfig is a pure frontend type — stored as a sealed blob in the vault
+// under vpath "gexchange://config/{roomId}.room.json".
+interface RoomConfig {
+    roomId:         string
+    canonicalName:  string
+    createdAt:      number
+    ownerPublicKey: string
+    sessionSecret:  string   // base64 — EDHT key material
+    ownerEndpoint:  string   // direct TCP endpoint; replaced by DHT in Phase 2
+    isOwner:        boolean
+    isAdmin:        boolean
+    isClosed:       boolean
+    closedReason:   string
+    accessPointId:  string   // vault access point for this config blob
+    blobSha256:     string   // blob identity — used to update config on change
+}
+
+interface Room extends RoomConfig {
+    displayName: string      // local override stored in localStorage
 }
 
 interface Identity {
     userId:    string
     username:  string
     publicKey: string
+    endpoint:  string
 }
 
 // ── SDK ────────────────────────────────────────────────────────────────────────
 
 const sdk = inject<WidgetSdk>('widgetSdk')
 const {
-    fsListDirSmart,
-    fsMkdir,
+    p2pGetIdentity,
+    p2pDeriveKey,
     p2pCreateInvite,
     p2pAcceptInvite,
-    p2pGetIdentity,
-    sendMessage:    sdkSendMessage,
-    getHistory:     sdkGetHistory,
-    onChatMessage:  sdkOnChatMessage,
-    onChatHistory:  sdkOnChatHistory,
+    p2pOpenChannel,
+    onP2PMessage,
+    createEdhtSession,
+    vaultOpen,
+    vaultClose,
+    vaultSealContentAs,
+    vaultUnsealText,
+    vaultList,
+    vaultDelete,
+    chatBind,
+    chatUnbind,
+    chatSend,
+    chatGetHistory,
+    onChatMessage,
+    onChatHistoryReady,
 } = sdk ?? {}
 
 // ── State ──────────────────────────────────────────────────────────────────────
@@ -426,16 +441,37 @@ const messages    = ref<ChatMessage[]>([])
 const draftText   = ref('')
 const sending     = ref(false)
 const chatLoading = ref(false)
-const shiftToSend = ref(true)   // true = Shift+Enter sends, Enter = newline
+const shiftToSend = ref(true)
 
 const feedRef  = ref<HTMLElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 
-// ── Refs ───────────────────────────────────────────────────────────────────────
+// ── DOM refs ───────────────────────────────────────────────────────────────────
 
 const pickerRef       = ref<HTMLElement | null>(null)
 const searchInputRef  = ref<HTMLInputElement | null>(null)
 const newRoomInputRef = ref<HTMLInputElement | null>(null)
+
+// ── Vault state ────────────────────────────────────────────────────────────────
+
+let vaultToken: string | null = null
+
+// ── Chat session state ─────────────────────────────────────────────────────────
+
+const chatSessions = ref(new Map<string, string>())  // roomId → chatSessionId
+
+// ── EDHT state ─────────────────────────────────────────────────────────────────
+
+const edhtSessions       = ref(new Map<string, EdhtSession>())
+const edhtSessionsPending = new Set<string>()
+const roomPeers          = ref<Map<string, Set<string>>>(new Map())
+const peerNames          = ref<Record<string, string>>({})
+
+const activePeerIds = computed(() => {
+    if (!activeRoom.value) return []
+    const peers = [...(roomPeers.value.get(activeRoom.value.roomId) ?? [])]
+    return peers.filter(id => id !== identity.value?.userId)
+})
 
 // ── Local display name overrides ───────────────────────────────────────────────
 
@@ -447,9 +483,9 @@ function loadLocalNames(): Record<string, string> {
 function saveLocalNames(names: Record<string, string>) {
     localStorage.setItem(LOCAL_NAMES_KEY, JSON.stringify(names))
 }
-function applyDisplayNames(raw: Omit<Room, 'displayName'>[]): Room[] {
+function applyDisplayNames(configs: RoomConfig[]): Room[] {
     const localNames = loadLocalNames()
-    return raw.map(r => ({
+    return configs.map(r => ({
         ...r,
         displayName: localNames[r.roomId] ?? r.canonicalName,
     }))
@@ -474,50 +510,172 @@ const canCreate = computed(() => {
 
 // ── Lifecycle ──────────────────────────────────────────────────────────────────
 
-let unsubMessage: (() => void) | null = null
-let unsubHistory: (() => void) | null = null
+let unsubMessage:  (() => void) | null = null
+let unsubHistory:  (() => void) | null = null
+let unsubP2PMsg:   (() => void) | null = null
 
 onMounted(async () => {
-    await Promise.all([loadIdentity(), loadRooms()])
-    if (rooms.value.length > 0 && !activeRoom.value)
-        selectRoom(rooms.value[0])
+    await loadIdentity()
+    await openVault()
+    await loadRooms()
 
-    // Subscribe to incoming chat messages from peers via SDK
-    unsubMessage = sdkOnChatMessage?.(null, (msg) => {
-        if (msg.roomId === activeRoom.value?.roomId)
-            appendMessage(msg)
+    const first = rooms.value[0]
+    if (first) selectRoom(first)
+
+    for (let i = 1; i < rooms.value.length; i++) {
+        const room = rooms.value[i]
+        setTimeout(() => ensureEdhtSession(room), i * 200)
+    }
+
+    unsubMessage = onChatMessage?.((msg) => {
+        if (msg.scopeId === activeRoom.value?.roomId)
+            appendMessage({ ...msg, roomId: msg.scopeId })
     }) ?? null
 
-    // Subscribe to history arrival — reload when peer delivers history
-    unsubHistory = sdkOnChatHistory?.(null, (roomId) => {
-        if (roomId === activeRoom.value?.roomId)
-            loadHistory(roomId)
+    unsubHistory = onChatHistoryReady?.((scopeId) => {
+        if (scopeId === activeRoom.value?.roomId)
+            loadHistory(scopeId)
+    }) ?? null
+
+    unsubP2PMsg = onP2PMessage?.((event) => {
+        const session = edhtSessions.value.get(event.channelId)
+        if (session) session.discover()
     }) ?? null
 })
 
-onUnmounted(() => {
+onUnmounted(async () => {
     unsubMessage?.()
     unsubHistory?.()
+    unsubP2PMsg?.()
     document.removeEventListener('mousedown', onDocClick)
+    await stopAllEdhtSessions()
+    await stopAllChatSessions()
+    if (vaultToken) {
+        await vaultClose?.(vaultToken)
+        vaultToken = null
+    }
 })
 
-// Reload history when active room changes
 watch(activeRoom, async (room) => {
     messages.value = []
-    if (room) await loadHistory(room.roomId)
+    if (!room) return
+    await ensureChatSession(room)
+    await loadHistory(room.roomId)
 })
+
+// ── Vault ──────────────────────────────────────────────────────────────────────
+
+async function openVault() {
+    if (!p2pDeriveKey || !vaultOpen) return
+    try {
+        const keyBytes = await p2pDeriveKey('vault-master-v1')
+        const result   = await vaultOpen({ scopeId: 'rooms', masterKey: keyBytes })
+        vaultToken     = result.vaultToken
+        console.log('[GExchange] Vault open — vaultId:', result.vaultId)
+    } catch (err) {
+        console.warn('[GExchange] Failed to open vault:', err)
+    }
+}
+
+// ── Room persistence ───────────────────────────────────────────────────────────
+
+async function loadRooms() {
+    if (!vaultToken || !vaultList || !vaultUnsealText) return
+    loading.value = true
+    try {
+        // All room configs live under the config/ prefix
+        const entries = await vaultList(vaultToken, 'gexchange://config/')
+        const configs: RoomConfig[] = []
+
+        for (const entry of entries) {
+            if (!entry.vpath.endsWith('.room.json')) continue
+            try {
+                const text   = await vaultUnsealText(vaultToken, entry.blobSha256)
+                const config = JSON.parse(text) as RoomConfig
+                // Attach vault identity so we can update this config later
+                config.accessPointId = entry.accessPointId
+                config.blobSha256    = entry.blobSha256
+                configs.push(config)
+            } catch (err) {
+                console.warn('[GExchange] Failed to read room config:', entry.vpath, err)
+            }
+        }
+
+        rooms.value = applyDisplayNames(configs)
+    } catch (err) {
+        console.warn('[GExchange] Failed to load rooms:', err)
+    } finally {
+        loading.value = false
+    }
+}
+
+async function saveRoomConfig(config: Omit<RoomConfig, 'accessPointId' | 'blobSha256'>): Promise<{ accessPointId: string; blobSha256: string }> {
+    if (!vaultToken || !vaultSealContentAs)
+        throw new Error('Vault not open')
+
+    const json    = JSON.stringify(config, null, 2)
+    // encodeURIComponent + unescape safely handles non-ASCII in btoa
+    const content = btoa(unescape(encodeURIComponent(json)))
+    const vpath   = `gexchange://config/${config.roomId}.room.json`
+
+    const ap = await vaultSealContentAs(vaultToken, content, vpath)
+    return { accessPointId: ap.accessPointId, blobSha256: ap.blobSha256 }
+}
+
+// ── Chat sessions ──────────────────────────────────────────────────────────────
+
+async function ensureChatSession(room: Room) {
+    if (chatSessions.value.has(room.roomId)) return
+    if (!chatBind || !p2pOpenChannel) return
+
+    try {
+        let channelId: string
+
+        if (room.isOwner) {
+            // Hub — inbound connections arrive via PeerConnectionCoordinator
+            channelId = room.roomId
+        } else {
+            const ch  = await p2pOpenChannel({
+                endpoint:  room.ownerEndpoint,
+                publicKey: room.ownerPublicKey,
+                sessionId: room.roomId,
+            })
+            channelId = ch.channelId
+        }
+
+        const { chatSessionId } = await chatBind({
+            channelId,
+            scopeId:      room.roomId,
+            senderName:   identity.value?.username ?? identity.value?.userId ?? 'Unknown',
+            isHub:        room.isOwner,
+            historyLimit: 500,
+        })
+
+        chatSessions.value.set(room.roomId, chatSessionId)
+        console.log('[GExchange] Chat bound room:', room.roomId.slice(0, 8), 'session:', chatSessionId.slice(0, 8))
+    } catch (err) {
+        console.warn('[GExchange] Failed to bind chat for room:', room.roomId.slice(0, 8), err)
+    }
+}
+
+async function stopAllChatSessions() {
+    if (!chatUnbind) return
+    for (const chatSessionId of chatSessions.value.values()) {
+        try { await chatUnbind(chatSessionId) } catch { }
+    }
+    chatSessions.value.clear()
+}
 
 // ── Chat actions ───────────────────────────────────────────────────────────────
 
 async function loadHistory(roomId: string) {
+    if (!chatGetHistory) return
     chatLoading.value = true
     try {
-        const res = await sdkGetHistory?.(roomId, 100)
-        if (res?.ok) {
-            messages.value = res.messages
-            await nextTick()
-            scrollToBottom()
-        }
+        const msgs     = await chatGetHistory(roomId, 100)
+        messages.value = msgs.map(m => ({ ...m, roomId: m.scopeId }))
+        await nextTick()
+        scrollToBottom()
     } catch (err) {
         console.warn('[GExchange] Failed to load history:', err)
     } finally {
@@ -527,15 +685,20 @@ async function loadHistory(roomId: string) {
 
 async function sendMessage() {
     const text = draftText.value.trim()
-    if (!text || !activeRoom.value || sending.value) return
+    if (!text || !activeRoom.value || sending.value || !chatSend) return
+
+    const chatSessionId = chatSessions.value.get(activeRoom.value.roomId)
+    if (!chatSessionId) {
+        console.warn('[GExchange] No chat session for room:', activeRoom.value.roomId.slice(0, 8))
+        return
+    }
 
     sending.value = true
     const optimisticId = `opt_${Date.now()}`
 
-    // Optimistic — show immediately before backend confirms
     const optimistic: ChatMessage = {
         id:         optimisticId,
-        roomId:     activeRoom.value.roomId,
+        scopeId:    activeRoom.value.roomId,
         senderId:   identity.value?.userId ?? '',
         senderName: identity.value?.username ?? 'You',
         text,
@@ -547,15 +710,15 @@ async function sendMessage() {
     resetInputHeight()
 
     try {
-        const res = await sdkSendMessage?.(activeRoom.value.roomId, text)
-        if (res?.ok && res.msg) {
-            // Replace optimistic with real message (has canonical backend ID)
-            const idx = messages.value.findIndex(m => m.id === optimisticId)
-            if (idx >= 0) messages.value[idx] = res.msg
+        const result = await chatSend(chatSessionId, text)
+        const idx    = messages.value.findIndex(m => m.id === optimisticId)
+        if (idx >= 0) messages.value[idx] = {
+            ...messages.value[idx],
+            id:     result.messageId,
+            sentAt: result.sentAt,
         }
     } catch (err) {
         console.warn('[GExchange] Failed to send message:', err)
-        // Remove optimistic on failure
         messages.value = messages.value.filter(m => m.id !== optimisticId)
     } finally {
         sending.value = false
@@ -571,8 +734,7 @@ function appendMessage(msg: ChatMessage) {
 }
 
 function scrollToBottom() {
-    if (feedRef.value)
-        feedRef.value.scrollTop = feedRef.value.scrollHeight
+    if (feedRef.value) feedRef.value.scrollTop = feedRef.value.scrollHeight
 }
 
 // ── Input handling ─────────────────────────────────────────────────────────────
@@ -617,48 +779,175 @@ function formatTime(ms: number): string {
     return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(new Date(ms))
 }
 
-// ── Data loading ───────────────────────────────────────────────────────────────
+function formatDate(ms: number): string {
+    if (!ms || isNaN(ms)) return ''
+    return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(ms))
+}
+
+// ── EDHT ───────────────────────────────────────────────────────────────────────
+
+const encoder = new TextEncoder()
+
+async function ensureEdhtSession(room: Room) {
+    if (edhtSessions.value.has(room.roomId)) return
+    if (edhtSessionsPending.has(room.roomId)) return
+    edhtSessionsPending.add(room.roomId)
+    if (!room.sessionSecret || !createEdhtSession) return
+
+    try {
+        const secret = Uint8Array.from(atob(room.sessionSecret), c => c.charCodeAt(0))
+        const s      = await createEdhtSession({ sessionSecret: secret, scopeId: room.roomId })
+
+        const payload = encoder.encode(JSON.stringify({
+            endpoint:  identity.value?.endpoint  ?? '',
+            publicKey: identity.value?.publicKey ?? '',
+            userId:    identity.value?.userId    ?? '',
+            username:  identity.value?.username  ?? '',
+        }))
+
+        await s.announce(payload)
+
+        s.onPeerDiscovered(async peer => {
+            try {
+                const info = JSON.parse(new TextDecoder().decode(peer.payload))
+
+                if (info.endpoint && info.publicKey && p2pOpenChannel) {
+                    try {
+                        await p2pOpenChannel({
+                            endpoint:  info.endpoint,
+                            publicKey: info.publicKey,
+                            sessionId: room.roomId,
+                        })
+                    } catch (err: any) {
+                        if (!err?.message?.includes('already'))
+                            console.warn('[GExchange] p2pOpenChannel failed:', err?.message)
+                    }
+                }
+
+                if (info.userId) {
+                    if (!roomPeers.value.has(room.roomId))
+                        roomPeers.value.set(room.roomId, new Set())
+                    roomPeers.value.get(room.roomId)!.add(info.userId)
+                    peerNames.value[info.userId] = info.username || info.userId
+                }
+            } catch (err) {
+                console.warn('[GExchange] Failed to parse EDHT peer payload:', err)
+            }
+        })
+
+        s.onPeerLeft(_nodeId => { /* future: remove from roomPeers */ })
+
+        await s.discover()
+        edhtSessions.value.set(room.roomId, s)
+        edhtSessionsPending.delete(room.roomId)
+        console.log(`[GExchange] EDHT session ready for room ${room.roomId.slice(0, 8)}…`)
+    } catch (err) {
+        edhtSessionsPending.delete(room.roomId)
+        console.warn('[GExchange] Failed to start EDHT session:', err)
+    }
+}
+
+async function stopAllEdhtSessions() {
+    for (const session of edhtSessions.value.values())
+        await session.dispose()
+    edhtSessions.value.clear()
+    edhtSessionsPending.clear()
+}
+
+// ── Identity ───────────────────────────────────────────────────────────────────
 
 async function loadIdentity() {
+    if (!p2pGetIdentity) return
     try {
-        const result = await p2pGetIdentity?.()
-        if (result) identity.value = result
+        const result   = await p2pGetIdentity()
+        identity.value = {
+            userId:    result.userId,
+            username:  result.userId,
+            publicKey: result.publicKey,
+            endpoint:  result.endpoint,
+        }
     } catch (err) {
         console.warn('[GExchange] Failed to load identity:', err)
     }
 }
 
-async function loadRooms() {
-    loading.value = true
-    try {
-        const res = await fsListDirSmart?.('.', {})
-        rooms.value = applyDisplayNames(
-            (res?.entries ?? []).map((e: any) => ({
-                roomId:        e.Meta?.roomId        ?? '',
-                canonicalName: e.Meta?.canonicalName ?? e.Name ?? '',
-                createdAt:     e.Meta?.createdAt     ?? e.ModifiedAt ?? 0,
-                isOwner:       !!(e.Meta?.isOwner),
-                isAdmin:       !!(e.Meta?.isAdmin),
-                isClosed:      !!(e.Meta?.isClosed),
-                closedReason:  e.Meta?.closedReason  ?? '',
-            }))
-        )
-    } catch (err) {
-        console.warn('[GExchange] Failed to load rooms:', err)
-    } finally {
-        loading.value = false
-    }
-}
-
 // ── Room actions ───────────────────────────────────────────────────────────────
 
-function selectRoom(room: Room) { activeRoom.value = room }
+function selectRoom(room: Room) {
+    activeRoom.value = room
+    ensureEdhtSession(room)
+}
 
 async function createRoom() {
     const name = roomFilter.value.trim()
     if (!name) return
     await doCreateRoom(name)
     closePicker()
+}
+
+async function createRoomFromEmpty() {
+    const name = newRoomName.value.trim()
+    if (!name) return
+    createError.value = ''
+    try {
+        await doCreateRoom(name)
+        showNewRoomInput.value = false
+        newRoomName.value      = ''
+    } catch (err: any) {
+        createError.value = err.message
+    }
+}
+
+async function doCreateRoom(name: string) {
+    if (!identity.value) throw new Error('Identity not loaded')
+
+    const createdAt     = Date.now()
+    const sessionSecret = generateSecret()
+    const roomId        = await deriveRoomId(identity.value.publicKey, name, createdAt)
+
+    const config: Omit<RoomConfig, 'accessPointId' | 'blobSha256'> = {
+        roomId,
+        canonicalName:  name,
+        createdAt,
+        ownerPublicKey: identity.value.publicKey,
+        sessionSecret,
+        ownerEndpoint:  identity.value.endpoint,
+        isOwner:        true,
+        isAdmin:        true,
+        isClosed:       false,
+        closedReason:   '',
+    }
+
+    const { accessPointId, blobSha256 } = await saveRoomConfig(config)
+    const room: Room = {
+        ...config,
+        accessPointId,
+        blobSha256,
+        displayName: name,
+    }
+
+    rooms.value.push(room)
+    selectRoom(room)
+}
+
+function generateSecret(): string {
+    const bytes = crypto.getRandomValues(new Uint8Array(32))
+    return btoa(String.fromCharCode(...bytes))
+}
+
+async function deriveRoomId(publicKey: string, name: string, createdAt: number): Promise<string> {
+    const input   = `${publicKey}|${name}|${createdAt}`
+    const encoded = new TextEncoder().encode(input)
+    const hash    = await crypto.subtle.digest('SHA-256', encoded)
+    return Array.from(new Uint8Array(hash))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('')
+        .slice(0, 8)
+}
+
+function openInItems() {
+    if (!activeRoom.value) return
+    console.log('[GExchange] Open in items:', `gexchange://${activeRoom.value.roomId}/`)
 }
 
 function focusCreateField() {
@@ -671,29 +960,78 @@ function focusCreateField() {
     })
 }
 
-async function createRoomFromEmpty() {
-    const name = newRoomName.value.trim()
-    if (!name) return
-    createError.value = ''
+// ── Invite ─────────────────────────────────────────────────────────────────────
+
+async function generateInvite() {
+    if (!activeRoom.value || !p2pCreateInvite) return
+    inviteError.value  = ''
+    inviteToken.value  = ''
+    inviteCopied.value = false
     try {
-        await doCreateRoom(name)
-        showNewRoomInput.value = false
-        newRoomName.value = ''
+        const result      = await p2pCreateInvite(activeRoom.value.roomId, {
+            sessionSecret:   activeRoom.value.sessionSecret,
+            validityMinutes: inviteExpiry.value,
+        })
+        inviteToken.value = result.token
     } catch (err: any) {
-        createError.value = err.message
+        inviteError.value = err.message
     }
 }
 
-async function doCreateRoom(name: string) {
-    await fsMkdir?.(name)
-    await loadRooms()
-    const created = rooms.value.find(r => r.canonicalName === name)
-    if (created) selectRoom(created)
+async function copyInvite() {
+    if (!inviteToken.value) return
+    try {
+        await navigator.clipboard.writeText(inviteToken.value)
+        inviteCopied.value = true
+        setTimeout(() => { inviteCopied.value = false }, 2000)
+    } catch { }
 }
 
-function openInItems() {
-    if (!activeRoom.value) return
-    console.log('[GExchange] Open in items:', `gexchange://${activeRoom.value.roomId}/`)
+async function joinRoom() {
+    const token = joinToken.value.trim()
+    if (!token || !p2pAcceptInvite || !identity.value) return
+    joinError.value   = ''
+    joinLoading.value = true
+    try {
+        const decoded = await p2pAcceptInvite(token)
+
+        const config: Omit<RoomConfig, 'accessPointId' | 'blobSha256'> = {
+            roomId:         decoded.sessionId,
+            canonicalName:  decoded.sessionId,
+            createdAt:      Date.now(),
+            ownerPublicKey: decoded.publicKey,
+            sessionSecret:  decoded.sessionSecret,
+            ownerEndpoint:  decoded.endpoint,
+            isOwner:        false,
+            isAdmin:        false,
+            isClosed:       false,
+            closedReason:   '',
+        }
+
+        const { accessPointId, blobSha256 } = await saveRoomConfig(config)
+        const room: Room = {
+            ...config,
+            accessPointId,
+            blobSha256,
+            displayName: config.canonicalName,
+        }
+
+        rooms.value.push(room)
+        selectRoom(room)
+
+        showJoinModal.value = false
+        joinToken.value     = ''
+    } catch (err: any) {
+        joinError.value = err.message
+    } finally {
+        joinLoading.value = false
+    }
+}
+
+function closeJoinModal() {
+    showJoinModal.value = false
+    joinToken.value     = ''
+    joinError.value     = ''
 }
 
 // ── Picker ─────────────────────────────────────────────────────────────────────
@@ -732,7 +1070,7 @@ function renameRoom(room: Room) {
     startRename(`gex-room-${room.roomId}`, {
         onCommit: (newName) => {
             if (!newName.trim()) return
-            const localNames = loadLocalNames()
+            const localNames        = loadLocalNames()
             localNames[room.roomId] = newName.trim()
             saveLocalNames(localNames)
             const r = rooms.value.find(x => x.roomId === room.roomId)
@@ -740,9 +1078,9 @@ function renameRoom(room: Room) {
             if (activeRoom.value?.roomId === room.roomId)
                 activeRoom.value = { ...activeRoom.value, displayName: newName.trim() }
         },
-        onCancel:   () => {},
-        selectAll:  true,
-        validate:   (v) => v.trim() ? null : 'Name cannot be empty',
+        onCancel:  () => {},
+        selectAll: true,
+        validate:  (v) => v.trim() ? null : 'Name cannot be empty',
     })
 }
 
@@ -750,266 +1088,291 @@ function renameRoom(room: Room) {
 
 function toggleSidebar() { showSidebar.value = !showSidebar.value }
 
-// ── Invite ─────────────────────────────────────────────────────────────────────
-
-async function generateInvite() {
-    if (!activeRoom.value) return
-    inviteError.value  = ''
-    inviteToken.value  = ''
-    inviteCopied.value = false
-    try {
-        const result = await p2pCreateInvite?.(
-            activeRoom.value.roomId,
-            activeRoom.value.canonicalName,
-            { mode: 'open', validityMinutes: inviteExpiry.value }
-        )
-        if (!result) throw new Error('P2P capability not available')
-        inviteToken.value = result.token
-    } catch (err: any) {
-        inviteError.value = err.message
-    }
-}
-
-async function copyInvite() {
-    if (!inviteToken.value) return
-    try {
-        await navigator.clipboard.writeText(inviteToken.value)
-        inviteCopied.value = true
-        setTimeout(() => { inviteCopied.value = false }, 2000)
-    } catch { }
-}
-
-async function joinRoom() {
-    const token = joinToken.value.trim()
-    if (!token) return
-    joinError.value   = ''
-    joinLoading.value = true
-    try {
-        const result = await p2pAcceptInvite?.(token)
-        if (!result) throw new Error('P2P capability not available')
-        await loadRooms()
-        const joined = rooms.value.find(r => r.roomId === result.roomId)
-        if (joined) selectRoom(joined)
-        showJoinModal.value = false
-        joinToken.value     = ''
-    } catch (err: any) {
-        joinError.value = err.message
-    } finally {
-        joinLoading.value = false
-    }
-}
-
-function closeJoinModal() {
-    showJoinModal.value = false
-    joinToken.value     = ''
-    joinError.value     = ''
-}
-
-// ── Formatters ─────────────────────────────────────────────────────────────────
-
-function formatDate(ms: number): string {
-    if (!ms || isNaN(ms)) return ''
-    return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(ms))
-}
-
 watch(showNewRoomInput, (v) => {
     if (v) nextTick(() => newRoomInputRef.value?.focus())
 })
 </script>
 
 <style scoped>
-/* ── Reset & root ──────────────────────────────────────────────────────────── */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
+/* ── Root ────────────────────────────────────────────────────────────────── */
 .gex-root {
-    --bg:       var(--surface-1,  #1a1a1f);
-    --bg-2:     var(--surface-2,  #22222a);
-    --bg-3:     var(--surface-3,  #2a2a35);
-    --fg:       var(--text-1,     #e8e8f0);
-    --fg-dim:   var(--text-2,     #9090a8);
-    --fg-muted: var(--text-3,     #606078);
-    --accent:   var(--color-accent, #7c6ff7);
-    --border:   var(--border-1,   rgba(255,255,255,.08));
-    --radius:   8px;
-    --font:     var(--font-ui, system-ui, sans-serif);
+    --bg:         var(--surface-1,  #111);
+    --bg-2:       var(--surface-2,  #171717);
+    --bg-3:       var(--surface-3,  #1e1e1e);
+    --border:     var(--border-1,   rgba(255,255,255,.07));
+    --fg:         var(--text-1,     #e8e8e8);
+    --fg-dim:     var(--text-2,     #777);
+    --fg-muted:   var(--text-3,     #444);
+    --accent:     var(--color-accent, #5b8ef0);
+    --accent-dim: rgba(91,142,240,.15);
+    --radius:     8px;
+    --font:       var(--font-ui, system-ui, sans-serif);
 
     display: grid;
-    grid-template-rows: auto 1fr auto;
+    grid-template-rows: 44px 1fr auto;
     height: 100%;
+    min-height: 0;
     background: var(--bg);
     color: var(--fg);
     font-family: var(--font);
     font-size: 13px;
-    position: relative;
+    border-radius: var(--radius);
     overflow: hidden;
+    position: relative;
+}
+.gex-root.no-room {
+    grid-template-rows: 44px auto 1fr;
 }
 
-/* ── Header ───────────────────────────────────────────────────────────────── */
+/* ── Header ──────────────────────────────────────────────────────────────── */
 .gex-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 10px;
-    height: 44px;
-    border-bottom: 1px solid var(--border);
+    padding: 0 12px;
     background: var(--bg-2);
-    flex-shrink: 0;
-    z-index: 10;
+    border-bottom: 1px solid var(--border);
+    gap: 8px;
 }
-.header-left, .header-right { display: flex; align-items: center; gap: 4px; }
-.icon-btn {
-    width: 28px; height: 28px;
-    display: flex; align-items: center; justify-content: center;
-    background: transparent;
-    border: none;
-    border-radius: 6px;
-    color: var(--fg-dim);
-    cursor: pointer;
-    transition: background .15s, color .15s;
-}
-.icon-btn:hover { background: var(--bg-3); color: var(--fg); }
-.icon-btn svg { width: 15px; height: 15px; }
+.header-left  { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
+.header-right { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 
-/* ── Room picker ──────────────────────────────────────────────────────────── */
-.room-picker { position: relative; }
+/* ── Room picker ─────────────────────────────────────────────────────────── */
+.room-picker { position: relative; min-width: 0; }
+
 .room-trigger {
-    display: flex; align-items: center; gap: 5px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
     background: transparent;
-    border: none;
+    border: 1px solid transparent;
     border-radius: 6px;
     color: var(--fg);
+    cursor: pointer;
+    padding: 4px 8px;
     font-family: var(--font);
     font-size: 13px;
     font-weight: 600;
-    padding: 4px 8px;
-    cursor: pointer;
-    transition: background .15s;
-    max-width: 220px;
+    transition: background .15s, border-color .15s;
+    max-width: 280px;
+    min-width: 0;
 }
-.room-trigger:hover { background: var(--bg-3); }
-.room-hash { color: var(--accent); font-weight: 700; }
-.room-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-trigger:hover { background: var(--bg-3); border-color: var(--border); }
+.room-picker.open .room-trigger { background: var(--bg-3); border-color: var(--accent); }
+
+.room-hash    { color: var(--accent); font-weight: 700; flex-shrink: 0; }
+.room-name    { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .room-id-badge {
     font-size: 10px;
     color: var(--fg-muted);
-    font-family: monospace;
     background: var(--bg-3);
-    border-radius: 3px;
-    padding: 1px 4px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    flex-shrink: 0;
+    font-weight: 400;
 }
-.chevron { width: 10px; height: 6px; color: var(--fg-muted); flex-shrink: 0; }
+.chevron {
+    width: 10px; height: 6px;
+    color: var(--fg-dim);
+    flex-shrink: 0;
+    transition: transform .2s;
+}
 .room-picker.open .chevron { transform: rotate(180deg); }
 
+/* ── Dropdown ────────────────────────────────────────────────────────────── */
 .room-dropdown {
     position: absolute;
-    top: calc(100% + 4px);
+    top: calc(100% + 6px);
     left: 0;
-    width: 260px;
+    width: 280px;
     background: var(--bg-2);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     box-shadow: 0 8px 32px rgba(0,0,0,.5);
     z-index: 200;
+    display: flex;
+    flex-direction: column;
     overflow: hidden;
 }
-.dropdown-top { padding: 8px 8px 0; }
+.dropdown-top  { flex-shrink: 0; }
 .search-row {
-    display: flex; align-items: center; gap: 6px;
-    background: var(--bg-3);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 4px 8px;
-    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px 6px;
 }
-.search-icon { width: 13px; height: 13px; color: var(--fg-muted); flex-shrink: 0; }
+.search-icon  { width: 14px; height: 14px; color: var(--fg-dim); flex-shrink: 0; }
 .room-search {
-    flex: 1; background: transparent; border: none;
-    color: var(--fg); font-family: var(--font); font-size: 12px; outline: none;
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--fg);
+    font-family: var(--font);
+    font-size: 13px;
 }
-.dropdown-actions { display: flex; gap: 4px; margin-bottom: 6px; }
+.room-search::placeholder { color: var(--fg-muted); }
+
+.dropdown-actions {
+    display: flex;
+    gap: 6px;
+    padding: 4px 10px 8px;
+}
 .action-btn {
-    flex: 1; display: flex; align-items: center; gap: 4px; justify-content: center;
-    background: var(--bg-3); border: 1px solid var(--border); border-radius: 5px;
-    color: var(--fg-dim); font-family: var(--font); font-size: 11px;
-    padding: 5px 6px; cursor: pointer; transition: all .15s;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex: 1;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-3);
+    color: var(--fg-dim);
+    font-family: var(--font);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all .15s;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
-.action-btn:hover { color: var(--fg); border-color: var(--accent); }
-.action-btn svg { width: 12px; height: 12px; }
-.dropdown-sep { height: 1px; background: var(--border); margin: 0 -8px; }
-.room-list-scroll { max-height: 200px; overflow-y: auto; padding: 4px; }
-.room-empty { font-size: 11px; color: var(--fg-muted); text-align: center; padding: 12px; }
+.action-btn svg { width: 12px; height: 12px; flex-shrink: 0; }
+.action-btn:hover:not(:disabled) { color: var(--fg); border-color: var(--accent); }
+.action-btn:disabled  { opacity: .35; cursor: not-allowed; }
+.create-btn:not(:disabled) { color: var(--accent); }
+.join-btn:not(:disabled)   { color: #4caf6e; }
+
+.dropdown-sep   { height: 1px; background: var(--border); }
+.room-list-scroll { overflow-y: auto; max-height: 220px; padding: 4px 0; }
+.room-empty { padding: 16px; text-align: center; color: var(--fg-muted); font-size: 12px; }
+
 .room-row {
-    display: flex; align-items: center; gap: 5px;
-    padding: 5px 6px; border-radius: 5px; cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    cursor: pointer;
     transition: background .1s;
+    position: relative;
 }
-.room-row:hover, .room-row.active { background: var(--bg-3); }
-.row-hash { color: var(--accent); font-weight: 700; font-size: 12px; }
-.row-name { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row-id { font-size: 10px; color: var(--fg-muted); font-family: monospace; }
-.row-closed { font-size: 10px; color: #e05555; }
+.room-row:hover  { background: var(--bg-3); }
+.room-row.active { background: var(--accent-dim); }
+.row-hash  { color: var(--accent); font-weight: 700; flex-shrink: 0; }
+.row-name  { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-id    { font-size: 10px; color: var(--fg-muted); flex-shrink: 0; }
+.row-closed {
+    font-size: 10px;
+    color: #e05555;
+    background: rgba(224,85,85,.1);
+    border: 1px solid rgba(224,85,85,.25);
+    border-radius: 4px;
+    padding: 1px 5px;
+    flex-shrink: 0;
+}
 .row-rename {
-    width: 20px; height: 20px; opacity: 0;
-    display: flex; align-items: center; justify-content: center;
-    background: transparent; border: none; color: var(--fg-muted); cursor: pointer;
-    border-radius: 3px; transition: opacity .15s, background .15s;
+    opacity: 0;
+    background: transparent;
+    border: none;
+    color: var(--fg-dim);
+    cursor: pointer;
+    padding: 2px;
+    display: flex;
+    align-items: center;
+    transition: opacity .15s, color .15s;
+    flex-shrink: 0;
 }
 .row-rename svg { width: 12px; height: 12px; }
 .room-row:hover .row-rename { opacity: 1; }
-.row-rename:hover { background: var(--bg); color: var(--fg); }
+.row-rename:hover { color: var(--accent); }
 
-/* ── Empty state ──────────────────────────────────────────────────────────── */
-.empty-state {
-    grid-row: 2 / 5;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 8px; padding: 32px; text-align: center;
+/* ── Icon buttons ────────────────────────────────────────────────────────── */
+.icon-btn {
+    background: transparent;
+    border: none;
+    color: var(--fg-dim);
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    transition: color .15s, background .15s;
 }
-.empty-glyph { font-size: 48px; color: var(--fg-muted); line-height: 1; }
-.empty-title { font-size: 15px; font-weight: 600; }
-.empty-sub   { font-size: 12px; color: var(--fg-dim); }
-.empty-actions { display: flex; gap: 8px; margin-top: 4px; }
-.inline-create { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
-.new-room-input {
-    background: var(--bg-3); border: 1px solid var(--border); border-radius: 6px;
-    color: var(--fg); font-family: var(--font); font-size: 12px;
-    padding: 6px 10px; outline: none; transition: border-color .15s;
-}
-.new-room-input:focus { border-color: var(--accent); }
-.create-error { font-size: 11px; color: #e05555; }
+.icon-btn svg  { width: 15px; height: 15px; }
+.icon-btn:hover { color: var(--fg); background: var(--bg-3); }
 
-/* ── Pill buttons ─────────────────────────────────────────────────────────── */
+/* ── Pill buttons ────────────────────────────────────────────────────────── */
 .pill-btn {
-    display: inline-flex; align-items: center; gap: 5px;
-    background: var(--bg-3); border: 1px solid var(--border); border-radius: 20px;
-    color: var(--fg-dim); font-family: var(--font); font-size: 12px;
-    padding: 5px 12px; cursor: pointer; transition: all .15s; white-space: nowrap;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    color: var(--fg-dim);
+    font-family: var(--font);
+    font-size: 12px;
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: all .15s;
 }
-.pill-btn:hover:not(:disabled) { color: var(--fg); border-color: rgba(255,255,255,.15); }
-.pill-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pill-btn:hover:not(:disabled) { color: var(--fg); border-color: var(--fg-muted); }
+.pill-btn.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
 .pill-btn.primary:hover:not(:disabled) { filter: brightness(1.1); }
 .pill-btn:disabled { opacity: .4; cursor: not-allowed; }
 
-/* ── Chat body ────────────────────────────────────────────────────────────── */
+/* ── Empty state ─────────────────────────────────────────────────────────── */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 32px 24px;
+    text-align: center;
+}
+.empty-glyph  { font-size: 48px; color: var(--fg-muted); line-height: 1; margin-bottom: 4px; }
+.empty-title  { font-size: 15px; font-weight: 600; margin: 0; color: var(--fg); }
+.empty-sub    { font-size: 12px; color: var(--fg-dim); margin: 0; }
+.empty-actions { display: flex; gap: 8px; margin-top: 4px; }
+.inline-create { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+.new-room-input {
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--fg);
+    font-family: var(--font);
+    font-size: 13px;
+    padding: 6px 10px;
+    outline: none;
+    width: 160px;
+    transition: border-color .15s;
+}
+.new-room-input:focus { border-color: var(--accent); }
+.create-error { font-size: 11px; color: #e05555; margin: 0; }
+
+/* ── Chat body ───────────────────────────────────────────────────────────── */
 .chat-body {
     display: flex;
     overflow: hidden;
     min-height: 0;
+    height: 100%;
 }
 .chat-feed {
     flex: 1;
+    padding: 12px 16px;
     overflow-y: auto;
-    padding: 12px 14px;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 2px;
-    scroll-behavior: smooth;
 }
 
-/* ── Messages ─────────────────────────────────────────────────────────────── */
-.message { display: flex; flex-direction: column; max-width: 80%; }
+/* ── Messages ────────────────────────────────────────────────────────────── */
+.message { display: flex; flex-direction: column; max-width: 72%; }
 .message.mine   { align-self: flex-end; align-items: flex-end; }
 .message.theirs { align-self: flex-start; align-items: flex-start; }
-.system-msg     { align-self: center; align-items: center; }
 
 .msg-sender {
     font-size: 11px;
@@ -1017,55 +1380,56 @@ watch(showNewRoomInput, (v) => {
     margin-bottom: 2px;
     padding: 0 4px;
 }
-.msg-sender.sender-you { color: var(--accent); opacity: .7; }
+.msg-sender.sender-you { color: var(--accent); opacity: .8; }
 
 .msg-bubble {
     display: flex;
     align-items: flex-end;
     gap: 6px;
-    background: var(--bg-3);
+    padding: 7px 10px;
     border-radius: 12px;
-    padding: 6px 10px;
-    max-width: 100%;
-}
-.message.mine .msg-bubble {
-    background: var(--accent);
-    border-bottom-right-radius: 4px;
-}
-.message.theirs .msg-bubble {
-    border-bottom-left-radius: 4px;
-}
-.system-msg .msg-bubble {
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 4px 10px;
-}
-
-.msg-text {
-    font-size: 13px;
     line-height: 1.45;
     word-break: break-word;
 }
-.msg-text.muted { color: var(--fg-muted); }
-.message.mine .msg-text { color: #fff; }
+.message.mine .msg-bubble {
+    background: var(--accent);
+    border-bottom-right-radius: 3px;
+}
+.message.theirs .msg-bubble {
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 3px;
+}
+
+.msg-text  { font-size: 13px; flex: 1; }
+.message.mine .msg-text   { color: #fff; }
+.message.theirs .msg-text { color: var(--fg); }
 
 .msg-time {
     font-size: 10px;
-    color: rgba(255,255,255,.4);
     flex-shrink: 0;
-    align-self: flex-end;
     margin-bottom: 1px;
+    white-space: nowrap;
 }
+.message.mine .msg-time   { color: rgba(255,255,255,.55); }
 .message.theirs .msg-time { color: var(--fg-muted); }
 
-/* ── Date separator ───────────────────────────────────────────────────────── */
+.system-msg {
+    align-self: center;
+    color: var(--fg-muted);
+    font-size: 11px;
+    font-style: italic;
+    padding: 2px 0;
+}
+
+/* ── Date separator ──────────────────────────────────────────────────────── */
 .date-sep {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin: 10px 0 4px;
-    align-self: stretch;
+    gap: 10px;
+    color: var(--fg-muted);
+    font-size: 11px;
+    margin: 8px 0 4px;
 }
 .date-sep::before,
 .date-sep::after {
@@ -1074,67 +1438,77 @@ watch(showNewRoomInput, (v) => {
     height: 1px;
     background: var(--border);
 }
-.date-sep span {
+
+/* ── Sidebar ─────────────────────────────────────────────────────────────── */
+.chat-sidebar {
+    width: 200px;
+    flex-shrink: 0;
+    background: var(--bg-2);
+    border-left: 1px solid var(--border);
+    padding: 14px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    overflow-y: auto;
+}
+.sidebar-section h4 {
+    margin: 0 0 8px;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: .08em;
+    font-weight: 700;
+}
+.user-list { list-style: none; padding: 0; margin: 0; }
+.user-row  { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; font-size: 12px; }
+.user-row.self { color: var(--fg); }
+.dot       { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.dot.online { background: #4caf6e; }
+.you-tag {
     font-size: 10px;
     color: var(--fg-muted);
-    white-space: nowrap;
-}
-
-/* ── Sidebar ──────────────────────────────────────────────────────────────── */
-.chat-sidebar {
-    width: 160px; flex-shrink: 0;
-    border-left: 1px solid var(--border);
-    overflow-y: auto;
-    padding: 10px 0;
-}
-.sidebar-section { padding: 0 10px 12px; }
-.sidebar-section h4 {
-    font-size: 10px; font-weight: 700; letter-spacing: .06em;
-    text-transform: uppercase; color: var(--fg-muted);
-    margin-bottom: 6px;
-}
-.user-list { list-style: none; display: flex; flex-direction: column; gap: 2px; }
-.user-row {
-    display: flex; align-items: center; gap: 5px;
-    font-size: 12px; padding: 2px 4px; border-radius: 4px;
-}
-.dot {
-    width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
-    background: var(--fg-muted);
-}
-.dot.online { background: #4caf7d; }
-.you-tag {
-    font-size: 9px; color: var(--fg-muted);
-    background: var(--bg-3); border-radius: 3px; padding: 1px 4px;
+    background: var(--bg-3);
+    border-radius: 3px;
+    padding: 1px 4px;
     margin-left: auto;
 }
-.room-meta { display: flex; flex-direction: column; gap: 4px; }
-.meta-row { display: flex; flex-direction: column; gap: 1px; }
-.meta-label { font-size: 10px; color: var(--fg-muted); }
-.meta-value { font-size: 11px; }
-.meta-value.mono { font-family: monospace; font-size: 10px; }
+.room-meta  { display: flex; flex-direction: column; gap: 6px; }
+.meta-row   { display: flex; flex-direction: column; gap: 1px; }
+.meta-label { font-size: 10px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: .06em; }
+.meta-value { font-size: 12px; color: var(--fg); }
+.meta-value.mono { letter-spacing: .04em; }
 
-/* ── Footer ───────────────────────────────────────────────────────────────── */
+/* ── Footer ──────────────────────────────────────────────────────────────── */
 .chat-footer {
-    border-top: 1px solid var(--border);
     background: var(--bg-2);
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
     flex-shrink: 0;
+    min-height: 0;
 }
 .plugin-tabs {
     display: flex;
-    border-bottom: 1px solid var(--border);
+    gap: 2px;
+    padding: 8px 12px 0;
 }
 .tab-btn {
-    flex: 1; padding: 6px; font-size: 11px;
-    background: transparent; border: none; color: var(--fg-dim);
-    font-family: var(--font); cursor: pointer; transition: all .15s;
-    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    background: transparent;
+    color: var(--fg-muted);
+    border: none;
+    padding: 5px 12px;
+    border-radius: 6px 6px 0 0;
+    cursor: pointer;
+    font-family: var(--font);
+    font-size: 12px;
+    transition: all .15s;
 }
-.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
-.tab-btn:hover:not(.active) { color: var(--fg); }
-.plugin-canvas { padding: 8px 10px; }
+.tab-btn.active { background: var(--bg-3); color: var(--fg); }
+.tab-btn:hover:not(.active) { color: var(--fg-dim); }
 
-/* ── Input area ───────────────────────────────────────────────────────────── */
+.plugin-canvas { padding: 10px 12px; flex-shrink: 0; }
+
+/* ── Input area ──────────────────────────────────────────────────────────── */
 .input-area {
     display: flex;
     flex-direction: column;
@@ -1142,23 +1516,23 @@ watch(showNewRoomInput, (v) => {
 }
 .chat-input {
     width: 100%;
+    min-height: 56px;
+    max-height: 160px;
     background: var(--bg-3);
-    border: 1px solid var(--border);
-    border-radius: 8px;
     color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
     font-family: var(--font);
     font-size: 13px;
-    padding: 7px 10px;
     resize: none;
     outline: none;
     transition: border-color .15s;
-    min-height: 36px;
-    max-height: 120px;
-    line-height: 1.45;
+    box-sizing: border-box;
+    line-height: 1.5;
 }
-.chat-input:focus { border-color: var(--accent); }
+.chat-input:focus   { border-color: var(--accent); }
 .chat-input:disabled { opacity: .4; cursor: not-allowed; }
-.chat-input::placeholder { color: var(--fg-muted); }
 
 .input-actions {
     display: flex;
@@ -1171,45 +1545,175 @@ watch(showNewRoomInput, (v) => {
     align-items: center;
     gap: 4px;
     cursor: pointer;
+    color: var(--fg-muted);
+    font-size: 11px;
     user-select: none;
 }
-.send-mode-toggle input[type="checkbox"] { display: none; }
+.send-mode-toggle input { display: none; }
 .toggle-label {
-    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    transition: all .15s;
+}
+.send-mode-toggle:has(input:checked) .toggle-label {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+.send-btn {
+    background: var(--accent);
+    border: none;
+    border-radius: 6px;
+    color: #fff;
+    cursor: pointer;
+    padding: 6px 8px;
+    display: flex;
+    align-items: center;
+    transition: filter .15s;
+}
+.send-btn svg { width: 14px; height: 14px; }
+.send-btn:hover:not(:disabled) { filter: brightness(1.15); }
+.send-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+.closed-banner {
+    font-size: 11px;
+    color: #e05555;
+    text-align: center;
+    padding: 4px 0 2px;
+}
+.loading-state {
+    font-size: 12px;
     color: var(--fg-muted);
+    padding: 12px 0;
+    text-align: center;
+}
+.mins { font-size: 10px; color: var(--fg-muted); }
+
+/* ── Invite panel ────────────────────────────────────────────────────────── */
+.invite-panel {
+    position: absolute;
+    top: 44px;
+    left: 0;
+    right: 0;
+    z-index: 50;
+    background: var(--bg-2);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 14px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.4);
+}
+.invite-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    font-size: 12px;
+    color: var(--fg-dim);
+}
+.invite-close {
+    background: transparent;
+    border: none;
+    color: var(--fg-muted);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 2px 4px;
+    line-height: 1;
+}
+.invite-close:hover { color: var(--fg); }
+.invite-body  { display: flex; flex-direction: column; gap: 8px; }
+.invite-label { font-size: 11px; color: var(--fg-dim); }
+.invite-expiry-row { display: flex; align-items: center; gap: 10px; }
+.expiry-options { display: flex; gap: 4px; }
+.expiry-btn {
     background: var(--bg-3);
     border: 1px solid var(--border);
     border-radius: 4px;
-    padding: 2px 6px;
+    color: var(--fg-dim);
+    font-family: var(--font);
+    font-size: 11px;
+    padding: 3px 8px;
     cursor: pointer;
     transition: all .15s;
 }
-.send-mode-toggle input:checked + .toggle-label {
-    color: var(--accent);
-    border-color: var(--accent);
+.expiry-btn.active { border-color: var(--accent); color: var(--accent); }
+.expiry-btn:hover:not(.active) { color: var(--fg); }
+.full-width { width: 100%; justify-content: center; }
+.token-display {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
 }
-.send-btn {
-    width: 28px; height: 28px;
-    display: flex; align-items: center; justify-content: center;
-    background: var(--accent);
-    border: none; border-radius: 6px;
-    color: #fff; cursor: pointer;
-    transition: filter .15s, opacity .15s;
-    flex-shrink: 0;
+.token-text {
+    flex: 1;
+    font-size: 10px;
+    color: var(--fg-dim);
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 6px 8px;
+    word-break: break-all;
+    line-height: 1.5;
+    max-height: 60px;
+    overflow-y: auto;
 }
-.send-btn:hover:not(:disabled) { filter: brightness(1.1); }
-.send-btn:disabled { opacity: .4; cursor: not-allowed; }
-.send-btn svg { width: 14px; height: 14px; }
-.closed-banner {
-    font-size: 11px; color: #e05555;
-    text-align: center; padding: 4px 0 2px;
-}
+.invite-error { font-size: 11px; color: #e05555; margin: 0; }
+.invite-note  { font-size: 10px; color: var(--fg-muted); margin: 0; line-height: 1.4; }
 
-/* ── Loading overlay ──────────────────────────────────────────────────────── */
+/* ── Join modal ──────────────────────────────────────────────────────────── */
+.modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 300;
+}
+.modal {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    width: 320px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.6);
+}
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    font-weight: 600;
+}
+.modal-body    { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.modal-sub     { font-size: 12px; color: var(--fg-dim); margin: 0; }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.token-input {
+    width: 100%;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--fg);
+    font-family: var(--font);
+    font-size: 11px;
+    padding: 8px 10px;
+    resize: none;
+    outline: none;
+    transition: border-color .15s;
+    box-sizing: border-box;
+    line-height: 1.5;
+}
+.token-input:focus { border-color: var(--accent); }
+
+/* ── Loading overlay ─────────────────────────────────────────────────────── */
 .loading-overlay {
-    position: absolute; inset: 0;
+    position: absolute;
+    inset: 0;
     background: rgba(0,0,0,.4);
-    display: flex; align-items: center; justify-content: center; z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
 }
 .spinner {
     width: 20px; height: 20px;
@@ -1220,74 +1724,19 @@ watch(showNewRoomInput, (v) => {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ── Invite panel ─────────────────────────────────────────────────────────── */
-.invite-panel {
-    position: absolute; top: 44px; left: 0; right: 0; z-index: 50;
-    background: var(--bg-2); border-bottom: 1px solid var(--border);
-    padding: 12px 14px; box-shadow: 0 4px 16px rgba(0,0,0,.4);
-}
-.invite-panel-header {
-    display: flex; align-items: center; justify-content: space-between;
-    margin-bottom: 10px; font-size: 12px; color: var(--fg-dim);
-}
-.invite-close {
-    background: transparent; border: none; color: var(--fg-muted);
-    cursor: pointer; font-size: 13px; padding: 2px 4px; line-height: 1;
-}
-.invite-close:hover { color: var(--fg); }
-.invite-body { display: flex; flex-direction: column; gap: 8px; }
-.invite-label { font-size: 11px; color: var(--fg-dim); }
-.invite-expiry-row { display: flex; align-items: center; gap: 10px; }
-.expiry-options { display: flex; gap: 4px; }
-.expiry-btn {
-    background: var(--bg-3); border: 1px solid var(--border); border-radius: 4px;
-    color: var(--fg-dim); font-family: var(--font); font-size: 11px;
-    padding: 3px 8px; cursor: pointer; transition: all .15s;
-}
-.expiry-btn.active  { border-color: var(--accent); color: var(--accent); }
-.expiry-btn:hover:not(.active) { color: var(--fg); }
-.full-width { width: 100%; justify-content: center; }
-.token-display { display: flex; gap: 8px; align-items: flex-start; }
-.token-text {
-    flex: 1; font-size: 10px; color: var(--fg-dim); font-family: var(--font);
-    background: var(--bg-3); border: 1px solid var(--border); border-radius: 5px;
-    padding: 6px 8px; word-break: break-all; line-height: 1.5;
-    max-height: 60px; overflow-y: auto;
-}
-.invite-error { font-size: 11px; color: #e05555; margin: 0; }
-.invite-note  { font-size: 10px; color: var(--fg-muted); margin: 0; line-height: 1.4; }
+/* ── Transitions ─────────────────────────────────────────────────────────── */
+.dropdown-enter-active,
+.dropdown-leave-active { transition: opacity .15s, transform .15s; }
+.dropdown-enter-from,
+.dropdown-leave-to     { opacity: 0; transform: translateY(-6px); }
 
-/* ── Join modal ───────────────────────────────────────────────────────────── */
-.modal-backdrop {
-    position: absolute; inset: 0; background: rgba(0,0,0,.6);
-    display: flex; align-items: center; justify-content: center; z-index: 300;
-}
-.modal {
-    background: var(--bg-2); border: 1px solid var(--border);
-    border-radius: var(--radius); width: 320px;
-    box-shadow: 0 12px 40px rgba(0,0,0,.6);
-}
-.modal-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 12px 14px; border-bottom: 1px solid var(--border);
-    font-size: 13px; font-weight: 600;
-}
-.modal-body { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
-.modal-sub  { font-size: 12px; color: var(--fg-dim); margin: 0; }
-.token-input {
-    width: 100%; background: var(--bg-3); border: 1px solid var(--border);
-    border-radius: 6px; color: var(--fg); font-family: var(--font); font-size: 11px;
-    padding: 8px 10px; resize: none; outline: none; transition: border-color .15s;
-    box-sizing: border-box; line-height: 1.5;
-}
-.token-input:focus { border-color: var(--accent); }
-.modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.slide-down-enter-active,
+.slide-down-leave-active { transition: opacity .15s, transform .15s; }
+.slide-down-enter-from,
+.slide-down-leave-to     { opacity: 0; transform: translateY(-8px); }
 
-/* ── Transitions ──────────────────────────────────────────────────────────── */
-.dropdown-enter-active, .dropdown-leave-active { transition: opacity .15s, transform .15s; }
-.dropdown-enter-from, .dropdown-leave-to { opacity: 0; transform: translateY(-6px); }
-.slide-down-enter-active, .slide-down-leave-active { transition: opacity .15s, transform .15s; }
-.slide-down-enter-from, .slide-down-leave-to { opacity: 0; transform: translateY(-8px); }
-.fade-enter-active, .fade-leave-active { transition: opacity .15s; }
-.fade-enter-from, .fade-leave-to { opacity: 0; }
+.fade-enter-active,
+.fade-leave-active { transition: opacity .15s; }
+.fade-enter-from,
+.fade-leave-to     { opacity: 0; }
 </style>

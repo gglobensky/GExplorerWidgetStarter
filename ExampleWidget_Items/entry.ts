@@ -1,7 +1,6 @@
 // src/widgets/items/entry.ts
 
 import Widget from './Widget.vue'
-import { registerWidgetMenus } from 'gexplorer/widgets'
 
 // ============================================================================
 // Menu contributions

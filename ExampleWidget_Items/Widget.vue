@@ -6,6 +6,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, defineExpos
 import {
   fsValidate,
   loadIconPack, // add to definition files
+  getEntryStyle, // add to definition files
   iconFor, 
   ensureIconsFor,
   createSelectionEngine, 
@@ -36,7 +37,9 @@ const {
   clipboardCopyFiles,
   clipboardCutFiles,
   clipboardGetFiles,
-  fsWatch
+  fsWatch,
+  openEntry: sdkOpenEntry,
+  openFolder: sdkOpenFolder
 } = sdk ?? {}
 
 const props = defineProps<{
@@ -182,7 +185,7 @@ const contextMenuOptions = computed(() => {
 ------------------------------------------------ */
 type HostAction =
   | { type: 'nav'; to: string; replace?: boolean; sourceId?: string }
-  | { type: 'open'; path: string }
+  | { type: 'open'; path: string; entry: string }
 
   
 type ResCol = keyof DetailWeights
@@ -1091,23 +1094,24 @@ async function loadDir(path?: string) {
 }
 
 
-async function openEntry(FullPath: string) {
-  if (!FullPath) return
-
-  try {
-    const v = await fsValidate(FullPath)
-    const isDir = !!v?.isDir
-
-    if (isDir) {
-      // Widget-level rule: folders → nav
-      props.runAction?.({ type: 'nav', to: FullPath })
-    } else {
-      // Widget-level rule: files → open
-      props.runAction?.({ type: 'open', path: FullPath })
+async function openEntry(FullPath: string, entry?: any) {
+    if (!FullPath) return
+    try {
+        const e      = entry ?? entries.value.find(e => e.FullPath === FullPath) ?? { FullPath }
+        const v      = await fsValidate(FullPath)
+        if (v?.isDir) {
+            await sdkOpenFolder?.(e)
+        } else {
+            await sdkOpenEntry?.(e)
+        }
+    } catch (result: any) {
+        // openFolder signals nav via thrown sentinel
+        if (result?.__nav) {
+            props.runAction?.({ type: 'nav', to: result.to })
+        } else {
+            console.error('[items] openEntry failed:', result)
+        }
     }
-  } catch (err) {
-    console.error('[items] openEntry failed:', err)
-  }
 }
 
 
@@ -1569,11 +1573,12 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction  })
         :sort-dir="sortDir"
         :initial-weights="colW"
         :folder-drop-target="folderDropTarget"  
+        :get-entry-style="getEntryStyle"
         :marquee-rect="marqueeRect"
         @row-down="({ id, mods }) => engine.rowDownId(id, mods)"
         @row-move="({ x, y }) => engine.rowMove?.(x, y)"
         @row-up="({ id }) => engine.rowUpId(id)"
-        @dblclick="({ id }) => openEntry(id)"
+        @dblclick="({ id, entry }) => openEntry(id, entry)"
         @dragstart="({ entry, event }) => { engine.dragStart(); }"
         @dragend="() => engine.dragEnd()"
         @header-click="(key) => onHeaderClick(key)"
@@ -1597,7 +1602,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction  })
         @row-down="({ id, mods }) => engine.rowDownId(id, mods)"
         @row-move="({ x, y }) => engine.rowMove?.(x, y)"
         @row-up="({ id }) => engine.rowUpId(id)"
-        @dblclick="({ id }) => openEntry(id)"
+        @dblclick="({ id, entry }) => openEntry(id, entry)"
         @dragstart="({ entry, event }) => { engine.dragStart(); }"
         @dragend="() => engine.dragEnd()"
       />
@@ -1615,7 +1620,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction  })
         @row-down="({ id, mods }) => engine.rowDownId(id, mods)"
         @row-move="({ x, y }) => engine.rowMove?.(x, y)"
         @row-up="({ id }) => engine.rowUpId(id)"
-        @dblclick="({ id }) => openEntry(id)"
+        @dblclick="({ id, entry }) => openEntry(id, entry)"
         @dragstart="({ entry, event }) => { engine.dragStart(); }"
         @dragend="() => engine.dragEnd()"
       />

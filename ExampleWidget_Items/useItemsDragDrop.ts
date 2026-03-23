@@ -148,7 +148,8 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
 
             if (!sources.length) return
 
-            // Single unified drop execution — fsMove handles VFS destinations internally
+            // fsMove is VFS-aware in the SDK — VFS sources are extracted and
+            // copied transparently; physical sources are moved as normal.
             await fsMove?.(sources.map(from => ({ from, to: target })))
             await loadDir(cwd.value || merged.value?.rpath || '')
 
@@ -219,16 +220,17 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
                 ? [...selected.value]
                 : [entry.FullPath]
 
-            const fileRefs = paths.map(p => {
-                const e = entries.value.find(x => x.FullPath === p)
-                return {
-                    path: p,
-                    name: e?.Name ?? '',
-                    size: e?.Size ?? 0,
-                    mimeType: guessMimeType(p),
-                    isDirectory: e?.Kind === 'dir',
-                }
-            })
+            const selectedEntries = paths
+                .map(p => entries.value.find(x => x.FullPath === p))
+                .filter(Boolean)
+
+            const fileRefs = selectedEntries.map(e => ({
+                path: e.FullPath,
+                name: e.Name ?? '',
+                size: e.Size ?? 0,
+                mimeType: guessMimeType(e.FullPath),
+                isDirectory: e.Kind === 'dir',
+            }))
 
             const payload = createGexPayload(
                 'gex/file-refs',
@@ -259,14 +261,22 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
                 },
                 moveEv.clientX,
                 moveEv.clientY,
+                { cwd: cwd.value, entries: selected }, 
             ).then(({ cleanup, resolvedPaths }) => {
-                    extracting  = false
-                    cleanupDrag = cleanup
-                    console.log('[items-dnd] onItemPointerDown, isDragging:', isDragging.value)
-                }).catch(() => {
-                    extracting = false
-                    resetDragState()
-                })
+                extracting = false
+
+                // startNativeDrag returns empty resolvedPaths when drag was
+                // cancelled by a VFS hook (e.g. all-ghost selection)
+                if (!resolvedPaths.length) {
+                    resetDragState()  // clears payload, resets isDragging
+                    return
+                }
+
+                cleanupDrag = cleanup
+            }).catch(() => {
+                extracting = false
+                resetDragState()
+            })
         }
 
         function onUp() { teardown() }

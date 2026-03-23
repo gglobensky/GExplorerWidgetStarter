@@ -1,4 +1,8 @@
 // src/widgets/gexchange/entry.ts
+// Complete final version.
+// No imports from @/internal or @/ui — all behavior via api parameter.
+// Third parties can define identical hooks for their own schemes.
+
 import ChatRoom from './ChatRoom.vue'
 
 export default {
@@ -8,23 +12,20 @@ export default {
     description: 'Secure file sharing and chat rooms',
 
     capabilities: [
-        { cap: 'Read',    reason: 'Lists room contents via the virtual vault filesystem' },
-        { cap: 'Write',   reason: 'Ingests files into the secure vault on drop' },
-        { cap: 'Network', reason: 'P2P room synchronization, peer file transfer, and chat' },
-        { cap: 'P2P',     reason: 'Generates and accepts room invite tokens for peer connections' },
+     { cap: 'P2P',           reason: 'peer identity and channel management' },
+     { cap: 'SecureStorage', reason: 'encrypted file vault per room' },
+     { cap: 'Chat',          reason: 'real-time messaging with peers' },
+     { cap: 'Network',       reason: 'outbound peer connections' },
     ],
 
     Component: ChatRoom,
 
     // ── Background Workers ────────────────────────────────────────────────────
-    // Declared here so the shell can start them at app-start without mounting
-    // the widget. Workers are separate executables — the shell owns their lifetime.
-    // Use createLifecycle().worker('gexchange-seeder') inside components to observe.
 
     workers: [
         {
             id:            'gexchange-seeder',
-            executable:    'workers/GExchangeSeeder.exe',  // relative to widget bundle root
+            executable:    'workers/GExchangeSeeder.exe',
             startOn:       'app-start',
             restartPolicy: 'on-crash',
             singleton:     true,
@@ -46,32 +47,67 @@ export default {
 
     // ── Virtual Filesystem ────────────────────────────────────────────────────
 
-    vfsHandlers: [
-        {
-            scheme: 'gexchange',
-            label:  'GExchange Secure Room',
-            icon:   'mdi-chat-lock',
-            resolver: 'backend',
-            ops: ['listDir', 'getMetadata', 'copy', 'delete', 'open', 'watch', 'extract', 'mkdir'],
-            // Eventually remove ops to use the keys of the endpoints:
-            /*
-                    In the app
-                    const ops = def.resolver === 'backend'
-                    ? Object.keys(def.backendEndpoints ?? {}) as VfsOp[]
-                    : def.ops
-            */
-            backendEndpoints: {
-                listDir:     'gexchange:listDir',
-                getMetadata: 'gexchange:getMetadata',
-                copy:        'gexchange:ingest',
-                delete:      'gexchange:delete',
-                open:        'gexchange:open',
-                watch:       'gexchange:watch',
-         		extract: 	 'gexchange:extract',
-                mkdir:       'gexchange:mkdir'
+     vfsHandlers: [{
+        // scheme is NOT declared — platform derives it from widget type ('gexchange')
+        resolver: 'frontend',
+        label:    'GExchange Secure Room',
+        icon:     'mdi-chat-lock',
+        ops: ['listDir', 'getMetadata', 'copy', 'delete', 'open', 'extract', 'mkdir'],
+        handler:  () => import('./vfsHandler'),
+ 
+        stateStyles: {
+            ghost:    { opacity: 0.45, badge: '↓', badgeTitle: 'Not downloaded', cursor: 'default', dimName: true },
+            fetching: { opacity: 0.65, badge: '⟳', badgeTitle: 'Downloading…',   animated: true },
+            unseeded: { opacity: 0.85, badge: '◎', badgeTitle: 'Not seeding' },
+            local:    {},
+        },
+ 
+        dragHooks: {
+            onDragStart: async (entries, api) => {
+                const ghosts = entries.filter((e: any) => e?.Meta?.blobState === 'ghost')
+                const local  = entries.filter((e: any) => e?.Meta?.blobState !== 'ghost')
+ 
+                if (ghosts.length > 0 && local.length === 0) {
+                    const names  = ghosts.length === 1
+                        ? `"${ghosts[0].Name}"`
+                        : `${ghosts.length} files`
+                    const result = await api.showPrompt({
+                        id:   'gexchange:drag:ghost:download',
+                        text: `${names} ${ghosts.length === 1 ? 'is' : 'are'} not downloaded yet.`,
+                        actions: [
+                            { label: 'Download', id: 'confirm' },
+                            { label: 'Not now',  id: 'cancel'  },
+                        ],
+                    })
+                    if (result.actionId === 'confirm') {
+                        for (const e of ghosts) {
+                            const roomId = e.FullPath.split('://')[1]?.split('/')[0] ?? ''
+                            // dispatch is still available on the drag api for widget-specific calls
+                            api.dispatch('gexchange:download', {
+                                roomId,
+                                hash:     e.Meta?.contentHash ?? '',
+                                fileName: e.Name,
+                            }).catch(console.warn)
+                        }
+                    }
+                    return { entries: [], cancelled: true }
+                }
+ 
+                if (ghosts.length > 0) {
+                    return {
+                        entries:  local,
+                        warnings: [`${ghosts.length} file${ghosts.length > 1 ? 's' : ''} skipped — not downloaded yet.`],
+                    }
+                }
+ 
+                return { entries }
+            },
+ 
+            onDragEnd: async (effect, entries, _api) => {
+                console.log(`[GExchange] drag ended: ${effect} × ${entries.length} file(s)`)
             },
         },
-    ],
+    }],
 
     // ── Extension Points ──────────────────────────────────────────────────────
 
@@ -81,14 +117,6 @@ export default {
             multiple: true,
         },
     ],
-
-    // provides: [
-    //     {
-    //         point:     'shell.controlPanel.icon',
-    //         component: () => import('./ControlPanelIcon.vue'),
-    //         props:     { label: 'GExchange', icon: 'mdi-chat-lock' },
-    //     },
-    // ],
 
     // ── Layout ────────────────────────────────────────────────────────────────
 
