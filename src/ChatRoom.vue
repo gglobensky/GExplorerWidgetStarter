@@ -314,7 +314,6 @@
                         </li>
                     </ul>
 
-                    <!-- Inline name editor — shown when user clicks the edit button -->
                     <Transition name="fade">
                         <div v-if="showNameEditor" class="name-editor">
                             <input
@@ -451,49 +450,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick, shallowRef, inject } from 'vue'
-import { startRename } from 'gexplorer/widgets'
-import type { WidgetSdk, ChatMessage } from 'gexplorer/widgets'
-import type { EdhtSession } from 'gexplorer/widgets'
+import { ref, computed, shallowRef, watch, onMounted, onUnmounted, inject } from 'vue'
+import type { MeshPeer, UseChannelReturn, WidgetSdk } from 'gexplorer/widgets'
 
-// ── Types ──────────────────────────────────────────────────────────────────────
-
-// RoomConfig is a pure frontend type — stored as a sealed blob in the vault
-// under vpath "gexchange://config/{roomId}.room.json".
-interface RoomConfig {
-    roomId:         string
-    canonicalName:  string
-    createdAt:      number
-    ownerPublicKey: string
-    sessionSecret:  string   // base64 — EDHT key material
-    ownerEndpoint:  string   // direct TCP endpoint; replaced by DHT in Phase 2
-    isOwner:        boolean
-    isAdmin:        boolean
-    isClosed:       boolean
-    closedReason:   string
-    accessPointId:  string   // vault access point for this config blob
-    blobSha256:     string   // blob identity — used to update config on change
-}
-
-interface Room extends RoomConfig {
-    displayName: string      // local override stored in localStorage
-}
-
-interface Identity {
-    userId:    string
-    username:  string        // resolved display name (base + disambiguator)
-    publicKey: string
-    endpoint:  string
-}
-
-// Disambiguator modes — stored alongside the base display name.
-// The resolved username sent to peers is always baseName + disambiguator.
-type DisambigMode = 'suffix-number' | 'suffix-word' | 'prefix-word'
-
-interface DisambigState {
-    mode:  DisambigMode
-    value: string   // the generated string, e.g. "#42" or "-swift" or "bold-"
-}
+import { useIdentity } from './useIdentity'
+import { useRooms }    from './useRooms'
+import { useChat }     from './useChat'
+import type { Room }   from './useRooms'
 
 // ── Props ──────────────────────────────────────────────────────────────────────
 
@@ -519,1030 +482,330 @@ const props = defineProps<{
 // ── SDK ────────────────────────────────────────────────────────────────────────
 
 const sdk = inject<WidgetSdk>('widgetSdk')
-const {
-    p2pGetIdentity,
-    p2pDeriveKey,
-    p2pSetUsername,
-    p2pCreateInvite,
-    p2pAcceptInvite,
-    p2pOpenChannel,
-    onP2PMessage,
-    onP2PChannelClosed,
-    createEdhtSession,
-    vaultOpen,
-    vaultClose,
-    vaultSealContentAs,
-    vaultUnsealText,
-    vaultList,
-    vaultDelete,
-    chatBind,
-    chatUnbind,
-    chatSend,
-    chatGetHistory,
-    onChatMessage,
-    onChatHistoryReady,
-} = sdk ?? {}
-
-// ── State ──────────────────────────────────────────────────────────────────────
-
-const loading          = ref(false)
-const rooms            = ref<Room[]>([])
-const activeRoom       = ref<Room | null>(null)
-const identity         = ref<Identity | null>(null)
-const showSidebar      = ref(true)
-const showBoard        = ref(false)
-const pickerOpen       = ref(false)
-const roomFilter       = ref('')
-const showJoinModal    = ref(false)
-const showNewRoomInput = ref(false)
-const newRoomName      = ref('')
-const createError      = ref('')
-const loadedComponent  = shallowRef<any>(null)
-
-const inviteToken     = ref('')
-const inviteExpiry    = ref(15)
-const inviteCopied    = ref(false)
-const inviteError     = ref('')
-const showInvitePanel = ref(false)
-const joinToken       = ref('')
-const joinError       = ref('')
-const joinLoading     = ref(false)
-
-// ── Chat state ─────────────────────────────────────────────────────────────────
-
-const messages    = ref<ChatMessage[]>([])
-const draftText   = ref('')
-const sending     = ref(false)
-const chatLoading = ref(false)
-const shiftToSend = ref(true)
-
-const feedRef  = ref<HTMLElement | null>(null)
-const inputRef = ref<HTMLTextAreaElement | null>(null)
-
+const { createEdhtSession, useChannel } = sdk ?? {}
 // ── DOM refs ───────────────────────────────────────────────────────────────────
 
+const feedRef            = ref<HTMLElement | null>(null)
+const inputRef           = ref<HTMLTextAreaElement | null>(null)
 const pickerRef          = ref<HTMLElement | null>(null)
 const searchInputRef     = ref<HTMLInputElement | null>(null)
 const newRoomInputRef    = ref<HTMLInputElement | null>(null)
 const namePromptInputRef = ref<HTMLInputElement | null>(null)
 const nameEditorInputRef = ref<HTMLInputElement | null>(null)
 
-// ── Vault state ────────────────────────────────────────────────────────────────
+// ── Board (plugin extension point) ────────────────────────────────────────────
+// loadedComponent is populated when the board tab is activated.
+// Kept as a stub here — the board plugin system wires it externally.
 
-let vaultToken: string | null = null
+const showBoard        = ref(false)
+const loadedComponent  = shallowRef<any>(null)
 
-// ── Chat session state ─────────────────────────────────────────────────────────
+// ── Channel instances ──────────────────────────────────────────────────────────
+//
+// One ChannelSession per room.  The session owns EDHT, mesh strategy,
+// chat bind/unbind, chatSessionId, peer tracking, and discovery-loop reconnect.
+// ChatRoom.vue never touches chatSessionId — it calls channel.sendMessage().
+//
+// LIFECYCLE NOTE: useChannel's onUnmounted is NOT called internally because
+// ensureChannel runs from async context after mount, when Vue's component
+// instance is no longer active. Disposal is explicit via _disposeAllChannels().
 
-const chatSessions  = ref(new Map<string, string>())  // roomId → chatSessionId
-const channelForRoom = ref(new Map<string, string>())  // roomId → channelId (for reconnect)
+const channels = new Map<string, UseChannelReturn>()
+const channelsPending = new Set<string>()
 
-// ── EDHT state ─────────────────────────────────────────────────────────────────
+// ── Sidebar ────────────────────────────────────────────────────────────────────
 
-const edhtSessions        = ref(new Map<string, EdhtSession>())
-const edhtSessionsPending = new Set<string>()
-const roomPeers           = ref<Map<string, Set<string>>>(new Map())
-const peerNames           = ref<Record<string, string>>({})
+const showSidebar = ref(true)
+function toggleSidebar() { showSidebar.value = !showSidebar.value }
+
+// ── Identity ───────────────────────────────────────────────────────────────────
+
+const identity$ = useIdentity({
+    sdk,
+    namePromptInputRef,
+    nameEditorInputRef,
+    onNameChanged: async () => {
+        const id = {
+            userId:    identity$.identity.value?.userId    ?? '',
+            username:  (identity$.resolvedUsername.value   || identity$.identity.value?.userId) ?? 'Unknown',
+            publicKey: identity$.identity.value?.publicKey ?? '',
+            endpoint:  identity$.identity.value?.endpoint  ?? '',
+        }
+        for (const channel of channels.values())
+            await channel.reannounce(id)
+    },
+})
+
+const {
+    identity,
+    resolvedUsername,
+    showNamePrompt,
+    namePromptValue,
+    namePromptError,
+    commitNamePrompt,
+    dismissNamePrompt,
+    showNameEditor,
+    nameEditorValue,
+    nameEditorSaving,
+    nameEditorError,
+    openNameEditor,
+    commitNameEdit,
+    showDisambigPrompt,
+    disambigChoice,
+    disambigOptions,
+    previewDisambig,
+    selectDisambigOption,
+    regenerateDisambig,
+    commitDisambig,
+} = identity$
+
+// ── Rooms ──────────────────────────────────────────────────────────────────────
+
+const rooms$ = useRooms({
+    sdk,
+    identity,
+    searchInputRef,
+    newRoomInputRef,
+    onRoomSelected: (room) => ensureChannel(room),
+})
+
+const {
+    rooms,
+    activeRoom,
+    loading,
+    vaultToken,   // exposed for file-sharing / VFS layer
+    roomFilter,
+    pickerOpen,
+    filteredRooms,
+    canCreate,
+    togglePicker,
+    closePicker,
+    onSearchEnter,
+    selectRoom,
+    createRoom,
+    createRoomFromEmpty,
+    newRoomName,
+    showNewRoomInput,
+    createError,
+    openInItems,
+    focusCreateField,
+    renameRoom,
+    inviteToken,
+    inviteExpiry,
+    inviteCopied,
+    inviteError,
+    showInvitePanel,
+    generateInvite,
+    copyInvite,
+    showJoinModal,
+    joinToken,
+    joinError,
+    joinLoading,
+    joinRoom,
+    closeJoinModal,
+} = rooms$
+
+// ── Chat ───────────────────────────────────────────────────────────────────────
+
+const chat$ = useChat({
+    sdk,
+    feedRef,
+    inputRef,
+    getChannel:    () => activeRoom.value ? channels.get(activeRoom.value.roomId) : undefined,
+    getScopeId:    () => activeRoom.value?.roomId,
+    getSenderId:   () => identity.value?.userId,
+    getSenderName: () => (resolvedUsername.value || identity.value?.userId) ?? 'You',
+})
+
+const {
+    messages,
+    draftText,
+    sending,
+    chatLoading,
+    shiftToSend,
+    sendMessage,
+    loadHistory,
+    clearMessages,
+    onInputKeydown,
+    autoResizeInput,
+    shouldShowSender,
+    shouldShowDateSep,
+    formatTime,
+    formatDate,
+} = chat$
+
+// ── Peer presence ──────────────────────────────────────────────────────────────
 
 const activePeerIds = computed(() => {
     if (!activeRoom.value) return []
-    const peers = [...(roomPeers.value.get(activeRoom.value.roomId) ?? [])]
-    return peers.filter(id => id !== identity.value?.userId)
+    const ch = channels.get(activeRoom.value.roomId)
+    if (!ch) return []
+    return [...ch.peers.value.keys()].filter(id => id !== identity.value?.userId)
 })
 
-// ── Username / name prompt state ───────────────────────────────────────────────
+const peerNames = computed<Record<string, string>>(() => {
+    const result: Record<string, string> = {}
+    for (const ch of channels.values())
+        for (const [userId, username] of ch.peers.value)
+            result[userId] = username
+    return result
+})
 
-// Base display name before disambiguator is applied (what the user typed).
-// Kept separately so we can re-resolve the full username when the disambiguator changes.
-const baseName         = ref('')
-const disambigState    = ref<DisambigState | null>(null)
+// ── Channel management ─────────────────────────────────────────────────────────
 
-// First-run prompt — shown when backend reports isNameSet === false
-const showNamePrompt   = ref(false)
-const namePromptValue  = ref('')
+const MAX_PEERS = 0   // 0 or -1 = no limit
 
-// Inline name editor in sidebar
-const showNameEditor      = ref(false)
-const nameEditorValue     = ref('')
-const nameEditorSaving    = ref(false)
-
-// Disambiguator prompt — shown when a name collision is detected
-const showDisambigPrompt  = ref(false)
-const disambigChoice      = ref<DisambigMode | null>(null)
-const disambigGenerated   = ref('')   // current generated value for the chosen mode
-
-const disambigOptions: { id: DisambigMode; label: string }[] = [
-    { id: 'suffix-number', label: 'Add a number (#42)' },
-    { id: 'suffix-word',   label: 'Add a word after (-swift)' },
-    { id: 'prefix-word',   label: 'Add a word before (bold-)' },
-]
-
-// Words pool for random-word disambiguators
-const DISAMBIG_WORDS = [
-    'swift','calm','bold','keen','bright','azure','crisp','dusk',
-    'east','fern','gale','haze','iris','jade','kite','lark',
-    'mesa','nova','opal','pine','quill','rust','sage','teal',
-    'umber','vale','wren','xen','yew','zeal',
-]
-
-// ── Local display name overrides ───────────────────────────────────────────────
-
-const LOCAL_NAMES_KEY = 'gexchange:roomDisplayNames'
-
-function loadLocalNames(): Record<string, string> {
-    try { return JSON.parse(localStorage.getItem(LOCAL_NAMES_KEY) ?? '{}') } catch { return {} }
+function buildCanConnect(room: Room) {
+    return async (peer: MeshPeer): Promise<boolean> => {
+        if (MAX_PEERS > 0) {
+            const ch = channels.get(room.roomId)
+            if (ch && ch.peers.value.size >= MAX_PEERS) return false
+        }
+        // TODO: ban list by peer.userId
+        // TODO: pending-approval prompt for owner/admin
+        return true
+    }
 }
-function saveLocalNames(names: Record<string, string>) {
-    localStorage.setItem(LOCAL_NAMES_KEY, JSON.stringify(names))
+
+async function ensureChannel(room: Room) {
+    console.log('[GExchange] ensureChannel check —',
+        'sessionSecret:', !!room.sessionSecret,
+        'useChannel:', !!useChannel,
+        'createEdhtSession:', !!createEdhtSession,
+        'sdk.useChannel:', !!(sdk?.useChannel),    // ← add this
+    )
+    if (channels.has(room.roomId)) return
+    if (channelsPending.has(room.roomId)) return
+    if (!room.sessionSecret || !useChannel || !createEdhtSession) {
+        console.warn('[GExchange] ensureChannel: missing sessionSecret, useChannel, or createEdhtSession')
+        return
+    }
+
+    channelsPending.add(room.roomId)
+
+    try {
+        const channel = useChannel({
+            scopeId:    room.roomId,
+            identity: {
+                userId:    identity.value?.userId    ?? '',
+                username:  (resolvedUsername.value   || identity.value?.userId) ?? 'Unknown',
+                publicKey: identity.value?.publicKey ?? '',
+                endpoint:  identity.value?.endpoint  ?? '',
+            },
+            sdk,
+            isHub:      room.isOwner,
+            strategy:   'full',
+            canConnect: buildCanConnect(room),
+            // Client path only — cleared from vault after first successful connection
+            bootstrapEndpoint:  room.bootstrapEndpoint,
+            bootstrapPublicKey: room.bootstrapPublicKey,
+
+            onPeerJoined: (peer: MeshPeer) => {
+                if (
+                    peer.userId   !== identity.value?.userId &&
+                    peer.username &&
+                    resolvedUsername.value &&
+                    peer.username === resolvedUsername.value &&
+                    !showDisambigPrompt.value
+                ) {
+                    showDisambigPrompt.value = true
+                }
+            },
+
+            onPeerLeft: (_peer: MeshPeer) => { /* handled reactively via channel.peers */ },
+        })
+
+        // Register before awaiting EDHT so racing ensureChannel calls see it
+        channels.set(room.roomId, channel)
+
+        const secret = Uint8Array.from(atob(room.sessionSecret), c => c.charCodeAt(0))
+        const edht   = await createEdhtSession({ sessionSecret: secret, scopeId: room.roomId })
+
+        await edht.announce(_buildEdhtPayload())
+        channel.wireEdht(edht)
+
+        // Bootstrap: dial owner directly to seed the Kademlia routing table.
+        // Only fires on the client path when bootstrapEndpoint is set.
+        // On success, clear the one-time fields from vault.
+        const bootstrapped = await channel.bootstrap()
+        if (bootstrapped) {
+            rooms$.clearBootstrap(room.roomId)
+        }
+
+        await edht.discover()
+
+        channelsPending.delete(room.roomId)
+        console.log(`[GExchange] Channel ready — room ${room.roomId.slice(0, 8)}…`)
+    } catch (err) {
+        channels.delete(room.roomId)
+        channelsPending.delete(room.roomId)
+        console.warn('[GExchange] Failed to start channel:', err)
+    }
 }
-function applyDisplayNames(configs: RoomConfig[]): Room[] {
-    const localNames = loadLocalNames()
-    return configs.map(r => ({
-        ...r,
-        displayName: localNames[r.roomId] ?? r.canonicalName,
+
+async function _disposeAllChannels() {
+    for (const channel of channels.values())
+        await channel.dispose()
+    channels.clear()
+    channelsPending.clear()
+}
+
+function _buildEdhtPayload(): Uint8Array {
+    return new TextEncoder().encode(JSON.stringify({
+        endpoint:  identity.value?.endpoint  ?? '',
+        publicKey: identity.value?.publicKey ?? '',
+        userId:    identity.value?.userId    ?? '',
+        username:  (resolvedUsername.value   || identity.value?.userId) ?? '',
     }))
 }
 
-// ── Computed ───────────────────────────────────────────────────────────────────
+// ── Picker outside-click ───────────────────────────────────────────────────────
 
-const filteredRooms = computed(() => {
-    const q = roomFilter.value.trim().toLowerCase()
-    if (!q) return rooms.value
-    return rooms.value.filter(r =>
-        r.displayName.toLowerCase().includes(q) ||
-        r.canonicalName.toLowerCase().includes(q) ||
-        r.roomId.toLowerCase().includes(q)
-    )
-})
-
-const canCreate = computed(() => {
-    const q = roomFilter.value.trim()
-    return q.length > 0 && !rooms.value.some(r => r.canonicalName === q)
-})
-
-// Resolved display name — base + disambiguator (if any)
-const resolvedUsername = computed(() => {
-    if (!baseName.value) return identity.value?.userId ?? ''
-    const d = disambigState.value
-    if (!d) return baseName.value
-    if (d.mode === 'prefix-word') return `${d.value}-${baseName.value}`
-    return `${baseName.value}${d.value}`
-})
+function onDocClick(e: MouseEvent) {
+    if (pickerRef.value && !pickerRef.value.contains(e.target as Node))
+        closePicker()
+}
 
 // ── Lifecycle ──────────────────────────────────────────────────────────────────
 
-let unsubMessage:       (() => void) | null = null
-let unsubHistory:       (() => void) | null = null
-let unsubP2PMsg:        (() => void) | null = null
-let unsubChannelClosed: (() => void) | null = null
-
 onMounted(async () => {
-    console.log('[GExchange] onMounted — chatSend available:', !!chatSend,
-        'onChatMessage available:', !!onChatMessage,
-        'chatBind available:', !!chatBind)
-
-    await loadIdentity()
-    await openVault()
-    await loadRooms()
+console.log('Full sdk : ', sdk);
+    document.addEventListener('mousedown', onDocClick)
+    await identity$.load()
+    await rooms$.load()
 
     const first = rooms.value[0]
     if (first) selectRoom(first)
 
     for (let i = 1; i < rooms.value.length; i++) {
         const room = rooms.value[i]
-        setTimeout(() => ensureEdhtSession(room), i * 200)
+        setTimeout(() => ensureChannel(room), i * 200)
     }
 
-    unsubMessage = onChatMessage?.((msg) => {
-        console.log('[GExchange] onChatMessage push received — scopeId:', msg.scopeId,
-            'activeRoom:', activeRoom.value?.roomId, 'match:', msg.scopeId === activeRoom.value?.roomId)
-        if (msg.scopeId === activeRoom.value?.roomId)
-            appendMessage({ ...msg, roomId: msg.scopeId })
-    }) ?? null
-    console.log('[GExchange] onChatMessage subscribed:', !!unsubMessage)
-
-    unsubHistory = onChatHistoryReady?.((scopeId) => {
-        if (scopeId === activeRoom.value?.roomId)
-            loadHistory(scopeId)
-    }) ?? null
-
-    unsubP2PMsg = onP2PMessage?.((event) => {
-        const session = edhtSessions.value.get(event.channelId)
-        if (session) session.discover()
-    }) ?? null
-
-    // ── Channel closed handler ─────────────────────────────────────────────
-    // When a channel drops, evict its stale chat session so the next
-    // ensureChatSession call opens a fresh one.
-    // Safe if the app quits unexpectedly — on next mount chatSessions and
-    // channelForRoom are both empty Maps, so ensureChatSession always binds fresh.
-    unsubChannelClosed = onP2PChannelClosed?.((event) => {
-        // Find which room owned this channel
-        for (const [roomId, channelId] of channelForRoom.value) {
-            if (channelId !== event.channelId) continue
-
-            console.log(`[GExchange] Channel closed for room ${roomId.slice(0, 8)}… — scheduling rebind`)
-            channelForRoom.value.delete(roomId)
-
-            const chatSessionId = chatSessions.value.get(roomId)
-            if (chatSessionId) {
-                // Best-effort cleanup — don't await, channel is already gone
-                chatUnbind?.(chatSessionId).catch(() => {})
-                chatSessions.value.delete(roomId)
-            }
-
-            // Re-bind immediately if this is the currently active room
-            if (activeRoom.value?.roomId === roomId) {
-                const room = rooms.value.find(r => r.roomId === roomId)
-                if (room) {
-                    ensureChatSession(room).then(() => loadHistory(roomId)).catch(console.warn)
-                }
-            }
-            break
-        }
-    }) ?? null
+    chat$.mount()
 })
 
 onUnmounted(async () => {
-    unsubMessage?.()
-    unsubHistory?.()
-    unsubP2PMsg?.()
-    unsubChannelClosed?.()
     document.removeEventListener('mousedown', onDocClick)
-    await stopAllEdhtSessions()
-    await stopAllChatSessions()
-    if (vaultToken) {
-        await vaultClose?.(vaultToken)
-        vaultToken = null
-    }
+    chat$.unmount()
+    await _disposeAllChannels()
+    await rooms$.dispose()
 })
+
+// ── Watch active room ──────────────────────────────────────────────────────────
+//
+// selectRoom → onRoomSelected → ensureChannel already called.
+// ensureChannel is idempotent — channels.has() guard makes second call a no-op.
 
 watch(activeRoom, async (room) => {
-    messages.value = []
+    clearMessages()
     if (!room) return
-    await ensureChatSession(room)
+    await ensureChannel(room)
     await loadHistory(room.roomId)
-})
-
-// ── Vault ──────────────────────────────────────────────────────────────────────
-
-async function openVault() {
-    if (!p2pDeriveKey || !vaultOpen) return
-    try {
-        const keyBytes = await p2pDeriveKey('vault-master-v1')
-        const result   = await vaultOpen({ scopeId: 'rooms', masterKey: keyBytes })
-        vaultToken     = result.vaultToken
-        console.log('[GExchange] Vault open — vaultId:', result.vaultId)
-    } catch (err) {
-        console.warn('[GExchange] Failed to open vault:', err)
-    }
-}
-
-// ── Room persistence ───────────────────────────────────────────────────────────
-
-async function loadRooms() {
-    if (!vaultToken || !vaultList || !vaultUnsealText) return
-    loading.value = true
-    try {
-        // All room configs live under the config/ prefix
-        const entries = await vaultList(vaultToken, 'gexchange://config/')
-        const configs: RoomConfig[] = []
-
-        for (const entry of entries) {
-            if (!entry.vpath.endsWith('.room.json')) continue
-            try {
-                const text   = await vaultUnsealText(vaultToken, entry.blobSha256)
-                const config = JSON.parse(text) as RoomConfig
-                // Attach vault identity so we can update this config later
-                config.accessPointId = entry.accessPointId
-                config.blobSha256    = entry.blobSha256
-                configs.push(config)
-            } catch (err) {
-                console.warn('[GExchange] Failed to read room config:', entry.vpath, err)
-            }
-        }
-
-        rooms.value = applyDisplayNames(configs)
-    } catch (err) {
-        console.warn('[GExchange] Failed to load rooms:', err)
-    } finally {
-        loading.value = false
-    }
-}
-
-async function saveRoomConfig(config: Omit<RoomConfig, 'accessPointId' | 'blobSha256'>): Promise<{ accessPointId: string; blobSha256: string }> {
-    if (!vaultToken || !vaultSealContentAs)
-        throw new Error('Vault not open')
-
-    const json    = JSON.stringify(config, null, 2)
-    // encodeURIComponent + unescape safely handles non-ASCII in btoa
-    const content = btoa(unescape(encodeURIComponent(json)))
-    const vpath   = `gexchange://config/${config.roomId}.room.json`
-
-    const ap = await vaultSealContentAs(vaultToken, content, vpath)
-    return { accessPointId: ap.accessPointId, blobSha256: ap.blobSha256 }
-}
-
-// ── Chat sessions ──────────────────────────────────────────────────────────────
-
-async function ensureChatSession(room: Room) {
-    if (chatSessions.value.has(room.roomId)) return
-    if (!chatBind) return
- 
-    try {
-        let channelId: string
- 
-        if (room.isOwner) {
-            // Hub — no outbound connection needed. Other peers connect to us.
-            // Use a stable sentinel so ChatBridge can identify our session
-            // if we ever need to look it up by chatSessionId.
-            channelId = `hub:${room.roomId}`
-        } else {
-            if (!p2pOpenChannel) return
- 
-            try {
-                const ch  = await p2pOpenChannel({
-                    endpoint:  room.ownerEndpoint,
-                    publicKey: room.ownerPublicKey,
-                    sessionId: room.roomId,
-                })
-                channelId = ch.channelId
-            } catch (err: any) {
-                // Transport already has a live channel for this sessionId —
-                // use the recorded channelId or fall back to room.roomId
-                if (err?.message?.includes('already') || err?.message?.includes('Reusing')) {
-                    channelId = channelForRoom.value.get(room.roomId) ?? room.roomId
-                    console.log('[GExchange] Reusing existing channel for room:',
-                        room.roomId.slice(0, 8))
-                } else {
-                    throw err
-                }
-            }
-        }
- 
-        channelForRoom.value.set(room.roomId, channelId)
- 
-        const { chatSessionId } = await chatBind({
-            channelId,
-            scopeId:      room.roomId,
-            senderName:   resolvedUsername.value || identity.value?.userId || 'Unknown',
-            isHub:        room.isOwner,
-            historyLimit: 500,
-        })
- 
-        chatSessions.value.set(room.roomId, chatSessionId)
- 
-        console.log('[GExchange] Chat bound — room:', room.roomId.slice(0, 8),
-            'channel:', channelId.slice(0, 8), 'session:', chatSessionId.slice(0, 8),
-            'isHub:', room.isOwner)
-    } catch (err: any) {
-        console.warn('[GExchange] Failed to bind chat for room:',
-            room.roomId.slice(0, 8), err)
-    }
-}
-
-async function stopAllChatSessions() {
-    if (!chatUnbind) return
-    for (const chatSessionId of chatSessions.value.values()) {
-        try { await chatUnbind(chatSessionId) } catch { }
-    }
-    chatSessions.value.clear()
-    channelForRoom.value.clear()
-}
-
-// ── Chat actions ───────────────────────────────────────────────────────────────
-
-async function loadHistory(roomId: string) {
-    if (!chatGetHistory) return
-    chatLoading.value = true
-    try {
-        const msgs     = await chatGetHistory(roomId, 100)
-        messages.value = msgs.map(m => ({ ...m, roomId: m.scopeId }))
-        await nextTick()
-        scrollToBottom()
-    } catch (err) {
-        console.warn('[GExchange] Failed to load history:', err)
-    } finally {
-        chatLoading.value = false
-    }
-}
-
-async function sendMessage() {
-    const text = draftText.value.trim()
-
-    console.log('[GExchange] sendMessage called — text:', text.slice(0, 20),
-        'activeRoom:', activeRoom.value?.roomId?.slice(0, 8) ?? 'null',
-        'sending:', sending.value,
-        'chatSend available:', !!chatSend,
-        'chatSessionId:', chatSessions.value.get(activeRoom.value?.roomId ?? '')?.slice(0, 8) ?? 'MISSING')
-
-    if (!text || !activeRoom.value || sending.value || !chatSend) return
-
-    const roomId        = activeRoom.value.roomId
-    const chatSessionId = chatSessions.value.get(roomId)
-
-    if (!chatSessionId) {
-        console.warn('[GExchange] No chat session for room:', roomId.slice(0, 8),
-            '— sessions map:', [...chatSessions.value.keys()].map(k => k.slice(0, 8)))
-        return
-    }
-
-    sending.value = true
-    const optimisticId = `opt_${Date.now()}`
-
-    const optimistic: ChatMessage = {
-        id:         optimisticId,
-        scopeId:    activeRoom.value.roomId,
-        senderId:   identity.value?.userId ?? '',
-        senderName: resolvedUsername.value || identity.value?.userId || 'You',
-        text,
-        type:       'text',
-        sentAt:     Date.now(),
-    }
-    appendMessage(optimistic)
-    draftText.value = ''
-    resetInputHeight()
-
-    try {
-        const result = await chatSend(chatSessionId, text)
-        const idx    = messages.value.findIndex(m => m.id === optimisticId)
-        if (idx >= 0) messages.value[idx] = {
-            ...messages.value[idx],
-            id:     result.messageId,
-            sentAt: result.sentAt,
-        }
-    } catch (err) {
-        console.warn('[GExchange] Failed to send message:', err)
-        messages.value = messages.value.filter(m => m.id !== optimisticId)
-    } finally {
-        sending.value = false
-        await nextTick()
-        inputRef.value?.focus()
-    }
-}
-
-function appendMessage(msg: ChatMessage) {
-    if (messages.value.some(m => m.id === msg.id)) return
-    messages.value.push(msg)
-    nextTick(() => scrollToBottom())
-}
-
-function scrollToBottom() {
-    if (feedRef.value) feedRef.value.scrollTop = feedRef.value.scrollHeight
-}
-
-// ── Input handling ─────────────────────────────────────────────────────────────
-
-function onInputKeydown(e: KeyboardEvent) {
-    if (shiftToSend.value) {
-        if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); sendMessage() }
-    } else {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() }
-    }
-}
-
-function autoResizeInput() {
-    const el = inputRef.value
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = Math.min(el.scrollHeight, 120) + 'px'
-}
-
-function resetInputHeight() {
-    if (inputRef.value) inputRef.value.style.height = 'auto'
-}
-
-// ── Message display helpers ────────────────────────────────────────────────────
-
-function shouldShowSender(msg: ChatMessage, list: ChatMessage[]): boolean {
-    const idx = list.indexOf(msg)
-    if (idx === 0) return true
-    const prev = list[idx - 1]
-    return prev.senderId !== msg.senderId || (msg.sentAt - prev.sentAt) > 5 * 60 * 1000
-}
-
-function shouldShowDateSep(msg: ChatMessage, list: ChatMessage[]): boolean {
-    const idx = list.indexOf(msg)
-    if (idx === 0) return false
-    const prev = list[idx - 1]
-    return new Date(msg.sentAt).toDateString() !== new Date(prev.sentAt).toDateString()
-}
-
-function formatTime(ms: number): string {
-    if (!ms || isNaN(ms)) return ''
-    return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(new Date(ms))
-}
-
-function formatDate(ms: number): string {
-    if (!ms || isNaN(ms)) return ''
-    return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(ms))
-}
-
-// ── EDHT ───────────────────────────────────────────────────────────────────────
-
-const encoder = new TextEncoder()
-
-async function ensureEdhtSession(room: Room) {
-    if (edhtSessions.value.has(room.roomId)) return
-    if (edhtSessionsPending.has(room.roomId)) return
-    edhtSessionsPending.add(room.roomId)
-    if (!room.sessionSecret || !createEdhtSession) return
-
-    try {
-        const secret = Uint8Array.from(atob(room.sessionSecret), c => c.charCodeAt(0))
-        const s      = await createEdhtSession({ sessionSecret: secret, scopeId: room.roomId })
-
-        // ── Register callback BEFORE announce so no push events are missed ──
-        s.onPeerDiscovered(async peer => {
-            try {
-                const info = JSON.parse(new TextDecoder().decode(peer.payload))
-        
-                // Update peer identity regardless of connection state
-                if (info.userId) {
-                    if (!roomPeers.value.has(room.roomId))
-                        roomPeers.value.set(room.roomId, new Set())
-                    roomPeers.value.get(room.roomId)!.add(info.userId)
-                    peerNames.value[info.userId] = info.username || info.userId
-        
-                    if (
-                        info.userId !== identity.value?.userId &&
-                        info.username &&
-                        baseName.value &&
-                        info.username === baseName.value &&
-                        !showDisambigPrompt.value &&
-                        !disambigState.value
-                    ) {
-                        showDisambigPrompt.value = true
-                    }
-                }
-        
-                // Only attempt a connection if we don't already have one for this room.
-                // This makes EDHT a fallback, not a parallel racer.
-                const alreadyConnected = chatSessions.value.has(room.roomId)
-                if (alreadyConnected) return
-        
-                if (info.endpoint && info.publicKey && p2pOpenChannel) {
-                    try {
-                        await p2pOpenChannel({
-                            endpoint:  info.endpoint,
-                            publicKey: info.publicKey,
-                            sessionId: room.roomId,
-                        })
-                        // p2pOpenChannel success → ChatBridge will wire via OnChannelOpen
-                        // ensureChatSession will be triggered by onP2PChannelClosed reconnect
-                        // or we call it explicitly here for the EDHT-connect path
-                        await ensureChatSession(room)
-                    } catch (err: any) {
-                        if (!err?.message?.includes('already') &&
-                            !err?.message?.includes('Reusing'))
-                            console.warn('[GExchange] EDHT p2pOpenChannel failed:', err?.message)
-                        else
-                            await ensureChatSession(room)  // already connected — just bind
-                    }
-                }
-            } catch (err) {
-                console.warn('[GExchange] Failed to parse EDHT peer payload:', err)
-            }
-        })
-        
-
-        s.onPeerLeft(_nodeId => { /* future: remove from roomPeers */ })
-
-        // ── Now announce, then discover ────────────────────────────────────
-        const payload = encoder.encode(JSON.stringify({
-            endpoint:  identity.value?.endpoint  ?? '',
-            publicKey: identity.value?.publicKey ?? '',
-            userId:    identity.value?.userId    ?? '',
-            username:  (resolvedUsername.value    || identity.value?.userId) ?? '',
-        }))
-
-        await s.announce(payload)
-        await s.discover()
-
-        edhtSessions.value.set(room.roomId, s)
-        edhtSessionsPending.delete(room.roomId)
-        console.log(`[GExchange] EDHT session ready for room ${room.roomId.slice(0, 8)}…`)
-    } catch (err) {
-        edhtSessionsPending.delete(room.roomId)
-        console.warn('[GExchange] Failed to start EDHT session:', err)
-    }
-}
-
-async function stopAllEdhtSessions() {
-    for (const session of edhtSessions.value.values())
-        await session.dispose()
-    edhtSessions.value.clear()
-    edhtSessionsPending.clear()
-}
-
-// Re-announce on all active EDHT sessions with the latest username payload.
-// Called after any display name change so peers see the update on their
-// next discover cycle without waiting for the TTL to expire.
-async function reannounceAll() {
-    for (const [roomId, session] of edhtSessions.value) {
-        const room = rooms.value.find(r => r.roomId === roomId)
-        if (!room) continue
-        try {
-            const payload = encoder.encode(JSON.stringify({
-                endpoint:  identity.value?.endpoint  ?? '',
-                publicKey: identity.value?.publicKey ?? '',
-                userId:    identity.value?.userId    ?? '',
-                username:  (resolvedUsername.value    || identity.value?.userId) ?? '',
-            }))
-            await session.announce(payload)
-        } catch (err) {
-            console.warn(`[GExchange] reannounce failed for room ${roomId.slice(0, 8)}…`, err)
-        }
-    }
-}
-
-// ── Identity ───────────────────────────────────────────────────────────────────
-
-async function loadIdentity() {
-    if (!p2pGetIdentity) return
-    try {
-        const result = await p2pGetIdentity()
-
-        // baseName tracks the raw configured name (no disambiguator).
-        // resolvedUsername (computed) appends the disambiguator if set.
-        baseName.value = result.displayName ?? ''
-
-        identity.value = {
-            userId:    result.userId,
-            username:  resolvedUsername.value || result.userId,
-            publicKey: result.publicKey,
-            endpoint:  result.endpoint,
-        }
-
-        // Show first-run prompt only when the backend confirms no name is set yet.
-        if (!result.isNameSet) {
-            showNamePrompt.value  = true
-            namePromptValue.value = ''
-            nextTick(() => namePromptInputRef.value?.focus())
-        }
-    } catch (err) {
-        console.warn('[GExchange] Failed to load identity:', err)
-    }
-}
-
-// ── Name prompt (first-run) ────────────────────────────────────────────────────
-
-const namePromptError = ref('')
-
-async function commitNamePrompt() {
-    const name = namePromptValue.value.trim()
-    if (!name) return
-    namePromptError.value = ''
-
-    if (!p2pSetUsername) {
-        // SDK not yet updated — store locally and continue
-        console.warn('[GExchange] p2pSetUsername not available — local only')
-        baseName.value = name
-        updateIdentityUsername()
-        showNamePrompt.value  = false
-        namePromptValue.value = ''
-        return
-    }
-
-    try {
-        const result   = await p2pSetUsername(name)
-        baseName.value = name
-        updateIdentityUsername()
-        showNamePrompt.value  = false
-        namePromptValue.value = ''
-        await reannounceAll()
-        console.log('[GExchange] Name set:', result.displayName)
-    } catch (err: any) {
-        namePromptError.value = err?.message ?? 'Failed to save name'
-        console.warn('[GExchange] Failed to set name:', err)
-    }
-}
-
-function dismissNamePrompt() {
-    showNamePrompt.value  = false
-    namePromptValue.value = ''
-    // Identity falls back to userId display — not ideal but non-blocking
-}
-
-// ── Name editor (sidebar) ──────────────────────────────────────────────────────
-
-function openNameEditor() {
-    nameEditorValue.value = baseName.value
-    showNameEditor.value  = true
-    nextTick(() => nameEditorInputRef.value?.focus())
-}
-
-const nameEditorError = ref('')
-
-async function commitNameEdit() {
-    const name = nameEditorValue.value.trim()
-    if (!name || nameEditorSaving.value) return
-    nameEditorError.value  = ''
-    nameEditorSaving.value = true
-    try {
-        if (p2pSetUsername) {
-            await p2pSetUsername(name)
-        } else {
-            console.warn('[GExchange] p2pSetUsername not available — local only')
-        }
-        baseName.value      = name
-        disambigState.value = null   // clear disambig; re-fires on next collision
-        updateIdentityUsername()
-        showNameEditor.value = false
-        await reannounceAll()
-    } catch (err: any) {
-        nameEditorError.value = err?.message ?? 'Failed to save name'
-        console.warn('[GExchange] Failed to update name:', err)
-    } finally {
-        nameEditorSaving.value = false
-    }
-}
-
-// ── Disambiguator ──────────────────────────────────────────────────────────────
-
-function generateDisambigValue(mode: DisambigMode): string {
-    if (mode === 'suffix-number') {
-        return `#${Math.floor(Math.random() * 900) + 100}`   // #100–#999
-    }
-    const word = DISAMBIG_WORDS[Math.floor(Math.random() * DISAMBIG_WORDS.length)]
-    if (mode === 'suffix-word') return `-${word}`
-    return `${word}-`  // prefix-word
-}
-
-function previewDisambig(mode: DisambigMode): string {
-    const base = baseName.value || identity.value?.userId?.slice(0, 8) || 'you'
-    if (disambigChoice.value === mode) {
-        const v = disambigGenerated.value
-        if (mode === 'prefix-word') return `${v.replace(/-$/, '')}-${base}`
-        return `${base}${v}`
-    }
-    // Show a static example for unchosen options
-    if (mode === 'suffix-number') return `${base}#42`
-    if (mode === 'suffix-word')   return `${base}-swift`
-    return `bold-${base}`
-}
-
-function selectDisambigOption(mode: DisambigMode) {
-    disambigChoice.value    = mode
-    disambigGenerated.value = generateDisambigValue(mode)
-}
-
-function regenerateDisambig() {
-    if (!disambigChoice.value) return
-    disambigGenerated.value = generateDisambigValue(disambigChoice.value)
-}
-
-async function commitDisambig() {
-    if (!disambigChoice.value) return
-    disambigState.value = {
-        mode:  disambigChoice.value,
-        value: disambigGenerated.value,
-    }
-    updateIdentityUsername()
-    showDisambigPrompt.value = false
-    disambigChoice.value     = null
-    await reannounceAll()
-}
-
-// Sync identity.value.username after any change to baseName or disambigState
-function updateIdentityUsername() {
-    if (!identity.value) return
-    identity.value = {
-        ...identity.value,
-        username: resolvedUsername.value || identity.value.userId,
-    }
-}
-
-// ── Room actions ───────────────────────────────────────────────────────────────
-
-function selectRoom(room: Room) {
-    activeRoom.value = room
-    ensureEdhtSession(room)
-}
-
-async function createRoom() {
-    const name = roomFilter.value.trim()
-    if (!name) return
-    await doCreateRoom(name)
-    closePicker()
-}
-
-async function createRoomFromEmpty() {
-    const name = newRoomName.value.trim()
-    if (!name) return
-    createError.value = ''
-    try {
-        await doCreateRoom(name)
-        showNewRoomInput.value = false
-        newRoomName.value      = ''
-    } catch (err: any) {
-        createError.value = err.message
-    }
-}
-
-async function doCreateRoom(name: string) {
-    if (!identity.value) throw new Error('Identity not loaded')
-
-    const createdAt     = Date.now()
-    const sessionSecret = generateSecret()
-    const roomId        = await deriveRoomId(identity.value.publicKey, name, createdAt)
-
-    const config: Omit<RoomConfig, 'accessPointId' | 'blobSha256'> = {
-        roomId,
-        canonicalName:  name,
-        createdAt,
-        ownerPublicKey: identity.value.publicKey,
-        sessionSecret,
-        ownerEndpoint:  identity.value.endpoint,
-        isOwner:        true,
-        isAdmin:        true,
-        isClosed:       false,
-        closedReason:   '',
-    }
-
-    const { accessPointId, blobSha256 } = await saveRoomConfig(config)
-    const room: Room = {
-        ...config,
-        accessPointId,
-        blobSha256,
-        displayName: name,
-    }
-
-    rooms.value.push(room)
-    selectRoom(room)
-}
-
-function generateSecret(): string {
-    const bytes = crypto.getRandomValues(new Uint8Array(32))
-    return btoa(String.fromCharCode(...bytes))
-}
-
-async function deriveRoomId(publicKey: string, name: string, createdAt: number): Promise<string> {
-    const input   = `${publicKey}|${name}|${createdAt}`
-    const encoded = new TextEncoder().encode(input)
-    const hash    = await crypto.subtle.digest('SHA-256', encoded)
-    return Array.from(new Uint8Array(hash))
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('')
-        .slice(0, 8)
-}
-
-function openInItems() {
-    if (!activeRoom.value) return
-    console.log('[GExchange] Open in items:', `gexchange://${activeRoom.value.roomId}/`)
-}
-
-function focusCreateField() {
-    nextTick(() => {
-        if (searchInputRef.value) {
-            searchInputRef.value.focus()
-            roomFilter.value = 'new-room'
-            nextTick(() => searchInputRef.value?.select())
-        }
-    })
-}
-
-// ── Invite ─────────────────────────────────────────────────────────────────────
-
-async function generateInvite() {
-    if (!activeRoom.value || !p2pCreateInvite) return
-    inviteError.value  = ''
-    inviteToken.value  = ''
-    inviteCopied.value = false
-    try {
-        const result      = await p2pCreateInvite(activeRoom.value.roomId, {
-            sessionSecret:   activeRoom.value.sessionSecret,
-            validityMinutes: inviteExpiry.value,
-        })
-        inviteToken.value = result.token
-    } catch (err: any) {
-        inviteError.value = err.message
-    }
-}
-
-async function copyInvite() {
-    if (!inviteToken.value) return
-    try {
-        await navigator.clipboard.writeText(inviteToken.value)
-        inviteCopied.value = true
-        setTimeout(() => { inviteCopied.value = false }, 2000)
-    } catch { }
-}
-
-async function joinRoom() {
-    const token = joinToken.value.trim()
-    if (!token || !p2pAcceptInvite || !identity.value) return
-    joinError.value   = ''
-    joinLoading.value = true
-    try {
-        const decoded = await p2pAcceptInvite(token)
-
-        // Use sessionName from the token if the invite was created with one,
-        // otherwise fall back to the raw sessionId.
-        // p2pAcceptInvite doesn't expose sessionName currently — when that's
-        // added to the invite token flow, use it here. For now use sessionId
-        // as canonicalName so at least it's consistent and renameable locally.
-        const canonicalName = decoded.sessionId
-
-        const config: Omit<RoomConfig, 'accessPointId' | 'blobSha256'> = {
-            roomId:         decoded.sessionId,
-            canonicalName,
-            createdAt:      Date.now(),
-            ownerPublicKey: decoded.publicKey,
-            sessionSecret:  decoded.sessionSecret,
-            ownerEndpoint:  decoded.endpoint,
-            isOwner:        false,
-            isAdmin:        false,
-            isClosed:       false,
-            closedReason:   '',
-        }
-
-        const { accessPointId, blobSha256 } = await saveRoomConfig(config)
-        const room: Room = {
-            ...config,
-            accessPointId,
-            blobSha256,
-            displayName: canonicalName,
-        }
-
-        rooms.value.push(room)
-        selectRoom(room)
-
-        showJoinModal.value = false
-        joinToken.value     = ''
-    } catch (err: any) {
-        joinError.value = err.message
-    } finally {
-        joinLoading.value = false
-    }
-}
-
-function closeJoinModal() {
-    showJoinModal.value = false
-    joinToken.value     = ''
-    joinError.value     = ''
-}
-
-// ── Picker ─────────────────────────────────────────────────────────────────────
-
-function togglePicker() {
-    pickerOpen.value = !pickerOpen.value
-    if (pickerOpen.value) {
-        roomFilter.value = ''
-        nextTick(() => searchInputRef.value?.focus())
-    }
-}
-
-function closePicker() {
-    pickerOpen.value = false
-    roomFilter.value = ''
-}
-
-function onSearchEnter() {
-    if (filteredRooms.value.length === 1) {
-        selectRoom(filteredRooms.value[0])
-        closePicker()
-    } else if (canCreate.value) {
-        createRoom()
-    }
-}
-
-function onDocClick(e: MouseEvent) {
-    if (pickerRef.value && !pickerRef.value.contains(e.target as Node))
-        closePicker()
-}
-onMounted(() => document.addEventListener('mousedown', onDocClick))
-
-// ── Rename ─────────────────────────────────────────────────────────────────────
-
-function renameRoom(room: Room) {
-    startRename(`gex-room-${room.roomId}`, {
-        onCommit: (newName) => {
-            if (!newName.trim()) return
-            const localNames        = loadLocalNames()
-            localNames[room.roomId] = newName.trim()
-            saveLocalNames(localNames)
-            const r = rooms.value.find(x => x.roomId === room.roomId)
-            if (r) r.displayName = newName.trim()
-            if (activeRoom.value?.roomId === room.roomId)
-                activeRoom.value = { ...activeRoom.value, displayName: newName.trim() }
-        },
-        onCancel:  () => {},
-        selectAll: true,
-        validate:  (v) => v.trim() ? null : 'Name cannot be empty',
-    })
-}
-
-// ── Sidebar ────────────────────────────────────────────────────────────────────
-
-function toggleSidebar() { showSidebar.value = !showSidebar.value }
-
-watch(showNewRoomInput, (v) => {
-    if (v) nextTick(() => newRoomInputRef.value?.focus())
 })
 </script>
 
 <style scoped>
-/* ── Root ────────────────────────────────────────────────────────────────── */
 .gex-root {
     --bg:         var(--surface-1,  #111);
     --bg-2:       var(--surface-2,  #171717);
@@ -1555,7 +818,6 @@ watch(showNewRoomInput, (v) => {
     --accent-dim: rgba(91,142,240,.15);
     --radius:     8px;
     --font:       var(--font-ui, system-ui, sans-serif);
-
     display: grid;
     grid-template-rows: 44px 1fr auto;
     height: 100%;
@@ -1568,11 +830,7 @@ watch(showNewRoomInput, (v) => {
     overflow: hidden;
     position: relative;
 }
-.gex-root.no-room {
-    grid-template-rows: 44px auto 1fr;
-}
-
-/* ── Header ──────────────────────────────────────────────────────────────── */
+.gex-root.no-room { grid-template-rows: 44px auto 1fr; }
 .gex-header {
     display: flex;
     align-items: center;
@@ -1584,10 +842,7 @@ watch(showNewRoomInput, (v) => {
 }
 .header-left  { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
 .header-right { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
-
-/* ── Room picker ─────────────────────────────────────────────────────────── */
-.room-picker { position: relative; min-width: 0; }
-
+.room-picker  { position: relative; min-width: 0; }
 .room-trigger {
     display: flex;
     align-items: center;
@@ -1607,7 +862,6 @@ watch(showNewRoomInput, (v) => {
 }
 .room-trigger:hover { background: var(--bg-3); border-color: var(--border); }
 .room-picker.open .room-trigger { background: var(--bg-3); border-color: var(--accent); }
-
 .room-hash    { color: var(--accent); font-weight: 700; flex-shrink: 0; }
 .room-name    { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .room-id-badge {
@@ -1620,15 +874,8 @@ watch(showNewRoomInput, (v) => {
     flex-shrink: 0;
     font-weight: 400;
 }
-.chevron {
-    width: 10px; height: 6px;
-    color: var(--fg-dim);
-    flex-shrink: 0;
-    transition: transform .2s;
-}
+.chevron { width: 10px; height: 6px; color: var(--fg-dim); flex-shrink: 0; transition: transform .2s; }
 .room-picker.open .chevron { transform: rotate(180deg); }
-
-/* ── Dropdown ────────────────────────────────────────────────────────────── */
 .room-dropdown {
     position: absolute;
     top: calc(100% + 6px);
@@ -1643,7 +890,7 @@ watch(showNewRoomInput, (v) => {
     flex-direction: column;
     overflow: hidden;
 }
-.dropdown-top  { flex-shrink: 0; }
+.dropdown-top { flex-shrink: 0; }
 .search-row {
     display: flex;
     align-items: center;
@@ -1652,22 +899,9 @@ watch(showNewRoomInput, (v) => {
     border-bottom: 1px solid var(--border);
 }
 .search-icon { width: 14px; height: 14px; color: var(--fg-muted); flex-shrink: 0; }
-.room-search {
-    flex: 1;
-    background: transparent;
-    border: none;
-    outline: none;
-    color: var(--fg);
-    font-family: var(--font);
-    font-size: 12px;
-}
+.room-search { flex: 1; background: transparent; border: none; outline: none; color: var(--fg); font-family: var(--font); font-size: 12px; }
 .room-search::placeholder { color: var(--fg-muted); }
-
-.dropdown-actions {
-    display: flex;
-    gap: 4px;
-    padding: 6px 8px;
-}
+.dropdown-actions { display: flex; gap: 4px; padding: 6px 8px; }
 .action-btn {
     display: flex;
     align-items: center;
@@ -1684,21 +918,11 @@ watch(showNewRoomInput, (v) => {
     justify-content: center;
     transition: color .15s, border-color .15s;
 }
-.action-btn svg  { width: 12px; height: 12px; flex-shrink: 0; }
+.action-btn svg { width: 12px; height: 12px; flex-shrink: 0; }
 .action-btn:hover { color: var(--fg); border-color: var(--accent); }
-
 .dropdown-sep { height: 1px; background: var(--border); }
-
-.room-list-scroll {
-    overflow-y: auto;
-    max-height: 220px;
-}
-.room-empty {
-    padding: 16px 12px;
-    font-size: 12px;
-    color: var(--fg-muted);
-    text-align: center;
-}
+.room-list-scroll { overflow-y: auto; max-height: 220px; }
+.room-empty { padding: 16px 12px; font-size: 12px; color: var(--fg-muted); text-align: center; }
 .room-row {
     display: flex;
     align-items: center;
@@ -1711,24 +935,14 @@ watch(showNewRoomInput, (v) => {
 }
 .room-row:hover  { background: var(--bg-3); }
 .room-row.active { background: var(--accent-dim); }
-.row-hash  { color: var(--accent); font-weight: 700; flex-shrink: 0; }
-.row-name  { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.row-id    { font-size: 10px; color: var(--fg-muted); flex-shrink: 0; }
+.row-hash   { color: var(--accent); font-weight: 700; flex-shrink: 0; }
+.row-name   { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.row-id     { font-size: 10px; color: var(--fg-muted); flex-shrink: 0; }
 .row-closed { font-size: 10px; color: #e05555; flex-shrink: 0; }
-.row-rename {
-    background: transparent;
-    border: none;
-    color: var(--fg-muted);
-    cursor: pointer;
-    padding: 2px;
-    opacity: 0;
-    transition: opacity .1s;
-}
+.row-rename { background: transparent; border: none; color: var(--fg-muted); cursor: pointer; padding: 2px; opacity: 0; transition: opacity .1s; }
 .row-rename svg { width: 12px; height: 12px; }
 .room-row:hover .row-rename { opacity: 1; }
 .row-rename:hover { color: var(--fg); }
-
-/* ── Icon buttons (header right) ─────────────────────────────────────────── */
 .icon-btn {
     display: flex;
     align-items: center;
@@ -1745,32 +959,12 @@ watch(showNewRoomInput, (v) => {
 }
 .icon-btn svg { width: 16px; height: 16px; }
 .icon-btn:hover { color: var(--fg); background: var(--bg-3); border-color: var(--border); }
-
-/* ── Empty state ─────────────────────────────────────────────────────────── */
-.empty-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 32px 24px;
-    text-align: center;
-}
-.empty-glyph {
-    font-size: 40px;
-    color: var(--fg-muted);
-    font-weight: 700;
-    line-height: 1;
-}
+.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 32px 24px; text-align: center; }
+.empty-glyph { font-size: 40px; color: var(--fg-muted); font-weight: 700; line-height: 1; }
 .empty-title { font-size: 14px; font-weight: 600; margin: 0; }
 .empty-sub   { font-size: 12px; color: var(--fg-dim); margin: 0; }
 .empty-actions { display: flex; gap: 8px; }
-.inline-create {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-    margin-top: 4px;
-}
+.inline-create { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
 .new-room-input {
     background: var(--bg-3);
     border: 1px solid var(--border);
@@ -1784,8 +978,6 @@ watch(showNewRoomInput, (v) => {
 }
 .new-room-input:focus { border-color: var(--accent); }
 .create-error { font-size: 11px; color: #e05555; margin: 0; }
-
-/* ── Pill buttons ────────────────────────────────────────────────────────── */
 .pill-btn {
     background: var(--bg-3);
     border: 1px solid var(--border);
@@ -1801,43 +993,17 @@ watch(showNewRoomInput, (v) => {
     gap: 4px;
 }
 .pill-btn:hover:not(:disabled) { color: var(--fg); border-color: var(--accent); }
-.pill-btn.primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #fff;
-}
+.pill-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .pill-btn.primary:hover:not(:disabled) { filter: brightness(1.1); }
 .pill-btn:disabled { opacity: .4; cursor: not-allowed; }
-
-/* ── Chat body ───────────────────────────────────────────────────────────── */
-.chat-body {
-    display: flex;
-    min-height: 0;
-    overflow: hidden;
-}
-.chat-feed {
-    flex: 1;
-    overflow-y: auto;
-    padding: 12px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-/* ── Messages ────────────────────────────────────────────────────────────── */
+.chat-body { display: flex; min-height: 0; overflow: hidden; }
+.chat-feed { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; }
 .message { display: flex; flex-direction: column; gap: 2px; padding: 1px 0; }
 .message.mine   { align-items: flex-end; }
 .message.theirs { align-items: flex-start; }
 .system-msg     { align-items: center; padding: 6px 0; }
-
-.msg-sender {
-    font-size: 10px;
-    color: var(--fg-muted);
-    padding: 0 4px;
-    margin-bottom: 1px;
-}
+.msg-sender { font-size: 10px; color: var(--fg-muted); padding: 0 4px; margin-bottom: 1px; }
 .msg-sender.sender-you { color: var(--accent); }
-
 .msg-bubble {
     display: inline-flex;
     align-items: flex-end;
@@ -1848,44 +1014,13 @@ watch(showNewRoomInput, (v) => {
     border-radius: 10px;
     padding: 6px 10px;
 }
-.mine .msg-bubble {
-    background: var(--accent-dim);
-    border-color: rgba(91,142,240,.25);
-    flex-direction: row-reverse;
-}
-.system-msg .msg-bubble {
-    background: transparent;
-    border: none;
-    font-size: 11px;
-    color: var(--fg-muted);
-    padding: 0;
-}
-
+.mine .msg-bubble { background: var(--accent-dim); border-color: rgba(91,142,240,.25); flex-direction: row-reverse; }
+.system-msg .msg-bubble { background: transparent; border: none; font-size: 11px; color: var(--fg-muted); padding: 0; }
 .msg-text { font-size: 13px; line-height: 1.45; }
-.msg-time {
-    font-size: 10px;
-    color: var(--fg-muted);
-    flex-shrink: 0;
-    margin-bottom: 1px;
-}
-.muted { color: var(--fg-muted); }
-
-.date-sep {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 8px 0 4px;
-}
-.date-sep span {
-    font-size: 10px;
-    color: var(--fg-muted);
-    background: var(--bg);
-    padding: 2px 8px;
-    border-radius: 10px;
-    border: 1px solid var(--border);
-}
-
-/* ── Sidebar ─────────────────────────────────────────────────────────────── */
+.msg-time { font-size: 10px; color: var(--fg-muted); flex-shrink: 0; margin-bottom: 1px; }
+.muted    { color: var(--fg-muted); }
+.date-sep { display: flex; align-items: center; justify-content: center; padding: 8px 0 4px; }
+.date-sep span { font-size: 10px; color: var(--fg-muted); background: var(--bg); padding: 2px 8px; border-radius: 10px; border: 1px solid var(--border); }
 .chat-sidebar {
     width: 180px;
     flex-shrink: 0;
@@ -1897,96 +1032,27 @@ watch(showNewRoomInput, (v) => {
     flex-direction: column;
     gap: 16px;
 }
-.sidebar-section h4 {
-    font-size: 10px;
-    color: var(--fg-muted);
-    text-transform: uppercase;
-    letter-spacing: .06em;
-    margin: 0 0 8px;
-}
-.user-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-.user-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: var(--fg-dim);
-    min-width: 0;
-}
+.sidebar-section h4 { font-size: 10px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: .06em; margin: 0 0 8px; }
+.user-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.user-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg-dim); min-width: 0; }
 .user-row.self { color: var(--fg); }
-.user-name {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.dot {
-    width: 6px; height: 6px;
-    border-radius: 50%;
-    flex-shrink: 0;
-    background: var(--fg-muted);
-}
+.user-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: var(--fg-muted); }
 .dot.online { background: #4caf50; }
-.you-tag {
-    font-size: 9px;
-    color: var(--accent);
-    background: var(--accent-dim);
-    border-radius: 3px;
-    padding: 1px 4px;
-    flex-shrink: 0;
-}
-.name-edit-btn {
-    background: transparent;
-    border: none;
-    color: var(--fg-muted);
-    cursor: pointer;
-    padding: 2px;
-    opacity: 0;
-    transition: opacity .1s;
-    flex-shrink: 0;
-}
+.you-tag { font-size: 9px; color: var(--accent); background: var(--accent-dim); border-radius: 3px; padding: 1px 4px; flex-shrink: 0; }
+.name-edit-btn { background: transparent; border: none; color: var(--fg-muted); cursor: pointer; padding: 2px; opacity: 0; transition: opacity .1s; flex-shrink: 0; }
 .name-edit-btn svg { width: 11px; height: 11px; }
 .user-row.self:hover .name-edit-btn { opacity: 1; }
 .name-edit-btn:hover { color: var(--fg); }
-
-/* ── Name editor (in sidebar) ────────────────────────────────────────────── */
-.name-editor {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin-top: 6px;
-    padding-top: 8px;
-    border-top: 1px solid var(--border);
-}
+.name-editor { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
 .name-editor-actions { display: flex; gap: 4px; }
-
-/* ── Room meta ───────────────────────────────────────────────────────────── */
-.room-meta { display: flex; flex-direction: column; gap: 6px; }
-.meta-row  { display: flex; flex-direction: column; gap: 1px; }
+.room-meta  { display: flex; flex-direction: column; gap: 6px; }
+.meta-row   { display: flex; flex-direction: column; gap: 1px; }
 .meta-label { font-size: 10px; color: var(--fg-muted); }
 .meta-value { font-size: 11px; color: var(--fg-dim); }
 .mono       { font-family: monospace; }
-
-/* ── Footer ──────────────────────────────────────────────────────────────── */
-.chat-footer {
-    border-top: 1px solid var(--border);
-    background: var(--bg-2);
-    display: flex;
-    flex-direction: column;
-}
-.plugin-tabs {
-    display: flex;
-    gap: 2px;
-    padding: 4px 8px 0;
-    border-bottom: 1px solid var(--border);
-}
+.chat-footer { border-top: 1px solid var(--border); background: var(--bg-2); display: flex; flex-direction: column; }
+.plugin-tabs { display: flex; gap: 2px; padding: 4px 8px 0; border-bottom: 1px solid var(--border); }
 .tab-btn {
     background: transparent;
     border: none;
@@ -2001,15 +1067,8 @@ watch(showNewRoomInput, (v) => {
 }
 .tab-btn.active { color: var(--fg); border-bottom-color: var(--accent); }
 .tab-btn:hover:not(.active) { color: var(--fg-dim); }
-
 .plugin-canvas { padding: 8px; }
-
-/* ── Input area ──────────────────────────────────────────────────────────── */
-.input-area {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
+.input-area { display: flex; flex-direction: column; gap: 4px; }
 .chat-input {
     width: 100%;
     background: var(--bg-3);
@@ -2028,54 +1087,16 @@ watch(showNewRoomInput, (v) => {
 .chat-input:focus { border-color: var(--accent); }
 .chat-input:disabled { opacity: .5; cursor: not-allowed; }
 .chat-input::placeholder { color: var(--fg-muted); }
-
-.input-actions {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 6px;
-}
-.send-mode-toggle {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    cursor: pointer;
-    font-size: 11px;
-    color: var(--fg-muted);
-}
+.input-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.send-mode-toggle { display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: 11px; color: var(--fg-muted); }
 .send-mode-toggle input { accent-color: var(--accent); }
 .toggle-label { user-select: none; }
-
-.send-btn {
-    background: var(--accent);
-    border: none;
-    border-radius: 6px;
-    color: #fff;
-    cursor: pointer;
-    padding: 6px 8px;
-    display: flex;
-    align-items: center;
-    transition: filter .15s;
-}
+.send-btn { background: var(--accent); border: none; border-radius: 6px; color: #fff; cursor: pointer; padding: 6px 8px; display: flex; align-items: center; transition: filter .15s; }
 .send-btn svg { width: 14px; height: 14px; }
 .send-btn:hover:not(:disabled) { filter: brightness(1.15); }
 .send-btn:disabled { opacity: .4; cursor: not-allowed; }
-
-.closed-banner {
-    font-size: 11px;
-    color: #e05555;
-    text-align: center;
-    padding: 4px 0 2px;
-}
-.loading-state {
-    font-size: 12px;
-    color: var(--fg-muted);
-    padding: 12px 0;
-    text-align: center;
-}
-.mins { font-size: 10px; color: var(--fg-muted); }
-
-/* ── Name prompt panel (first-run + disambig) ────────────────────────────── */
+.closed-banner { font-size: 11px; color: #e05555; text-align: center; padding: 4px 0 2px; }
+.loading-state { font-size: 12px; color: var(--fg-muted); padding: 12px 0; text-align: center; }
 .name-prompt-panel {
     position: absolute;
     top: 44px;
@@ -2090,199 +1111,47 @@ watch(showNewRoomInput, (v) => {
 .name-prompt-body  { display: flex; flex-direction: column; gap: 8px; }
 .name-prompt-label { font-size: 12px; color: var(--fg-dim); }
 .name-prompt-row   { display: flex; gap: 6px; align-items: center; }
-.name-prompt-input {
-    flex: 1;
-    background: var(--bg-3);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--fg);
-    font-family: var(--font);
-    font-size: 12px;
-    padding: 6px 10px;
-    outline: none;
-    transition: border-color .15s;
-}
+.name-prompt-input { flex: 1; background: var(--bg-3); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font-family: var(--font); font-size: 12px; padding: 6px 10px; outline: none; transition: border-color .15s; }
 .name-prompt-input:focus { border-color: var(--accent); }
 .name-prompt-note { font-size: 10px; color: var(--fg-muted); margin: 0; line-height: 1.4; }
-
-/* ── Disambiguator options ───────────────────────────────────────────────── */
-.disambig-options {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-.disambig-btn {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    background: var(--bg-3);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--fg-dim);
-    cursor: pointer;
-    font-family: var(--font);
-    padding: 7px 10px;
-    text-align: left;
-    transition: border-color .15s, color .15s;
-}
-.disambig-btn:hover { border-color: var(--accent); color: var(--fg); }
+.disambig-options { display: flex; flex-direction: column; gap: 4px; }
+.disambig-btn { display: flex; align-items: center; gap: 10px; background: var(--bg-3); border: 1px solid var(--border); border-radius: 6px; color: var(--fg-dim); cursor: pointer; font-family: var(--font); padding: 7px 10px; text-align: left; transition: border-color .15s, color .15s; }
+.disambig-btn:hover  { border-color: var(--accent); color: var(--fg); }
 .disambig-btn.active { border-color: var(--accent); background: var(--accent-dim); color: var(--fg); }
-.disambig-preview {
-    font-size: 13px;
-    font-weight: 600;
-    min-width: 90px;
-    color: var(--accent);
-}
-.disambig-label { font-size: 11px; color: inherit; }
+.disambig-preview { font-size: 13px; font-weight: 600; min-width: 90px; color: var(--accent); }
+.disambig-label   { font-size: 11px; color: inherit; }
 .disambig-actions { display: flex; gap: 6px; align-items: center; }
-
-/* ── Invite panel ────────────────────────────────────────────────────────── */
-.invite-panel {
-    position: absolute;
-    top: 44px;
-    left: 0;
-    right: 0;
-    z-index: 50;
-    background: var(--bg-2);
-    border-bottom: 1px solid var(--border);
-    padding: 12px 14px;
-    box-shadow: 0 4px 16px rgba(0,0,0,.4);
-}
-.invite-panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 10px;
-    font-size: 12px;
-    color: var(--fg-dim);
-}
-.invite-close {
-    background: transparent;
-    border: none;
-    color: var(--fg-muted);
-    cursor: pointer;
-    font-size: 13px;
-    padding: 2px 4px;
-    line-height: 1;
-}
+.invite-panel { position: absolute; top: 44px; left: 0; right: 0; z-index: 50; background: var(--bg-2); border-bottom: 1px solid var(--border); padding: 12px 14px; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
+.invite-panel-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; font-size: 12px; color: var(--fg-dim); }
+.invite-close { background: transparent; border: none; color: var(--fg-muted); cursor: pointer; font-size: 13px; padding: 2px 4px; line-height: 1; }
 .invite-close:hover { color: var(--fg); }
 .invite-body  { display: flex; flex-direction: column; gap: 8px; }
 .invite-label { font-size: 11px; color: var(--fg-dim); }
 .invite-expiry-row { display: flex; align-items: center; gap: 10px; }
 .expiry-options { display: flex; gap: 4px; }
-.expiry-btn {
-    background: var(--bg-3);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--fg-dim);
-    font-family: var(--font);
-    font-size: 11px;
-    padding: 3px 8px;
-    cursor: pointer;
-    transition: all .15s;
-}
+.expiry-btn { background: var(--bg-3); border: 1px solid var(--border); border-radius: 4px; color: var(--fg-dim); font-family: var(--font); font-size: 11px; padding: 3px 8px; cursor: pointer; transition: all .15s; }
 .expiry-btn.active { border-color: var(--accent); color: var(--accent); }
 .expiry-btn:hover:not(.active) { color: var(--fg); }
 .full-width { width: 100%; justify-content: center; }
-.token-display {
-    display: flex;
-    gap: 8px;
-    align-items: flex-start;
-}
-.token-text {
-    flex: 1;
-    font-size: 10px;
-    color: var(--fg-dim);
-    background: var(--bg-3);
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    padding: 6px 8px;
-    word-break: break-all;
-    line-height: 1.5;
-    max-height: 60px;
-    overflow-y: auto;
-}
+.token-display { display: flex; gap: 8px; align-items: flex-start; }
+.token-text { flex: 1; font-size: 10px; color: var(--fg-dim); background: var(--bg-3); border: 1px solid var(--border); border-radius: 5px; padding: 6px 8px; word-break: break-all; line-height: 1.5; max-height: 60px; overflow-y: auto; }
 .invite-error { font-size: 11px; color: #e05555; margin: 0; }
 .invite-note  { font-size: 10px; color: var(--fg-muted); margin: 0; line-height: 1.4; }
-
-/* ── Join modal ──────────────────────────────────────────────────────────── */
-.modal-backdrop {
-    position: absolute;
-    inset: 0;
-    background: rgba(0,0,0,.6);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 300;
-}
-.modal {
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    width: 320px;
-    box-shadow: 0 12px 40px rgba(0,0,0,.6);
-}
-.modal-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 14px;
-    border-bottom: 1px solid var(--border);
-    font-size: 13px;
-    font-weight: 600;
-}
+.modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 300; }
+.modal { background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius); width: 320px; box-shadow: 0 12px 40px rgba(0,0,0,.6); }
+.modal-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 600; }
 .modal-body    { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .modal-sub     { font-size: 12px; color: var(--fg-dim); margin: 0; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
-.token-input {
-    width: 100%;
-    background: var(--bg-3);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--fg);
-    font-family: var(--font);
-    font-size: 11px;
-    padding: 8px 10px;
-    resize: none;
-    outline: none;
-    transition: border-color .15s;
-    box-sizing: border-box;
-    line-height: 1.5;
-}
+.token-input { width: 100%; background: var(--bg-3); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font-family: var(--font); font-size: 11px; padding: 8px 10px; resize: none; outline: none; transition: border-color .15s; box-sizing: border-box; line-height: 1.5; }
 .token-input:focus { border-color: var(--accent); }
-
-/* ── Loading overlay ─────────────────────────────────────────────────────── */
-.loading-overlay {
-    position: absolute;
-    inset: 0;
-    background: rgba(0,0,0,.4);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 100;
-}
-.spinner {
-    width: 20px; height: 20px;
-    border: 2px solid var(--border);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin .7s linear infinite;
-}
+.loading-overlay { position: absolute; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-
-/* ── Transitions ─────────────────────────────────────────────────────────── */
-.dropdown-enter-active,
-.dropdown-leave-active { transition: opacity .15s, transform .15s; }
-.dropdown-enter-from,
-.dropdown-leave-to     { opacity: 0; transform: translateY(-6px); }
-
-.slide-down-enter-active,
-.slide-down-leave-active { transition: opacity .15s, transform .15s; }
-.slide-down-enter-from,
-.slide-down-leave-to     { opacity: 0; transform: translateY(-8px); }
-
-.fade-enter-active,
-.fade-leave-active { transition: opacity .15s; }
-.fade-enter-from,
-.fade-leave-to     { opacity: 0; }
+.dropdown-enter-active, .dropdown-leave-active { transition: opacity .15s, transform .15s; }
+.dropdown-enter-from,   .dropdown-leave-to     { opacity: 0; transform: translateY(-6px); }
+.slide-down-enter-active, .slide-down-leave-active { transition: opacity .15s, transform .15s; }
+.slide-down-enter-from,   .slide-down-leave-to     { opacity: 0; transform: translateY(-8px); }
+.fade-enter-active, .fade-leave-active { transition: opacity .15s; }
+.fade-enter-from,   .fade-leave-to     { opacity: 0; }
 </style>
