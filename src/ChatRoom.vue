@@ -448,15 +448,15 @@
         </div>
     </div>
 </template>
-
 <script setup lang="ts">
 import { ref, computed, shallowRef, watch, onMounted, onUnmounted, inject } from 'vue'
-import type { MeshPeer, UseChannelReturn, WidgetSdk } from 'gexplorer/widgets'
+import type { MeshPeer, UseChannelReturn, WidgetSdk, ChatMessage } from 'gexplorer/widgets'
 
 import { useIdentity } from './useIdentity'
 import { useRooms }    from './useRooms'
 import { useChat }     from './useChat'
 import type { Room }   from './useRooms'
+import type { EdhtSession } from 'gexplorer/widgets'
 
 // ── Props ──────────────────────────────────────────────────────────────────────
 
@@ -483,6 +483,7 @@ const props = defineProps<{
 
 const sdk = inject<WidgetSdk>('widgetSdk')
 const { createEdhtSession, useChannel } = sdk ?? {}
+
 // ── DOM refs ───────────────────────────────────────────────────────────────────
 
 const feedRef            = ref<HTMLElement | null>(null)
@@ -493,25 +494,32 @@ const newRoomInputRef    = ref<HTMLInputElement | null>(null)
 const namePromptInputRef = ref<HTMLInputElement | null>(null)
 const nameEditorInputRef = ref<HTMLInputElement | null>(null)
 
-// ── Board (plugin extension point) ────────────────────────────────────────────
-// loadedComponent is populated when the board tab is activated.
-// Kept as a stub here — the board plugin system wires it externally.
+// ── Board ──────────────────────────────────────────────────────────────────────
 
-const showBoard        = ref(false)
-const loadedComponent  = shallowRef<any>(null)
+const showBoard       = ref(false)
+const loadedComponent = shallowRef<any>(null)
 
-// ── Channel instances ──────────────────────────────────────────────────────────
+// ── Channel + EDHT instances ───────────────────────────────────────────────────
 //
-// One ChannelSession per room.  The session owns EDHT, mesh strategy,
-// chat bind/unbind, chatSessionId, peer tracking, and discovery-loop reconnect.
-// ChatRoom.vue never touches chatSessionId — it calls channel.sendMessage().
+// Two maps, one responsibility each:
 //
-// LIFECYCLE NOTE: useChannel's onUnmounted is NOT called internally because
-// ensureChannel runs from async context after mount, when Vue's component
-// instance is no longer active. Disposal is explicit via _disposeAllChannels().
+//   edhtSessions  — EDHT sessions created by announceRoom().
+//                   Owner rooms are announced on mount before any channel setup.
+//                   When ensureChannel runs, it reuses the existing session so
+//                   we don't double-create or lose the already-stored blobs.
+//                   Entries are removed when a channel takes ownership (wireEdht).
+//                   Remaining entries (announced but never activated) are disposed
+//                   on unmount.
+//
+//   channels      — Full UseChannelReturn instances (mesh + chatBind + edht).
+//                   Present for every room that has had ensureChannel run.
 
-const channels = new Map<string, UseChannelReturn>()
+const edhtSessions  = new Map<string, EdhtSession>()
+const channels      = new Map<string, UseChannelReturn>()
 const channelsPending = new Set<string>()
+
+// Unsub handle for the ambient message listener
+let _ambientUnsub: (() => void) | null = null
 
 // ── Sidebar ────────────────────────────────────────────────────────────────────
 
@@ -529,7 +537,6 @@ const identity$ = useIdentity({
             userId:    identity$.identity.value?.userId    ?? '',
             username:  (identity$.resolvedUsername.value   || identity$.identity.value?.userId) ?? 'Unknown',
             publicKey: identity$.identity.value?.publicKey ?? '',
-            endpoint:  identity$.identity.value?.endpoint  ?? '',
         }
         for (const channel of channels.values())
             await channel.reannounce(id)
@@ -573,7 +580,7 @@ const {
     rooms,
     activeRoom,
     loading,
-    vaultToken,   // exposed for file-sharing / VFS layer
+    vaultToken,
     roomFilter,
     pickerOpen,
     filteredRooms,
@@ -651,9 +658,17 @@ const peerNames = computed<Record<string, string>>(() => {
     return result
 })
 
-// ── Channel management ─────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
-const MAX_PEERS = 0   // 0 or -1 = no limit
+const MAX_PEERS = 0
+
+function _buildEdhtPayload(): Uint8Array {
+    return new TextEncoder().encode(JSON.stringify({
+        publicKey: identity.value?.publicKey ?? '',
+        userId:    identity.value?.userId    ?? '',
+        username:  (resolvedUsername.value   || identity.value?.userId) ?? '',
+    }))
+}
 
 function buildCanConnect(room: Room) {
     return async (peer: MeshPeer): Promise<boolean> => {
@@ -667,13 +682,64 @@ function buildCanConnect(room: Room) {
     }
 }
 
-async function ensureChannel(room: Room) {
-    console.log('[GExchange] ensureChannel check —',
-        'sessionSecret:', !!room.sessionSecret,
-        'useChannel:', !!useChannel,
-        'createEdhtSession:', !!createEdhtSession,
-        'sdk.useChannel:', !!(sdk?.useChannel),    // ← add this
-    )
+// ── Mention detection ──────────────────────────────────────────────────────────
+//
+// Runs on every message from non-active rooms.
+// Three triggers: per-room always-notify config, direct @mention, or a room
+// where only one other peer is present (message is always for you).
+
+function _shouldNotify(msg: ChatMessage, room: Room): boolean {
+    if (!identity.value) return false
+
+    // Per-room always-on config (future: room.notifyAll)
+    // if (room.notifyAll) return true
+
+    // Direct mention by resolved username or userId
+    const username = resolvedUsername.value || identity.value.userId
+    if (
+        msg.text.toLowerCase().includes(`@${username.toLowerCase()}`) ||
+        msg.text.includes(`@${identity.value.userId}`)
+    ) return true
+
+    // Only one other peer — it's a direct conversation, always notify
+    const ch = channels.get(room.roomId)
+    if (ch && ch.peers.value.size === 1) return true
+
+    return false
+}
+
+// ── Phase 1 — announceRoom ─────────────────────────────────────────────────────
+//
+// Lightweight: EDHT session + announce only. No TCP, no mesh, no chatBind.
+// Called in parallel for all owned rooms on mount so peers can find us
+// immediately via EDHT even for rooms we haven't opened yet.
+// Idempotent — silently skips if already announced.
+
+async function announceRoom(room: Room): Promise<void> {
+    if (edhtSessions.has(room.roomId)) return
+    if (!room.sessionSecret || !createEdhtSession) return
+
+    try {
+        const secret = Uint8Array.from(atob(room.sessionSecret), c => c.charCodeAt(0))
+        const edht   = await createEdhtSession({ sessionSecret: secret, scopeId: room.roomId })
+        await edht.announce(_buildEdhtPayload())
+        edhtSessions.set(room.roomId, edht)
+        console.log(`[GExchange] Announced — room ${room.roomId.slice(0, 8)}…`)
+    } catch (err) {
+        console.warn(`[GExchange] Failed to announce room ${room.roomId.slice(0, 8)}…:`, err)
+    }
+}
+
+// ── Phase 2 — ensureChannel ────────────────────────────────────────────────────
+//
+// Ambient channel setup: mesh strategy + chatBind so messages flow for all
+// rooms, enabling mention detection even for rooms that aren't active.
+// Reuses the EDHT session from announceRoom() if it exists — avoids
+// double-creating a session or losing already-stored presence blobs.
+// Does NOT load history — that's activateRoom()'s job.
+// Idempotent — safe to call multiple times, channels.has() guard makes it a no-op.
+
+async function ensureChannel(room: Room): Promise<void> {
     if (channels.has(room.roomId)) return
     if (channelsPending.has(room.roomId)) return
     if (!room.sessionSecret || !useChannel || !createEdhtSession) {
@@ -685,18 +751,16 @@ async function ensureChannel(room: Room) {
 
     try {
         const channel = useChannel({
-            scopeId:    room.roomId,
+            scopeId:  room.roomId,
             identity: {
                 userId:    identity.value?.userId    ?? '',
                 username:  (resolvedUsername.value   || identity.value?.userId) ?? 'Unknown',
                 publicKey: identity.value?.publicKey ?? '',
-                endpoint:  identity.value?.endpoint  ?? '',
             },
             sdk,
             isHub:      room.isOwner,
             strategy:   'full',
             canConnect: buildCanConnect(room),
-            // Client path only — cleared from vault after first successful connection
             bootstrapEndpoint:  room.bootstrapEndpoint,
             bootstrapPublicKey: room.bootstrapPublicKey,
 
@@ -715,27 +779,39 @@ async function ensureChannel(room: Room) {
             onPeerLeft: (_peer: MeshPeer) => { /* handled reactively via channel.peers */ },
         })
 
-        // Register before awaiting EDHT so racing ensureChannel calls see it
+        // Register before any awaits so racing ensureChannel calls see it
         channels.set(room.roomId, channel)
 
-        const secret = Uint8Array.from(atob(room.sessionSecret), c => c.charCodeAt(0))
-        const edht   = await createEdhtSession({ sessionSecret: secret, scopeId: room.roomId })
-
-        await edht.announce(_buildEdhtPayload())
-        channel.wireEdht(edht)
-
-        // Bootstrap: dial owner directly to seed the Kademlia routing table.
-        // Only fires on the client path when bootstrapEndpoint is set.
-        // On success, clear the one-time fields from vault.
-        const bootstrapped = await channel.bootstrap()
-        if (bootstrapped) {
-            rooms$.clearBootstrap(room.roomId)
+        // Reuse existing EDHT session from announceRoom() if available.
+        // Remove from edhtSessions since the channel now owns it — channel.dispose()
+        // will call edht.dispose() internally via wireEdht.
+        let edht = edhtSessions.get(room.roomId)
+        if (edht) {
+            edhtSessions.delete(room.roomId)
+            console.log(`[GExchange] Reusing announced EDHT session — room ${room.roomId.slice(0, 8)}…`)
+        } else {
+            const secret = Uint8Array.from(atob(room.sessionSecret), c => c.charCodeAt(0))
+            edht = await createEdhtSession({ sessionSecret: secret, scopeId: room.roomId })
+            await edht.announce(_buildEdhtPayload())
         }
 
-        await edht.discover()
+        channel.wireEdht(edht)
+
+        // For owner rooms, wait for ChatBridge to register the hub session before
+        // announcing. Without this, B can find A via EDHT and connect inbound
+        // before the hub is ready — chat:peer:joined never fires and A's peer
+        // list stays empty.
+        if (room.isOwner) await channel.whenHubReady
+
+        const bootstrapped = await channel.bootstrap()
+        if (bootstrapped) rooms$.clearBootstrap(room.roomId)
+
+        await edht.discover().catch(err =>
+            console.warn(`[GExchange] Initial discover failed — will retry via loop`, err)
+        )
 
         channelsPending.delete(room.roomId)
-        console.log(`[GExchange] Channel ready — room ${room.roomId.slice(0, 8)}…`)
+        console.log(`[GExchange] Channel ready (ambient) — room ${room.roomId.slice(0, 8)}…`)
     } catch (err) {
         channels.delete(room.roomId)
         channelsPending.delete(room.roomId)
@@ -743,20 +819,31 @@ async function ensureChannel(room: Room) {
     }
 }
 
-async function _disposeAllChannels() {
+// ── Phase 3 — activateRoom ─────────────────────────────────────────────────────
+//
+// Called when a room becomes active (watch on activeRoom).
+// Ensures the ambient channel exists then loads history.
+// ensureChannel is idempotent — safe to call if channel already exists.
+
+async function activateRoom(room: Room): Promise<void> {
+    await ensureChannel(room)
+    await loadHistory(room.roomId)
+}
+
+// ── Dispose ────────────────────────────────────────────────────────────────────
+
+async function _disposeAllChannels(): Promise<void> {
     for (const channel of channels.values())
         await channel.dispose()
     channels.clear()
     channelsPending.clear()
-}
 
-function _buildEdhtPayload(): Uint8Array {
-    return new TextEncoder().encode(JSON.stringify({
-        endpoint:  identity.value?.endpoint  ?? '',
-        publicKey: identity.value?.publicKey ?? '',
-        userId:    identity.value?.userId    ?? '',
-        username:  (resolvedUsername.value   || identity.value?.userId) ?? '',
-    }))
+    // Dispose any EDHT sessions that were announced but never had a channel
+    // spun up (owned rooms that were never selected). channel.dispose() handles
+    // the rest via wireEdht.
+    for (const edht of edhtSessions.values())
+        await edht.dispose().catch(() => { /* best-effort */ })
+    edhtSessions.clear()
 }
 
 // ── Picker outside-click ───────────────────────────────────────────────────────
@@ -769,24 +856,57 @@ function onDocClick(e: MouseEvent) {
 // ── Lifecycle ──────────────────────────────────────────────────────────────────
 
 onMounted(async () => {
-console.log('Full sdk : ', sdk);
     document.addEventListener('mousedown', onDocClick)
     await identity$.load()
     await rooms$.load()
 
+    // Phase 1 — announce all owned rooms immediately, in parallel.
+    // No stagger: announcing is lightweight (EDHT only, no TCP).
+    // This ensures B can find A via EDHT right after app start even for
+    // rooms A hasn't opened yet — the 15-minute re-announce keeps it fresh.
+    await Promise.all(
+        rooms.value
+            .filter(r => !r.isOwner && !r.isClosed)
+            .map(r => announceRoom(r))
+    )
+
+    // Phase 2 — activate the first room (loads history + triggers full channel setup)
     const first = rooms.value[0]
     if (first) selectRoom(first)
 
+    // Phase 3 — ambient channel setup for remaining rooms, staggered.
+    // These won't load history but will connect so mentions are detectable.
     for (let i = 1; i < rooms.value.length; i++) {
         const room = rooms.value[i]
         setTimeout(() => ensureChannel(room), i * 200)
     }
+
+    // Ambient message handler — mention detection for non-active rooms.
+    // useChat handles the active room; this handles everything else.
+    _ambientUnsub = sdk?.onChatMessage?.((msg: ChatMessage) => {
+        // Skip active room — useChat owns that
+        if (msg.scopeId === activeRoom.value?.roomId) return
+
+        const room = rooms.value.find(r => r.roomId === msg.scopeId)
+        if (!room) return
+
+        if (_shouldNotify(msg, room)) {
+            // TODO: wire to snackbar API
+            // sdk.showSnackbar?.({ text: `${msg.senderName} in #${room.displayName}`, ... })
+            console.log(
+                `[GExchange] Notify: ${msg.senderName} in #${room.displayName}: ` +
+                `${msg.text.slice(0, 60)}${msg.text.length > 60 ? '…' : ''}`
+            )
+        }
+    }) ?? null
 
     chat$.mount()
 })
 
 onUnmounted(async () => {
     document.removeEventListener('mousedown', onDocClick)
+    _ambientUnsub?.()
+    _ambientUnsub = null
     chat$.unmount()
     await _disposeAllChannels()
     await rooms$.dispose()
@@ -795,13 +915,12 @@ onUnmounted(async () => {
 // ── Watch active room ──────────────────────────────────────────────────────────
 //
 // selectRoom → onRoomSelected → ensureChannel already called.
-// ensureChannel is idempotent — channels.has() guard makes second call a no-op.
+// activateRoom calls ensureChannel (no-op if already done) then loads history.
 
 watch(activeRoom, async (room) => {
     clearMessages()
     if (!room) return
-    await ensureChannel(room)
-    await loadHistory(room.roomId)
+    await activateRoom(room)
 })
 </script>
 

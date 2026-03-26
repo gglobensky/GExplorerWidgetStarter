@@ -25,7 +25,6 @@ export interface Identity {
     userId:    string
     username:  string
     publicKey: string
-    endpoint:  string
 }
 
 type DisambigMode = 'suffix-number' | 'suffix-word' | 'prefix-word'
@@ -257,7 +256,6 @@ export function useIdentity(options: UseIdentityOptions): UseIdentityReturn {
                 userId:    result.userId,
                 username:  resolvedUsername.value || result.userId,
                 publicKey: result.publicKey,
-                endpoint:  result.endpoint,
             }
             if (!result.isNameSet) {
                 showNamePrompt.value  = true

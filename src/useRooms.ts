@@ -235,7 +235,7 @@ export function useRooms(options: UseRoomsOptions): UseRoomsReturn {
                     console.warn('[GExchange] Failed to read room config:', entry.vpath, err)
                 }
             }
-            
+
             // After building configs array, before assigning to rooms.value
             const seen = new Set<string>()
             const deduped = configs.filter(c => {
@@ -252,10 +252,22 @@ export function useRooms(options: UseRoomsOptions): UseRoomsReturn {
     }
 
     async function _saveRoomConfig(
-        config: Omit<RoomConfig, 'accessPointId' | 'blobSha256'>
+        config: Omit<RoomConfig, 'accessPointId' | 'blobSha256'>,
+        existingAccessPointId?: string   // pass when updating, omit when creating
     ): Promise<{ accessPointId: string; blobSha256: string }> {
         if (!vaultToken.value || !vaultSealContentAs)
             throw new Error('Vault not open')
+
+        // Delete the old blob before writing the new one.
+        // Without this, vaultList returns both and the room appears twice.
+        if (existingAccessPointId && sdk.vaultDelete) {
+            try {
+                await sdk.vaultDelete(vaultToken.value, existingAccessPointId)
+            } catch (err) {
+                console.warn('[GExchange] Failed to delete old vault entry before update:', err)
+                // Non-fatal — the read-time dedup still covers us, but the ghost entry remains
+            }
+        }
 
         const json    = JSON.stringify(config, null, 2)
         const content = btoa(unescape(encodeURIComponent(json)))
@@ -504,7 +516,7 @@ export function useRooms(options: UseRoomsOptions): UseRoomsReturn {
                 isClosed:      room.isClosed,
                 closedReason:  room.closedReason,
                 // bootstrapEndpoint and bootstrapPublicKey intentionally omitted
-            })
+            }, room.accessPointId)
             room.accessPointId = accessPointId
             room.blobSha256    = blobSha256
             console.log(`[GExchange] Bootstrap fields cleared — room ${roomId.slice(0, 8)}…`)
