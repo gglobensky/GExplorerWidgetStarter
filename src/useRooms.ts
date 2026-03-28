@@ -114,6 +114,12 @@ export interface UseRoomsReturn {
     openInItems:       () => void
     focusCreateField:  () => void
     renameRoom:        (room: Room) => void
+    /**
+    * Create a room with an explicit name — no user input required.
+    * Used by ChatRoom.vue when creating private rooms from the participant list.
+    * Returns the created Room so the caller can generate invites immediately.
+    */
+    createNamedRoom: (name: string) => Promise<Room>
 
     // ── Invite ─────────────────────────────────────────────────────────────
     inviteToken:    Ref<string>
@@ -360,6 +366,15 @@ export function useRooms(options: UseRoomsOptions): UseRoomsReturn {
         })
     }
 
+   async function createNamedRoom(name: string): Promise<Room> {
+       await _doCreateRoom(name)
+       // _doCreateRoom pushes the new room and selects it —
+       // the last entry in rooms.value is the one just created.
+       const room = rooms.value[rooms.value.length - 1]
+       if (!room) throw new Error('createNamedRoom: room not found after creation')
+       return room
+   }
+
     // ── Invite ────────────────────────────────────────────────────────────
 
     async function generateInvite() {
@@ -548,6 +563,7 @@ export function useRooms(options: UseRoomsOptions): UseRoomsReturn {
         openInItems,
         focusCreateField,
         renameRoom,
+        createNamedRoom,
 
         inviteToken,
         inviteExpiry,

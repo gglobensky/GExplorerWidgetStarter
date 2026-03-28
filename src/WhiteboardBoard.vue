@@ -1,1 +1,0 @@
-<template><div style="padding:20px; background:#fff; color:#000;">🎨 Whiteboard</div></template>

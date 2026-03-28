@@ -39,6 +39,16 @@ export interface UseChatOptions {
     feedRef:    Ref<HTMLElement | null>
     /** Ref to the message input for post-send re-focus. */
     inputRef:   Ref<HTMLTextAreaElement | null>
+    /**
+    * Called when a message is detected as a room invite / call signal.
+    * Return true to consume the message (don't add to feed).
+    * Return false to let it render normally.
+    */
+    onInviteMessage?: (
+        text:       string,
+        senderId:   string,
+        senderName: string,
+    ) => boolean
 }
 
 // ── Return type ───────────────────────────────────────────────────────────────
@@ -103,11 +113,16 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
     // ── Internal helpers ──────────────────────────────────────────────────
 
-    function _appendMessage(msg: ChatMessage) {
-        if (messages.value.some(m => m.id === msg.id)) return
-        messages.value.push(msg)
-        nextTick(() => _scrollToBottom())
-    }
+   function _appendMessage(msg: ChatMessage) {
+       // Intercept invite/call signals — never show in chat feed
+       if (msg.text.startsWith('__invite__|') || msg.text.startsWith('__decline__|')) {
+           options.onInviteMessage?.(msg.text, msg.senderId, msg.senderName)
+           return
+       }
+       if (messages.value.some(m => m.id === msg.id)) return
+       messages.value.push(msg)
+       nextTick(() => _scrollToBottom())
+   }
 
     function _scrollToBottom() {
         if (feedRef.value) feedRef.value.scrollTop = feedRef.value.scrollHeight
@@ -119,20 +134,22 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
     // ── Actions ───────────────────────────────────────────────────────────
 
-    async function loadHistory(scopeId: string) {
-        if (!chatGetHistory) return
-        chatLoading.value = true
-        try {
-            const msgs     = await chatGetHistory(scopeId, 100)
-            messages.value = msgs.map(m => ({ ...m, roomId: m.scopeId }))
-            await nextTick()
-            _scrollToBottom()
-        } catch (err) {
-            console.warn('[GExchange] Failed to load history:', err)
-        } finally {
-            chatLoading.value = false
-        }
-    }
+   async function loadHistory(scopeId: string) {
+       if (!chatGetHistory) return
+       chatLoading.value = true
+       try {
+           const msgs = await chatGetHistory(scopeId, 100)
+           messages.value = msgs
+               .filter(m => !m.text.startsWith('__invite__|') && !m.text.startsWith('__decline__|'))
+               .map(m => ({ ...m, roomId: m.scopeId }))
+           await nextTick()
+           _scrollToBottom()
+       } catch (err) {
+           console.warn('[GExchange] Failed to load history:', err)
+       } finally {
+           chatLoading.value = false
+       }
+   }
 
     function clearMessages() {
         messages.value = []

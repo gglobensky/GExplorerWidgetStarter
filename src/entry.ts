@@ -111,12 +111,23 @@ export default {
 
     // ── Extension Points ──────────────────────────────────────────────────────
 
-    consumes: [
-        {
-            point:    'gexchange.board',
-            multiple: true,
-        },
-    ],
+   provides: [
+       {
+           point:     'gexchange.board',
+           component: () => import('./VoicePanel.vue'),
+           props: {
+               label: '🎙 Voice',
+               icon:  'mdi-microphone',
+           },
+       },
+   ],
+
+   consumes: [
+       {
+           point:    'gexchange.board',
+           multiple: true,
+       },
+   ],
 
     // ── Layout ────────────────────────────────────────────────────────────────
 
