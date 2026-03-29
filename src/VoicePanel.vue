@@ -19,15 +19,20 @@
 
             <!-- Preview controls -->
             <div class="vp-preview-btns">
+                <!-- Record button — always enabled when mic is live -->
                 <button
                     class="vp-icon-btn"
                     :class="{ active: recording }"
-                    :disabled="!micActive || playing"
+                    :disabled="playing"
                     @click="toggleRecord"
-                    title="Record 5s preview"
+                    title="Record preview"
                 >
-                    <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" :fill="recording ? '#e05555' : 'currentColor'"/></svg>
+                    <svg viewBox="0 0 16 16">
+                        <circle cx="8" cy="8" r="5" :fill="micActive ? '#e05555' : 'currentColor'"/>
+                    </svg>
                 </button>
+
+                <!-- Play button — enabled when preview is ready -->
                 <button
                     class="vp-icon-btn"
                     :class="{ active: playing }"
@@ -63,7 +68,7 @@
                             <span>Thresh</span>
                             <input type="range" min="0" max="0.15" step="0.001"
                                 v-model.number="fx.noiseGate.threshold"
-                                @input="updateNoise" :disabled="!fx.noiseGate.enabled"/>
+                                :disabled="!fx.noiseGate.enabled"/>
                             <span class="vp-val">{{ (fx.noiseGate.threshold * 100).toFixed(1) }}</span>
                         </label>
                     </div>
@@ -80,7 +85,7 @@
                             <span>Semi</span>
                             <input type="range" min="-12" max="12" step="1"
                                 v-model.number="fx.pitch.semitones"
-                                @input="updatePitch" :disabled="!fx.pitch.enabled"/>
+                                :disabled="!fx.pitch.enabled"/>
                             <span class="vp-val">{{ fx.pitch.semitones > 0 ? '+' : '' }}{{ fx.pitch.semitones }}</span>
                         </label>
                     </div>
@@ -97,14 +102,14 @@
                             <span>Freq</span>
                             <input type="range" min="10" max="120" step="1"
                                 v-model.number="fx.robot.frequency"
-                                @input="updateRobot" :disabled="!fx.robot.enabled"/>
+                                :disabled="!fx.robot.enabled"/>
                             <span class="vp-val">{{ fx.robot.frequency }}Hz</span>
                         </label>
                         <label class="vp-sl">
                             <span>Mix</span>
                             <input type="range" min="0" max="1" step="0.01"
                                 v-model.number="fx.robot.mix"
-                                @input="updateRobot" :disabled="!fx.robot.enabled"/>
+                                :disabled="!fx.robot.enabled"/>
                             <span class="vp-val">{{ Math.round(fx.robot.mix * 100) }}%</span>
                         </label>
                     </div>
@@ -121,14 +126,14 @@
                             <span>Rate</span>
                             <input type="range" min="0.1" max="8" step="0.1"
                                 v-model.number="fx.chorus.rate"
-                                @input="updateChorus" :disabled="!fx.chorus.enabled"/>
+                                :disabled="!fx.chorus.enabled"/>
                             <span class="vp-val">{{ fx.chorus.rate.toFixed(1) }}</span>
                         </label>
                         <label class="vp-sl">
                             <span>Depth</span>
                             <input type="range" min="0" max="1" step="0.01"
                                 v-model.number="fx.chorus.depth"
-                                @input="updateChorus" :disabled="!fx.chorus.enabled"/>
+                                :disabled="!fx.chorus.enabled"/>
                             <span class="vp-val">{{ Math.round(fx.chorus.depth * 100) }}%</span>
                         </label>
                     </div>
@@ -145,7 +150,7 @@
                             <span>Mix</span>
                             <input type="range" min="0" max="1" step="0.01"
                                 v-model.number="fx.whisper.mix"
-                                @input="updateWhisper" :disabled="!fx.whisper.enabled"/>
+                                :disabled="!fx.whisper.enabled"/>
                             <span class="vp-val">{{ Math.round(fx.whisper.mix * 100) }}%</span>
                         </label>
                     </div>
@@ -162,14 +167,14 @@
                             <span>Bits</span>
                             <input type="range" min="1" max="16" step="1"
                                 v-model.number="fx.bitcrusher.bits"
-                                @input="updateBitcrusher" :disabled="!fx.bitcrusher.enabled"/>
+                                :disabled="!fx.bitcrusher.enabled"/>
                             <span class="vp-val">{{ fx.bitcrusher.bits }}</span>
                         </label>
                         <label class="vp-sl">
                             <span>Rate</span>
                             <input type="range" min="1" max="32" step="1"
                                 v-model.number="fx.bitcrusher.reduction"
-                                @input="updateBitcrusher" :disabled="!fx.bitcrusher.enabled"/>
+                                :disabled="!fx.bitcrusher.enabled"/>
                             <span class="vp-val">÷{{ fx.bitcrusher.reduction }}</span>
                         </label>
                     </div>
@@ -186,14 +191,14 @@
                             <span>Size</span>
                             <input type="range" min="0.1" max="6" step="0.1"
                                 v-model.number="fx.reverb.duration"
-                                @input="updateReverb" :disabled="!fx.reverb.enabled"/>
+                                :disabled="!fx.reverb.enabled"/>
                             <span class="vp-val">{{ fx.reverb.duration.toFixed(1) }}s</span>
                         </label>
                         <label class="vp-sl">
                             <span>Mix</span>
                             <input type="range" min="0" max="1" step="0.01"
                                 v-model.number="fx.reverb.mix"
-                                @input="updateReverb" :disabled="!fx.reverb.enabled"/>
+                                :disabled="!fx.reverb.enabled"/>
                             <span class="vp-val">{{ Math.round(fx.reverb.mix * 100) }}%</span>
                         </label>
                     </div>
@@ -210,14 +215,14 @@
                             <span>Time</span>
                             <input type="range" min="0.05" max="1" step="0.01"
                                 v-model.number="fx.echo.delay"
-                                @input="updateEcho" :disabled="!fx.echo.enabled"/>
+                                :disabled="!fx.echo.enabled"/>
                             <span class="vp-val">{{ fx.echo.delay.toFixed(2) }}s</span>
                         </label>
                         <label class="vp-sl">
                             <span>Feed</span>
                             <input type="range" min="0" max="0.9" step="0.01"
                                 v-model.number="fx.echo.feedback"
-                                @input="updateEcho" :disabled="!fx.echo.enabled"/>
+                                :disabled="!fx.echo.enabled"/>
                             <span class="vp-val">{{ Math.round(fx.echo.feedback * 100) }}%</span>
                         </label>
                     </div>
@@ -277,27 +282,42 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick, inject } from 'vue'
-import type { WidgetSdk } from 'gexplorer/widgets'
+import { ref, computed, onMounted, onUnmounted, nextTick, inject, type ComputedRef } from 'vue'
+import type { UseAudioChainReturn, FxState } from './useAudioChain'
+import type { UseChannelReturn } from 'gexplorer/widgets'
 
-// ── Props (from extension point registration) ─────────────────────────────────
+const activeChannel = inject<ComputedRef<UseChannelReturn | undefined>>('gex:activeChannel')
+
+// ── Props ─────────────────────────────────────────────────────────────────────
 defineProps<{ label?: string; icon?: string }>()
 
-// ── SDK (injected from parent widget tree) ────────────────────────────────────
-const sdk = inject<WidgetSdk>('widgetSdk')
+// ── Audio chain (injected from ChatRoom) ──────────────────────────────────────
+//
+// useAudioChain owns the AudioContext and the full processing chain.
+// VoicePanel is a pure control surface: it reads reactive state from the chain
+// and mutates fxState directly — the chain's watcher handles apply + persist.
+
+const audioChain = inject<UseAudioChainReturn>('gex:audioChain')
+
+const fx         = audioChain?.fxState
+const inputLevel = audioChain?.inputLevel ?? ref(0)
+
+// ── UI state ──────────────────────────────────────────────────────────────────
+
+const micActive  = ref(false)
+const micError   = ref(false)
+const statusText = ref('')
+const recording  = ref(false)
+const playing    = ref(false)
+
+// Preset UI
+const savedPresets   = ref<VoicePreset[]>([])
+const activePresetId = ref<string | null>(null)
+const showSaveInput  = ref(false)
+const savePresetName = ref('')
+const saveInputRef   = ref<HTMLInputElement | null>(null)
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-
-interface FxState {
-    noiseGate:  { enabled: boolean; threshold: number }
-    pitch:      { enabled: boolean; semitones: number }
-    robot:      { enabled: boolean; frequency: number; mix: number }
-    chorus:     { enabled: boolean; rate: number; depth: number }
-    whisper:    { enabled: boolean; mix: number }
-    bitcrusher: { enabled: boolean; bits: number; reduction: number }
-    reverb:     { enabled: boolean; duration: number; mix: number }
-    echo:       { enabled: boolean; delay: number; feedback: number }
-}
 
 interface VoicePreset {
     id:       string
@@ -305,92 +325,6 @@ interface VoicePreset {
     builtIn?: boolean
     effects:  FxState
 }
-
-// ── AudioWorklet processor source strings ─────────────────────────────────────
-// Loaded via Blob URL so no separate worklet files are needed.
-
-const PITCH_PROCESSOR = `
-class PitchShifterProcessor extends AudioWorkletProcessor {
-    static get parameterDescriptors() {
-        return [{ name: 'pitch', defaultValue: 1.0, minValue: 0.25, maxValue: 4.0, automationRate: 'k-rate' }]
-    }
-    constructor() {
-        super()
-        this._buf = new Float32Array(8192)
-        this._wp  = 0
-        this._rp  = 0.0
-    }
-    process(inputs, outputs, params) {
-        const inp = inputs[0]?.[0], out = outputs[0]?.[0]
-        if (!inp || !out) return true
-        const pitch = params.pitch[0], len = this._buf.length
-        for (let i = 0; i < inp.length; i++) {
-            this._buf[this._wp++ & (len - 1)] = inp[i]
-            const s0 = Math.floor(this._rp) & (len - 1)
-            const s1 = (s0 + 1) & (len - 1)
-            const fr = this._rp - Math.floor(this._rp)
-            out[i] = this._buf[s0] * (1 - fr) + this._buf[s1] * fr
-            this._rp += pitch
-            const diff = this._wp - this._rp
-            if (diff > len * 0.75) this._rp += len * 0.25
-            if (diff < len * 0.1)  this._rp  = this._wp - len * 0.4
-        }
-        return true
-    }
-}
-registerProcessor('pitch-shifter', PitchShifterProcessor)
-`
-
-const BITCRUSHER_PROCESSOR = `
-class BitcrusherProcessor extends AudioWorkletProcessor {
-    static get parameterDescriptors() {
-        return [
-            { name: 'bits',      defaultValue: 8, minValue: 1,  maxValue: 16, automationRate: 'k-rate' },
-            { name: 'reduction', defaultValue: 1, minValue: 1, maxValue: 50,  automationRate: 'k-rate' }
-        ]
-    }
-    constructor() { super(); this._ph = 0; this._last = 0 }
-    process(inputs, outputs, params) {
-        const inp = inputs[0]?.[0], out = outputs[0]?.[0]
-        if (!inp || !out) return true
-        const step = Math.pow(0.5, params.bits[0] - 1)
-        const red  = Math.max(1, Math.floor(params.reduction[0]))
-        for (let i = 0; i < inp.length; i++) {
-            if (++this._ph >= red) { this._ph = 0; this._last = step * Math.floor(inp[i] / step + 0.5) }
-            out[i] = this._last
-        }
-        return true
-    }
-}
-registerProcessor('bitcrusher', BitcrusherProcessor)
-`
-
-const NOISEGATE_PROCESSOR = `
-class NoiseGateProcessor extends AudioWorkletProcessor {
-    static get parameterDescriptors() {
-        return [
-            { name: 'threshold', defaultValue: 0.02, minValue: 0, maxValue: 0.15, automationRate: 'k-rate' },
-            { name: 'enabled',   defaultValue: 1,    minValue: 0, maxValue: 1,    automationRate: 'k-rate' }
-        ]
-    }
-    constructor() { super(); this._env = 0 }
-    process(inputs, outputs, params) {
-        const inp = inputs[0]?.[0], out = outputs[0]?.[0]
-        if (!inp || !out) return true
-        const thresh  = params.threshold[0]
-        const enabled = params.enabled[0] > 0.5
-        for (let i = 0; i < inp.length; i++) {
-            const lvl = Math.abs(inp[i])
-            this._env = lvl > this._env
-                ? 0.999  * this._env + 0.001  * lvl
-                : 0.9997 * this._env
-            out[i] = (!enabled || this._env > thresh) ? inp[i] : inp[i] * 0.001
-        }
-        return true
-    }
-}
-registerProcessor('noise-gate', NoiseGateProcessor)
-`
 
 // ── Built-in presets ──────────────────────────────────────────────────────────
 
@@ -475,75 +409,14 @@ const BUILTIN_PRESETS: VoicePreset[] = [
     },
 ]
 
-// ── Reactive state ────────────────────────────────────────────────────────────
-
-const fx = reactive<FxState>({
-    noiseGate:  { enabled: false, threshold: 0.02 },
-    pitch:      { enabled: false, semitones: 0 },
-    robot:      { enabled: false, frequency: 30, mix: 0.7 },
-    chorus:     { enabled: false, rate: 0.5, depth: 0.3 },
-    whisper:    { enabled: false, mix: 0.5 },
-    bitcrusher: { enabled: false, bits: 8, reduction: 4 },
-    reverb:     { enabled: false, duration: 2, mix: 0.3 },
-    echo:       { enabled: false, delay: 0.3, feedback: 0.4 },
-})
-
-const micActive      = ref(false)
-const micError       = ref(false)
-const inputLevel     = ref(0)
-const recording      = ref(false)
-const playing        = ref(false)
-const previewBuffer  = ref<AudioBuffer | null>(null)
-const activePresetId = ref<string | null>(null)
-const savedPresets   = ref<VoicePreset[]>([])
-const showSaveInput  = ref(false)
-const savePresetName = ref('')
-const saveInputRef   = ref<HTMLInputElement | null>(null)
-const statusText     = ref('')
-
 const allPresets = computed(() => [...BUILTIN_PRESETS, ...savedPresets.value])
-
-// ── Audio graph refs ──────────────────────────────────────────────────────────
-
-let ctx:              AudioContext | null = null
-let stream:           MediaStream | null = null
-let sourceNode:       MediaStreamAudioSourceNode | null = null
-let analyserNode:     AnalyserNode | null = null
-let noiseGateNode:    AudioWorkletNode | null = null
-let pitchNode:        AudioWorkletNode | null = null
-let robotOsc:         OscillatorNode | null = null
-let robotGainIn:      GainNode | null = null
-let robotGainWet:     GainNode | null = null
-let robotGainDry:     GainNode | null = null
-let chorusDelay:      DelayNode | null = null
-let chorusLfo:        OscillatorNode | null = null
-let chorusLfoGain:    GainNode | null = null
-let chorusMix:        GainNode | null = null
-let chorusDry:        GainNode | null = null
-let whisperFilter:    BiquadFilterNode | null = null
-let whisperShaper:    WaveShaperNode | null = null
-let whisperGainWet:   GainNode | null = null
-let whisperGainDry:   GainNode | null = null
-let bitcrusherNode:   AudioWorkletNode | null = null
-let convolverNode:    ConvolverNode | null = null
-let reverbGainWet:    GainNode | null = null
-let reverbGainDry:    GainNode | null = null
-let echoDelay:        DelayNode | null = null
-let echoFeedGain:     GainNode | null = null
-let echoMix:          GainNode | null = null
-let echoDry:          GainNode | null = null
-let outputGain:       GainNode | null = null
-let recorderDest:     MediaStreamAudioDestinationNode | null = null
-let mediaRecorder:    MediaRecorder | null = null
-let recorderChunks:   Blob[] = []
-let meterFrame:       number | null = null
-let playbackSource:   AudioBufferSourceNode | null = null
-let workletLoaded =   false
 
 // ── Level meter ───────────────────────────────────────────────────────────────
 
 const levelStyle = computed(() => ({
-    width: `${Math.min(100, inputLevel.value * 110)}%`,
+    width: micActive.value
+        ? `${Math.min(100, inputLevel.value * 110)}%`
+        : '0%',
     background: inputLevel.value > 0.95
         ? '#e05555'
         : inputLevel.value > 0.7
@@ -551,368 +424,129 @@ const levelStyle = computed(() => ({
         : 'var(--accent, #5b8ef0)',
 }))
 
-function startMeter() {
-    if (!analyserNode) return
-    const data = new Uint8Array(analyserNode.frequencyBinCount)
-
-    function tick() {
-        if (!analyserNode) return
-        analyserNode.getByteTimeDomainData(data)
-        let max = 0
-        for (const v of data) {
-            const n = Math.abs((v - 128) / 128)
-            if (n > max) max = n
-        }
-        inputLevel.value = max
-        meterFrame = requestAnimationFrame(tick)
-    }
-    meterFrame = requestAnimationFrame(tick)
-}
-
-function stopMeter() {
-    if (meterFrame !== null) { cancelAnimationFrame(meterFrame); meterFrame = null }
-    inputLevel.value = 0
-}
-
-// ── Worklet helpers ───────────────────────────────────────────────────────────
-
-async function loadWorklet(code: string): Promise<void> {
-    if (!ctx) return
-    const blob = new Blob([code], { type: 'application/javascript' })
-    const url  = URL.createObjectURL(blob)
-    try { await ctx.audioWorklet.addModule(url) }
-    finally { URL.revokeObjectURL(url) }
-}
-
-// ── Reverb IR generator ───────────────────────────────────────────────────────
-
-function makeReverbIR(duration: number, decay: number): AudioBuffer {
-    const len  = Math.floor(ctx!.sampleRate * duration)
-    const buf  = ctx!.createBuffer(2, len, ctx!.sampleRate)
-    for (let c = 0; c < 2; c++) {
-        const d = buf.getChannelData(c)
-        for (let i = 0; i < len; i++)
-            d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay)
-    }
-    return buf
-}
-
-// ── Whisper curve ─────────────────────────────────────────────────────────────
-
-function makeWhisperCurve(): Float32Array {
-    const n = 256, curve = new Float32Array(n)
-    for (let i = 0; i < n; i++) {
-        const x = (i * 2) / n - 1
-        curve[i] = Math.sign(x) * (1 - Math.exp(-Math.abs(x) * 4))
-    }
-    return curve
-}
-
-// ── Audio graph construction ──────────────────────────────────────────────────
-
-async function buildChain(): Promise<void> {
-    if (!ctx || !sourceNode) return
-
-    // ── Ensure worklets are loaded ─────────────────────────────────────────
-    if (!workletLoaded) {
-        await loadWorklet(NOISEGATE_PROCESSOR)
-        await loadWorklet(PITCH_PROCESSOR)
-        await loadWorklet(BITCRUSHER_PROCESSOR)
-        workletLoaded = true
-    }
-
-    // ── Analyser ───────────────────────────────────────────────────────────
-    analyserNode = ctx.createAnalyser()
-    analyserNode.fftSize = 512
-
-    // ── Noise gate ─────────────────────────────────────────────────────────
-    noiseGateNode = new AudioWorkletNode(ctx, 'noise-gate')
-    noiseGateNode.parameters.get('threshold')!.value = fx.noiseGate.threshold
-    noiseGateNode.parameters.get('enabled')!.value   = fx.noiseGate.enabled ? 1 : 0
-
-    // ── Pitch ──────────────────────────────────────────────────────────────
-    pitchNode = new AudioWorkletNode(ctx, 'pitch-shifter')
-    pitchNode.parameters.get('pitch')!.value = fx.pitch.enabled
-        ? Math.pow(2, fx.pitch.semitones / 12)
-        : 1.0
-
-    // ── Robot (ring mod) ───────────────────────────────────────────────────
-    robotOsc      = ctx.createOscillator()
-    robotGainIn   = ctx.createGain()
-    robotGainWet  = ctx.createGain()
-    robotGainDry  = ctx.createGain()
-    robotOsc.frequency.value = fx.robot.frequency
-    robotOsc.type = 'sine'
-    robotGainWet.gain.value  = fx.robot.enabled ? fx.robot.mix : 0
-    robotGainDry.gain.value  = fx.robot.enabled ? 1 - fx.robot.mix : 1
-    robotOsc.connect(robotGainIn.gain)
-    robotOsc.start()
-
-    // ── Chorus ────────────────────────────────────────────────────────────
-    chorusDelay  = ctx.createDelay(0.05)
-    chorusLfo    = ctx.createOscillator()
-    chorusLfoGain = ctx.createGain()
-    chorusMix    = ctx.createGain()
-    chorusDry    = ctx.createGain()
-    chorusDelay.delayTime.value = 0.025
-    chorusLfo.frequency.value   = fx.chorus.rate
-    chorusLfoGain.gain.value    = fx.chorus.depth * 0.01
-    chorusMix.gain.value        = fx.chorus.enabled ? 0.5 : 0
-    chorusDry.gain.value        = 1
-    chorusLfo.connect(chorusLfoGain)
-    chorusLfoGain.connect(chorusDelay.delayTime)
-    chorusLfo.start()
-
-    // ── Whisper ────────────────────────────────────────────────────────────
-    whisperFilter   = ctx.createBiquadFilter()
-    whisperShaper   = ctx.createWaveShaper()
-    whisperGainWet  = ctx.createGain()
-    whisperGainDry  = ctx.createGain()
-    whisperFilter.type = 'highpass'
-    whisperFilter.frequency.value = 800
-    whisperShaper.curve = makeWhisperCurve()
-    whisperGainWet.gain.value = fx.whisper.enabled ? fx.whisper.mix : 0
-    whisperGainDry.gain.value = fx.whisper.enabled ? 1 - fx.whisper.mix : 1
-
-    // ── Bitcrusher ─────────────────────────────────────────────────────────
-    bitcrusherNode = new AudioWorkletNode(ctx, 'bitcrusher')
-    bitcrusherNode.parameters.get('bits')!.value = fx.bitcrusher.enabled
-        ? fx.bitcrusher.bits : 16
-    bitcrusherNode.parameters.get('reduction')!.value = fx.bitcrusher.enabled
-        ? fx.bitcrusher.reduction : 1
-
-    // ── Reverb ─────────────────────────────────────────────────────────────
-    convolverNode   = ctx.createConvolver()
-    reverbGainWet   = ctx.createGain()
-    reverbGainDry   = ctx.createGain()
-    convolverNode.buffer = makeReverbIR(fx.reverb.duration, 2)
-    reverbGainWet.gain.value = fx.reverb.enabled ? fx.reverb.mix : 0
-    reverbGainDry.gain.value = fx.reverb.enabled ? 1 - fx.reverb.mix : 1
-
-    // ── Echo ───────────────────────────────────────────────────────────────
-    echoDelay    = ctx.createDelay(2)
-    echoFeedGain = ctx.createGain()
-    echoMix      = ctx.createGain()
-    echoDry      = ctx.createGain()
-    echoDelay.delayTime.value  = fx.echo.delay
-    echoFeedGain.gain.value    = fx.echo.feedback
-    echoMix.gain.value         = fx.echo.enabled ? 0.5 : 0
-    echoDry.gain.value         = 1
-
-    // ── Output ─────────────────────────────────────────────────────────────
-    outputGain = ctx.createGain()
-    outputGain.gain.value = 1.0
-
-    // ── Recorder destination (for preview) ────────────────────────────────
-    recorderDest = ctx.createMediaStreamDestination()
-
-    // ── Wire the chain ─────────────────────────────────────────────────────
-    // source → analyser → noiseGate → pitch → robot(dry+wet) → chorus(dry+wet)
-    //       → whisper(dry+wet) → bitcrusher → reverb(dry+wet) → echo(dry+wet)
-    //       → output → destination + recorderDest
-
-    const merger = ctx.createGain() // acts as a summing junction
-
-    // source → analyser → noiseGate → pitch
-    sourceNode.connect(analyserNode)
-    analyserNode.connect(noiseGateNode)
-    noiseGateNode.connect(pitchNode)
-
-    // pitch → robot dry + ring mod wet
-    pitchNode.connect(robotGainDry)
-    pitchNode.connect(robotGainIn)
-    robotGainIn.connect(robotGainWet)
-    robotGainDry.connect(merger)
-    robotGainWet.connect(merger)
-
-    // merger → chorus dry + modulated delay wet
-    merger.connect(chorusDry)
-    merger.connect(chorusDelay)
-    chorusDelay.connect(chorusMix)
-    const preChorusMerge = ctx.createGain()
-    chorusDry.connect(preChorusMerge)
-    chorusMix.connect(preChorusMerge)
-
-    // preChorusMerge → whisper dry + filter→shaper wet
-    preChorusMerge.connect(whisperGainDry)
-    preChorusMerge.connect(whisperFilter)
-    whisperFilter.connect(whisperShaper)
-    whisperShaper.connect(whisperGainWet)
-    const preCrusherMerge = ctx.createGain()
-    whisperGainDry.connect(preCrusherMerge)
-    whisperGainWet.connect(preCrusherMerge)
-
-    // preCrusherMerge → bitcrusher → reverb dry + convolver wet
-    preCrusherMerge.connect(bitcrusherNode)
-    bitcrusherNode.connect(reverbGainDry)
-    bitcrusherNode.connect(convolverNode)
-    convolverNode.connect(reverbGainWet)
-    const preEchoMerge = ctx.createGain()
-    reverbGainDry.connect(preEchoMerge)
-    reverbGainWet.connect(preEchoMerge)
-
-    // preEchoMerge → echo dry + delay wet (with feedback)
-    preEchoMerge.connect(echoDry)
-    preEchoMerge.connect(echoDelay)
-    echoDelay.connect(echoFeedGain)
-    echoFeedGain.connect(echoDelay)
-    echoDelay.connect(echoMix)
-    const finalMerge = ctx.createGain()
-    echoDry.connect(finalMerge)
-    echoMix.connect(finalMerge)
-
-    // finalMerge → output → destination + recorder
-    finalMerge.connect(outputGain)
-    outputGain.connect(ctx.destination)
-    outputGain.connect(recorderDest)
-}
-
 // ── Mic toggle ────────────────────────────────────────────────────────────────
+//
+// Preview mode (no active call):
+//   Acquires the raw mic stream, runs it through the audio chain, and enables
+//   the chain's built-in monitor tap so the user hears their processed voice
+//   directly via ctx.destination. Same AudioContext, same clock, zero seams.
+//
+// Active call:
+//   Chain is already running. monitorSelf on the voice channel routes encoded
+//   audio back through the decode graph — the user hears exactly what peers hear.
 
 async function toggleMic() {
-    if (micActive.value) {
-        await teardownAudio()
-    } else {
-        await setupAudio()
-    }
+    micActive.value ? await _stopMic() : await _startMic()
 }
 
-async function setupAudio() {
+async function _startMic() {
     try {
         micError.value = false
-        ctx = new AudioContext()
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-        sourceNode = ctx.createMediaStreamSource(stream)
-        await buildChain()
-        startMeter()
-        micActive.value = true
+
+        if (audioChain?.isProcessing.value) {
+            // Call active — the chain is already running, enable loopback via voice channel
+            if (activeChannel?.value?.monitorSelf)
+                activeChannel.value.monitorSelf.value = true
+        } else {
+            // No call — acquire stream, build chain, open monitor tap
+            const raw = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: false,
+                    noiseSuppression: false,
+                    autoGainControl:  false,
+                    sampleRate:       48000,
+                    channelCount:     1,
+                }
+            })
+            await audioChain?.processStream(raw)
+            if (audioChain) audioChain.monitorEnabled.value = true
+        }
+
+        micActive.value  = true
         statusText.value = 'Live'
+
     } catch (err: any) {
-        micError.value  = true
-        micActive.value = false
+        micError.value   = true
+        micActive.value  = false
         statusText.value = err.name === 'NotAllowedError' ? 'Mic denied' : 'Mic error'
         console.warn('[VoicePanel] Mic error:', err)
     }
 }
 
-async function teardownAudio() {
-    stopMeter()
+async function _stopMic() {
     stopRecord()
     stopPlayback()
 
-    robotOsc?.stop()
-    chorusLfo?.stop()
+    if (audioChain?.isProcessing.value) {
+        // Call active — just disable the loopback
+        if (activeChannel?.value?.monitorSelf)
+            activeChannel.value.monitorSelf.value = false
+    } else {
+        // No call — close the monitor tap and release the chain
+        if (audioChain) audioChain.monitorEnabled.value = false
+        await audioChain?.releaseStream()
+    }
 
-    stream?.getTracks().forEach(t => t.stop())
-    await ctx?.close()
-
-    ctx = sourceNode = analyserNode = noiseGateNode = pitchNode = null
-    robotOsc = robotGainIn = robotGainWet = robotGainDry = null
-    chorusDelay = chorusLfo = chorusLfoGain = chorusMix = chorusDry = null
-    whisperFilter = whisperShaper = whisperGainWet = whisperGainDry = null
-    bitcrusherNode = convolverNode = reverbGainWet = reverbGainDry = null
-    echoDelay = echoFeedGain = echoMix = echoDry = outputGain = null
-    recorderDest = null
-    stream = null
-    workletLoaded = false
-
-    micActive.value = false
+    micActive.value  = false
     statusText.value = ''
 }
 
-// ── Effect toggle + param updates ─────────────────────────────────────────────
+// ── Effect toggle ─────────────────────────────────────────────────────────────
+//
+// Mutating fxState directly triggers the watcher in useAudioChain, which calls
+// _applyFx() and _saveConfig() automatically. No per-effect update functions needed.
 
 function toggle(key: keyof FxState) {
+    if (!fx) return
     fx[key].enabled = !fx[key].enabled
     activePresetId.value = null
-
-    switch (key) {
-        case 'noiseGate':  updateNoise();      break
-        case 'pitch':      updatePitch();      break
-        case 'robot':      updateRobot();      break
-        case 'chorus':     updateChorus();     break
-        case 'whisper':    updateWhisper();    break
-        case 'bitcrusher': updateBitcrusher(); break
-        case 'reverb':     updateReverb();     break
-        case 'echo':       updateEcho();       break
-    }
 }
 
-function updateNoise() {
-    if (!noiseGateNode) return
-    noiseGateNode.parameters.get('threshold')!.value = fx.noiseGate.threshold
-    noiseGateNode.parameters.get('enabled')!.value   = fx.noiseGate.enabled ? 1 : 0
-}
+// ── Preview recorder ──────────────────────────────────────────────────────────
+//
+// Records a clip from previewDest (the post-limiter tap, independent of
+// externalGain) and plays it back through a separate AudioContext.
+// Completely distinct from live monitoring — no shared state.
 
-function updatePitch() {
-    if (!pitchNode) return
-    pitchNode.parameters.get('pitch')!.value = fx.pitch.enabled
-        ? Math.pow(2, fx.pitch.semitones / 12) : 1.0
-}
-
-function updateRobot() {
-    if (!robotOsc || !robotGainWet || !robotGainDry) return
-    robotOsc.frequency.value = fx.robot.frequency
-    robotGainWet.gain.value  = fx.robot.enabled ? fx.robot.mix : 0
-    robotGainDry.gain.value  = fx.robot.enabled ? 1 - fx.robot.mix : 1
-}
-
-function updateChorus() {
-    if (!chorusLfo || !chorusLfoGain || !chorusMix) return
-    chorusLfo.frequency.value   = fx.chorus.rate
-    chorusLfoGain.gain.value    = fx.chorus.depth * 0.01
-    chorusMix.gain.value        = fx.chorus.enabled ? 0.5 : 0
-}
-
-function updateWhisper() {
-    if (!whisperGainWet || !whisperGainDry) return
-    whisperGainWet.gain.value = fx.whisper.enabled ? fx.whisper.mix : 0
-    whisperGainDry.gain.value = fx.whisper.enabled ? 1 - fx.whisper.mix : 1
-}
-
-function updateBitcrusher() {
-    if (!bitcrusherNode) return
-    bitcrusherNode.parameters.get('bits')!.value      = fx.bitcrusher.enabled ? fx.bitcrusher.bits : 16
-    bitcrusherNode.parameters.get('reduction')!.value = fx.bitcrusher.enabled ? fx.bitcrusher.reduction : 1
-}
-
-function updateReverb() {
-    if (!convolverNode || !reverbGainWet || !reverbGainDry || !ctx) return
-    convolverNode.buffer     = makeReverbIR(fx.reverb.duration, 2)
-    reverbGainWet.gain.value = fx.reverb.enabled ? fx.reverb.mix : 0
-    reverbGainDry.gain.value = fx.reverb.enabled ? 1 - fx.reverb.mix : 1
-}
-
-function updateEcho() {
-    if (!echoDelay || !echoFeedGain || !echoMix) return
-    echoDelay.delayTime.value = fx.echo.delay
-    echoFeedGain.gain.value   = fx.echo.feedback
-    echoMix.gain.value        = fx.echo.enabled ? 0.5 : 0
-}
-
-// ── Preview record / play ─────────────────────────────────────────────────────
-
-const PREVIEW_DURATION_MS = 5000
-
-function toggleRecord() {
-    recording.value ? stopRecord() : startRecord()
-}
+let mediaRecorder:  MediaRecorder | null = null
+let recorderChunks: Blob[] = []
+const previewBuffer = ref<AudioBuffer | null>(null)
+let playbackCtx:    AudioContext | null = null
+let playbackSource: AudioBufferSourceNode | null = null
 
 function startRecord() {
-    if (!recorderDest || recording.value) return
+    const stream = audioChain?.getPreviewStream()
+    if (!stream || recording.value) return
+
+    // Mute external output while previewing — don't send to callee
+    if (audioChain) audioChain.externalMuted.value = true
+
     recorderChunks = []
-    mediaRecorder = new MediaRecorder(recorderDest.stream)
-    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recorderChunks.push(e.data) }
-    mediaRecorder.onstop = async () => {
-        const blob    = new Blob(recorderChunks, { type: 'audio/webm' })
-        const arrBuf  = await blob.arrayBuffer()
-        previewBuffer.value = await ctx!.decodeAudioData(arrBuf)
-        statusText.value = 'Preview ready'
+    previewBuffer.value = null
+    playing.value = false
+
+    mediaRecorder = new MediaRecorder(stream)
+
+    mediaRecorder.ondataavailable = e => {
+        if (e.data.size > 0) recorderChunks.push(e.data)
     }
+
+    mediaRecorder.onstop = async () => {
+        const blob   = new Blob(recorderChunks, { type: 'audio/webm' })
+        const arrBuf = await blob.arrayBuffer()
+
+        if (!playbackCtx || playbackCtx.state === 'closed')
+            playbackCtx = new AudioContext()
+
+        previewBuffer.value = await playbackCtx.decodeAudioData(arrBuf)
+        statusText.value    = 'Preview ready — play to hear effects'
+
+        if (audioChain) audioChain.externalMuted.value = false
+    }
+
     mediaRecorder.start()
-    recording.value = true
+    recording.value  = true
     statusText.value = 'Recording…'
-    setTimeout(stopRecord, PREVIEW_DURATION_MS)
 }
 
 function stopRecord() {
@@ -921,31 +555,47 @@ function stopRecord() {
     recording.value = false
 }
 
-function togglePlay() {
-    playing.value ? stopPlayback() : startPlayback()
+async function toggleRecord() {
+    if (recording.value) {
+        stopRecord()
+    } else {
+        if (!micActive.value) await _startMic()
+        else startRecord()
+    }
 }
 
 function startPlayback() {
-    if (!previewBuffer.value || !ctx) return
-    playbackSource = ctx.createBufferSource()
+    if (!previewBuffer.value || !playbackCtx) return
+
+    if (audioChain) audioChain.externalMuted.value = true
+
+    playbackSource = playbackCtx.createBufferSource()
     playbackSource.buffer = previewBuffer.value
-    playbackSource.connect(ctx.destination)
-    playbackSource.onended = () => { playing.value = false }
+    playbackSource.connect(playbackCtx.destination)
+    playbackSource.onended = () => {
+        playing.value = false
+        statusText.value = ''
+        if (audioChain) audioChain.externalMuted.value = false
+    }
     playbackSource.start()
-    playing.value = true
+    playing.value    = true
     statusText.value = 'Playing…'
 }
 
 function stopPlayback() {
     playbackSource?.stop()
-    playbackSource = null
-    playing.value  = false
+    playbackSource   = null
+    playing.value    = false
     statusText.value = ''
+    if (audioChain) audioChain.externalMuted.value = false
 }
+
+function togglePlay() { playing.value ? stopPlayback() : startPlayback() }
 
 // ── Presets ───────────────────────────────────────────────────────────────────
 
 function loadPreset(preset: VoicePreset) {
+    if (!fx) return
     const e = preset.effects
     Object.assign(fx.noiseGate,  e.noiseGate)
     Object.assign(fx.pitch,      e.pitch)
@@ -956,12 +606,8 @@ function loadPreset(preset: VoicePreset) {
     Object.assign(fx.reverb,     e.reverb)
     Object.assign(fx.echo,       e.echo)
 
-    // Apply all to audio graph
-    updateNoise(); updatePitch(); updateRobot(); updateChorus()
-    updateWhisper(); updateBitcrusher(); updateReverb(); updateEcho()
-
     activePresetId.value = preset.id
-    statusText.value = `Loaded: ${preset.name}`
+    statusText.value     = `Loaded: ${preset.name}`
 }
 
 function savePreset() {
@@ -972,7 +618,7 @@ function savePreset() {
 
 async function confirmSave() {
     const name = savePresetName.value.trim()
-    if (!name) return
+    if (!name || !fx) return
 
     const preset: VoicePreset = {
         id:      `user-${Date.now()}`,
@@ -984,30 +630,26 @@ async function confirmSave() {
     activePresetId.value = preset.id
     showSaveInput.value  = false
     savePresetName.value = ''
-    await persistPresets()
+    await _persistPresets()
     statusText.value = `Saved: ${name}`
 }
 
 function deletePreset(id: string) {
     savedPresets.value = savedPresets.value.filter(p => p.id !== id)
     if (activePresetId.value === id) activePresetId.value = null
-    persistPresets()
+    _persistPresets()
 }
 
 async function sharePreset(preset: VoicePreset) {
-    // TODO: Save to vault at gexchange://voiceEffects/{username}/{preset.name}.json
-    // then attach as a room file so peers can download and import it.
-    // Requires active room context — wire when file sharing layer is confirmed working.
-    const json = JSON.stringify(preset, null, 2)
-    await navigator.clipboard.writeText(json)
-    statusText.value = 'Copied to clipboard (vault sharing coming soon)'
+    await navigator.clipboard.writeText(JSON.stringify(preset, null, 2))
+    statusText.value = 'Copied to clipboard'
 }
 
-// ── Preset persistence (vault) ────────────────────────────────────────────────
+// ── Preset persistence ────────────────────────────────────────────────────────
 
 const PRESET_STORAGE_KEY = 'vp_presets'
 
-async function loadPersistedPresets() {
+async function _loadPresets() {
     try {
         const raw = localStorage.getItem(PRESET_STORAGE_KEY)
         if (raw) savedPresets.value = JSON.parse(raw)
@@ -1016,25 +658,26 @@ async function loadPersistedPresets() {
     }
 }
 
-async function persistPresets() {
+async function _persistPresets() {
     try {
         localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify(savedPresets.value))
     } catch (err) {
         console.warn('[VoicePanel] Failed to persist presets:', err)
     }
 }
-// Note: vault-backed persistence (for cross-device sync) replaces localStorage
-// once the vault token is reliably injectable into board provider components.
-// The key will be: gexchange://config/voice-presets.json
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 onMounted(async () => {
-    await loadPersistedPresets()
+    await _loadPresets()
 })
 
 onUnmounted(async () => {
-    await teardownAudio()
+    stopRecord()
+    stopPlayback()
+    await playbackCtx?.close().catch(() => {})
+    playbackCtx = null
+    if (micActive.value) await _stopMic()
 })
 </script>
 

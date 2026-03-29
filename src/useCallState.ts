@@ -75,6 +75,9 @@ export interface UseCallStateReturn {
 const INVITE_PREFIX  = '__invite__|'
 const DECLINE_PREFIX = '__decline__|'
 
+// Timeout after which call attempt is dropped
+let _ringTimeout: ReturnType<typeof setTimeout> | null = null
+
 // ── Ringtone player ───────────────────────────────────────────────────────────
 
 class RingtonePlayer {
@@ -163,13 +166,20 @@ export function useCallState(opts: UseCallStateOptions): UseCallStateReturn {
 
     // ── Outgoing ringing ──────────────────────────────────────────────────
 
-    function startRinging(roomId: string, roomName: string, peerNames: string[]) {
-        outgoingCall.value = { roomId, roomName, peerNames }
-        callAnswered.value = false
-        _dialtone.play('/sounds/dialtone.ogg')
-    }
+function startRinging(roomId: string, roomName: string, peerNames: string[]) {
+    outgoingCall.value = { roomId, roomName, peerNames }
+    callAnswered.value = false
+    _dialtone.play('/sounds/dialtone.ogg')
+
+    _ringTimeout = setTimeout(() => {
+        if (outgoingCall.value?.roomId === roomId)
+            stopRinging()
+    }, 40_000)
+}
 
     function stopRinging() {
+        clearTimeout(_ringTimeout)
+        _ringTimeout = null
         _dialtone.stop()
         outgoingCall.value = null
     }

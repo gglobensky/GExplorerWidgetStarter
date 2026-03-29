@@ -589,6 +589,8 @@ import { createSelectionEngine } from 'gexplorer/widgets'
 import type { SelectionEngine } from 'gexplorer/widgets'
 import { useCallState } from './useCallState'
 import IncomingCallModal from './IncomingCallModal.vue'
+import { useAudioChain } from './useAudioChain'
+import type { UseAudioChainReturn } from './useAudioChain'
 
 // ── Props ──────────────────────────────────────────────────────────────────────
 
@@ -642,6 +644,15 @@ watch(boardProviders, (providers) => {
 const activeBoard = computed(() =>
     boardProviders.value.find(p => p.key === activeBoardKey.value) ?? null
 )
+
+// ── Audio chain ────────────────────────────────────────────────────────────────
+//
+// Owns the mic stream and full effect chain for the lifetime of the component.
+// VoicePanel injects this — it never owns audio directly.
+
+const audioChain = useAudioChain(sdk)
+provide('gex:audioChain', audioChain)
+
 // ── Channel + EDHT instances ───────────────────────────────────────────────────
 //
 // Two maps, one responsibility each:
@@ -810,7 +821,7 @@ const {
                    const channel = channels.get(activeRoom.value!.roomId)
                    if (!channel) return
                    try {
-                       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+                       const stream = await getAudioStream()
                        await channel.startCall?.(stream)
                    } catch (err) {
                        console.warn('[GExchange] Auto-call on accept failed:', err)
@@ -917,16 +928,13 @@ function onPeerListKeydown(e: KeyboardEvent) {
 async function toggleGroupCall() {
     const channel = activeChannel.value
     if (!channel) return
- 
+
     if (channel.callActive?.value) {
         await channel.endCall?.()
+        await audioChain.releaseStream()
     } else {
-        // Mic must be active — VoicePanel handles its own mic state.
-        // Here we just need the processed stream from the recorder destination.
-        // For now we start with the raw mic stream and let VoicePanel effects
-        // apply when it's open. Full integration in the voice polish pass.
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+            const stream = await getAudioStream()
             await channel.startCall?.(stream)
         } catch (err) {
             console.warn('[GExchange] toggleGroupCall: mic access failed:', err)
@@ -999,7 +1007,7 @@ async function createPrivateRoomWith(peerIds: string[], withCall: boolean): Prom
                     unwatch()
 
                     try {
-                        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+                        const stream = await getAudioStream()
                         await targetChannel.startCall?.(stream)
                     } catch (err) {
                         console.warn('[GExchange] Auto-call on peer join failed:', err)
@@ -1038,6 +1046,25 @@ function buildCanConnect(room: Room) {
         // TODO: pending-approval prompt for owner/admin
         return true
     }
+}
+
+// ── Audio stream acquisition ───────────────────────────────────────────────────
+//
+// Single entry point for mic access. Constraints applied here so every call path
+// gets echo cancellation, noise suppression, and AGC regardless of how it starts.
+// VoicePanel processed stream integration hooks in here later.
+
+async function getAudioStream(): Promise<MediaStream> {
+    const raw = await navigator.mediaDevices.getUserMedia({
+        audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl:  true,
+            sampleRate:       48000,
+            channelCount:     1,  
+        }
+    })
+    return audioChain.processStream(raw)
 }
 
 // ── Mention detection ──────────────────────────────────────────────────────────
@@ -1216,6 +1243,7 @@ function onDocClick(e: MouseEvent) {
 
 onMounted(async () => {
     document.addEventListener('mousedown', onDocClick)
+    await audioChain.load()   
     await identity$.load()
     await rooms$.load()
 
@@ -1271,6 +1299,7 @@ onUnmounted(async () => {
     _ambientUnsub?.()
     _ambientUnsub = null
     chat$.unmount()
+    await audioChain.dispose()   
     await _disposeAllChannels()
     await rooms$.dispose()
     _peerEngine?.destroy()
