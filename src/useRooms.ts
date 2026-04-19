@@ -41,9 +41,9 @@ export interface RoomConfig {
     blobSha256:    string
 
     /**
-     * Owner's endpoint and public key at join time.
-     * Used once to bootstrap the Kademlia routing table via a direct TCP
-     * connection — after that EDHT handles peer discovery normally.
+     * Hub's userId and public key stored at join time.
+     * Used once to initiate SP2P rendezvous with the hub via connectToPeer —
+     * after that eDHT presence discovery handles reconnection normally.
      * Cleared from the vault config after the first successful connection.
      * Undefined for rooms where isOwner === true (no bootstrap needed).
      */
@@ -75,7 +75,7 @@ function applyDisplayNames(configs: RoomConfig[]): Room[] {
 // ── Options ───────────────────────────────────────────────────────────────────
 
 export interface UseRoomsOptions {
-    sdk:      WidgetSdk
+    sdk:      WidgetSdk // TODO: I believe we shouldnt have to provide the sdk for sdk methods anymore. It was redundant
     identity: Ref<Identity | null>
     /** Called when a room is selected — ChatRoom.vue wires ensureChannel here. */
     onRoomSelected?: (room: Room) => void
@@ -424,7 +424,7 @@ export function useRooms(options: UseRoomsOptions): UseRoomsReturn {
                 closedReason:  '',
                 // Kept only until the first successful direct connection.
                 // ensureChannel clears these from vault once bootstrap completes.
-                bootstrapEndpoint:  decoded.endpoint,
+                bootstrapEndpoint:  decoded.userId,
                 bootstrapPublicKey: decoded.publicKey,
             }
 

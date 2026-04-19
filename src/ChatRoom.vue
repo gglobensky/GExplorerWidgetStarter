@@ -1142,14 +1142,12 @@ async function ensureChannel(room: Room): Promise<void> {
                 username:  (resolvedUsername.value   || identity.value?.userId) ?? 'Unknown',
                 publicKey: identity.value?.publicKey ?? '',
             },
-            sdk,
             isHub:      room.isOwner,
             strategy:   'full',
             canConnect: buildCanConnect(room),
-            bootstrapEndpoint:  room.bootstrapEndpoint,
-            bootstrapPublicKey: room.bootstrapPublicKey,
+            secure: true,
             voice: true,
-
+            redundancy: 0,
             onPeerJoined: (peer: MeshPeer) => {
                 if (
                     peer.userId   !== identity.value?.userId &&
@@ -1189,9 +1187,11 @@ async function ensureChannel(room: Room): Promise<void> {
         // list stays empty.
         if (room.isOwner) await channel.whenHubReady
 
-        const bootstrapped = await channel.bootstrap()
-        if (bootstrapped) rooms$.clearBootstrap(room.roomId)
-
+        if (!room.isOwner && room.bootstrapPublicKey && room.bootstrapEndpoint) {
+            // bootstrapEndpoint now holds the hub's userId (not an IP)
+            await channel.connectToPeer(room.bootstrapEndpoint, room.bootstrapPublicKey)
+        }
+        
         await edht.discover().catch(err =>
             console.warn(`[GExchange] Initial discover failed — will retry via loop`, err)
         )
