@@ -576,6 +576,8 @@
     </div>
 </template>
 <script setup lang="ts">
+// TODO LOOK INTO REMOVING SDK INJECTION FROM SDK CALLS IT SHOULD BE USELESS AND REDUNDANT NOW
+
 import { ref, computed, shallowRef, watch, onMounted, onUnmounted, inject, provide, type ComputedRef  } from 'vue'
 import type { MeshPeer, UseChannelReturn, WidgetSdk, ChatMessage } from 'gexplorer/widgets'
 
@@ -583,7 +585,6 @@ import { useIdentity } from './useIdentity'
 import { useRooms }    from './useRooms'
 import { useChat }     from './useChat'
 import type { Room }   from './useRooms'
-import type { EdhtSession } from 'gexplorer/widgets'
 import { useSlotProviders } from 'gexplorer/widgets'
 import { createSelectionEngine } from 'gexplorer/widgets'
 import type { SelectionEngine } from 'gexplorer/widgets'
@@ -668,7 +669,6 @@ provide('gex:audioChain', audioChain)
 //   channels      — Full UseChannelReturn instances (mesh + chatBind + edht).
 //                   Present for every room that has had ensureChannel run.
 
-const edhtSessions  = new Map<string, EdhtSession>()
 const channels      = new Map<string, UseChannelReturn>()
 const channelsPending = new Set<string>()
 
@@ -700,7 +700,7 @@ const identity$ = useIdentity({
             publicKey: identity$.identity.value?.publicKey ?? '',
         }
         for (const channel of channels.values())
-            await channel.reannounce(id)
+            await channel.reannounce()
     },
 })
 
@@ -1127,16 +1127,24 @@ async function announceRoom(room: Room): Promise<void> {
 async function ensureChannel(room: Room): Promise<void> {
     if (channels.has(room.roomId)) return
     if (channelsPending.has(room.roomId)) return
-    if (!room.sessionSecret || !useChannel || !createEdhtSession) {
-        console.warn('[GExchange] ensureChannel: missing sessionSecret, useChannel, or createEdhtSession')
+    if (!room.sessionSecret || !useChannel) {
+        console.warn('[GExchange] ensureChannel: missing sessionSecret or useChannel')
         return
     }
 
     channelsPending.add(room.roomId)
 
     try {
+        const secret = Uint8Array.from(atob(room.sessionSecret), c => c.charCodeAt(0))
+
         const channel = useChannel({
             scopeId:  room.roomId,
+            sessionSecret: secret,
+            buildPresence: () => ({
+                publicKey: identity.value?.publicKey ?? '',
+                userId:    identity.value?.userId    ?? '',
+                username:  (resolvedUsername.value   || identity.value?.userId) ?? 'Unknown',
+            }),
             identity: {
                 userId:    identity.value?.userId    ?? '',
                 username:  (resolvedUsername.value   || identity.value?.userId) ?? 'Unknown',
@@ -1159,42 +1167,17 @@ async function ensureChannel(room: Room): Promise<void> {
                     showDisambigPrompt.value = true
                 }
             },
-
             onPeerLeft: (_peer: MeshPeer) => { /* handled reactively via channel.peers */ },
         })
 
-        // Register before any awaits so racing ensureChannel calls see it
         channels.set(room.roomId, channel)
 
-        // Reuse existing EDHT session from announceRoom() if available.
-        // Remove from edhtSessions since the channel now owns it — channel.dispose()
-        // will call edht.dispose() internally via wireEdht.
-        let edht = edhtSessions.get(room.roomId)
-        if (edht) {
-            edhtSessions.delete(room.roomId)
-            console.log(`[GExchange] Reusing announced EDHT session — room ${room.roomId.slice(0, 8)}…`)
-        } else {
-            const secret = Uint8Array.from(atob(room.sessionSecret), c => c.charCodeAt(0))
-            edht = await createEdhtSession({ sessionSecret: secret, scopeId: room.roomId })
-            await edht.announce(_buildEdhtPayload())
-        }
-
-        channel.wireEdht(edht)
-
-        // For owner rooms, wait for ChatBridge to register the hub session before
-        // announcing. Without this, B can find A via EDHT and connect inbound
-        // before the hub is ready — chat:peer:joined never fires and A's peer
-        // list stays empty.
         if (room.isOwner) await channel.whenHubReady
+        else await channel.whenEdhtReady  // ensure _edht is set before SP2P rendezvous starts
 
         if (!room.isOwner && room.bootstrapPublicKey && room.bootstrapEndpoint) {
-            // bootstrapEndpoint now holds the hub's userId (not an IP)
             await channel.connectToPeer(room.bootstrapEndpoint, room.bootstrapPublicKey)
         }
-        
-        await edht.discover().catch(err =>
-            console.warn(`[GExchange] Initial discover failed — will retry via loop`, err)
-        )
 
         channelsPending.delete(room.roomId)
         console.log(`[GExchange] Channel ready (ambient) — room ${room.roomId.slice(0, 8)}…`)
@@ -1223,13 +1206,7 @@ async function _disposeAllChannels(): Promise<void> {
         await channel.dispose()
     channels.clear()
     channelsPending.clear()
-
-    // Dispose any EDHT sessions that were announced but never had a channel
-    // spun up (owned rooms that were never selected). channel.dispose() handles
-    // the rest via wireEdht.
-    for (const edht of edhtSessions.values())
-        await edht.dispose().catch(() => { /* best-effort */ })
-    edhtSessions.clear()
+    // EdhtSession disposal is handled by channel.dispose() — no orphaned sessions.
 }
 
 // ── Picker outside-click ───────────────────────────────────────────────────────
@@ -1246,16 +1223,6 @@ onMounted(async () => {
     await audioChain.load()   
     await identity$.load()
     await rooms$.load()
-
-    // Phase 1 — announce all owned rooms immediately, in parallel.
-    // No stagger: announcing is lightweight (EDHT only, no TCP).
-    // This ensures B can find A via EDHT right after app start even for
-    // rooms A hasn't opened yet — the 15-minute re-announce keeps it fresh.
-    await Promise.all(
-        rooms.value
-            .filter(r => !r.isOwner && !r.isClosed)
-            .map(r => announceRoom(r))
-    )
 
     // Phase 2 — activate the first room (loads history + triggers full channel setup)
     const first = rooms.value[0]
