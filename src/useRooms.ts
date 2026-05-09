@@ -47,7 +47,7 @@ export interface RoomConfig {
      * Cleared from the vault config after the first successful connection.
      * Undefined for rooms where isOwner === true (no bootstrap needed).
      */
-    bootstrapEndpoint?:  string
+    bootstrapUserId?:    string
     bootstrapPublicKey?: string
 }
 
@@ -75,7 +75,8 @@ function applyDisplayNames(configs: RoomConfig[]): Room[] {
 // ── Options ───────────────────────────────────────────────────────────────────
 
 export interface UseRoomsOptions {
-    sdk:      WidgetSdk // TODO: I believe we shouldnt have to provide the sdk for sdk methods anymore. It was redundant
+    /** Public app-provided SDK dependency. Keep injected; do not import app internals. */
+    sdk:      WidgetSdk
     identity: Ref<Identity | null>
     /** Called when a room is selected — ChatRoom.vue wires ensureChannel here. */
     onRoomSelected?: (room: Room) => void
@@ -137,6 +138,9 @@ export interface UseRoomsReturn {
     joinLoading:    Ref<boolean>
     joinRoom:       () => Promise<void>
     closeJoinModal: () => void
+
+    // ── Bootstrap cleanup ─────────────────────────────────────────────────
+    clearBootstrap: (roomId: string) => Promise<void>
 
     // ── Lifecycle ───────────────────────────────────────────────────────────
     /** Call from onMounted — opens vault and loads rooms. */
@@ -233,7 +237,15 @@ export function useRooms(options: UseRoomsOptions): UseRoomsReturn {
                 if (!entry.vpath.endsWith('.room.json')) continue
                 try {
                     const text   = await vaultUnsealText(vaultToken.value!, entry.blobSha256)
-                    const config = JSON.parse(text) as RoomConfig
+                    const config = JSON.parse(text) as RoomConfig & { bootstrapEndpoint?: string }
+
+                    // Pre-rename active-dev compatibility. The field never held
+                    // a network endpoint; it held the hub userId. Normalize once
+                    // in memory and save future updates with bootstrapUserId only.
+                    if (!config.bootstrapUserId && config.bootstrapEndpoint)
+                        config.bootstrapUserId = config.bootstrapEndpoint
+                    delete config.bootstrapEndpoint
+
                     config.accessPointId = entry.accessPointId
                     config.blobSha256    = entry.blobSha256
                     configs.push(config)
@@ -422,9 +434,9 @@ export function useRooms(options: UseRoomsOptions): UseRoomsReturn {
                 isAdmin:       false,
                 isClosed:      false,
                 closedReason:  '',
-                // Kept only until the first successful direct connection.
+                // Kept only until the first successful rendezvous kick-off.
                 // ensureChannel clears these from vault once bootstrap completes.
-                bootstrapEndpoint:  decoded.userId,
+                bootstrapUserId:    decoded.userId,
                 bootstrapPublicKey: decoded.publicKey,
             }
 
@@ -507,16 +519,16 @@ export function useRooms(options: UseRoomsOptions): UseRoomsReturn {
 
     // ── Bootstrap cleanup ─────────────────────────────────────────────────
     //
-    // Called by ChatRoom.vue after the first direct TCP connection succeeds.
+    // Called by ChatRoom.vue after the first SP2P rendezvous kick-off succeeds.
     // Removes the one-time bootstrap fields from both the in-memory room
-    // object and the vault config so they don't persist as a stale address.
+    // object and the vault config so they don't persist as stale peer hints.
 
     async function clearBootstrap(roomId: string) {
         const room = rooms.value.find(r => r.roomId === roomId)
-        if (!room || (!room.bootstrapEndpoint && !room.bootstrapPublicKey)) return
+        if (!room || (!room.bootstrapUserId && !room.bootstrapPublicKey)) return
 
         // Clear in memory first so the UI never reads stale values
-        room.bootstrapEndpoint  = undefined
+        room.bootstrapUserId    = undefined
         room.bootstrapPublicKey = undefined
 
         // Persist the updated config back to vault
@@ -530,7 +542,7 @@ export function useRooms(options: UseRoomsOptions): UseRoomsReturn {
                 isAdmin:       room.isAdmin,
                 isClosed:      room.isClosed,
                 closedReason:  room.closedReason,
-                // bootstrapEndpoint and bootstrapPublicKey intentionally omitted
+                // bootstrapUserId and bootstrapPublicKey intentionally omitted
             }, room.accessPointId)
             room.accessPointId = accessPointId
             room.blobSha256    = blobSha256

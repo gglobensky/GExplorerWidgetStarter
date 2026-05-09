@@ -91,6 +91,18 @@
                         </div>
                     </Transition>
                 </div>
+                <div
+                    v-if="activeSecurityStatus"
+                    class="security-pill"
+                    :class="`tone-${activeSecurityStatus.tone}`"
+                    v-gex-tooltip="{
+                        content: activeSecurityStatus.label,
+                        detail: activeSecurityStatus.detail
+                    }"
+                >
+                    <span class="security-dot" />
+                    <span class="security-label">{{ activeSecurityStatus.label }}</span>
+                </div>
             </div>
 
             <div class="header-right">
@@ -578,7 +590,7 @@
 <script setup lang="ts">
 // TODO LOOK INTO REMOVING SDK INJECTION FROM SDK CALLS IT SHOULD BE USELESS AND REDUNDANT NOW
 
-import { ref, computed, shallowRef, watch, onMounted, onUnmounted, inject, provide, type ComputedRef  } from 'vue'
+import { ref, computed, shallowRef, shallowReactive, watch, onMounted, onUnmounted, inject, provide, type ComputedRef  } from 'vue'
 import type { MeshPeer, UseChannelReturn, WidgetSdk, ChatMessage } from 'gexplorer/widgets'
 
 import { useIdentity } from './useIdentity'
@@ -617,7 +629,7 @@ const props = defineProps<{
 // ── SDK ────────────────────────────────────────────────────────────────────────
 
 const sdk = inject<WidgetSdk>('widgetSdk')
-const { createEdhtSession, useChannel } = sdk ?? {}
+const { useChannel } = sdk ?? {}
 
 // ── DOM refs ───────────────────────────────────────────────────────────────────
 
@@ -654,22 +666,16 @@ const activeBoard = computed(() =>
 const audioChain = useAudioChain(sdk)
 provide('gex:audioChain', audioChain)
 
-// ── Channel + EDHT instances ───────────────────────────────────────────────────
+// ── Channel instances ─────────────────────────────────────────────────────────
 //
-// Two maps, one responsibility each:
+// The widget owns high-level channel sessions only. EDHT, mesh, route prep,
+// reconnect, and SP2P internals are app-side responsibilities behind useChannel.
 //
-//   edhtSessions  — EDHT sessions created by announceRoom().
-//                   Owner rooms are announced on mount before any channel setup.
-//                   When ensureChannel runs, it reuses the existing session so
-//                   we don't double-create or lose the already-stored blobs.
-//                   Entries are removed when a channel takes ownership (wireEdht).
-//                   Remaining entries (announced but never activated) are disposed
-//                   on unmount.
-//
-//   channels      — Full UseChannelReturn instances (mesh + chatBind + edht).
-//                   Present for every room that has had ensureChannel run.
+// channels — Full UseChannelReturn instances present for every room that has
+//            had ensureChannel run. The Map is reactive because activeChannel
+//            and the status pill depend on entries being added after setup.
 
-const channels      = new Map<string, UseChannelReturn>()
+const channels = shallowReactive(new Map<string, UseChannelReturn>())
 const channelsPending = new Set<string>()
 
 provide('gex:activeChannel', computed(() =>
@@ -679,8 +685,92 @@ const activeChannel = computed(() =>
     activeRoom.value ? channels.get(activeRoom.value.roomId) : undefined
 )
 
-// Unsub handle for the ambient message listener
+// Unsub handle for the ambient message listener.
+// This handles non-active rooms; useChat handles the active room feed.
 let _ambientUnsub: (() => void) | null = null
+
+const channelTransportMode = ref<'sp2p' | 'direct-p2p'>('sp2p')
+
+type SecurityStatusTone = 'idle' | 'info' | 'ok' | 'warn' | 'error'
+
+type SecurityStatusView = {
+    tone: SecurityStatusTone
+    label: string
+    detail: string
+}
+
+const SP2P_STATUS_COPY: Record<string, SecurityStatusView> = {
+    'transport.created': {
+        tone: 'info',
+        label: 'Opening secure transport',
+        detail: 'The private SP2P transport is starting.',
+    },
+    'edht.waiting': {
+        tone: 'info',
+        label: 'Finding peer',
+        detail: 'Waiting for encrypted room presence.',
+    },
+    'peer.presence.missing': {
+        tone: 'warn',
+        label: 'Waiting for peer presence',
+        detail: 'The peer is known, but their current room presence is not ready yet.',
+    },
+    'peer.pipeline.starting': {
+        tone: 'info',
+        label: 'Preparing peer route',
+        detail: 'Starting private route preparation for this peer.',
+    },
+    'route.requested': {
+        tone: 'info',
+        label: 'Requesting private route',
+        detail: 'Asking the app for a split-path SP2P route.',
+    },
+    'route.received': {
+        tone: 'info',
+        label: 'Private route received',
+        detail: 'A redacted private route map was received and is being prepared.',
+    },
+    'route.preparing': {
+        tone: 'info',
+        label: 'Preparing private route',
+        detail: 'Preparing the private split-path route before sending room data.',
+    },
+    'route.ready': {
+        tone: 'ok',
+        label: 'Private SP2P route ready',
+        detail: 'Peer endpoints are hidden from participants. Routing metadata may still be observable by infrastructure.',
+    },
+    'route.degraded': {
+        tone: 'warn',
+        label: 'Route degraded',
+        detail: 'The private route is degraded. Messages may reconnect or retry.',
+    },
+    'route.recovered': {
+        tone: 'ok',
+        label: 'Route recovered',
+        detail: 'The private SP2P route recovered.',
+    },
+    'route.rotation.requested': {
+        tone: 'info',
+        label: 'Rotating private route',
+        detail: 'Preparing a fresh private route.',
+    },
+    'route.rotation.ready': {
+        tone: 'ok',
+        label: 'Private route ready',
+        detail: 'A fresh private route is ready.',
+    },
+    'voice.ready': {
+        tone: 'ok',
+        label: 'Voice route ready',
+        detail: 'Voice frames can use the private SP2P route.',
+    },
+    'offline': {
+        tone: 'error',
+        label: 'Offline',
+        detail: 'The room channel is offline or reconnecting.',
+    },
+}
 
 // ── Sidebar ────────────────────────────────────────────────────────────────────
 
@@ -771,9 +861,36 @@ const {
     joinLoading,
     joinRoom,
     closeJoinModal,
-    createNamedRoom
+    createNamedRoom,
+    clearBootstrap,
 } = rooms$
 
+const activeSecurityStatus = computed<SecurityStatusView | null>(() => {
+    if (!activeRoom.value) return null
+
+    if (channelTransportMode.value === 'direct-p2p') {
+        return {
+            tone: 'warn',
+            label: 'Direct encrypted P2P',
+            detail: 'Lower overhead, but your peer may learn your IP address.',
+        }
+    }
+
+    const status = activeChannel.value?.sp2pStatus?.value ?? null
+    if (!status) {
+        return {
+            tone: 'info',
+            label: 'Opening secure transport',
+            detail: 'Preparing the private SP2P channel.',
+        }
+    }
+
+    return SP2P_STATUS_COPY[status.code] ?? {
+        tone: status.severity,
+        label: status.message || 'SP2P status updated',
+        detail: 'Private SP2P channel status changed.',
+    }
+})
 // ── Chat ───────────────────────────────────────────────────────────────────────
 
 const chat$ = useChat({
@@ -1093,28 +1210,6 @@ function _shouldNotify(msg: ChatMessage, room: Room): boolean {
     return false
 }
 
-// ── Phase 1 — announceRoom ─────────────────────────────────────────────────────
-//
-// Lightweight: EDHT session + announce only. No TCP, no mesh, no chatBind.
-// Called in parallel for all owned rooms on mount so peers can find us
-// immediately via EDHT even for rooms we haven't opened yet.
-// Idempotent — silently skips if already announced.
-
-async function announceRoom(room: Room): Promise<void> {
-    if (edhtSessions.has(room.roomId)) return
-    if (!room.sessionSecret || !createEdhtSession) return
-
-    try {
-        const secret = Uint8Array.from(atob(room.sessionSecret), c => c.charCodeAt(0))
-        const edht   = await createEdhtSession({ sessionSecret: secret, scopeId: room.roomId })
-        await edht.announce(_buildEdhtPayload())
-        edhtSessions.set(room.roomId, edht)
-        console.log(`[GExchange] Announced — room ${room.roomId.slice(0, 8)}…`)
-    } catch (err) {
-        console.warn(`[GExchange] Failed to announce room ${room.roomId.slice(0, 8)}…:`, err)
-    }
-}
-
 // ── Phase 2 — ensureChannel ────────────────────────────────────────────────────
 //
 // Ambient channel setup: mesh strategy + chatBind so messages flow for all
@@ -1153,7 +1248,7 @@ async function ensureChannel(room: Room): Promise<void> {
             isHub:      room.isOwner,
             strategy:   'full',
             canConnect: buildCanConnect(room),
-            secure: true,
+            transportMode: channelTransportMode.value,
             voice: true,
             redundancy: 0,
             onPeerJoined: (peer: MeshPeer) => {
@@ -1175,8 +1270,9 @@ async function ensureChannel(room: Room): Promise<void> {
         if (room.isOwner) await channel.whenHubReady
         else await channel.whenEdhtReady  // ensure _edht is set before SP2P rendezvous starts
 
-        if (!room.isOwner && room.bootstrapPublicKey && room.bootstrapEndpoint) {
-            await channel.connectToPeer(room.bootstrapEndpoint, room.bootstrapPublicKey)
+        if (!room.isOwner && room.bootstrapPublicKey && room.bootstrapUserId) {
+            await channel.connectToPeer(room.bootstrapUserId, room.bootstrapPublicKey)
+            await clearBootstrap(room.roomId)
         }
 
         channelsPending.delete(room.roomId)
@@ -1235,6 +1331,8 @@ onMounted(async () => {
         setTimeout(() => ensureChannel(room), i * 200)
     }
 
+    chat$.mount()
+
     // Ambient message handler — mention detection for non-active rooms.
     // useChat handles the active room; this handles everything else.
     _ambientUnsub = sdk?.onChatMessage?.((msg: ChatMessage) => {
@@ -1257,8 +1355,6 @@ onMounted(async () => {
             console.log(`[GExchange] Notify: ${msg.senderName} in #${room.displayName}: ${msg.text.slice(0, 60)}`)
         }
     }) ?? null
-
-    chat$.mount()
 })
 
 onUnmounted(async () => {
@@ -1322,6 +1418,65 @@ watch(activeRoom, async (room) => {
 }
 .header-left  { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
 .header-right { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+
+.security-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    max-width: 240px;
+    height: 24px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-3);
+    color: var(--fg-dim);
+    font-size: 11px;
+    line-height: 1;
+    white-space: nowrap;
+    flex-shrink: 1;
+}
+
+.security-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.security-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: currentColor;
+    opacity: .85;
+    flex-shrink: 0;
+}
+
+.security-pill.tone-info {
+    color: var(--accent);
+    background: var(--accent-dim);
+}
+
+.security-pill.tone-ok {
+    color: #74d680;
+    background: rgba(116,214,128,.12);
+    border-color: rgba(116,214,128,.22);
+}
+
+.security-pill.tone-warn {
+    color: #e7bd5d;
+    background: rgba(231,189,93,.12);
+    border-color: rgba(231,189,93,.24);
+}
+
+.security-pill.tone-error {
+    color: #ee7474;
+    background: rgba(238,116,116,.12);
+    border-color: rgba(238,116,116,.24);
+}
+
+.security-pill.tone-idle {
+    color: var(--fg-muted);
+}
 .room-picker  { position: relative; min-width: 0; }
 .room-trigger {
     display: flex;
