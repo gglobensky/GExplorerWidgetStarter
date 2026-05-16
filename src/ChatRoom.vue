@@ -588,8 +588,6 @@
     </div>
 </template>
 <script setup lang="ts">
-// TODO LOOK INTO REMOVING SDK INJECTION FROM SDK CALLS IT SHOULD BE USELESS AND REDUNDANT NOW
-
 import { ref, computed, shallowRef, shallowReactive, watch, onMounted, onUnmounted, inject, provide, type ComputedRef  } from 'vue'
 import type { MeshPeer, UseChannelReturn, WidgetSdk, ChatMessage } from 'gexplorer/widgets'
 
@@ -720,6 +718,11 @@ const SP2P_STATUS_COPY: Record<string, SecurityStatusView> = {
         label: 'Preparing peer route',
         detail: 'Starting private route preparation for this peer.',
     },
+    'peer.pipeline.retrying': {
+        tone: 'info',
+        label: 'Retrying private route',
+        detail: 'The peer route did not become ready in time, so GExchange is trying a fresh private route.',
+    },
     'route.requested': {
         tone: 'info',
         label: 'Requesting private route',
@@ -789,7 +792,7 @@ const identity$ = useIdentity({
             username:  (identity$.resolvedUsername.value   || identity$.identity.value?.userId) ?? 'Unknown',
             publicKey: identity$.identity.value?.publicKey ?? '',
         }
-        for (const channel of channels.values())
+    for (const channel of channels.values())
             await channel.reannounce()
     },
 })
@@ -862,7 +865,6 @@ const {
     joinRoom,
     closeJoinModal,
     createNamedRoom,
-    clearBootstrap,
 } = rooms$
 
 const activeSecurityStatus = computed<SecurityStatusView | null>(() => {
@@ -1145,14 +1147,6 @@ async function createPrivateRoomWith(peerIds: string[], withCall: boolean): Prom
 
 const MAX_PEERS = 0
 
-function _buildEdhtPayload(): Uint8Array {
-    return new TextEncoder().encode(JSON.stringify({
-        publicKey: identity.value?.publicKey ?? '',
-        userId:    identity.value?.userId    ?? '',
-        username:  (resolvedUsername.value   || identity.value?.userId) ?? '',
-    }))
-}
-
 function buildCanConnect(room: Room) {
     return async (peer: MeshPeer): Promise<boolean> => {
         if (MAX_PEERS > 0) {
@@ -1231,6 +1225,7 @@ async function ensureChannel(room: Room): Promise<void> {
 
     try {
         const secret = Uint8Array.from(atob(room.sessionSecret), c => c.charCodeAt(0))
+        const myJoinedAt = Date.now()
 
         const channel = useChannel({
             scopeId:  room.roomId,
@@ -1252,11 +1247,15 @@ async function ensureChannel(room: Room): Promise<void> {
             voice: true,
             redundancy: 0,
             onPeerJoined: (peer: MeshPeer) => {
+                // TODO ADD joinedAt to widget-sdk.d file
+                // Validate this really works where if a simple user was there with the same username as another, the newcomer only will get asked to change
+                const isNewcomer = !room.isOwner && !!peer.joinedAt && peer.joinedAt < myJoinedAt
                 if (
                     peer.userId   !== identity.value?.userId &&
                     peer.username &&
                     resolvedUsername.value &&
                     peer.username === resolvedUsername.value &&
+                    isNewcomer &&
                     !showDisambigPrompt.value
                 ) {
                     showDisambigPrompt.value = true
@@ -1272,7 +1271,6 @@ async function ensureChannel(room: Room): Promise<void> {
 
         if (!room.isOwner && room.bootstrapPublicKey && room.bootstrapUserId) {
             await channel.connectToPeer(room.bootstrapUserId, room.bootstrapPublicKey)
-            await clearBootstrap(room.roomId)
         }
 
         channelsPending.delete(room.roomId)
@@ -1290,9 +1288,38 @@ async function ensureChannel(room: Room): Promise<void> {
 // Ensures the ambient channel exists then loads history.
 // ensureChannel is idempotent — safe to call if channel already exists.
 
+async function kickRoomRendezvous(room: Room, reason: string): Promise<void> {
+    const channel = channels.get(room.roomId)
+    if (!channel) return
+
+    if (!room.isOwner && room.bootstrapUserId && room.bootstrapPublicKey) {
+        await channel.connectToPeer(room.bootstrapUserId, room.bootstrapPublicKey).catch(err =>
+            console.warn(
+                `[GExchange] Room rendezvous kick failed (${reason}) — ${room.roomId.slice(0, 8)}…:`,
+                err
+            )
+        )
+        return
+    }
+
+    await channel.reannounce().catch(err =>
+        console.warn(
+            `[GExchange] Room connectivity refresh failed (${reason}) — ${room.roomId.slice(0, 8)}…:`,
+            err
+        )
+    )
+}
+
 async function activateRoom(room: Room): Promise<void> {
     await ensureChannel(room)
+    await kickRoomRendezvous(room, 'activate')
     await loadHistory(room.roomId)
+}
+
+async function refreshActiveRoomChannel(reason: string): Promise<void> {
+    const room = activeRoom.value
+    if (!room) return
+    await kickRoomRendezvous(room, reason)
 }
 
 // ── Dispose ────────────────────────────────────────────────────────────────────
@@ -1312,10 +1339,21 @@ function onDocClick(e: MouseEvent) {
         closePicker()
 }
 
+function onVisibilityChange() {
+    if (document.visibilityState === 'visible')
+        void refreshActiveRoomChannel('visible')
+}
+
+function onWindowFocus() {
+    void refreshActiveRoomChannel('focus')
+}
+
 // ── Lifecycle ──────────────────────────────────────────────────────────────────
 
 onMounted(async () => {
     document.addEventListener('mousedown', onDocClick)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('focus', onWindowFocus)
     await audioChain.load()   
     await identity$.load()
     await rooms$.load()
@@ -1359,6 +1397,8 @@ onMounted(async () => {
 
 onUnmounted(async () => {
     document.removeEventListener('mousedown', onDocClick)
+    document.removeEventListener('visibilitychange', onVisibilityChange)
+    window.removeEventListener('focus', onWindowFocus)
     _ambientUnsub?.()
     _ambientUnsub = null
     chat$.unmount()

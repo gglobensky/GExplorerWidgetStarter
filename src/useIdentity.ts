@@ -15,6 +15,13 @@
 //   onNameChanged    — call this when the name changes to trigger reannounce
 //                      (ChatRoom.vue wires this to reannounceAll so useIdentity
 //                       stays decoupled from the mesh layer)
+//
+// DISAMBIG SEEDING:
+//   Preview values and initial selections are derived deterministically from
+//   userId via FNV-1a. This ensures two users with colliding names see
+//   different suggested suffixes/prefixes from the moment the prompt opens,
+//   with no coordination required. "Try another" remains random — that is its
+//   entire purpose.
 
 import { ref, computed, nextTick, type Ref } from 'vue'
 import type { WidgetSdk } from 'gexplorer/widgets'
@@ -42,6 +49,22 @@ const DISAMBIG_WORDS = [
     'mesa','nova','opal','pine','quill','rust','sage','teal',
     'umber','vale','wren','xen','yew','zeal',
 ]
+
+// ── Seeded integer ────────────────────────────────────────────────────────────
+//
+// FNV-1a over (userId + '\0' + salt). Different salts per mode ensure that
+// suffix-word and prefix-word never resolve to the same word even when the
+// userId is the same. Returns a value in [0, max).
+
+function _seededInt(seed: string, salt: string, max: number): number {
+    let h = 0x811c9dc5
+    const s = seed + '\0' + salt
+    for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i)
+        h = (Math.imul(h, 0x01000193)) >>> 0
+    }
+    return h % max
+}
 
 // ── Options ───────────────────────────────────────────────────────────────────
 
@@ -111,7 +134,7 @@ export function useIdentity(options: UseIdentityOptions): UseIdentityReturn {
         if (!baseName.value) return identity.value?.userId ?? ''
         const d = disambigState.value
         if (!d) return baseName.value
-        if (d.mode === 'prefix-word') return `${d.value}-${baseName.value}`
+        if (d.mode === 'prefix-word') return `${d.value}${baseName.value}`
         return `${baseName.value}${d.value}`
     })
 
@@ -193,10 +216,28 @@ export function useIdentity(options: UseIdentityOptions): UseIdentityReturn {
     }
 
     // ── Disambiguator ─────────────────────────────────────────────────────
+    //
+    // _seededDefaults holds one deterministic suggestion per mode, derived
+    // from userId. Built once in load(). These are the values shown in
+    // preview before any explicit selection, and the initial generated value
+    // when a mode is selected for the first time. "Try another" overwrites
+    // with a fresh Math.random() value — seeding does not constrain it.
 
     const showDisambigPrompt = ref(false)
     const disambigChoice     = ref<DisambigMode | null>(null)
     const disambigGenerated  = ref('')
+
+    // userId → { mode → formatted suffix/prefix string }
+    const _seededDefaults = new Map<DisambigMode, string>()
+
+    function _buildSeededDefaults(userId: string): void {
+        const number     = 100 + _seededInt(userId, 'n',  900)
+        const suffixWord = DISAMBIG_WORDS[_seededInt(userId, 'sw', DISAMBIG_WORDS.length)]
+        const prefixWord = DISAMBIG_WORDS[_seededInt(userId, 'pw', DISAMBIG_WORDS.length)]
+        _seededDefaults.set('suffix-number', `#${number}`)
+        _seededDefaults.set('suffix-word',   `-${suffixWord}`)
+        _seededDefaults.set('prefix-word',   `${prefixWord}-`)
+    }
 
     const disambigOptions: { id: DisambigMode; label: string }[] = [
         { id: 'suffix-number', label: 'Add a number (#42)' },
@@ -213,11 +254,22 @@ export function useIdentity(options: UseIdentityOptions): UseIdentityReturn {
 
     function previewDisambig(mode: DisambigMode): string {
         const base = baseName.value || identity.value?.userId?.slice(0, 8) || 'you'
+
         if (disambigChoice.value === mode) {
             const v = disambigGenerated.value
             if (mode === 'prefix-word') return `${v.replace(/-$/, '')}-${base}`
             return `${base}${v}`
         }
+
+        // Show the seeded default for unselected modes so each user sees a
+        // unique suggestion list. Falls back to the hardcoded placeholder only
+        // if identity hasn't loaded yet.
+        const def = _seededDefaults.get(mode)
+        if (def !== undefined) {
+            if (mode === 'prefix-word') return `${def.replace(/-$/, '')}-${base}`
+            return `${base}${def}`
+        }
+
         if (mode === 'suffix-number') return `${base}#42`
         if (mode === 'suffix-word')   return `${base}-swift`
         return `bold-${base}`
@@ -225,11 +277,15 @@ export function useIdentity(options: UseIdentityOptions): UseIdentityReturn {
 
     function selectDisambigOption(mode: DisambigMode) {
         disambigChoice.value    = mode
-        disambigGenerated.value = _generateDisambigValue(mode)
+        // Initialize with the seeded default so the first selection already
+        // shows a value unique to this user. The user can hit "Try another"
+        // to get a fresh random value if they want something different.
+        disambigGenerated.value = _seededDefaults.get(mode) ?? _generateDisambigValue(mode)
     }
 
     function regenerateDisambig() {
         if (!disambigChoice.value) return
+        // Intentionally random — this is the "give me something different" action.
         disambigGenerated.value = _generateDisambigValue(disambigChoice.value)
     }
 
@@ -257,6 +313,10 @@ export function useIdentity(options: UseIdentityOptions): UseIdentityReturn {
                 username:  resolvedUsername.value || result.userId,
                 publicKey: result.publicKey,
             }
+            // Build seeded defaults now that we have a stable userId.
+            // Must happen before the disambig prompt could ever be shown.
+            _buildSeededDefaults(result.userId)
+
             if (!result.isNameSet) {
                 showNamePrompt.value  = true
                 namePromptValue.value = ''

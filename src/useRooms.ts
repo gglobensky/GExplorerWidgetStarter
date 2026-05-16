@@ -41,11 +41,14 @@ export interface RoomConfig {
     blobSha256:    string
 
     /**
-     * Hub's userId and public key stored at join time.
-     * Used once to initiate SP2P rendezvous with the hub via connectToPeer —
-     * after that eDHT presence discovery handles reconnection normally.
-     * Cleared from the vault config after the first successful connection.
-     * Undefined for rooms where isOwner === true (no bootstrap needed).
+     * Stable room-owner identity hint, captured from the invite.
+     *
+     * This is not a network endpoint and does not expose peer transport details.
+     * It is intentionally persisted so joined clients can re-kick SP2P
+     * rendezvous after app restart, room reload, sleep/wake, or stale EDHT
+     * state.
+     *
+     * Undefined for rooms where isOwner === true.
      */
     bootstrapUserId?:    string
     bootstrapPublicKey?: string
@@ -138,9 +141,6 @@ export interface UseRoomsReturn {
     joinLoading:    Ref<boolean>
     joinRoom:       () => Promise<void>
     closeJoinModal: () => void
-
-    // ── Bootstrap cleanup ─────────────────────────────────────────────────
-    clearBootstrap: (roomId: string) => Promise<void>
 
     // ── Lifecycle ───────────────────────────────────────────────────────────
     /** Call from onMounted — opens vault and loads rooms. */
@@ -237,14 +237,7 @@ export function useRooms(options: UseRoomsOptions): UseRoomsReturn {
                 if (!entry.vpath.endsWith('.room.json')) continue
                 try {
                     const text   = await vaultUnsealText(vaultToken.value!, entry.blobSha256)
-                    const config = JSON.parse(text) as RoomConfig & { bootstrapEndpoint?: string }
-
-                    // Pre-rename active-dev compatibility. The field never held
-                    // a network endpoint; it held the hub userId. Normalize once
-                    // in memory and save future updates with bootstrapUserId only.
-                    if (!config.bootstrapUserId && config.bootstrapEndpoint)
-                        config.bootstrapUserId = config.bootstrapEndpoint
-                    delete config.bootstrapEndpoint
+                    const config = JSON.parse(text) as RoomConfig
 
                     config.accessPointId = entry.accessPointId
                     config.blobSha256    = entry.blobSha256
@@ -434,8 +427,8 @@ export function useRooms(options: UseRoomsOptions): UseRoomsReturn {
                 isAdmin:       false,
                 isClosed:      false,
                 closedReason:  '',
-                // Kept only until the first successful rendezvous kick-off.
-                // ensureChannel clears these from vault once bootstrap completes.
+                // Persisted room-owner identity hint.
+                // Safe to keep: this is userId/publicKey, not a network endpoint.
                 bootstrapUserId:    decoded.userId,
                 bootstrapPublicKey: decoded.publicKey,
             }
@@ -517,41 +510,6 @@ export function useRooms(options: UseRoomsOptions): UseRoomsReturn {
             .slice(0, 8)
     }
 
-    // ── Bootstrap cleanup ─────────────────────────────────────────────────
-    //
-    // Called by ChatRoom.vue after the first SP2P rendezvous kick-off succeeds.
-    // Removes the one-time bootstrap fields from both the in-memory room
-    // object and the vault config so they don't persist as stale peer hints.
-
-    async function clearBootstrap(roomId: string) {
-        const room = rooms.value.find(r => r.roomId === roomId)
-        if (!room || (!room.bootstrapUserId && !room.bootstrapPublicKey)) return
-
-        // Clear in memory first so the UI never reads stale values
-        room.bootstrapUserId    = undefined
-        room.bootstrapPublicKey = undefined
-
-        // Persist the updated config back to vault
-        try {
-            const { accessPointId, blobSha256 } = await _saveRoomConfig({
-                roomId:        room.roomId,
-                canonicalName: room.canonicalName,
-                createdAt:     room.createdAt,
-                sessionSecret: room.sessionSecret,
-                isOwner:       room.isOwner,
-                isAdmin:       room.isAdmin,
-                isClosed:      room.isClosed,
-                closedReason:  room.closedReason,
-                // bootstrapUserId and bootstrapPublicKey intentionally omitted
-            }, room.accessPointId)
-            room.accessPointId = accessPointId
-            room.blobSha256    = blobSha256
-            console.log(`[GExchange] Bootstrap fields cleared — room ${roomId.slice(0, 8)}…`)
-        } catch (err) {
-            console.warn(`[GExchange] Failed to clear bootstrap fields for room ${roomId.slice(0, 8)}…:`, err)
-        }
-    }
-
     return {
         rooms,
         activeRoom,
@@ -592,7 +550,6 @@ export function useRooms(options: UseRoomsOptions): UseRoomsReturn {
         joinRoom,
         closeJoinModal,
 
-        clearBootstrap,
         load,
         dispose,
     }
