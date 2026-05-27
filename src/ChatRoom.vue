@@ -773,6 +773,16 @@ const SP2P_STATUS_COPY: Record<string, SecurityStatusView> = {
         label: 'Offline',
         detail: 'The room channel is offline or reconnecting.',
     },
+    'route.orchestrators.unavailable': {
+        tone: 'error',
+        label: 'SP2P network unavailable',
+        detail: 'No trusted orchestrator is currently available. GExchange did not fall back to direct-P2P.',
+    },
+    'route.orchestrators.busy': {
+        tone: 'warn',
+        label: 'SP2P network busy',
+        detail: 'All trusted orchestrators are busy. GExchange is waiting and will retry without falling back to direct-P2P.',
+    },
 }
 
 // ── Sidebar ────────────────────────────────────────────────────────────────────
