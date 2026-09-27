@@ -31,8 +31,21 @@ import type { Identity } from './useIdentity'
 export interface RoomConfig {
     roomId:        string
     canonicalName: string
-    createdAt:     number
-    sessionSecret: string   // base64 — EDHT key material
+    createdAt:     number    
+    /**
+     * Joined rooms have a sessionSecret and can start a channel.
+     * Pending rooms have accepted an opaque invite but are waiting for room
+     * admission/bootstrap.
+     */
+    admissionStatus?: RoomAdmissionStatus
+
+    /**
+     * Empty while admissionStatus === 'pending'.
+     * Filled once the encrypted bootstrap response provides the room secret.
+     */
+    sessionSecret: string
+
+    pendingAdmission?: PendingRoomAdmission
     isOwner:       boolean
     isAdmin:       boolean
     isClosed:      boolean
@@ -54,8 +67,42 @@ export interface RoomConfig {
     bootstrapPublicKey?: string
 }
 
+export type RoomAdmissionStatus = 'joined' | 'pending'
+
+export interface PendingRoomAdmission {
+    format: 'gex-room-invite-v3'
+
+    acceptedAt: number
+    rawToken: string
+
+    inviteId: string
+    admissionRendezvousKey: string
+    issuedAt: number
+    expiresAt: number
+    pendingTtlMs: number
+
+    issuerUserId: string
+    issuerPublicKey: string
+    roomName?: string
+    claimId: string
+    invitePrivateJwk: JsonWebKey
+}
+
 export interface Room extends RoomConfig {
     displayName: string
+}
+
+export type CreateRoomInviteOptions = {
+    validityMinutes?: number
+}
+
+export type CreateRoomInviteResult = {
+    token: string
+    inviteId?: string
+    expiresAt?: number
+    pendingTtlMs?: number
+    admissionRendezvousKey?: string
+    inviteIssuedEventId?: string
 }
 
 // ── Local name storage ────────────────────────────────────────────────────────
@@ -81,6 +128,16 @@ export interface UseRoomsOptions {
     /** Public app-provided SDK dependency. Keep injected; do not import app internals. */
     sdk:      WidgetSdk
     identity: Ref<Identity | null>
+    /**
+     * Creates a room invite through the channel/runtime layer.
+     *
+     * useRooms intentionally does not know whether this is an old direct token,
+     * an opaque v3 admission token, EDHT-backed, SP2P-backed, etc.
+     */
+    createInvite?: (
+        room: Room,
+        options?: CreateRoomInviteOptions,
+    ) => Promise<CreateRoomInviteResult>
     /** Called when a room is selected — ChatRoom.vue wires ensureChannel here. */
     onRoomSelected?: (room: Room) => void
     /** Refs for UI focus management */
@@ -152,11 +209,18 @@ export interface UseRoomsReturn {
 // ── Composable ────────────────────────────────────────────────────────────────
 
 export function useRooms(options: UseRoomsOptions): UseRoomsReturn {
-    const { sdk, identity, onRoomSelected, searchInputRef, newRoomInputRef } = options
+    const {
+        sdk,
+        identity,
+        onRoomSelected,
+        createInvite,
+        searchInputRef,
+        newRoomInputRef,
+    } = options
     const {
         p2pDeriveKey,
-        p2pCreateInvite,
-        p2pAcceptInvite,
+        p2pSubmitAdmissionClaim,
+        p2pWatchBootstrap,
         vaultOpen,
         vaultClose,
         vaultSealContentAs,
@@ -239,6 +303,8 @@ export function useRooms(options: UseRoomsOptions): UseRoomsReturn {
                     const text   = await vaultUnsealText(vaultToken.value!, entry.blobSha256)
                     const config = JSON.parse(text) as RoomConfig
 
+                    config.admissionStatus ??= config.sessionSecret ? 'joined' : 'pending'
+
                     config.accessPointId = entry.accessPointId
                     config.blobSha256    = entry.blobSha256
                     configs.push(config)
@@ -254,7 +320,15 @@ export function useRooms(options: UseRoomsOptions): UseRoomsReturn {
                 seen.add(c.roomId)
                 return true
             })
+            
             rooms.value = applyDisplayNames(deduped)
+
+            // Resume bootstrap pollers for any rooms still pending
+            for (const room of rooms.value) {
+                if (room.admissionStatus === 'pending')
+                    _startBootstrapPoller(room)
+            }
+
         } catch (err) {
             console.warn('[GExchange] Failed to load rooms:', err)
         } finally {
@@ -291,6 +365,11 @@ export function useRooms(options: UseRoomsOptions): UseRoomsReturn {
 
     function selectRoom(room: Room) {
         activeRoom.value = room
+
+        if (room.admissionStatus === 'pending') {
+            return
+        }
+
         onRoomSelected?.(room)
     }
 
@@ -326,6 +405,7 @@ export function useRooms(options: UseRoomsOptions): UseRoomsReturn {
             canonicalName: name,
             createdAt,
             sessionSecret,
+            admissionStatus: 'joined',
             isOwner:       true,
             isAdmin:       true,
             isClosed:      false,
@@ -383,18 +463,25 @@ export function useRooms(options: UseRoomsOptions): UseRoomsReturn {
     // ── Invite ────────────────────────────────────────────────────────────
 
     async function generateInvite() {
-        if (!activeRoom.value || !p2pCreateInvite) return
+        if (!activeRoom.value) return
+
         inviteError.value  = ''
         inviteToken.value  = ''
         inviteCopied.value = false
+
+        if (!createInvite) {
+            inviteError.value = 'Room invite creation is unavailable.'
+            return
+        }
+
         try {
-            const result      = await p2pCreateInvite(activeRoom.value.roomId, {
-                sessionSecret:   activeRoom.value.sessionSecret,
+            const result = await createInvite(activeRoom.value, {
                 validityMinutes: inviteExpiry.value,
             })
+
             inviteToken.value = result.token
         } catch (err: any) {
-            inviteError.value = err.message
+            inviteError.value = err?.message ?? String(err)
         }
     }
 
@@ -411,39 +498,152 @@ export function useRooms(options: UseRoomsOptions): UseRoomsReturn {
 
     async function joinRoom() {
         const token = joinToken.value.trim()
-        if (!token || !p2pAcceptInvite || !identity.value) return
+
+        if (!token || !identity.value)
+            return
+
+       if (!p2pSubmitAdmissionClaim) {
+            joinError.value = 'Room admission is unavailable.'
+            return
+        }
+ 
         joinError.value   = ''
         joinLoading.value = true
+ 
         try {
-            const decoded       = await p2pAcceptInvite(token)
-            const canonicalName = decoded.sessionId
+            const admission = await p2pSubmitAdmissionClaim({
+                rawToken:         token,
+                joinerUserId:     identity.value.userId,
+                joinerPublicKey:  identity.value.publicKey,
+                joinerDisplayName: (identity.value as any).displayName,
+            })
+ 
+            const existing = rooms.value.find(r => r.roomId === admission.roomId)
 
+            if (existing) {
+                if (existing.admissionStatus === 'pending') {
+                    selectRoom(existing)
+                    showJoinModal.value = false
+                    joinToken.value = ''
+                    return
+                }
+ 
+                throw new Error('You have already joined this room.')
+            }
+ 
+            const canonicalName =
+                admission.roomName?.trim() ||
+                `pending-${admission.roomId}`
+ 
             const config: Omit<RoomConfig, 'accessPointId' | 'blobSha256'> = {
-                roomId:        decoded.sessionId,
+                roomId:          admission.roomId,
                 canonicalName,
-                createdAt:     Date.now(),
-                sessionSecret: decoded.sessionSecret,
-                isOwner:       false,
-                isAdmin:       false,
-                isClosed:      false,
-                closedReason:  '',
-                // Persisted room-owner identity hint.
-                // Safe to keep: this is userId/publicKey, not a network endpoint.
-                bootstrapUserId:    decoded.userId,
-                bootstrapPublicKey: decoded.publicKey,
+                createdAt:       Date.now(),
+                sessionSecret:   '',
+                admissionStatus: 'pending',
+                isOwner:         false,
+                isAdmin:         false,
+                isClosed:        false,
+                closedReason:    '',
+ 
+                bootstrapUserId:   admission.issuerUserId,
+                bootstrapPublicKey: admission.issuerPublicKey,
+ 
+                pendingAdmission: {
+                    format:     'gex-room-invite-v3',
+                    acceptedAt: Date.now(),
+                    rawToken:   token,
+ 
+                    inviteId:               admission.inviteId,
+                    admissionRendezvousKey: admission.admissionRendezvousKey,
+                    issuedAt:               admission.issuedAt,
+                    expiresAt:              admission.expiresAt,
+                    pendingTtlMs:           admission.pendingTtlMs,
+                    issuerUserId:           admission.issuerUserId,
+                    issuerPublicKey:        admission.issuerPublicKey,
+                    roomName:               admission.roomName,
+                    claimId:                admission.claimId,
+                    invitePrivateJwk:       admission.invitePrivateJwk,
+                },
             }
 
             const { accessPointId, blobSha256 } = await _saveRoomConfig(config)
-            const room: Room = { ...config, accessPointId, blobSha256, displayName: canonicalName }
+
+            const room: Room = {
+                ...config,
+                accessPointId,
+                blobSha256,
+                displayName: canonicalName,
+            }
+
             rooms.value.push(room)
+            _startBootstrapPoller(room)
             selectRoom(room)
+
             showJoinModal.value = false
-            joinToken.value     = ''
+            joinToken.value = ''
         } catch (err: any) {
-            joinError.value = err.message
+            joinError.value = err?.message ?? String(err)
         } finally {
             joinLoading.value = false
         }
+    }
+
+    function _startBootstrapPoller(room: Room): void {
+        const pending = room.pendingAdmission
+        if (!pending?.claimId || !pending?.invitePrivateJwk) return
+        if (!p2pWatchBootstrap) return
+
+        const pendingUntil = pending.expiresAt + pending.pendingTtlMs
+
+        p2pWatchBootstrap({
+            claimId:                pending.claimId,
+            admissionRendezvousKey: pending.admissionRendezvousKey,
+            pendingUntil,
+            invitePrivateJwk:       pending.invitePrivateJwk,
+            onResult: (result) => {
+                if (result.status === 'arrived') {
+                    _onBootstrapArrived(room.roomId, result.sessionSecret)
+                        .catch(err => console.warn('[GExchange] _onBootstrapArrived failed:', err))
+                } else {
+                    console.warn('[GExchange] Bootstrap poll ended:', result.status, {
+                        roomId: room.roomId,
+                    })
+                }
+            },
+        })
+    }
+
+    async function _onBootstrapArrived(roomId: string, sessionSecret: Uint8Array): Promise<void> {
+        const room = rooms.value.find(r => r.roomId === roomId)
+        if (!room) return
+
+        const secretBase64 = btoa(String.fromCharCode(...sessionSecret))
+
+        const updated: Omit<RoomConfig, 'accessPointId' | 'blobSha256'> = {
+            ...room,
+            sessionSecret:   secretBase64,
+            admissionStatus: 'joined',
+            pendingAdmission: undefined,
+        }
+
+        const { accessPointId, blobSha256 } = await _saveRoomConfig(updated, room.accessPointId)
+
+        const updatedRoom: Room = {
+            ...updated,
+            accessPointId,
+            blobSha256,
+            displayName: room.displayName,
+        }
+
+        const idx = rooms.value.findIndex(r => r.roomId === roomId)
+        if (idx !== -1) rooms.value[idx] = updatedRoom
+        if (activeRoom.value?.roomId === roomId) activeRoom.value = updatedRoom
+
+        console.info('[GExchange] Bootstrap arrived — room joined', { roomId })
+
+        if (activeRoom.value?.roomId === roomId)
+            onRoomSelected?.(updatedRoom)
     }
 
     function closeJoinModal() {

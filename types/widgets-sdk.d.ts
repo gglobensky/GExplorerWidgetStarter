@@ -617,8 +617,12 @@ declare module 'gexplorer/widgets' {
         error?: string
     }>
 
-    export function iconFor(path: string): string
-    export function ensureIconsFor(paths: string[]): Promise<void>
+    /** Entry shape the icon helpers read (fs:listDir fields, lower-cased). */
+    export type IconEntry = { iconKey?: string; kind?: string; ext?: string }
+    /** Cached system icon (data URL) for entry.iconKey, else a pack icon or emoji. */
+    export function iconFor(entry: IconEntry, size?: number): string
+    /** Fetches missing system icons into the shared cache; resolves to how many were added. */
+    export function ensureIconsFor(entries: readonly IconEntry[], size?: number): Promise<number>
 
     export function createGexPayload<T>(
         type: GexDnDType | string,

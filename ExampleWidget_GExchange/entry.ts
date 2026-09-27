@@ -12,7 +12,7 @@ export default {
     description: 'Secure file sharing and chat rooms',
 
     capabilities: [
-     { cap: 'P2P',           reason: 'peer identity and channel management' },
+    { cap: 'SP2P',          reason: 'private split-path chat and voice rooms' },
      { cap: 'SecureStorage', reason: 'encrypted file vault per room' },
      { cap: 'Chat',          reason: 'real-time messaging with peers' },
      { cap: 'Network',       reason: 'outbound peer connections' },
@@ -111,12 +111,23 @@ export default {
 
     // ── Extension Points ──────────────────────────────────────────────────────
 
-    consumes: [
-        {
-            point:    'gexchange.board',
-            multiple: true,
-        },
-    ],
+   provides: [
+       {
+           point:     'gexchange.board',
+           component: () => import('./VoicePanel.vue'),
+           props: {
+               label: '🎙 Voice',
+               icon:  'mdi-microphone',
+           },
+       },
+   ],
+
+   consumes: [
+       {
+           point:    'gexchange.board',
+           multiple: true,
+       },
+   ],
 
     // ── Layout ────────────────────────────────────────────────────────────────
 

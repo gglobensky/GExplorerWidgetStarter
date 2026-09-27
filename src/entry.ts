@@ -1,145 +1,142 @@
-// src/widgets/gexchange/entry.ts
-// Complete final version.
-// No imports from @/internal or @/ui — all behavior via api parameter.
-// Third parties can define identical hooks for their own schemes.
+// src/widgets/items/entry.ts
 
-import ChatRoom from './ChatRoom.vue'
+import Widget from './Widget.vue'
+
+// ============================================================================
+// Menu contributions
+// ============================================================================
+
+const menuConfig = {
+    contributions: [
+        {
+            scope: 'background',
+            items: [
+                {
+                    id:       'items.refresh-menu-item',
+                    type:     'command',
+                    actionId: 'items.refresh',
+                    section:  '@core.view',
+                    order:    10,
+                },
+            ],
+        },
+        {
+            // Rename only makes sense for a single item
+            scope: 'file',
+            items: [
+                {
+                    id:       'items.rename-menu-item',
+                    type:     'command',
+                    actionId: 'fs.rename',
+                    section:  '@core.edit',
+                    order:    10,
+                },
+            ],
+        },
+        {
+            scope: 'folder',
+            items: [
+                {
+                    id:       'items.rename-menu-item',
+                    type:     'command',
+                    actionId: 'fs.rename',
+                    section:  '@core.edit',
+                    order:    10,
+                },
+            ],
+        },
+    ],
+}
+
+// ============================================================================
+// Widget definition
+// ============================================================================
 
 export default {
-    id: 'gexchange',
-    version: '1.0.0',
-    displayName: 'GExchange',
-    description: 'Secure file sharing and chat rooms',
+    api:     '1.0',
+    id:      'items',
+    version: '0.3.1',
+    Component: Widget,
+    dropAccepts: ['gex/file-refs'],
+	menus: menuConfig,
 
-    capabilities: [
-    { cap: 'SP2P',          reason: 'private split-path chat and voice rooms' },
-     { cap: 'SecureStorage', reason: 'encrypted file vault per room' },
-     { cap: 'Chat',          reason: 'real-time messaging with peers' },
-     { cap: 'Network',       reason: 'outbound peer connections' },
+    // ── Context declarations ────────────────────────────────────────────────
+    // Static metadata consumed by:
+    //   - ContextMenuEditor (left-panel tabs)
+    //   - Command template picker (context filter)
+    //   - Config storage key mapping
+    //
+    // builtin: true  → resolved by contextResolver's built-in logic
+    // builtin: false → widget component registers a detector via
+    //                  registerContextDetector() in onMounted
+    menuContexts: [
+        { id: 'background', label: 'Empty area',       icon: '🖥',  builtin: true },
+        { id: 'file',       label: 'File',              icon: '📄',  builtin: true },
+        { id: 'folder',     label: 'Folder',            icon: '📁',  builtin: true },
+        { id: 'multi',      label: 'Multiple selected', icon: '⬛',  builtin: true },
     ],
-
-    Component: ChatRoom,
-
-    // ── Background Workers ────────────────────────────────────────────────────
-
-    workers: [
-        {
-            id:            'gexchange-seeder',
-            executable:    'workers/GExchangeSeeder.exe',
-            startOn:       'app-start',
-            restartPolicy: 'on-crash',
-            singleton:     true,
-            caps:          ['Network', 'Ipc'],
-            pipes:         ['status', 'commands'],
-            description:   'P2P seeder and DHT peer discovery for GExchange rooms',
-        },
-        {
-            id:            'gexchange-push',
-            executable:    'workers/GExchangePush.exe',
-            startOn:       'app-start',
-            restartPolicy: 'on-crash',
-            singleton:     true,
-            caps:          ['Network', 'Ipc'],
-            pipes:         ['status'],
-            description:   'Push notification listener for room events',
-        },
-    ],
-
-    // ── Virtual Filesystem ────────────────────────────────────────────────────
-
-     vfsHandlers: [{
-        // scheme is NOT declared — platform derives it from widget type ('gexchange')
-        resolver: 'frontend',
-        label:    'GExchange Secure Room',
-        icon:     'mdi-chat-lock',
-        ops: ['listDir', 'getMetadata', 'copy', 'delete', 'open', 'extract', 'mkdir'],
-        handler:  () => import('./vfsHandler'),
- 
-        stateStyles: {
-            ghost:    { opacity: 0.45, badge: '↓', badgeTitle: 'Not downloaded', cursor: 'default', dimName: true },
-            fetching: { opacity: 0.65, badge: '⟳', badgeTitle: 'Downloading…',   animated: true },
-            unseeded: { opacity: 0.85, badge: '◎', badgeTitle: 'Not seeding' },
-            local:    {},
-        },
- 
-        dragHooks: {
-            onDragStart: async (entries, api) => {
-                const ghosts = entries.filter((e: any) => e?.Meta?.blobState === 'ghost')
-                const local  = entries.filter((e: any) => e?.Meta?.blobState !== 'ghost')
- 
-                if (ghosts.length > 0 && local.length === 0) {
-                    const names  = ghosts.length === 1
-                        ? `"${ghosts[0].Name}"`
-                        : `${ghosts.length} files`
-                    const result = await api.showPrompt({
-                        id:   'gexchange:drag:ghost:download',
-                        text: `${names} ${ghosts.length === 1 ? 'is' : 'are'} not downloaded yet.`,
-                        actions: [
-                            { label: 'Download', id: 'confirm' },
-                            { label: 'Not now',  id: 'cancel'  },
-                        ],
-                    })
-                    if (result.actionId === 'confirm') {
-                        for (const e of ghosts) {
-                            const roomId = e.FullPath.split('://')[1]?.split('/')[0] ?? ''
-                            // dispatch is still available on the drag api for widget-specific calls
-                            api.dispatch('gexchange:download', {
-                                roomId,
-                                hash:     e.Meta?.contentHash ?? '',
-                                fileName: e.Name,
-                            }).catch(console.warn)
-                        }
-                    }
-                    return { entries: [], cancelled: true }
-                }
- 
-                if (ghosts.length > 0) {
-                    return {
-                        entries:  local,
-                        warnings: [`${ghosts.length} file${ghosts.length > 1 ? 's' : ''} skipped — not downloaded yet.`],
-                    }
-                }
- 
-                return { entries }
-            },
- 
-            onDragEnd: async (effect, entries, _api) => {
-                console.log(`[GExchange] drag ended: ${effect} × ${entries.length} file(s)`)
-            },
-        },
-    }],
-
-    // ── Extension Points ──────────────────────────────────────────────────────
-
-   provides: [
-       {
-           point:     'gexchange.board',
-           component: () => import('./VoicePanel.vue'),
-           props: {
-               label: '🎙 Voice',
-               icon:  'mdi-microphone',
-           },
-       },
-   ],
-
-   consumes: [
-       {
-           point:    'gexchange.board',
-           multiple: true,
-       },
-   ],
-
-    // ── Layout ────────────────────────────────────────────────────────────────
+	
+	actions: [
+		{
+			id: 'navigate',
+			label: 'Navigate to folder',
+			accepts: {
+				extensions: [],        // folders don't have extensions
+				contexts: ['folder'],  // only offered when right-clicking a folder
+			},
+			contextMenu: {
+				label: 'Open in this pane',
+				icon: '📂',
+				submenuLabel: 'File Pane',
+			},
+		},
+		{
+			id: 'reveal',
+			label: 'Reveal file',
+			accepts: {
+				contexts: ['file'],
+			},
+			contextMenu: {
+				label: 'Reveal in this pane',
+				icon: '🔍',
+				submenuLabel: 'File Pane',
+			},
+		},
+	],
 
     contexts: {
         grid: {
-            minSize:     { cols: 3, rows: 3 },
-            defaultSize: { cols: 4, rows: 4 },
+            layouts: [
+                { id: 'list',    icon: '☰', tooltip: 'List'    },
+                { id: 'grid',    icon: '▦', tooltip: 'Grid'    },
+                { id: 'details', icon: '▤', tooltip: 'Details' },
+            ],
+            minSize: { cols: 2, rows: 2 },
+        },
+        sidebar: {
+            layouts: [
+                { id: 'compact', icon: '─', tooltip: 'Compact Browser' },
+                { id: 'list',    icon: '☰', tooltip: 'File List'       },
+            ],
+            minHeight: 100,
         },
     },
 
     defaults: {
-        data: { room: '' },
-        view: { layout: 'chat' },
+        data: { rpath: '' },
+        view: {
+            layout:       'list',
+            columns:      1,
+            itemSize:     'md',
+            showHidden:   false,
+            navigateMode: 'internal',
+        },
     },
+
+    capabilities: [
+		{ cap: 'Read',      reason: 'Lists directory contents and validates paths' },
+		{ cap: 'Write',     reason: 'Moves, copies, renames, and deletes files' },
+		{ cap: 'Metadata',  reason: 'Resolves file icons and shortcut targets' },
+		{ cap: 'Clipboard', reason: 'Copies and cuts files to the clipboard' },
+	]
 }

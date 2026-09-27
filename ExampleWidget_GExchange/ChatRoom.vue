@@ -77,6 +77,7 @@
                                         v-gex-tooltip="{ content: room.canonicalName, detail: 'Original name' }"
                                     >{{ room.roomId }}</span>
                                     <span v-if="room.isClosed" class="row-closed">archived</span>
+                                    <span v-if="room.admissionStatus === 'pending'" class="row-closed">pending</span>
                                     <button
                                         class="row-rename"
                                         v-gex-tooltip="'Rename display name'"
@@ -90,6 +91,18 @@
                             </div>
                         </div>
                     </Transition>
+                </div>
+                <div
+                    v-if="activeSecurityStatus"
+                    class="security-pill"
+                    :class="`tone-${activeSecurityStatus.tone}`"
+                    v-gex-tooltip="{
+                        content: activeSecurityStatus.label,
+                        detail: activeSecurityStatus.detail
+                    }"
+                >
+                    <span class="security-dot" />
+                    <span class="security-label">{{ activeSecurityStatus.label }}</span>
                 </div>
             </div>
 
@@ -125,6 +138,74 @@
             </div>
         </header>
 
+        <!-- ── First-run name prompt ──────────────────────────────────── -->
+        <Transition name="slide-down">
+            <div v-if="showNamePrompt && !props.editMode" class="name-prompt-panel">
+                <div class="name-prompt-body">
+                    <span class="name-prompt-label">Choose a display name for GExchange</span>
+                    <div class="name-prompt-row">
+                        <input
+                            ref="namePromptInputRef"
+                            v-model="namePromptValue"
+                            class="name-prompt-input"
+                            placeholder="Your name…"
+                            maxlength="32"
+                            @keydown.enter="commitNamePrompt"
+                            @keydown.escape="dismissNamePrompt"
+                        />
+                        <button
+                            class="pill-btn primary"
+                            :disabled="!namePromptValue.trim()"
+                            @click="commitNamePrompt"
+                        >Set name</button>
+                        <button class="pill-btn" @click="dismissNamePrompt">Skip</button>
+                    </div>
+                    <p class="name-prompt-note">
+                        This is shown to other members. You can change it any time from the sidebar.
+                    </p>
+                    <p v-if="namePromptError" class="invite-error">{{ namePromptError }}</p>
+                </div>
+            </div>
+        </Transition>
+
+        <!-- ── Disambiguator prompt ───────────────────────────────────── -->
+        <Transition name="slide-down">
+            <div v-if="showDisambigPrompt && !props.editMode" class="name-prompt-panel">
+                <div class="name-prompt-body">
+                    <span class="name-prompt-label">
+                        Someone in this room is also called <strong>{{ identity?.username }}</strong>.
+                        Add a distinguisher?
+                    </span>
+                    <div class="disambig-options">
+                        <button
+                            v-for="opt in disambigOptions"
+                            :key="opt.id"
+                            class="disambig-btn"
+                            :class="{ active: disambigChoice === opt.id }"
+                            @click="selectDisambigOption(opt.id)"
+                        >
+                            <span class="disambig-preview">{{ previewDisambig(opt.id) }}</span>
+                            <span class="disambig-label">{{ opt.label }}</span>
+                        </button>
+                    </div>
+                    <div class="disambig-actions">
+                        <button
+                            v-if="disambigChoice"
+                            class="pill-btn"
+                            @click="regenerateDisambig"
+                            v-gex-tooltip="'Generate a different one'"
+                        >↺ Try another</button>
+                        <button
+                            class="pill-btn primary"
+                            :disabled="!disambigChoice"
+                            @click="commitDisambig"
+                        >Use this</button>
+                        <button class="pill-btn" @click="showDisambigPrompt = false">Not now</button>
+                    </div>
+                </div>
+            </div>
+        </Transition>
+
         <!-- ── Invite panel ───────────────────────────────────────────── -->
         <Transition name="slide-down">
             <div v-if="showInvitePanel && activeRoom" class="invite-panel">
@@ -155,7 +236,9 @@
                         </button>
                     </div>
                     <p v-if="inviteError" class="invite-error">{{ inviteError }}</p>
-                    <p class="invite-note">⚠ Anyone with this code can join until it expires.</p>
+                    <p class="invite-note">
+                        ⚠ Anyone with this code can request access until it expires. The room key is not stored in the invite.
+                    </p>
                 </div>
             </div>
         </Transition>
@@ -183,6 +266,16 @@
                 </button>
             </div>
             <p v-if="createError" class="create-error">{{ createError }}</p>
+        </div>
+
+        <!-- ── Pending room state ─────────────────────────────────────── -->
+        <div v-else-if="activeRoomPending" class="empty-state pending-room-state">
+            <div class="empty-glyph">⌛</div>
+            <p class="empty-title">Waiting for room admission</p>
+            <p class="empty-sub">
+                This invite was accepted, but the room key has not been delivered yet.
+                GExchange will finish joining when someone from the room is reachable.
+            </p>
         </div>
 
         <!-- ── Chat body ──────────────────────────────────────────────── -->
@@ -223,20 +316,154 @@
             </main>
 
             <aside class="chat-sidebar" v-if="showSidebar">
+            
+                <!-- ── Participants ──────────────────────────────────────────── -->
                 <div class="sidebar-section">
-                    <h4>Participants</h4>
-                    <ul class="user-list">
+                    <div class="sidebar-participants-header">
+                        <h4>
+                            Participants
+                            <span class="peer-count" v-if="activePeerIds.length > 0">
+                                {{ activePeerIds.length }}
+                            </span>
+                        </h4>
+                        <div class="sidebar-header-actions">
+                            <!-- Group call — calls everyone in the room, no new room -->
+                            <button
+                                class="sidebar-action-btn"
+                                :class="{ active: activeChannel?.callActive?.value }"
+                                :disabled="activePeerIds.length === 0"
+                                @click="toggleGroupCall"
+                                v-gex-tooltip="activeChannel?.callActive?.value ? 'End call' : 'Start group call'"
+                            >
+                                <svg viewBox="0 0 16 16" fill="none">
+                                    <path d="M3 3c0 0 1-1 2 0l2 2c1 1 0 2 0 2s-1 1 0 2l2 2c1 1 2 0 2 0s1-1 2 0l1 1c1 1 0 3-1 3C5 16 0 11 0 4 0 3 2 2 3 3z"
+                                        stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+                                    <path v-if="activeChannel?.callActive?.value"
+                                        d="M10 2l4 4M14 2l-4 4"
+                                        stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                                </svg>
+                            </button>
+                            <!-- Selection hint — shows when peers are selected -->
+                            <span
+                                class="selection-hint"
+                                v-if="selectedPeerIds.size > 0"
+                            >{{ selectedPeerIds.size }} selected</span>
+                        </div>
+                    </div>
+            
+                    <ul class="user-list" @keydown="onPeerListKeydown">
+            
+                        <!-- Self row — always first, never selectable -->
                         <li class="user-row self">
-                            <span class="dot online"/>
-                            {{ identity?.username ?? 'You' }}
+                            <span class="dot" :class="{ online: true, speaking: false }"/>
+                            <span class="user-name">{{ identity?.username ?? 'You' }}</span>
                             <span class="you-tag">you</span>
+                            <button
+                                class="name-edit-btn"
+                                v-gex-tooltip="'Change your name'"
+                                @click="openNameEditor"
+                            >
+                                <svg viewBox="0 0 14 14" fill="none">
+                                    <path d="M2 10.5L9.5 3l1.5 1.5-7.5 7.5H2v-1.5z"
+                                        stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+                                </svg>
+                            </button>
                         </li>
-                        <li v-for="peerId in activePeerIds" :key="peerId" class="user-row">
-                            <span class="dot online"/>
-                            {{ peerNames[peerId] ?? peerId }}
+            
+                        <!-- Peer rows — selectable, with action buttons -->
+                        <li
+                            v-for="peerId in activePeerIds"
+                            :key="peerId"
+                            class="user-row peer"
+                            :class="{
+                                selected: selectedPeerIds.has(peerId),
+                                speaking: activeChannel?.activePeers?.value?.get(peerId)?.speaking,
+                            }"
+                            @mousedown="onPeerMouseDown(peerId, $event)"
+                            @mouseup="onPeerMouseUp(peerId)"
+                        >
+                            <span class="dot" :class="{
+                                online: true,
+                                speaking: activeChannel?.activePeers?.value?.get(peerId)?.speaking,
+                            }"/>
+                            <span class="user-name">{{ peerNames[peerId] ?? peerId.slice(0, 8) }}</span>
+            
+                            <!-- Per-peer actions — visible on hover or when selected -->
+                            <div class="peer-actions">
+                                <!-- Private call → creates a room then calls -->
+                                <button
+                                    class="peer-action-btn"
+                                    v-gex-tooltip="'Private call'"
+                                    @click.stop="createPrivateRoomWith(
+                                        selectedPeerIds.has(peerId) && selectedPeerIds.size > 1
+                                            ? [...selectedPeerIds]
+                                            : [peerId],
+                                        true
+                                    )"
+                                >
+                                    <svg viewBox="0 0 16 16" fill="none">
+                                        <path d="M3 3c0 0 1-1 2 0l2 2c1 1 0 2 0 2s-1 1 0 2l2 2c1 1 2 0 2 0s1-1 2 0l1 1c1 1 0 3-1 3C5 16 0 11 0 4 0 3 2 2 3 3z"
+                                            stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+                                    </svg>
+                                </button>
+                                <!-- Private chat → creates a room without calling -->
+                                <button
+                                    class="peer-action-btn"
+                                    v-gex-tooltip="selectedPeerIds.has(peerId) && selectedPeerIds.size > 1
+                                        ? `Private room with ${selectedPeerIds.size} people`
+                                        : 'Private room'"
+                                    @click.stop="createPrivateRoomWith(
+                                        selectedPeerIds.has(peerId) && selectedPeerIds.size > 1
+                                            ? [...selectedPeerIds]
+                                            : [peerId],
+                                        false
+                                    )"
+                                >
+                                    <svg viewBox="0 0 16 16" fill="none">
+                                        <rect x="1" y="2" width="14" height="10" rx="2"
+                                            stroke="currentColor" stroke-width="1.3"/>
+                                        <path d="M4 12l2 3" stroke="currentColor" stroke-width="1.3"
+                                            stroke-linecap="round"/>
+                                        <path d="M4 6h8M4 9h5"
+                                            stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                                    </svg>
+                                </button>
+                            </div>
                         </li>
-                    </ul>
+                    </ul> 
+
+                    <!-- Creating private room indicator -->
+                    <div v-if="creatingPrivateRoom" class="creating-indicator">
+                        <span class="spinner-small"/>
+                        Creating room…
+                    </div>
+                                
+                    <!-- Name editor (unchanged) -->
+                    <Transition name="fade">
+                        <div v-if="showNameEditor" class="name-editor">
+                            <input
+                                ref="nameEditorInputRef"
+                                v-model="nameEditorValue"
+                                class="name-prompt-input"
+                                placeholder="New display name…"
+                                maxlength="32"
+                                @keydown.enter="commitNameEdit"
+                                @keydown.escape="showNameEditor = false"
+                            />
+                            <p v-if="nameEditorError" class="invite-error">{{ nameEditorError }}</p>
+                            <div class="name-editor-actions">
+                                <button
+                                    class="pill-btn primary"
+                                    :disabled="!nameEditorValue.trim() || nameEditorSaving"
+                                    @click="commitNameEdit"
+                                >{{ nameEditorSaving ? 'Saving…' : 'Save' }}</button>
+                                <button class="pill-btn" @click="showNameEditor = false">Cancel</button>
+                            </div>
+                        </div>
+                    </Transition>
                 </div>
+            
+                <!-- ── Room meta (unchanged) ─────────────────────────────────── -->
                 <div class="sidebar-section">
                     <h4>Room</h4>
                     <div class="room-meta">
@@ -254,14 +481,25 @@
                         </div>
                     </div>
                 </div>
+            
             </aside>
         </div>
 
         <!-- ── Footer ─────────────────────────────────────────────────── -->
-        <footer v-if="activeRoom" class="chat-footer">
+        <footer v-if="activeRoom && !activeRoomPending" class="chat-footer">
             <div class="plugin-tabs">
-                <button @click="showBoard = false" :class="{ active: !showBoard }" class="tab-btn">💬 Chat</button>
-                <button @click="showBoard = true"  :class="{ active: showBoard  }" class="tab-btn">🛠️ Board</button>
+                <button
+                    @click="showBoard = false"
+                    :class="{ active: !showBoard }"
+                    class="tab-btn"
+                >💬 Chat</button>
+                <button
+                    v-for="p in boardProviders"
+                    :key="p.key"
+                    @click="showBoard = true; activeBoardKey = p.key"
+                    :class="{ active: showBoard && activeBoardKey === p.key }"
+                    class="tab-btn"
+                >{{ p.props?.label ?? '🛠️ Board' }}</button>
             </div>
             <div class="plugin-canvas">
                 <template v-if="!showBoard">
@@ -300,13 +538,17 @@
                             </button>
                         </div>
                     </div>
-                    <div v-if="activeRoom.isClosed" class="closed-banner">
-                        This room is archived — read only
-                    </div>
-                </template>
-                <component v-else-if="showBoard && loadedComponent" :is="loadedComponent"/>
-                <div v-else-if="showBoard" class="loading-state">Loading board…</div>
-            </div>
+                   <div v-if="activeRoom.isClosed" class="closed-banner">
+                       This room is archived — read only
+                   </div>
+               </template>
+               <template v-else-if="showBoard && activeBoard">
+                   <component :is="activeBoard.component" v-bind="activeBoard.props" />
+               </template>
+               <div v-else-if="showBoard" class="loading-state">
+                   No boards available
+               </div>
+           </div>
         </footer>
 
         <!-- ── Join modal ─────────────────────────────────────────────── -->
@@ -341,6 +583,16 @@
                 </div>
             </div>
         </Transition>
+        
+        <!-- ── Call modal ──────────────────────────────────────────────── -->
+        <IncomingCallModal
+            :incomingCall="incomingCall"
+            :outgoingCall="outgoingCall"
+            :callAnswered="callAnswered"
+            @accept="acceptCall"
+            @decline="declineCall"
+            @cancel="stopRinging"
+        />
 
         <!-- ── Loading overlay ────────────────────────────────────────── -->
         <div v-if="loading" class="loading-overlay">
@@ -348,772 +600,1437 @@
         </div>
     </div>
 </template>
-
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick, shallowRef, inject } from 'vue'
-import { startRename } from 'gexplorer/widgets'
-import type { WidgetSdk, ChatMessage } from 'gexplorer/widgets'
-import type { EdhtSession } from 'gexplorer/widgets'
+import { ref, computed, shallowRef, shallowReactive, watch, onMounted, onUnmounted, inject, provide, type ComputedRef  } from 'vue'
+import type { MeshPeer, UseChannelReturn, WidgetSdk, ChatMessage } from 'gexplorer/widgets'
 
-// ── Types ──────────────────────────────────────────────────────────────────────
+import { useIdentity } from './useIdentity'
+import { useRooms }    from './useRooms'
+import { useChat }     from './useChat'
+import type { Room }   from './useRooms'
+import { useSlotProviders } from 'gexplorer/widgets'
+import { createSelectionEngine } from 'gexplorer/widgets'
+import type { SelectionEngine } from 'gexplorer/widgets'
+import { useCallState } from './useCallState'
+import IncomingCallModal from './IncomingCallModal.vue'
+import { useAudioChain } from './useAudioChain'
+import type { UseAudioChainReturn } from './useAudioChain'
 
-// RoomConfig is a pure frontend type — stored as a sealed blob in the vault
-// under vpath "gexchange://config/{roomId}.room.json".
-interface RoomConfig {
-    roomId:         string
-    canonicalName:  string
-    createdAt:      number
-    ownerPublicKey: string
-    sessionSecret:  string   // base64 — EDHT key material
-    ownerEndpoint:  string   // direct TCP endpoint; replaced by DHT in Phase 2
-    isOwner:        boolean
-    isAdmin:        boolean
-    isClosed:       boolean
-    closedReason:   string
-    accessPointId:  string   // vault access point for this config blob
-    blobSha256:     string   // blob identity — used to update config on change
-}
+// ── Props ──────────────────────────────────────────────────────────────────────
 
-interface Room extends RoomConfig {
-    displayName: string      // local override stored in localStorage
-}
-
-interface Identity {
-    userId:    string
-    username:  string
-    publicKey: string
-    endpoint:  string
-}
+const props = defineProps<{
+    widgetDef?: any
+    config?: any
+    theme?: Record<string, string>
+    context?: 'grid' | 'sidebar' | 'embedded' | 'dialog'
+    width?: number
+    height?: number
+    showNav?: boolean
+    gridSize?: { cols: number; rows: number }
+    actions?: any
+    sourceId?: string
+    editMode?: boolean
+    variant?: string
+    resizePhase?: 'active' | 'idle'
+    resizing?: boolean
+    virtualFolder?: string
+    gridPosition?: number
+}>()
 
 // ── SDK ────────────────────────────────────────────────────────────────────────
 
 const sdk = inject<WidgetSdk>('widgetSdk')
-const {
-    p2pGetIdentity,
-    p2pDeriveKey,
-    p2pCreateInvite,
-    p2pAcceptInvite,
-    p2pOpenChannel,
-    onP2PMessage,
-    createEdhtSession,
-    vaultOpen,
-    vaultClose,
-    vaultSealContentAs,
-    vaultUnsealText,
-    vaultList,
-    vaultDelete,
-    chatBind,
-    chatUnbind,
-    chatSend,
-    chatGetHistory,
-    onChatMessage,
-    onChatHistoryReady,
-} = sdk ?? {}
-
-// ── State ──────────────────────────────────────────────────────────────────────
-
-const loading          = ref(false)
-const rooms            = ref<Room[]>([])
-const activeRoom       = ref<Room | null>(null)
-const identity         = ref<Identity | null>(null)
-const showSidebar      = ref(true)
-const showBoard        = ref(false)
-const pickerOpen       = ref(false)
-const roomFilter       = ref('')
-const showJoinModal    = ref(false)
-const showNewRoomInput = ref(false)
-const newRoomName      = ref('')
-const createError      = ref('')
-const loadedComponent  = shallowRef<any>(null)
-
-const inviteToken     = ref('')
-const inviteExpiry    = ref(15)
-const inviteCopied    = ref(false)
-const inviteError     = ref('')
-const showInvitePanel = ref(false)
-const joinToken       = ref('')
-const joinError       = ref('')
-const joinLoading     = ref(false)
-
-// ── Chat state ─────────────────────────────────────────────────────────────────
-
-const messages    = ref<ChatMessage[]>([])
-const draftText   = ref('')
-const sending     = ref(false)
-const chatLoading = ref(false)
-const shiftToSend = ref(true)
-
-const feedRef  = ref<HTMLElement | null>(null)
-const inputRef = ref<HTMLTextAreaElement | null>(null)
+const { useChannel } = sdk ?? {}
 
 // ── DOM refs ───────────────────────────────────────────────────────────────────
 
-const pickerRef       = ref<HTMLElement | null>(null)
-const searchInputRef  = ref<HTMLInputElement | null>(null)
-const newRoomInputRef = ref<HTMLInputElement | null>(null)
+const feedRef            = ref<HTMLElement | null>(null)
+const inputRef           = ref<HTMLTextAreaElement | null>(null)
+const pickerRef          = ref<HTMLElement | null>(null)
+const searchInputRef     = ref<HTMLInputElement | null>(null)
+const newRoomInputRef    = ref<HTMLInputElement | null>(null)
+const namePromptInputRef = ref<HTMLInputElement | null>(null)
+const nameEditorInputRef = ref<HTMLInputElement | null>(null)
 
-// ── Vault state ────────────────────────────────────────────────────────────────
+// ── Board ──────────────────────────────────────────────────────────────────────
+const showBoard    = ref(false)
+const boardProviders = useSlotProviders('gexchange.board')
 
-let vaultToken: string | null = null
+// Active board — the currently selected provider from the tab bar.
+// Defaults to the first provider when providers become available.
+const activeBoardKey = ref<string | null>(null)
 
-// ── Chat session state ─────────────────────────────────────────────────────────
+watch(boardProviders, (providers) => {
+    if (providers.length > 0 && !activeBoardKey.value)
+        activeBoardKey.value = providers[0].key
+}, { immediate: true })
 
-const chatSessions = ref(new Map<string, string>())  // roomId → chatSessionId
+const activeBoard = computed(() =>
+    boardProviders.value.find(p => p.key === activeBoardKey.value) ?? null
+)
 
-// ── EDHT state ─────────────────────────────────────────────────────────────────
+// ── Audio chain ────────────────────────────────────────────────────────────────
+//
+// Owns the mic stream and full effect chain for the lifetime of the component.
+// VoicePanel injects this — it never owns audio directly.
 
-const edhtSessions       = ref(new Map<string, EdhtSession>())
-const edhtSessionsPending = new Set<string>()
-const roomPeers          = ref<Map<string, Set<string>>>(new Map())
-const peerNames          = ref<Record<string, string>>({})
+const audioChain = useAudioChain(sdk)
+provide('gex:audioChain', audioChain)
 
-const activePeerIds = computed(() => {
-    if (!activeRoom.value) return []
-    const peers = [...(roomPeers.value.get(activeRoom.value.roomId) ?? [])]
-    return peers.filter(id => id !== identity.value?.userId)
-})
+// ── Channel instances ─────────────────────────────────────────────────────────
+//
+// The widget owns high-level channel sessions only. EDHT, mesh, route prep,
+// reconnect, and SP2P internals are app-side responsibilities behind useChannel.
+//
+// channels — Full UseChannelReturn instances present for every room that has
+//            had ensureChannel run. The Map is reactive because activeChannel
+//            and the status pill depend on entries being added after setup.
 
-// ── Local display name overrides ───────────────────────────────────────────────
+const channels = shallowReactive(new Map<string, UseChannelReturn>())
+const channelsPending = new Map<string, Promise<void>>()
 
-const LOCAL_NAMES_KEY = 'gexchange:roomDisplayNames'
+provide('gex:activeChannel', computed(() =>
+    activeRoom.value ? channels.get(activeRoom.value.roomId) : undefined
+))
 
-function loadLocalNames(): Record<string, string> {
-    try { return JSON.parse(localStorage.getItem(LOCAL_NAMES_KEY) ?? '{}') } catch { return {} }
-}
-function saveLocalNames(names: Record<string, string>) {
-    localStorage.setItem(LOCAL_NAMES_KEY, JSON.stringify(names))
-}
-function applyDisplayNames(configs: RoomConfig[]): Room[] {
-    const localNames = loadLocalNames()
-    return configs.map(r => ({
-        ...r,
-        displayName: localNames[r.roomId] ?? r.canonicalName,
-    }))
-}
+const activeChannel = computed(() =>
+    activeRoom.value ? channels.get(activeRoom.value.roomId) : undefined
+)
 
-// ── Computed ───────────────────────────────────────────────────────────────────
+const activeRoomPending = computed(() =>
+    activeRoom.value?.admissionStatus === 'pending'
+)
 
-const filteredRooms = computed(() => {
-    const q = roomFilter.value.trim().toLowerCase()
-    if (!q) return rooms.value
-    return rooms.value.filter(r =>
-        r.displayName.toLowerCase().includes(q) ||
-        r.canonicalName.toLowerCase().includes(q) ||
-        r.roomId.toLowerCase().includes(q)
-    )
-})
+// Unsub handle for the ambient message listener.
+// This handles non-active rooms; useChat handles the active room feed.
+let _ambientUnsub: (() => void) | null = null
 
-const canCreate = computed(() => {
-    const q = roomFilter.value.trim()
-    return q.length > 0 && !rooms.value.some(r => r.canonicalName === q)
-})
+const channelTransportMode = ref<'sp2p' | 'direct-p2p'>('sp2p')
 
-// ── Lifecycle ──────────────────────────────────────────────────────────────────
+type SecurityStatusTone = 'idle' | 'info' | 'ok' | 'warn' | 'error'
 
-let unsubMessage:  (() => void) | null = null
-let unsubHistory:  (() => void) | null = null
-let unsubP2PMsg:   (() => void) | null = null
-
-onMounted(async () => {
-    await loadIdentity()
-    await openVault()
-    await loadRooms()
-
-    const first = rooms.value[0]
-    if (first) selectRoom(first)
-
-    for (let i = 1; i < rooms.value.length; i++) {
-        const room = rooms.value[i]
-        setTimeout(() => ensureEdhtSession(room), i * 200)
-    }
-
-    unsubMessage = onChatMessage?.((msg) => {
-        if (msg.scopeId === activeRoom.value?.roomId)
-            appendMessage({ ...msg, roomId: msg.scopeId })
-    }) ?? null
-
-    unsubHistory = onChatHistoryReady?.((scopeId) => {
-        if (scopeId === activeRoom.value?.roomId)
-            loadHistory(scopeId)
-    }) ?? null
-
-    unsubP2PMsg = onP2PMessage?.((event) => {
-        const session = edhtSessions.value.get(event.channelId)
-        if (session) session.discover()
-    }) ?? null
-})
-
-onUnmounted(async () => {
-    unsubMessage?.()
-    unsubHistory?.()
-    unsubP2PMsg?.()
-    document.removeEventListener('mousedown', onDocClick)
-    await stopAllEdhtSessions()
-    await stopAllChatSessions()
-    if (vaultToken) {
-        await vaultClose?.(vaultToken)
-        vaultToken = null
-    }
-})
-
-watch(activeRoom, async (room) => {
-    messages.value = []
-    if (!room) return
-    await ensureChatSession(room)
-    await loadHistory(room.roomId)
-})
-
-// ── Vault ──────────────────────────────────────────────────────────────────────
-
-async function openVault() {
-    if (!p2pDeriveKey || !vaultOpen) return
-    try {
-        const keyBytes = await p2pDeriveKey('vault-master-v1')
-        const result   = await vaultOpen({ scopeId: 'rooms', masterKey: keyBytes })
-        vaultToken     = result.vaultToken
-        console.log('[GExchange] Vault open — vaultId:', result.vaultId)
-    } catch (err) {
-        console.warn('[GExchange] Failed to open vault:', err)
-    }
+type SecurityStatusView = {
+    tone: SecurityStatusTone
+    label: string
+    detail: string
 }
 
-// ── Room persistence ───────────────────────────────────────────────────────────
-
-async function loadRooms() {
-    if (!vaultToken || !vaultList || !vaultUnsealText) return
-    loading.value = true
-    try {
-        // All room configs live under the config/ prefix
-        const entries = await vaultList(vaultToken, 'gexchange://config/')
-        const configs: RoomConfig[] = []
-
-        for (const entry of entries) {
-            if (!entry.vpath.endsWith('.room.json')) continue
-            try {
-                const text   = await vaultUnsealText(vaultToken, entry.blobSha256)
-                const config = JSON.parse(text) as RoomConfig
-                // Attach vault identity so we can update this config later
-                config.accessPointId = entry.accessPointId
-                config.blobSha256    = entry.blobSha256
-                configs.push(config)
-            } catch (err) {
-                console.warn('[GExchange] Failed to read room config:', entry.vpath, err)
-            }
-        }
-
-        rooms.value = applyDisplayNames(configs)
-    } catch (err) {
-        console.warn('[GExchange] Failed to load rooms:', err)
-    } finally {
-        loading.value = false
-    }
+const SP2P_STATUS_COPY: Record<string, SecurityStatusView> = {
+    'transport.created': {
+        tone: 'info',
+        label: 'Opening secure transport',
+        detail: 'The private SP2P transport is starting.',
+    },
+    'edht.waiting': {
+        tone: 'info',
+        label: 'Finding peer',
+        detail: 'Waiting for encrypted room presence.',
+    },
+    'peer.presence.missing': {
+        tone: 'warn',
+        label: 'Waiting for peer presence',
+        detail: 'The peer is known, but their current room presence is not ready yet.',
+    },
+    'peer.pipeline.starting': {
+        tone: 'info',
+        label: 'Preparing peer route',
+        detail: 'Starting private route preparation for this peer.',
+    },
+    'peer.pipeline.retrying': {
+        tone: 'info',
+        label: 'Retrying private route',
+        detail: 'The peer route did not become ready in time, so GExchange is trying a fresh private route.',
+    },
+    'route.requested': {
+        tone: 'info',
+        label: 'Requesting private route',
+        detail: 'Asking the app for a split-path SP2P route.',
+    },
+    'route.received': {
+        tone: 'info',
+        label: 'Private route received',
+        detail: 'A redacted private route map was received and is being prepared.',
+    },
+    'route.preparing': {
+        tone: 'info',
+        label: 'Preparing private route',
+        detail: 'Preparing the private split-path route before sending room data.',
+    },
+    'route.ready': {
+        tone: 'ok',
+        label: 'Private SP2P route ready',
+        detail: 'Peer endpoints are hidden from participants. Routing metadata may still be observable by infrastructure.',
+    },
+    'route.degraded': {
+        tone: 'warn',
+        label: 'Route degraded',
+        detail: 'The private route is degraded. Messages may reconnect or retry.',
+    },
+    'route.recovered': {
+        tone: 'ok',
+        label: 'Route recovered',
+        detail: 'The private SP2P route recovered.',
+    },
+    'route.rotation.requested': {
+        tone: 'info',
+        label: 'Rotating private route',
+        detail: 'Preparing a fresh private route.',
+    },
+    'route.rotation.ready': {
+        tone: 'ok',
+        label: 'Private route ready',
+        detail: 'A fresh private route is ready.',
+    },
+    'voice.ready': {
+        tone: 'ok',
+        label: 'Voice route ready',
+        detail: 'Voice frames can use the private SP2P route.',
+    },
+    'offline': {
+        tone: 'error',
+        label: 'Offline',
+        detail: 'The room channel is offline or reconnecting.',
+    },
+    'route.orchestrators.unavailable': {
+        tone: 'error',
+        label: 'SP2P network unavailable',
+        detail: 'No trusted orchestrator is currently available. GExchange did not fall back to direct-P2P.',
+    },
+    'route.orchestrators.busy': {
+        tone: 'warn',
+        label: 'SP2P network busy',
+        detail: 'All trusted orchestrators are busy. GExchange is waiting and will retry without falling back to direct-P2P.',
+    },
 }
 
-async function saveRoomConfig(config: Omit<RoomConfig, 'accessPointId' | 'blobSha256'>): Promise<{ accessPointId: string; blobSha256: string }> {
-    if (!vaultToken || !vaultSealContentAs)
-        throw new Error('Vault not open')
+// ── Sidebar ────────────────────────────────────────────────────────────────────
 
-    const json    = JSON.stringify(config, null, 2)
-    // encodeURIComponent + unescape safely handles non-ASCII in btoa
-    const content = btoa(unescape(encodeURIComponent(json)))
-    const vpath   = `gexchange://config/${config.roomId}.room.json`
-
-    const ap = await vaultSealContentAs(vaultToken, content, vpath)
-    return { accessPointId: ap.accessPointId, blobSha256: ap.blobSha256 }
-}
-
-// ── Chat sessions ──────────────────────────────────────────────────────────────
-
-async function ensureChatSession(room: Room) {
-    if (chatSessions.value.has(room.roomId)) return
-    if (!chatBind || !p2pOpenChannel) return
-
-    try {
-        let channelId: string
-
-        if (room.isOwner) {
-            // Hub — inbound connections arrive via PeerConnectionCoordinator
-            channelId = room.roomId
-        } else {
-            const ch  = await p2pOpenChannel({
-                endpoint:  room.ownerEndpoint,
-                publicKey: room.ownerPublicKey,
-                sessionId: room.roomId,
-            })
-            channelId = ch.channelId
-        }
-
-        const { chatSessionId } = await chatBind({
-            channelId,
-            scopeId:      room.roomId,
-            senderName:   identity.value?.username ?? identity.value?.userId ?? 'Unknown',
-            isHub:        room.isOwner,
-            historyLimit: 500,
-        })
-
-        chatSessions.value.set(room.roomId, chatSessionId)
-        console.log('[GExchange] Chat bound room:', room.roomId.slice(0, 8), 'session:', chatSessionId.slice(0, 8))
-    } catch (err) {
-        console.warn('[GExchange] Failed to bind chat for room:', room.roomId.slice(0, 8), err)
-    }
-}
-
-async function stopAllChatSessions() {
-    if (!chatUnbind) return
-    for (const chatSessionId of chatSessions.value.values()) {
-        try { await chatUnbind(chatSessionId) } catch { }
-    }
-    chatSessions.value.clear()
-}
-
-// ── Chat actions ───────────────────────────────────────────────────────────────
-
-async function loadHistory(roomId: string) {
-    if (!chatGetHistory) return
-    chatLoading.value = true
-    try {
-        const msgs     = await chatGetHistory(roomId, 100)
-        messages.value = msgs.map(m => ({ ...m, roomId: m.scopeId }))
-        await nextTick()
-        scrollToBottom()
-    } catch (err) {
-        console.warn('[GExchange] Failed to load history:', err)
-    } finally {
-        chatLoading.value = false
-    }
-}
-
-async function sendMessage() {
-    const text = draftText.value.trim()
-    if (!text || !activeRoom.value || sending.value || !chatSend) return
-
-    const chatSessionId = chatSessions.value.get(activeRoom.value.roomId)
-    if (!chatSessionId) {
-        console.warn('[GExchange] No chat session for room:', activeRoom.value.roomId.slice(0, 8))
-        return
-    }
-
-    sending.value = true
-    const optimisticId = `opt_${Date.now()}`
-
-    const optimistic: ChatMessage = {
-        id:         optimisticId,
-        scopeId:    activeRoom.value.roomId,
-        senderId:   identity.value?.userId ?? '',
-        senderName: identity.value?.username ?? 'You',
-        text,
-        type:       'text',
-        sentAt:     Date.now(),
-    }
-    appendMessage(optimistic)
-    draftText.value = ''
-    resetInputHeight()
-
-    try {
-        const result = await chatSend(chatSessionId, text)
-        const idx    = messages.value.findIndex(m => m.id === optimisticId)
-        if (idx >= 0) messages.value[idx] = {
-            ...messages.value[idx],
-            id:     result.messageId,
-            sentAt: result.sentAt,
-        }
-    } catch (err) {
-        console.warn('[GExchange] Failed to send message:', err)
-        messages.value = messages.value.filter(m => m.id !== optimisticId)
-    } finally {
-        sending.value = false
-        await nextTick()
-        inputRef.value?.focus()
-    }
-}
-
-function appendMessage(msg: ChatMessage) {
-    if (messages.value.some(m => m.id === msg.id)) return
-    messages.value.push(msg)
-    nextTick(() => scrollToBottom())
-}
-
-function scrollToBottom() {
-    if (feedRef.value) feedRef.value.scrollTop = feedRef.value.scrollHeight
-}
-
-// ── Input handling ─────────────────────────────────────────────────────────────
-
-function onInputKeydown(e: KeyboardEvent) {
-    if (shiftToSend.value) {
-        if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); sendMessage() }
-    } else {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() }
-    }
-}
-
-function autoResizeInput() {
-    const el = inputRef.value
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = Math.min(el.scrollHeight, 120) + 'px'
-}
-
-function resetInputHeight() {
-    if (inputRef.value) inputRef.value.style.height = 'auto'
-}
-
-// ── Message display helpers ────────────────────────────────────────────────────
-
-function shouldShowSender(msg: ChatMessage, list: ChatMessage[]): boolean {
-    const idx = list.indexOf(msg)
-    if (idx === 0) return true
-    const prev = list[idx - 1]
-    return prev.senderId !== msg.senderId || (msg.sentAt - prev.sentAt) > 5 * 60 * 1000
-}
-
-function shouldShowDateSep(msg: ChatMessage, list: ChatMessage[]): boolean {
-    const idx = list.indexOf(msg)
-    if (idx === 0) return false
-    const prev = list[idx - 1]
-    return new Date(msg.sentAt).toDateString() !== new Date(prev.sentAt).toDateString()
-}
-
-function formatTime(ms: number): string {
-    if (!ms || isNaN(ms)) return ''
-    return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(new Date(ms))
-}
-
-function formatDate(ms: number): string {
-    if (!ms || isNaN(ms)) return ''
-    return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(ms))
-}
-
-// ── EDHT ───────────────────────────────────────────────────────────────────────
-
-const encoder = new TextEncoder()
-
-async function ensureEdhtSession(room: Room) {
-    if (edhtSessions.value.has(room.roomId)) return
-    if (edhtSessionsPending.has(room.roomId)) return
-    edhtSessionsPending.add(room.roomId)
-    if (!room.sessionSecret || !createEdhtSession) return
-
-    try {
-        const secret = Uint8Array.from(atob(room.sessionSecret), c => c.charCodeAt(0))
-        const s      = await createEdhtSession({ sessionSecret: secret, scopeId: room.roomId })
-
-        const payload = encoder.encode(JSON.stringify({
-            endpoint:  identity.value?.endpoint  ?? '',
-            publicKey: identity.value?.publicKey ?? '',
-            userId:    identity.value?.userId    ?? '',
-            username:  identity.value?.username  ?? '',
-        }))
-
-        await s.announce(payload)
-
-        s.onPeerDiscovered(async peer => {
-            try {
-                const info = JSON.parse(new TextDecoder().decode(peer.payload))
-
-                if (info.endpoint && info.publicKey && p2pOpenChannel) {
-                    try {
-                        await p2pOpenChannel({
-                            endpoint:  info.endpoint,
-                            publicKey: info.publicKey,
-                            sessionId: room.roomId,
-                        })
-                    } catch (err: any) {
-                        if (!err?.message?.includes('already'))
-                            console.warn('[GExchange] p2pOpenChannel failed:', err?.message)
-                    }
-                }
-
-                if (info.userId) {
-                    if (!roomPeers.value.has(room.roomId))
-                        roomPeers.value.set(room.roomId, new Set())
-                    roomPeers.value.get(room.roomId)!.add(info.userId)
-                    peerNames.value[info.userId] = info.username || info.userId
-                }
-            } catch (err) {
-                console.warn('[GExchange] Failed to parse EDHT peer payload:', err)
-            }
-        })
-
-        s.onPeerLeft(_nodeId => { /* future: remove from roomPeers */ })
-
-        await s.discover()
-        edhtSessions.value.set(room.roomId, s)
-        edhtSessionsPending.delete(room.roomId)
-        console.log(`[GExchange] EDHT session ready for room ${room.roomId.slice(0, 8)}…`)
-    } catch (err) {
-        edhtSessionsPending.delete(room.roomId)
-        console.warn('[GExchange] Failed to start EDHT session:', err)
-    }
-}
-
-async function stopAllEdhtSessions() {
-    for (const session of edhtSessions.value.values())
-        await session.dispose()
-    edhtSessions.value.clear()
-    edhtSessionsPending.clear()
-}
+const showSidebar = ref(true)
+function toggleSidebar() { showSidebar.value = !showSidebar.value }
 
 // ── Identity ───────────────────────────────────────────────────────────────────
 
-async function loadIdentity() {
-    if (!p2pGetIdentity) return
-    try {
-        const result   = await p2pGetIdentity()
-        identity.value = {
-            userId:    result.userId,
-            username:  result.userId,
-            publicKey: result.publicKey,
-            endpoint:  result.endpoint,
+const identity$ = useIdentity({
+    sdk,
+    namePromptInputRef,
+    nameEditorInputRef,
+    onNameChanged: async () => {
+        const id = {
+            userId:    identity$.identity.value?.userId    ?? '',
+            username:  (identity$.resolvedUsername.value   || identity$.identity.value?.userId) ?? 'Unknown',
+            publicKey: identity$.identity.value?.publicKey ?? '',
         }
-    } catch (err) {
-        console.warn('[GExchange] Failed to load identity:', err)
-    }
-}
+    for (const channel of channels.values())
+            await channel.reannounce()
+    },
+})
 
-// ── Room actions ───────────────────────────────────────────────────────────────
+const {
+    identity,
+    resolvedUsername,
+    showNamePrompt,
+    namePromptValue,
+    namePromptError,
+    commitNamePrompt,
+    dismissNamePrompt,
+    showNameEditor,
+    nameEditorValue,
+    nameEditorSaving,
+    nameEditorError,
+    openNameEditor,
+    commitNameEdit,
+    showDisambigPrompt,
+    disambigChoice,
+    disambigOptions,
+    previewDisambig,
+    selectDisambigOption,
+    regenerateDisambig,
+    commitDisambig,
+} = identity$
 
-function selectRoom(room: Room) {
-    activeRoom.value = room
-    ensureEdhtSession(room)
-}
+// ── Rooms ──────────────────────────────────────────────────────────────────────
 
-async function createRoom() {
-    const name = roomFilter.value.trim()
-    if (!name) return
-    await doCreateRoom(name)
-    closePicker()
-}
+async function createRoomInvite(
+    room: Room,
+    options: { validityMinutes?: number } = {},
+) {
+    await ensureChannel(room)
 
-async function createRoomFromEmpty() {
-    const name = newRoomName.value.trim()
-    if (!name) return
-    createError.value = ''
-    try {
-        await doCreateRoom(name)
-        showNewRoomInput.value = false
-        newRoomName.value      = ''
-    } catch (err: any) {
-        createError.value = err.message
-    }
-}
+    const channel = channels.get(room.roomId)
 
-async function doCreateRoom(name: string) {
-    if (!identity.value) throw new Error('Identity not loaded')
-
-    const createdAt     = Date.now()
-    const sessionSecret = generateSecret()
-    const roomId        = await deriveRoomId(identity.value.publicKey, name, createdAt)
-
-    const config: Omit<RoomConfig, 'accessPointId' | 'blobSha256'> = {
-        roomId,
-        canonicalName:  name,
-        createdAt,
-        ownerPublicKey: identity.value.publicKey,
-        sessionSecret,
-        ownerEndpoint:  identity.value.endpoint,
-        isOwner:        true,
-        isAdmin:        true,
-        isClosed:       false,
-        closedReason:   '',
+    if (!channel) {
+        throw new Error('Room channel is not ready yet. Please try again in a moment.')
     }
 
-    const { accessPointId, blobSha256 } = await saveRoomConfig(config)
-    const room: Room = {
-        ...config,
-        accessPointId,
-        blobSha256,
-        displayName: name,
+    if (!channel.createOpaqueRoomInvite) {
+        throw new Error('Opaque room invites are not available for this room.')
     }
 
-    rooms.value.push(room)
-    selectRoom(room)
-}
-
-function generateSecret(): string {
-    const bytes = crypto.getRandomValues(new Uint8Array(32))
-    return btoa(String.fromCharCode(...bytes))
-}
-
-async function deriveRoomId(publicKey: string, name: string, createdAt: number): Promise<string> {
-    const input   = `${publicKey}|${name}|${createdAt}`
-    const encoded = new TextEncoder().encode(input)
-    const hash    = await crypto.subtle.digest('SHA-256', encoded)
-    return Array.from(new Uint8Array(hash))
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('')
-        .slice(0, 8)
-}
-
-function openInItems() {
-    if (!activeRoom.value) return
-    console.log('[GExchange] Open in items:', `gexchange://${activeRoom.value.roomId}/`)
-}
-
-function focusCreateField() {
-    nextTick(() => {
-        if (searchInputRef.value) {
-            searchInputRef.value.focus()
-            roomFilter.value = 'new-room'
-            nextTick(() => searchInputRef.value?.select())
-        }
+    return await channel.createOpaqueRoomInvite({
+        validityMinutes: options.validityMinutes ?? 15,
+        pendingTtlMinutes: 24 * 60,
+        roomName: room.displayName || room.canonicalName,
     })
 }
 
-// ── Invite ─────────────────────────────────────────────────────────────────────
+const rooms$ = useRooms({
+    sdk,
+    identity,
+    searchInputRef,
+    newRoomInputRef,
+    createInvite: createRoomInvite,
+    onRoomSelected: (room) => ensureChannel(room)
+})
 
-async function generateInvite() {
-    if (!activeRoom.value || !p2pCreateInvite) return
-    inviteError.value  = ''
-    inviteToken.value  = ''
-    inviteCopied.value = false
-    try {
-        const result      = await p2pCreateInvite(activeRoom.value.roomId, {
-            sessionSecret:   activeRoom.value.sessionSecret,
-            validityMinutes: inviteExpiry.value,
-        })
-        inviteToken.value = result.token
-    } catch (err: any) {
-        inviteError.value = err.message
+const {
+    rooms,
+    activeRoom,
+    loading,
+    vaultToken,
+    roomFilter,
+    pickerOpen,
+    filteredRooms,
+    canCreate,
+    togglePicker,
+    closePicker,
+    onSearchEnter,
+    selectRoom,
+    createRoom,
+    createRoomFromEmpty,
+    newRoomName,
+    showNewRoomInput,
+    createError,
+    openInItems,
+    focusCreateField,
+    renameRoom,
+    inviteToken,
+    inviteExpiry,
+    inviteCopied,
+    inviteError,
+    showInvitePanel,
+    generateInvite,
+    copyInvite,
+    showJoinModal,
+    joinToken,
+    joinError,
+    joinLoading,
+    joinRoom,
+    closeJoinModal,
+    createNamedRoom,
+} = rooms$
+
+const activeSecurityStatus = computed<SecurityStatusView | null>(() => {
+    if (!activeRoom.value) return null
+
+    if (channelTransportMode.value === 'direct-p2p') {
+        return {
+            tone: 'warn',
+            label: 'Direct encrypted P2P',
+            detail: 'Lower overhead, but your peer may learn your IP address.',
+        }
+    }
+
+    const status = activeChannel.value?.sp2pStatus?.value ?? null
+    if (!status) {
+        return {
+            tone: 'info',
+            label: 'Opening secure transport',
+            detail: 'Preparing the private SP2P channel.',
+        }
+    }
+
+    return SP2P_STATUS_COPY[status.code] ?? {
+        tone: status.severity,
+        label: status.message || 'SP2P status updated',
+        detail: 'Private SP2P channel status changed.',
+    }
+})
+// ── Chat ───────────────────────────────────────────────────────────────────────
+
+const chat$ = useChat({
+    sdk,
+    feedRef,
+    inputRef,
+    getChannel:    () => activeRoom.value ? channels.get(activeRoom.value.roomId) : undefined,
+    getScopeId:    () => activeRoom.value?.roomId,
+    getSenderId:   () => identity.value?.userId,
+    getSenderName: () => (resolvedUsername.value || identity.value?.userId) ?? 'You',    
+    onInviteMessage: (text, senderId, senderName) =>     // ← add this
+    handleInviteMessage(text, senderId, senderName),
+})
+
+const {
+    messages,
+    draftText,
+    sending,
+    chatLoading,
+    shiftToSend,
+    sendMessage,
+    loadHistory,
+    clearMessages,
+    onInputKeydown,
+    autoResizeInput,
+    shouldShowSender,
+    shouldShowDateSep,
+    formatTime,
+    formatDate,
+} = chat$
+
+   const callState = useCallState({
+       sdk,
+       getSelfUserId: () => identity.value?.userId,
+
+       onAccepted: async (token, withCall) => {
+           // Parse and join the private room
+           joinToken.value = token
+           await joinRoom()
+
+           // If it was a voice call, start the call once channel is ready
+           if (withCall && activeRoom.value) {
+               const startDelay = 1000
+               setTimeout(async () => {
+                   const channel = channels.get(activeRoom.value!.roomId)
+                   if (!channel) return
+                   try {
+                       const stream = await getAudioStream()
+                       await channel.startCall?.(stream)
+                   } catch (err) {
+                       console.warn('[GExchange] Auto-call on accept failed:', err)
+                   }
+               }, startDelay)
+           }
+       },
+
+       onDeclined: (callerId) => {
+           // Send decline signal back on the current room channel
+           const channel = activeRoom.value
+               ? channels.get(activeRoom.value.roomId)
+               : null
+           channel?.sendMessage(`__decline__|${callerId}`).catch(() => {})
+           callState.stopRinging()
+       },
+   })
+
+   const {
+       incomingCall,
+       outgoingCall,
+       callAnswered,
+       handleInviteMessage,
+       startRinging,
+       stopRinging,
+       acceptCall,
+       declineCall,
+   } = callState
+
+// ── Peer presence ──────────────────────────────────────────────────────────────
+
+const activePeerIds = computed(() => {
+    if (!activeRoom.value) return []
+    const ch = channels.get(activeRoom.value.roomId)
+    if (!ch) return []
+    return [...ch.peers.value.keys()].filter(id => id !== identity.value?.userId)
+})
+
+const peerNames = computed<Record<string, string>>(() => {
+    const result: Record<string, string> = {}
+    for (const ch of channels.values())
+        for (const [userId, username] of ch.peers.value)
+            result[userId] = username
+    return result
+})
+
+// ── Selection engine ────────────────────────────────────────────────────────
+ 
+const selectedPeerIds = ref<Set<string>>(new Set())
+let _peerEngine: SelectionEngine | null = null
+ 
+// Initialise / re-initialise when the peer list changes identity
+watch(activePeerIds, () => {
+    _peerEngine?.destroy()
+    _peerEngine = createSelectionEngine(
+        { policy: 'windows' },
+        { orderedIds: () => activePeerIds.value },
+        {
+            selectionChanged: (sel) => {
+                selectedPeerIds.value = new Set(sel)
+            },
+        }
+    )
+}, { immediate: true })
+ 
+// Clear selection when room changes
+watch(activeRoom, () => {
+    selectedPeerIds.value = new Set()
+    _peerEngine?.replaceSelection([], { reason: 'room-change' })
+})
+ 
+function onPeerMouseDown(peerId: string, e: MouseEvent) {
+    _peerEngine?.rowDownId(peerId, {
+        shift: e.shiftKey,
+        ctrl:  e.ctrlKey,
+        meta:  e.metaKey,
+        alt:   e.altKey,
+    })
+}
+ 
+function onPeerMouseUp(peerId: string) {
+    _peerEngine?.rowUpId(peerId)
+}
+ 
+function onPeerListKeydown(e: KeyboardEvent) {
+    if (!_peerEngine) return
+    const action = e.key === 'ArrowUp'   ? 'Up'
+                 : e.key === 'ArrowDown'  ? 'Down'
+                 : e.key === 'Home'       ? 'Home'
+                 : e.key === 'End'        ? 'End'
+                 : null
+    if (!action) return
+    e.preventDefault()
+    _peerEngine.kbd(action, {
+        shift: e.shiftKey,
+        ctrl:  e.ctrlKey,
+        meta:  e.metaKey,
+        alt:   e.altKey,
+    })
+}
+ 
+// ── Group call (current room, no new room) ──────────────────────────────────
+ 
+async function toggleGroupCall() {
+    const channel = activeChannel.value
+    if (!channel) return
+
+    if (channel.callActive?.value) {
+        await channel.endCall?.()
+        await audioChain.releaseStream()
+    } else {
+        try {
+            const stream = await getAudioStream()
+            await channel.startCall?.(stream)
+        } catch (err) {
+            console.warn('[GExchange] toggleGroupCall: mic access failed:', err)
+        }
     }
 }
+ 
+// ── Private room creation ───────────────────────────────────────────────────
+ 
+const creatingPrivateRoom = ref(false)
+ 
+async function createPrivateRoomWith(peerIds: string[], withCall: boolean): Promise<void> {
+    if (creatingPrivateRoom.value || peerIds.length === 0) return
+    creatingPrivateRoom.value = true
 
-async function copyInvite() {
-    if (!inviteToken.value) return
+    // ── Capture BEFORE createNamedRoom switches activeRoom ────────────
+    const originChannel = activeRoom.value
+        ? channels.get(activeRoom.value.roomId)
+        : null
+
     try {
-        await navigator.clipboard.writeText(inviteToken.value)
-        inviteCopied.value = true
-        setTimeout(() => { inviteCopied.value = false }, 2000)
-    } catch { }
-}
+        const names    = peerIds.map(id => peerNames.value[id] ?? id.slice(0, 6)).join(', ')
+        const myName   = resolvedUsername.value || identity.value?.userId?.slice(0, 6) || 'me'
+        const roomName = `${myName}, ${names}`
 
-async function joinRoom() {
-    const token = joinToken.value.trim()
-    if (!token || !p2pAcceptInvite || !identity.value) return
-    joinError.value   = ''
-    joinLoading.value = true
-    try {
-        const decoded = await p2pAcceptInvite(token)
+        const room = await createNamedRoom(roomName)   // switches activeRoom internally
+        await ensureChannel(room)
 
-        const config: Omit<RoomConfig, 'accessPointId' | 'blobSha256'> = {
-            roomId:         decoded.sessionId,
-            canonicalName:  decoded.sessionId,
-            createdAt:      Date.now(),
-            ownerPublicKey: decoded.publicKey,
-            sessionSecret:  decoded.sessionSecret,
-            ownerEndpoint:  decoded.endpoint,
-            isOwner:        false,
-            isAdmin:        false,
-            isClosed:       false,
-            closedReason:   '',
+        // Use originChannel — the room B is currently in
+        for (const peerId of peerIds) {
+            try {
+                const result = await createRoomInvite(room, {
+                    validityMinutes: 1440,
+                })
+                if (result && originChannel) {
+                    await originChannel.sendMessage(
+                        `__invite__|${result.token}|${roomName}|${peerId}${withCall ? '|call' : ''}`
+                    )
+                }
+            } catch (err) {
+                console.warn(`[GExchange] Failed to invite ${peerId.slice(0, 8)}…:`, err)
+            }
         }
 
-        const { accessPointId, blobSha256 } = await saveRoomConfig(config)
-        const room: Room = {
-            ...config,
-            accessPointId,
-            blobSha256,
-            displayName: config.canonicalName,
-        }
-
-        rooms.value.push(room)
+        // Switch caller to new room after invites are sent
         selectRoom(room)
 
-        showJoinModal.value = false
-        joinToken.value     = ''
-    } catch (err: any) {
-        joinError.value = err.message
+        if (withCall) {
+            const ringingNames = peerIds.map(id => peerNames.value[id] ?? id.slice(0, 6))
+            startRinging(room.roomId, roomName, ringingNames)
+
+            const RING_TIMEOUT_MS = 40_000
+
+            // Watch for callee joining the private room, then start the call.
+            // We capture the channel reference after ensureChannel completed above.
+            const targetChannel = channels.get(room.roomId)
+            if (targetChannel) {
+                let started = false
+
+                const ringTimer = setTimeout(() => {
+                    if (!started) stopRinging()   // no answer — cancel
+                }, RING_TIMEOUT_MS)
+
+                const unwatch = watch(targetChannel.peers, async (peers) => {
+                    if (started || peers.size === 0) return
+                    started = true
+                    clearTimeout(ringTimer)
+                    stopRinging()
+                    unwatch()
+
+                    try {
+                        const stream = await getAudioStream()
+                        await targetChannel.startCall?.(stream)
+                    } catch (err) {
+                        console.warn('[GExchange] Auto-call on peer join failed:', err)
+                    }
+                }, { immediate: false })
+            }
+        }
+    } catch (err) {
+        console.warn('[GExchange] createPrivateRoomWith failed:', err)
     } finally {
-        joinLoading.value = false
+        creatingPrivateRoom.value = false
+        selectedPeerIds.value = new Set()
+        _peerEngine?.replaceSelection([], { reason: 'action-complete' })
     }
 }
 
-function closeJoinModal() {
-    showJoinModal.value = false
-    joinToken.value     = ''
-    joinError.value     = ''
-}
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
-// ── Picker ─────────────────────────────────────────────────────────────────────
+const MAX_PEERS = 0
 
-function togglePicker() {
-    pickerOpen.value = !pickerOpen.value
-    if (pickerOpen.value) {
-        roomFilter.value = ''
-        nextTick(() => searchInputRef.value?.focus())
+function buildCanConnect(room: Room) {
+    return async (peer: MeshPeer): Promise<boolean> => {
+        if (MAX_PEERS > 0) {
+            const ch = channels.get(room.roomId)
+            if (ch && ch.peers.value.size >= MAX_PEERS) return false
+        }
+        // TODO: ban list by peer.userId
+        // TODO: pending-approval prompt for owner/admin
+        return true
     }
 }
 
-function closePicker() {
-    pickerOpen.value = false
-    roomFilter.value = ''
+// ── Audio stream acquisition ───────────────────────────────────────────────────
+//
+// Single entry point for mic access. Constraints applied here so every call path
+// gets echo cancellation, noise suppression, and AGC regardless of how it starts.
+// VoicePanel processed stream integration hooks in here later.
+
+async function getAudioStream(): Promise<MediaStream> {
+    const raw = await navigator.mediaDevices.getUserMedia({
+        audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl:  true,
+            sampleRate:       48000,
+            channelCount:     1,  
+        }
+    })
+    return audioChain.processStream(raw)
 }
 
-function onSearchEnter() {
-    if (filteredRooms.value.length === 1) {
-        selectRoom(filteredRooms.value[0])
-        closePicker()
-    } else if (canCreate.value) {
-        createRoom()
-    }
+// ── Mention detection ──────────────────────────────────────────────────────────
+//
+// Runs on every message from non-active rooms.
+// Three triggers: per-room always-notify config, direct @mention, or a room
+// where only one other peer is present (message is always for you).
+
+function _shouldNotify(msg: ChatMessage, room: Room): boolean {
+    if (!identity.value) return false
+
+    // Per-room always-on config (future: room.notifyAll)
+    // if (room.notifyAll) return true
+
+    // Direct mention by resolved username or userId
+    const username = resolvedUsername.value || identity.value.userId
+    if (
+        msg.text.toLowerCase().includes(`@${username.toLowerCase()}`) ||
+        msg.text.includes(`@${identity.value.userId}`)
+    ) return true
+
+    // Only one other peer — it's a direct conversation, always notify
+    const ch = channels.get(room.roomId)
+    if (ch && ch.peers.value.size === 1) return true
+
+    return false
 }
+
+// ── Phase 2 — ensureChannel ────────────────────────────────────────────────────
+//
+// Ambient channel setup: mesh strategy + chatBind so messages flow for all
+// rooms, enabling mention detection even for rooms that aren't active.
+// Reuses the EDHT session from announceRoom() if it exists — avoids
+// double-creating a session or losing already-stored presence blobs.
+// Does NOT load history — that's activateRoom()'s job.
+// Idempotent — safe to call multiple times, channels.has() guard makes it a no-op.
+
+    async function ensureChannel(room: Room): Promise<void> {
+        if (channels.has(room.roomId)) return
+
+        const pending = channelsPending.get(room.roomId)
+        if (pending) {
+            await pending
+            return
+        }
+
+        const task = _startChannel(room)
+        channelsPending.set(room.roomId, task)
+
+        try {
+            await task
+        } finally {
+            channelsPending.delete(room.roomId)
+        }
+    }
+
+    async function _startChannel(room: Room): Promise<void> {
+        if (room.admissionStatus === 'pending') {
+            return
+        }
+
+        if (!room.sessionSecret || !useChannel) {
+            console.warn('[GExchange] ensureChannel: missing sessionSecret or useChannel')
+            return
+        }
+
+        try {
+            const secret = Uint8Array.from(atob(room.sessionSecret), c => c.charCodeAt(0))
+            const myJoinedAt = Date.now()
+
+            let channel: UseChannelReturn | null = null
+
+            channel = useChannel({
+                scopeId:  room.roomId,
+                sessionSecret: secret,
+                roomState: {
+                    enabled: true,
+                    isOwner: room.isOwner,
+                    displayName: resolvedUsername.value || identity.value?.userId || 'Unknown',
+                },
+
+                buildPresence: () => ({
+                    publicKey: identity.value?.publicKey ?? '',
+                    userId:    identity.value?.userId    ?? '',
+                    username:  (resolvedUsername.value   || identity.value?.userId) ?? 'Unknown',
+                }),
+                identity: {
+                    userId:    identity.value?.userId    ?? '',
+                    username:  (resolvedUsername.value   || identity.value?.userId) ?? 'Unknown',
+                    publicKey: identity.value?.publicKey ?? '',
+                },
+                isHub:      room.isOwner,
+                strategy:   'full',
+                canConnect: buildCanConnect(room),
+                transportMode: channelTransportMode.value,
+                voice: true,
+                redundancy: 0,
+                onPeerJoined: (peer: MeshPeer) => {
+                    // TODO ADD joinedAt to widget-sdk.d file
+                    // Validate this really works where if a simple user was there with the same username as another, the newcomer only will get asked to change
+                    const isNewcomer = !room.isOwner && !!peer.joinedAt && peer.joinedAt < myJoinedAt
+                    if (
+                        peer.userId   !== identity.value?.userId &&
+                        peer.username &&
+                        resolvedUsername.value &&
+                        peer.username === resolvedUsername.value &&
+                        isNewcomer &&
+                        !showDisambigPrompt.value
+                    ) {
+                        showDisambigPrompt.value = true
+                    }
+                },
+                onPeerLeft: (_peer: MeshPeer) => { /* handled reactively via channel.peers */ },
+            })
+
+            channels.set(room.roomId, channel)
+
+            if (room.isOwner) await channel.whenHubReady
+            else await channel.whenEdhtReady  // ensure _edht is set before SP2P rendezvous starts
+
+            if (!room.isOwner && room.bootstrapPublicKey && room.bootstrapUserId) {
+                await channel.connectToPeer(room.bootstrapUserId, room.bootstrapPublicKey)
+            }
+
+            console.log(`[GExchange] Channel ready (ambient) — room ${room.roomId.slice(0, 8)}…`)
+        } catch (err) {
+            channels.delete(room.roomId)
+            console.warn('[GExchange] Failed to start channel:', err)
+        }
+}
+
+// ── Phase 3 — activateRoom ─────────────────────────────────────────────────────
+//
+// Called when a room becomes active (watch on activeRoom).
+// Ensures the ambient channel exists then loads history.
+// ensureChannel is idempotent — safe to call if channel already exists.
+
+async function kickRoomRendezvous(room: Room, reason: string): Promise<void> {
+    const channel = channels.get(room.roomId)
+    if (!channel) return
+
+    if (!room.isOwner && room.bootstrapUserId && room.bootstrapPublicKey) {
+        await channel.connectToPeer(room.bootstrapUserId, room.bootstrapPublicKey).catch(err =>
+            console.warn(
+                `[GExchange] Room rendezvous kick failed (${reason}) — ${room.roomId.slice(0, 8)}…:`,
+                err
+            )
+        )
+        return
+    }
+
+    await channel.reannounce().catch(err =>
+        console.warn(
+            `[GExchange] Room connectivity refresh failed (${reason}) — ${room.roomId.slice(0, 8)}…:`,
+            err
+        )
+    )
+}
+
+async function activateRoom(room: Room): Promise<void> {
+    await ensureChannel(room)
+    await kickRoomRendezvous(room, 'activate')
+    await loadHistory(room.roomId)
+}
+
+async function refreshActiveRoomChannel(reason: string): Promise<void> {
+    const room = activeRoom.value
+    if (!room) return
+    await kickRoomRendezvous(room, reason)
+}
+
+// ── Dispose ────────────────────────────────────────────────────────────────────
+
+async function _disposeAllChannels(): Promise<void> {
+    for (const channel of channels.values())
+        await channel.dispose()
+    channels.clear()
+    channelsPending.clear()
+    // EdhtSession disposal is handled by channel.dispose() — no orphaned sessions.
+}
+
+// ── Picker outside-click ───────────────────────────────────────────────────────
 
 function onDocClick(e: MouseEvent) {
     if (pickerRef.value && !pickerRef.value.contains(e.target as Node))
         closePicker()
 }
-onMounted(() => document.addEventListener('mousedown', onDocClick))
 
-// ── Rename ─────────────────────────────────────────────────────────────────────
-
-function renameRoom(room: Room) {
-    startRename(`gex-room-${room.roomId}`, {
-        onCommit: (newName) => {
-            if (!newName.trim()) return
-            const localNames        = loadLocalNames()
-            localNames[room.roomId] = newName.trim()
-            saveLocalNames(localNames)
-            const r = rooms.value.find(x => x.roomId === room.roomId)
-            if (r) r.displayName = newName.trim()
-            if (activeRoom.value?.roomId === room.roomId)
-                activeRoom.value = { ...activeRoom.value, displayName: newName.trim() }
-        },
-        onCancel:  () => {},
-        selectAll: true,
-        validate:  (v) => v.trim() ? null : 'Name cannot be empty',
-    })
+function onVisibilityChange() {
+    if (document.visibilityState === 'visible')
+        void refreshActiveRoomChannel('visible')
 }
 
-// ── Sidebar ────────────────────────────────────────────────────────────────────
+function onWindowFocus() {
+    void refreshActiveRoomChannel('focus')
+}
 
-function toggleSidebar() { showSidebar.value = !showSidebar.value }
+// ── Lifecycle ──────────────────────────────────────────────────────────────────
 
-watch(showNewRoomInput, (v) => {
-    if (v) nextTick(() => newRoomInputRef.value?.focus())
+onMounted(async () => {
+    document.addEventListener('mousedown', onDocClick)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('focus', onWindowFocus)
+    await audioChain.load()   
+    await identity$.load()
+    await rooms$.load()
+
+    // Phase 2 — activate the first room (loads history + triggers full channel setup)
+    const first = rooms.value[0]
+    if (first) selectRoom(first)
+
+    // Phase 3 — ambient channel setup for remaining rooms, staggered.
+    // These won't load history but will connect so mentions are detectable.
+    for (let i = 1; i < rooms.value.length; i++) {
+        const room = rooms.value[i]
+        setTimeout(() => ensureChannel(room), i * 200)
+    }
+
+    chat$.mount()
+
+    // Ambient message handler — mention detection for non-active rooms.
+    // useChat handles the active room; this handles everything else.
+    _ambientUnsub = sdk?.onChatMessage?.((msg: ChatMessage) => {
+        if (msg.scopeId === activeRoom.value?.roomId) return
+
+        // Handle call signals from any room
+        if (msg.text.startsWith('__invite__|')) {
+            handleInviteMessage(msg.text, msg.senderId, msg.senderName)
+            return
+        }
+        if (msg.text.startsWith('__decline__|')) {
+            stopRinging()
+            return
+        }
+
+        const room = rooms.value.find(r => r.roomId === msg.scopeId)
+        if (!room) return
+
+        if (_shouldNotify(msg, room)) {
+            console.log(`[GExchange] Notify: ${msg.senderName} in #${room.displayName}: ${msg.text.slice(0, 60)}`)
+        }
+    }) ?? null
+})
+
+onUnmounted(async () => {
+    document.removeEventListener('mousedown', onDocClick)
+    document.removeEventListener('visibilitychange', onVisibilityChange)
+    window.removeEventListener('focus', onWindowFocus)
+    _ambientUnsub?.()
+    _ambientUnsub = null
+    chat$.unmount()
+    await audioChain.dispose()   
+    await _disposeAllChannels()
+    await rooms$.dispose()
+    _peerEngine?.destroy()
+    _peerEngine = null
+})
+
+// ── Watch active room ──────────────────────────────────────────────────────────
+//
+// selectRoom → onRoomSelected → ensureChannel already called.
+// activateRoom calls ensureChannel (no-op if already done) then loads history.
+
+watch(activeRoom, async (room) => {
+    clearMessages()
+    if (!room) return
+    await activateRoom(room)
 })
 </script>
 
 <style scoped>
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
 .gex-root {
-    --bg:       var(--surface-1,  #1a1a1f);
-    --bg-2:     var(--surface-2,  #22222a);
-    --bg-3:     var(--surface-3,  #2a2a35);
-    --fg:       var(--text-1,     #e8e8f0);
-    --fg-dim:   var(--text-2,     #9090a8);
-    --fg-muted: var(--text-3,     #606078);
-    --accent:   var(--color-accent, #7c6ff7);
-    --border:   var(--border-1,   rgba(255,255,255,.08));
-    --radius:   8px;
-    font-family: var(--font, system-ui, sans-serif);
-    font-size: 13px;
-    color: var(--fg);
+    --bg:         var(--surface-1,  #111);
+    --bg-2:       var(--surface-2,  #171717);
+    --bg-3:       var(--surface-3,  #1e1e1e);
+    --border:     var(--border-1,   rgba(255,255,255,.07));
+    --fg:         var(--text-1,     #e8e8e8);
+    --fg-dim:     var(--text-2,     #777);
+    --fg-muted:   var(--text-3,     #444);
+    --accent:     var(--color-accent, #5b8ef0);
+    --accent-dim: rgba(91,142,240,.15);
+    --radius:     8px;
+    --font:       var(--font-ui, system-ui, sans-serif);
+    display: grid;
+    grid-template-rows: 44px 1fr auto;
+    height: 100%;
+    min-height: 0;
     background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font);
+    font-size: 13px;
+    border-radius: var(--radius);
+    overflow: hidden;
+    position: relative;
+}
+.gex-root.no-room { grid-template-rows: 44px auto 1fr; }
+.gex-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    background: var(--bg-2);
+    border-bottom: 1px solid var(--border);
+    gap: 8px;
+}
+.header-left  { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
+.header-right { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+
+.security-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    max-width: 240px;
+    height: 24px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-3);
+    color: var(--fg-dim);
+    font-size: 11px;
+    line-height: 1;
+    white-space: nowrap;
+    flex-shrink: 1;
+}
+
+.security-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.security-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: currentColor;
+    opacity: .85;
+    flex-shrink: 0;
+}
+
+.security-pill.tone-info {
+    color: var(--accent);
+    background: var(--accent-dim);
+}
+
+.security-pill.tone-ok {
+    color: #74d680;
+    background: rgba(116,214,128,.12);
+    border-color: rgba(116,214,128,.22);
+}
+
+.security-pill.tone-warn {
+    color: #e7bd5d;
+    background: rgba(231,189,93,.12);
+    border-color: rgba(231,189,93,.24);
+}
+
+.security-pill.tone-error {
+    color: #ee7474;
+    background: rgba(238,116,116,.12);
+    border-color: rgba(238,116,116,.24);
+}
+
+.security-pill.tone-idle {
+    color: var(--fg-muted);
+}
+.room-picker  { position: relative; min-width: 0; }
+.room-trigger {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--fg);
+    cursor: pointer;
+    padding: 4px 8px;
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 600;
+    transition: background .15s, border-color .15s;
+    max-width: 280px;
+    min-width: 0;
+}
+.room-trigger:hover { background: var(--bg-3); border-color: var(--border); }
+.room-picker.open .room-trigger { background: var(--bg-3); border-color: var(--accent); }
+.room-hash    { color: var(--accent); font-weight: 700; flex-shrink: 0; }
+.room-name    { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-id-badge {
+    font-size: 10px;
+    color: var(--fg-muted);
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    flex-shrink: 0;
+    font-weight: 400;
+}
+.chevron { width: 10px; height: 6px; color: var(--fg-dim); flex-shrink: 0; transition: transform .2s; }
+.room-picker.open .chevron { transform: rotate(180deg); }
+.room-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    width: 280px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 8px 32px rgba(0,0,0,.5);
+    z-index: 200;
     display: flex;
     flex-direction: column;
-    height: 100%;
-    position: relative;
     overflow: hidden;
+}
+.dropdown-top { flex-shrink: 0; }
+.search-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+}
+.search-icon { width: 14px; height: 14px; color: var(--fg-muted); flex-shrink: 0; }
+.room-search { flex: 1; background: transparent; border: none; outline: none; color: var(--fg); font-family: var(--font); font-size: 12px; }
+.room-search::placeholder { color: var(--fg-muted); }
+.dropdown-actions { display: flex; gap: 4px; padding: 6px 8px; }
+.action-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--fg-dim);
+    cursor: pointer;
+    font-family: var(--font);
+    font-size: 11px;
+    padding: 4px 8px;
+    flex: 1;
+    justify-content: center;
+    transition: color .15s, border-color .15s;
+}
+.action-btn svg { width: 12px; height: 12px; flex-shrink: 0; }
+.action-btn:hover { color: var(--fg); border-color: var(--accent); }
+.dropdown-sep { height: 1px; background: var(--border); }
+.room-list-scroll { overflow-y: auto; max-height: 220px; }
+.room-empty { padding: 16px 12px; font-size: 12px; color: var(--fg-muted); text-align: center; }
+.room-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 10px;
+    cursor: pointer;
+    border-radius: 4px;
+    margin: 2px 4px;
+    transition: background .1s;
+}
+.room-row:hover  { background: var(--bg-3); }
+.room-row.active { background: var(--accent-dim); }
+.row-hash   { color: var(--accent); font-weight: 700; flex-shrink: 0; }
+.row-name   { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.row-id     { font-size: 10px; color: var(--fg-muted); flex-shrink: 0; }
+.row-closed { font-size: 10px; color: #e05555; flex-shrink: 0; }
+.row-rename { background: transparent; border: none; color: var(--fg-muted); cursor: pointer; padding: 2px; opacity: 0; transition: opacity .1s; }
+.row-rename svg { width: 12px; height: 12px; }
+.room-row:hover .row-rename { opacity: 1; }
+.row-rename:hover { color: var(--fg); }
+.icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--fg-dim);
+    cursor: pointer;
+    transition: color .15s, background .15s, border-color .15s;
+    flex-shrink: 0;
+}
+.icon-btn svg { width: 16px; height: 16px; }
+.icon-btn:hover { color: var(--fg); background: var(--bg-3); border-color: var(--border); }
+.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 32px 24px; text-align: center; }
+.empty-glyph { font-size: 40px; color: var(--fg-muted); font-weight: 700; line-height: 1; }
+.empty-title { font-size: 14px; font-weight: 600; margin: 0; }
+.empty-sub   { font-size: 12px; color: var(--fg-dim); margin: 0; }
+.empty-actions { display: flex; gap: 8px; }
+.inline-create { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
+.new-room-input {
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--fg);
+    font-family: var(--font);
+    font-size: 12px;
+    padding: 6px 10px;
+    outline: none;
+    transition: border-color .15s;
+}
+.new-room-input:focus { border-color: var(--accent); }
+.create-error { font-size: 11px; color: #e05555; margin: 0; }
+.pill-btn {
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--fg-dim);
+    cursor: pointer;
+    font-family: var(--font);
+    font-size: 12px;
+    padding: 5px 12px;
+    transition: color .15s, border-color .15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.pill-btn:hover:not(:disabled) { color: var(--fg); border-color: var(--accent); }
+.pill-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pill-btn.primary:hover:not(:disabled) { filter: brightness(1.1); }
+.pill-btn:disabled { opacity: .4; cursor: not-allowed; }
+.chat-body { display: flex; min-height: 0; overflow: hidden; }
+.chat-feed { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; }
+.message { display: flex; flex-direction: column; gap: 2px; padding: 1px 0; }
+.message.mine   { align-items: flex-end; }
+.message.theirs { align-items: flex-start; }
+.system-msg     { align-items: center; padding: 6px 0; }
+.msg-sender { font-size: 10px; color: var(--fg-muted); padding: 0 4px; margin-bottom: 1px; }
+.msg-sender.sender-you { color: var(--accent); }
+.msg-bubble {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 6px;
+    max-width: 72%;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 6px 10px;
+}
+.mine .msg-bubble { background: var(--accent-dim); border-color: rgba(91,142,240,.25); flex-direction: row-reverse; }
+.system-msg .msg-bubble { background: transparent; border: none; font-size: 11px; color: var(--fg-muted); padding: 0; }
+.msg-text { font-size: 13px; line-height: 1.45; }
+.msg-time { font-size: 10px; color: var(--fg-muted); flex-shrink: 0; margin-bottom: 1px; }
+.muted    { color: var(--fg-muted); }
+.date-sep { display: flex; align-items: center; justify-content: center; padding: 8px 0 4px; }
+.date-sep span { font-size: 10px; color: var(--fg-muted); background: var(--bg); padding: 2px 8px; border-radius: 10px; border: 1px solid var(--border); }
+.chat-sidebar {
+    width: 180px;
+    flex-shrink: 0;
+    border-left: 1px solid var(--border);
+    background: var(--bg-2);
+    overflow-y: auto;
+    padding: 12px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+.sidebar-section h4 { font-size: 10px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: .06em; margin: 0 0 8px; }
+.user-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.user-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg-dim); min-width: 0; }
+.user-row.self { color: var(--fg); }
+.user-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: var(--fg-muted); }
+.dot.online { background: #4caf50; }
+.you-tag { font-size: 9px; color: var(--accent); background: var(--accent-dim); border-radius: 3px; padding: 1px 4px; flex-shrink: 0; }
+.name-edit-btn { background: transparent; border: none; color: var(--fg-muted); cursor: pointer; padding: 2px; opacity: 0; transition: opacity .1s; flex-shrink: 0; }
+.name-edit-btn svg { width: 11px; height: 11px; }
+.user-row.self:hover .name-edit-btn { opacity: 1; }
+.name-edit-btn:hover { color: var(--fg); }
+.name-editor { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
+.name-editor-actions { display: flex; gap: 4px; }
+.room-meta  { display: flex; flex-direction: column; gap: 6px; }
+.meta-row   { display: flex; flex-direction: column; gap: 1px; }
+.meta-label { font-size: 10px; color: var(--fg-muted); }
+.meta-value { font-size: 11px; color: var(--fg-dim); }
+.mono       { font-family: monospace; }
+.chat-footer { border-top: 1px solid var(--border); background: var(--bg-2); display: flex; flex-direction: column; }
+.plugin-tabs { display: flex; gap: 2px; padding: 4px 8px 0; border-bottom: 1px solid var(--border); }
+.tab-btn {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--fg-muted);
+    cursor: pointer;
+    font-family: var(--font);
+    font-size: 11px;
+    padding: 4px 8px 5px;
+    transition: color .15s, border-color .15s;
+    margin-bottom: -1px;
+}
+.tab-btn.active { color: var(--fg); border-bottom-color: var(--accent); }
+.tab-btn:hover:not(.active) { color: var(--fg-dim); }
+.plugin-canvas { padding: 8px; }
+.input-area { display: flex; flex-direction: column; gap: 4px; }
+.chat-input {
+    width: 100%;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--fg);
+    font-family: var(--font);
+    font-size: 13px;
+    line-height: 1.45;
+    outline: none;
+    padding: 7px 10px;
+    resize: none;
+    transition: border-color .15s;
+    box-sizing: border-box;
+}
+.chat-input:focus { border-color: var(--accent); }
+.chat-input:disabled { opacity: .5; cursor: not-allowed; }
+.chat-input::placeholder { color: var(--fg-muted); }
+.input-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.send-mode-toggle { display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: 11px; color: var(--fg-muted); }
+.send-mode-toggle input { accent-color: var(--accent); }
+.toggle-label { user-select: none; }
+.send-btn { background: var(--accent); border: none; border-radius: 6px; color: #fff; cursor: pointer; padding: 6px 8px; display: flex; align-items: center; transition: filter .15s; }
+.send-btn svg { width: 14px; height: 14px; }
+.send-btn:hover:not(:disabled) { filter: brightness(1.15); }
+.send-btn:disabled { opacity: .4; cursor: not-allowed; }
+.closed-banner { font-size: 11px; color: #e05555; text-align: center; padding: 4px 0 2px; }
+.loading-state { font-size: 12px; color: var(--fg-muted); padding: 12px 0; text-align: center; }
+.name-prompt-panel {
+    position: absolute;
+    top: 44px;
+    left: 0;
+    right: 0;
+    z-index: 50;
+    background: var(--bg-2);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 14px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.4);
+}
+.name-prompt-body  { display: flex; flex-direction: column; gap: 8px; }
+.name-prompt-label { font-size: 12px; color: var(--fg-dim); }
+.name-prompt-row   { display: flex; gap: 6px; align-items: center; }
+.name-prompt-input { flex: 1; background: var(--bg-3); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font-family: var(--font); font-size: 12px; padding: 6px 10px; outline: none; transition: border-color .15s; }
+.name-prompt-input:focus { border-color: var(--accent); }
+.name-prompt-note { font-size: 10px; color: var(--fg-muted); margin: 0; line-height: 1.4; }
+.disambig-options { display: flex; flex-direction: column; gap: 4px; }
+.disambig-btn { display: flex; align-items: center; gap: 10px; background: var(--bg-3); border: 1px solid var(--border); border-radius: 6px; color: var(--fg-dim); cursor: pointer; font-family: var(--font); padding: 7px 10px; text-align: left; transition: border-color .15s, color .15s; }
+.disambig-btn:hover  { border-color: var(--accent); color: var(--fg); }
+.disambig-btn.active { border-color: var(--accent); background: var(--accent-dim); color: var(--fg); }
+.disambig-preview { font-size: 13px; font-weight: 600; min-width: 90px; color: var(--accent); }
+.disambig-label   { font-size: 11px; color: inherit; }
+.disambig-actions { display: flex; gap: 6px; align-items: center; }
+.invite-panel { position: absolute; top: 44px; left: 0; right: 0; z-index: 50; background: var(--bg-2); border-bottom: 1px solid var(--border); padding: 12px 14px; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
+.invite-panel-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; font-size: 12px; color: var(--fg-dim); }
+.invite-close { background: transparent; border: none; color: var(--fg-muted); cursor: pointer; font-size: 13px; padding: 2px 4px; line-height: 1; }
+.invite-close:hover { color: var(--fg); }
+.invite-body  { display: flex; flex-direction: column; gap: 8px; }
+.invite-label { font-size: 11px; color: var(--fg-dim); }
+.invite-expiry-row { display: flex; align-items: center; gap: 10px; }
+.expiry-options { display: flex; gap: 4px; }
+.expiry-btn { background: var(--bg-3); border: 1px solid var(--border); border-radius: 4px; color: var(--fg-dim); font-family: var(--font); font-size: 11px; padding: 3px 8px; cursor: pointer; transition: all .15s; }
+.expiry-btn.active { border-color: var(--accent); color: var(--accent); }
+.expiry-btn:hover:not(.active) { color: var(--fg); }
+.full-width { width: 100%; justify-content: center; }
+.token-display { display: flex; gap: 8px; align-items: flex-start; }
+.token-text { flex: 1; font-size: 10px; color: var(--fg-dim); background: var(--bg-3); border: 1px solid var(--border); border-radius: 5px; padding: 6px 8px; word-break: break-all; line-height: 1.5; max-height: 60px; overflow-y: auto; }
+.invite-error { font-size: 11px; color: #e05555; margin: 0; }
+.invite-note  { font-size: 10px; color: var(--fg-muted); margin: 0; line-height: 1.4; }
+.modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 300; }
+.modal { background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius); width: 320px; box-shadow: 0 12px 40px rgba(0,0,0,.6); }
+.modal-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 600; }
+.modal-body    { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.modal-sub     { font-size: 12px; color: var(--fg-dim); margin: 0; }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.token-input { width: 100%; background: var(--bg-3); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font-family: var(--font); font-size: 11px; padding: 8px 10px; resize: none; outline: none; transition: border-color .15s; box-sizing: border-box; line-height: 1.5; }
+.token-input:focus { border-color: var(--accent); }
+.loading-overlay { position: absolute; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.dropdown-enter-active, .dropdown-leave-active { transition: opacity .15s, transform .15s; }
+.dropdown-enter-from,   .dropdown-leave-to     { opacity: 0; transform: translateY(-6px); }
+.slide-down-enter-active, .slide-down-leave-active { transition: opacity .15s, transform .15s; }
+.slide-down-enter-from,   .slide-down-leave-to     { opacity: 0; transform: translateY(-8px); }
+.fade-enter-active, .fade-leave-active { transition: opacity .15s; }
+.fade-enter-from,   .fade-leave-to     { opacity: 0; }
+
+/* ── Participants header ─────────────────────────────────────────── */
+.sidebar-participants-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+.sidebar-participants-header h4 {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    margin: 0;
+}
+.peer-count {
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 9px;
+    padding: 1px 5px;
+    color: var(--fg-dim);
+    font-weight: 400;
+}
+.sidebar-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.sidebar-action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--fg-muted);
+    cursor: pointer;
+    transition: all .12s;
+}
+.sidebar-action-btn svg { width: 12px; height: 12px; }
+.sidebar-action-btn:hover:not(:disabled) { color: #4caf50; border-color: #4caf50; }
+.sidebar-action-btn.active { color: #e05555; border-color: #e05555; background: rgba(224,85,85,.1); }
+.sidebar-action-btn:disabled { opacity: .3; cursor: not-allowed; }
+.selection-hint {
+    font-size: 9px;
+    color: var(--accent);
+    background: var(--accent-dim);
+    border-radius: 4px;
+    padding: 1px 5px;
+}
+ 
+/* ── Peer rows ──────────────────────────────────────────────────── */
+.user-row.peer {
+    cursor: pointer;
+    border-radius: 4px;
+    padding: 3px 4px;
+    margin: 1px 0;
+    user-select: none;
+    transition: background .1s;
+}
+.user-row.peer:hover { background: var(--bg-3); }
+.user-row.peer.selected {
+    background: var(--accent-dim);
+    border: 1px solid rgba(91,142,240,.2);
+}
+.user-row.peer.speaking .dot { background: #4caf50; box-shadow: 0 0 4px #4caf5088; }
+.user-row.peer.speaking .user-name { color: var(--fg); }
+ 
+/* ── Per-peer action buttons ────────────────────────────────────── */
+.peer-actions {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity .1s;
+    margin-left: auto;
+}
+.user-row.peer:hover .peer-actions,
+.user-row.peer.selected .peer-actions { opacity: 1; }
+.peer-action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    color: var(--fg-muted);
+    cursor: pointer;
+    transition: all .1s;
+}
+.peer-action-btn svg { width: 10px; height: 10px; }
+.peer-action-btn:hover { color: var(--fg); border-color: var(--border); background: var(--bg-3); }
+ 
+/* ── Speaking dot pulse ─────────────────────────────────────────── */
+.dot.speaking {
+    animation: pulse-speak .8s ease-in-out infinite;
+}
+@keyframes pulse-speak {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(76,175,80,.4); }
+    50%       { box-shadow: 0 0 0 4px rgba(76,175,80,0); }
+}
+ 
+/* ── Creating indicator ─────────────────────────────────────────── */
+.creating-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    color: var(--fg-muted);
+    padding: 4px 4px;
+}
+.spinner-small {
+    width: 10px;
+    height: 10px;
+    border: 1.5px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin .6s linear infinite;
+    flex-shrink: 0;
 }
 </style>
