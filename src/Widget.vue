@@ -12,6 +12,13 @@
               createVirtualGeometry (hit ranges from row math).
    KEYS       one KEYMAP table -> named actions (to be replaced by the app's
               input controller; nothing else hard-codes keys).
+   PAGING     (L4) per-folder view.paging from the host. The virtual list
+              shows one page (a window of the source); everything else keeps
+              using source indices, so selection, keep-my-place and reveal
+              work across pages (they switch page when needed). The pager
+              lives in the host's pane chrome (useWidgetChrome).
+   RESTORE    the listing and the view (page, place, selection) are kept on
+              the lifecycle shelf: a tab switch remounts without rescanning.
 ------------------------------------------------ */
 import { ref, shallowRef, computed, watch, onMounted, onBeforeUnmount, nextTick, inject } from 'vue'
 import {
@@ -25,7 +32,10 @@ import {
   useListing,
   startRename,
   createWidgetMessaging,
+  createLifecycle,
+  useWidgetChrome,
   show as showSnack,
+  showOnce,
   type ScrollerAdapter,
   type Rect,
   type WidgetSdk,
@@ -37,11 +47,13 @@ import {
   type ListingSnapshot,
   type SelectMods,
   type FocusAction,
+  type ViewPaging,
 } from 'gexplorer/widgets'
 
 import ItemsListLayout from './ItemsListLayout.vue'
 import ItemsGridLayout from './ItemsGridLayout.vue'
 import ItemsDetailsLayout from './ItemsDetailsLayout.vue'
+import ItemsPager from './ItemsPager.vue'
 import { useItemsDragDrop } from './useItemsDragDrop'
 
 const sdk = inject<WidgetSdk>('widgetSdk')
@@ -64,7 +76,7 @@ const props = defineProps<{
   theme?: Record<string, string>
   runAction?: (a: HostAction) => void
   placement?: {
-    context: 'grid' | 'sidebar' | 'embedded'
+    context: 'grid' | 'sidebar' | 'embedded' | 'dialog'
     size: { cols?: number; rows?: number; width?: number; height?: number }
   }
   editMode?: boolean
@@ -76,6 +88,7 @@ const props = defineProps<{
 type HostAction =
   | { type: 'nav'; to: string; replace?: boolean; sourceId?: string }
   | { type: 'open'; path: string; entry: string }
+  | { type: 'setView'; patch: Record<string, unknown> }
 
 type DetailWeights = { name: number; ext: number; size: number; mod: number }
 
@@ -183,6 +196,23 @@ const sortDir = ref<ListingSortDir>((props.config?.view?.sortDir as any) || 'asc
 
 const source = shallowRef<ListingSource | null>(null)
 
+// The host file dialog is a one-off: its listing is not kept for a remount.
+const inDialog = computed(() => props.placement?.context === 'dialog')
+
+/* Lifecycle shelf: survives unmount (tab switch) until the pane is gone for
+   good; then `dispose` closes the kept listing. */
+type SavedView = {
+  page: number
+  anchor: { name: string; offset: number; edge: 'top' | 'bottom' } | null
+  selection: { all: boolean; ids: string[]; focusId: string | null; anchorId: string | null } | null
+}
+type Shelf = { path: string; key: string; source: ListingSource; view: SavedView | null }
+
+const RESTORE_SELECTION_MAX = 50_000
+const life = createLifecycle(props.sourceId)
+const shelf = life.persistRef<Shelf | null>('items.listing', null, { dispose: (s) => s?.source.close() })
+let pendingRestore: SavedView | null = null
+
 function listingFilter(): ListingFilter {
   const f = activeFilter.value
   return {
@@ -192,17 +222,42 @@ function listingFilter(): ListingFilter {
   }
 }
 
-/** Opens `path` (replaces the current listing; useListing closes the old one). */
+/**
+ * Opens `path` (replaces the current listing; useListing closes the old one).
+ * First open after a remount: reuses the shelved listing of the same folder
+ * (no rescan) and queues the saved view for restoreView().
+ */
 function openDir(path: string) {
-  selection.clear()
   lnkIconKeys.clear()
   lnkProbed.clear()
+  const key = JSON.stringify(listingFilter())
+  const kept = shelf.value
+
+  if (kept && !source.value) {
+    const reusable = !inDialog.value && path && kept.path === path && kept.key === key &&
+      kept.source.snapshot().status !== 'closed'
+    if (reusable) {
+      const cur = kept.source.snapshot().sort
+      if (cur.key !== sortKey.value || cur.dir !== sortDir.value) kept.source.setSort({ key: sortKey.value, dir: sortDir.value })
+      pendingRestore = kept.view
+      kept.view = null
+      pageIndex.value = pendingRestore?.page ?? 0
+      source.value = kept.source
+      return
+    }
+    kept.source.close()          // not attached to anything: close it here
+    shelf.value = null
+  }
+
+  selection.clear()
+  pageIndex.value = 0
   if (!path) { source.value = null; return }
   source.value = openListing?.(path, {
     owner: props.instanceId,
     sort: { key: sortKey.value, dir: sortDir.value, foldersFirst: true },
     filter: listingFilter(),
   }) ?? null
+  shelf.value = source.value && !inDialog.value ? { path, key, source: source.value, view: null } : null
 }
 
 function refresh() {
@@ -234,12 +289,51 @@ const bindRows = (el: any) => { rowsEl.value = (el as HTMLElement) ?? null }
 const listingRef = shallowRef<ReturnType<typeof useListing> | null>(null)
 const total = computed(() => listingRef.value?.total.value ?? 0)
 
+/* -----------------------------------------------
+   Paging (L4)
+   view.paging (from the host, per folder):
+     undefined = not known yet, null = no record, else the user's choice.
+   Everything outside this block works in source indices; the virtual list
+   shows the window [pageStart, pageStart + pageLen).
+------------------------------------------------ */
+const PAGE_SIZE_DEFAULT = 500          // matches entry.ts paging.defaultPageSize
+
+type PagingState = 'unknown' | 'none' | 'single' | 'paged'
+const pagingState = computed<PagingState>(() => {
+  const p = props.config?.view?.paging as ViewPaging | null | undefined
+  if (p === undefined) return 'unknown'
+  if (p === null) return 'none'
+  return p.mode === 'paged' ? 'paged' : 'single'
+})
+const isPaged = computed(() => pagingState.value === 'paged')
+const pageSize = computed(() => {
+  const n = Number(props.config?.view?.paging?.pageSize)
+  return Number.isInteger(n) && n > 0 ? n : PAGE_SIZE_DEFAULT
+})
+const pagerJump = computed(() => {
+  const n = Number(props.config?.view?.pagerJump)      // settings later
+  return Number.isInteger(n) && n > 0 ? n : 5
+})
+
+/** Wanted page; the shown page is clamped (totals grow while a folder loads). */
+const pageIndex = ref(0)
+const pageCount = computed(() => isPaged.value ? Math.max(1, Math.ceil(total.value / pageSize.value)) : 1)
+const currentPage = computed(() => isPaged.value ? Math.min(pageIndex.value, pageCount.value - 1) : 0)
+const pageStart = computed(() => currentPage.value * (isPaged.value ? pageSize.value : 0))
+const pageLen = computed(() => isPaged.value
+  ? Math.max(0, Math.min(pageSize.value, total.value - pageStart.value))
+  : total.value)
+
+function pageOf(index: number): number {
+  return isPaged.value ? Math.floor(Math.max(0, index) / pageSize.value) : 0
+}
+
 const LIST_TOP_PAD = 6   // was the scroller's padding-block; now inside the rows
 
 const vlist = useVirtualList({
   scrollEl: scrollerEl,
   sizerEl,
-  count: () => Math.ceil(total.value / cols.value),
+  count: () => Math.ceil(pageLen.value / cols.value),
   gap: () => {
     if (isGrid.value) return S.value.gap
     const g = rowsEl.value ? parseFloat(getComputedStyle(rowsEl.value).rowGap) : 0
@@ -247,37 +341,106 @@ const vlist = useVirtualList({
   },
   contentOffset: () => (layout.value === 'details' ? 0 : isGrid.value ? S.value.gap : LIST_TOP_PAD),
   overscan: 6,
-  onRange: (s, e) => source.value?.ensure(s * cols.value, e * cols.value),
+  onRange: () => ensureVisible(),
 })
+
+/** Loads the rows on screen (source indices of the current page window). */
+function ensureVisible() {
+  const c = cols.value
+  const from = pageStart.value + vlist.start.value * c
+  const to = pageStart.value + Math.min(pageLen.value, vlist.end.value * c)
+  source.value?.ensure(from, to)
+}
+// Same rendered range on another page still needs that page's rows.
+watch(pageStart, () => ensureVisible())
 
 // Re-measure when the layout, item size or column count changes the rows.
 watch([layout, () => merged.value.itemSize, cols], () => nextTick(() => vlist.measure()))
 
-/** Item-index view of the list (grid rows hold `cols` items). */
+/** Visual row (in the current page window) of source index `i`. */
+function localRow(i: number): number {
+  return Math.floor((i - pageStart.value) / cols.value)
+}
+
+/** Runs `then` with source index `index` on the current page (switches page first if needed). */
+function withIndexOnPage(index: number, then: () => void) {
+  const p = pageOf(index)
+  if (isPaged.value && p !== currentPage.value) {
+    pageIndex.value = p
+    void nextTick(then)        // the list re-renders with the new window first
+  } else {
+    then()
+  }
+}
+
+/**
+ * Item-index view of the list, in source indices (grid rows hold `cols`
+ * items; paged lists show one page). useListing, selection and reveal use it.
+ */
 const itemView = {
-  start: computed(() => vlist.start.value * cols.value),
-  end: computed(() => Math.min(total.value, vlist.end.value * cols.value)),
+  start: computed(() => pageStart.value + vlist.start.value * cols.value),
+  end: computed(() => pageStart.value + Math.min(pageLen.value, vlist.end.value * cols.value)),
   captureAnchor: (prefer?: number | null) => {
-    const a = vlist.captureAnchor(prefer == null ? prefer : Math.floor(prefer / cols.value))
-    return a ? { ...a, index: a.index * cols.value } : null
+    const onPage = prefer != null && prefer >= pageStart.value && prefer < pageStart.value + pageLen.value
+    const a = vlist.captureAnchor(onPage ? localRow(prefer!) : null)
+    return a ? { ...a, index: pageStart.value + a.index * cols.value } : null
   },
-  restoreAnchor: (a: { index: number; offset: number; edge: 'top' | 'bottom' }, index?: number) =>
-    vlist.restoreAnchor(
-      { ...a, index: Math.floor(a.index / cols.value) },
-      Math.floor((index ?? a.index) / cols.value)),
+  restoreAnchor: (a: { index: number; offset: number; edge: 'top' | 'bottom' }, index?: number) => {
+    const target = index ?? a.index
+    withIndexOnPage(target, () => {
+      const row = localRow(target)
+      vlist.restoreAnchor({ ...a, index: row }, row)
+    })
+  },
   scrollToIndex: (index: number, align?: 'start' | 'center' | 'end' | 'nearest') =>
-    vlist.scrollToIndex(Math.floor(index / cols.value), align),
+    withIndexOnPage(index, () => vlist.scrollToIndex(localRow(index), align)),
 }
 
 const itemIndices = computed(() => {
   const out: number[] = []
   const c = cols.value
-  const n = total.value
+  const base = pageStart.value
+  const end = base + pageLen.value
   for (const r of vlist.indices.value) {
-    for (let i = r * c; i < Math.min(n, (r + 1) * c); i++) out.push(i)
+    for (let i = base + r * c; i < Math.min(end, base + (r + 1) * c); i++) out.push(i)
   }
   return out
 })
+
+/** User page change (pager / keys): new page from its top. */
+function goToPage(p: number) {
+  if (!isPaged.value) return
+  const t = Math.min(Math.max(0, Math.floor(p)), pageCount.value - 1)
+  if (t === currentPage.value) return
+  pageIndex.value = t
+  void nextTick(() => vlist.scrollToIndex(0, 'start'))
+}
+
+// Switching Single <-> Paged (or the page size) in the same folder keeps the
+// focused item, else the first visible one, in view. Transitions from
+// 'unknown' are a folder loading its setting: openDir already chose the page.
+watch(
+  () => `${pagingState.value}|${pageSize.value}`,
+  (now, before) => {
+    const [was] = (before ?? '').split('|')
+    if (!before || was === 'unknown' || pagingState.value === 'unknown') return
+    const [oldState, oldSize] = before.split('|')
+    const oldPaged = oldState === 'paged'
+    const oldPageSize = Number(oldSize) || PAGE_SIZE_DEFAULT
+    const oldStart = oldPaged
+      ? Math.min(pageIndex.value, Math.max(0, Math.ceil(total.value / oldPageSize) - 1)) * oldPageSize
+      : 0
+    const oldLen = oldPaged ? Math.min(oldPageSize, total.value - oldStart) : total.value
+    const pitch = vlist.rowPitch.value
+    const firstRow = pitch > 0 ? Math.floor(vlist.logicalTop.value / pitch) : 0
+    const focus = selection.focusIndex()
+    const anchor = focus != null && focus >= oldStart && focus < oldStart + oldLen
+      ? focus
+      : Math.min(Math.max(0, total.value - 1), oldStart + firstRow * cols.value)
+    pageIndex.value = pageOf(anchor)
+    void nextTick(() => vlist.scrollToIndex(localRow(anchor), focus === anchor ? 'nearest' : 'start'))
+  }
+)
 
 /* -----------------------------------------------
    Selection
@@ -312,6 +475,9 @@ selection.subscribe((s) => {
 const listing = useListing(source, {
   vlist: itemView,
   focusName: () => selState.value.focusId,
+  // Outside the dialog the listing is shelved on unmount (tab switch) and
+  // closed by the shelf's dispose when the pane is gone for good.
+  closeOnDispose: inDialog.value,
 })
 listingRef.value = listing
 
@@ -465,7 +631,8 @@ let lastClientX = 0, lastClientY = 0
 const geo = createVirtualGeometry({
   vlist,
   scrollEl: scrollerEl,
-  count: () => total.value,
+  count: () => pageLen.value,           // the page window…
+  offset: () => pageStart.value,        // …hit ranges come back as source indices
   columns: () => cols.value,
   cell: () => {
     // Grid cell geometry from the first rendered cell (viewport-relative).
@@ -649,6 +816,7 @@ type ItemsAction =
   | `focus.${FocusAction}` | `extend.${FocusAction}` | `move.${FocusAction}`
   | 'select.all' | 'select.toggleFocused' | 'select.clear'
   | 'open.focused' | 'rename.focused'
+  | 'page.next' | 'page.prev' | 'page.goto'
 
 const FOCUS_KEYS: Record<string, FocusAction> = {
   ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
@@ -666,6 +834,9 @@ const KEYMAP: Record<string, ItemsAction> = {
   'Escape': 'select.clear',
   'Enter': 'open.focused',
   'F2': 'rename.focused',
+  'Alt+PageDown': 'page.next',
+  'Alt+PageUp': 'page.prev',
+  'Ctrl+G': 'page.goto',
 }
 
 function keyCombo(ev: KeyboardEvent): string {
@@ -694,6 +865,14 @@ function runItemsAction(action: ItemsAction): void {
     case 'rename.focused': {
       const paths = selectedPathsNow()
       if (paths?.length === 1) void startItemRename(paths[0])
+      return
+    }
+    case 'page.next': goToPage(currentPage.value + 1); return
+    case 'page.prev': goToPage(currentPage.value - 1); return
+    case 'page.goto': {
+      if (!isPaged.value) return
+      chrome.reveal()                      // overlay mode: expand the pager first
+      void nextTick(() => pagerRef.value?.focusInput())
       return
     }
   }
@@ -958,6 +1137,121 @@ function onWidgetAction(msg: any) {
 function getNavState() { return { canGoBack: false, canGoForward: false, cwd: cwd.value } }
 
 /* -----------------------------------------------
+   Pager in the pane chrome
+------------------------------------------------ */
+const chrome = useWidgetChrome(() => isPaged.value)
+const pagerRef = ref<InstanceType<typeof ItemsPager> | null>(null)
+
+// Overlay mode hides the pager until Ctrl is held: say so once per session
+// when a paged folder gets focus (the "never" choice is remembered).
+let ctrlHintShown = false
+function onRootFocusIn() {
+  if (ctrlHintShown || !isPaged.value || chrome.mode.value !== 'overlay') return
+  ctrlHintShown = true
+  void showOnce('hint.items.ctrlPager', {
+    id: 'items-ctrl-pager',
+    text: 'Hold Ctrl to show the page controls.',
+    timeoutMs: 8000,
+    dedupe: 'replace',
+  })
+}
+
+/* -----------------------------------------------
+   Suggesting pages for very large folders
+   Once per visit of a folder with no paging record. "Use pages" / "Not now"
+   are recorded for that folder (as if chosen in the Layout menu); "Never"
+   turns the suggestion off everywhere.
+------------------------------------------------ */
+const pagingSuggestAt = computed(() => {
+  const n = Number(props.config?.view?.pagingSuggestAt)   // settings later
+  return Number.isInteger(n) && n > 0 ? n : 50_000
+})
+let suggestedFor = ''
+
+watch(
+  () => `${listing.status.value}|${pagingState.value}|${cwd.value}|${total.value > pagingSuggestAt.value}`,
+  () => {
+    if (inDialog.value || props.placement?.context === 'sidebar') return
+    if (listing.status.value !== 'ready' || pagingState.value !== 'none') return
+    const n = total.value
+    const path = cwd.value
+    if (n <= pagingSuggestAt.value || !path || suggestedFor === path) return
+    suggestedFor = path
+    void showOnce('hint.items.suggestPaging', {
+      id: 'items-suggest-paging',
+      text: `This folder has ${n.toLocaleString()} items. Show it in pages?`,
+      actions: [
+        { id: 'paged', label: 'Use pages' },
+        { id: 'single', label: 'Not now' },
+      ],
+      timeoutMs: 15000,
+      dedupe: 'replace',
+    }).then((res) => {
+      if (res.type !== 'action' || cwd.value !== path) return
+      const mode: ViewPaging['mode'] = res.actionId === 'paged' ? 'paged' : 'single'
+      props.runAction?.({ type: 'setView', patch: { paging: { mode, pageSize: pageSize.value } } })
+    })
+  }
+)
+
+/* -----------------------------------------------
+   Keeping the view across a remount (tab switch)
+------------------------------------------------ */
+function saveView() {
+  const kept = shelf.value
+  if (inDialog.value || !kept || kept.source !== source.value) return
+  const a = itemView.captureAnchor(selection.focusIndex())
+  const name = a ? rowAt(a.index)?.Name : undefined
+  const st = selState.value
+  const keepSelection = (!st.all && st.ids.size <= RESTORE_SELECTION_MAX) || (st.all && st.ids.size === 0)
+  kept.view = {
+    page: currentPage.value,
+    anchor: a && name ? { name, offset: a.offset, edge: a.edge } : null,
+    selection: keepSelection
+      ? { all: st.all, ids: st.all ? [] : [...st.ids], focusId: st.focusId, anchorId: st.anchorId }
+      : null,
+  }
+}
+
+/** Resolves once the host has told us this folder's paging (or after `ms`). */
+function pagingKnown(ms = 2000): Promise<void> {
+  if (pagingState.value !== 'unknown') return Promise.resolve()
+  return new Promise(resolve => {
+    const timer = window.setTimeout(() => { stop(); resolve() }, ms)
+    const stop = watch(pagingState, (st) => {
+      if (st !== 'unknown') { clearTimeout(timer); stop(); resolve() }
+    })
+  })
+}
+
+async function restoreView(v: SavedView) {
+  const s = source.value
+  if (!s) return
+  if (s.snapshot().version === 0) await waitForVersion(s, 0)
+  await pagingKnown()               // page math needs the folder's paging
+  await nextTick()
+  await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))   // list measured
+  if (s !== source.value) return
+
+  if (v.selection) {
+    if (v.selection.all) selection.selectAll()
+    else if (v.selection.ids.length) {
+      selection.setIds(v.selection.ids, { focusId: v.selection.focusId, anchorId: v.selection.anchorId })
+    }
+  }
+
+  if (v.anchor) {
+    const [index] = await s.find([v.anchor.name])
+    if (s !== source.value) return
+    if (index >= 0) {
+      itemView.restoreAnchor({ index, offset: v.anchor.offset, edge: v.anchor.edge }, index)
+      return
+    }
+  }
+  pageIndex.value = v.page
+}
+
+/* -----------------------------------------------
    Status line
 ------------------------------------------------ */
 const statusText = computed(() => {
@@ -991,6 +1285,11 @@ const hostVars = computed(() => ({
    Messages / lifecycle
 ------------------------------------------------ */
 onMounted(() => {
+  if (pendingRestore) {
+    const v = pendingRestore
+    pendingRestore = null
+    void restoreView(v)
+  }
   on('fs:refresh-after-drop', (msg: any) => {
     const current = cwd.value || merged.value.rpath || ''
     const target = String(msg.payload?.target || '')
@@ -1015,13 +1314,15 @@ on('items:reloadAndRename', async (msg: any) => {
 })
 
 onBeforeUnmount(() => {
+  saveView()      // before the selection goes away
   if (iconsRaf) cancelAnimationFrame(iconsRaf)
   if (selectionEventTimer) clearTimeout(selectionEventTimer)
   try { driver.destroy() } catch {}
   try { selection.destroy() } catch {}
   try { dispose() } catch {}
   cleanup()   // unregisters all on() subscriptions including those in useItemsDragDrop
-  // useListing closes the listing when the component goes away.
+  // The listing stays open on the lifecycle shelf (closed when the pane is
+  // released); in the dialog useListing closes it.
 })
 
 defineExpose({ applyExternalCwd, getNavState, onWidgetAction })
@@ -1038,7 +1339,20 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction })
       'drag-selecting': marqueeActive,
       'drop-active': isDropActive,
     }"
+    @focusin="onRootFocusIn"
   >
+    <!-- Pager: rendered into the host's pane chrome (header strip or overlay slot) -->
+    <Teleport v-if="isPaged && chrome.target.value" :to="chrome.target.value">
+      <ItemsPager
+        ref="pagerRef"
+        :page="currentPage"
+        :page-count="pageCount"
+        :jump="pagerJump"
+        :expanded="chrome.expanded.value"
+        @go="goToPage"
+      />
+    </Teleport>
+
     <!-- Focusable scroller; captures keyboard for every layout -->
     <div
       class="items-scroll-container"

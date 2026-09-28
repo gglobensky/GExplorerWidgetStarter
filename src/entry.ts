@@ -111,6 +111,8 @@ export default {
                 { id: 'grid',    icon: '▦', tooltip: 'Grid'    },
                 { id: 'details', icon: '▤', tooltip: 'Details' },
             ],
+            // Layout menu gets "Single page" / "Paged ▸"; the choice is stored per folder
+            paging: { pageSizes: [100, 250, 500, 1000, 2500, 5000], defaultPageSize: 500 },
             minSize: { cols: 2, rows: 2 },
         },
         sidebar: {

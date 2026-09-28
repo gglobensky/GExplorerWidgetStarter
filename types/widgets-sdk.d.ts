@@ -797,6 +797,8 @@ declare module 'gexplorer/widgets' {
         columns?: () => number
         /** Grid cell geometry, viewport-relative px. */
         cell?: () => { x0: number; width: number; gapX: number }
+        /** Paged lists: source index of the list's first item; hit ranges come back as source indices. Default 0. */
+        offset?: () => number
     }
     export interface VirtualGeometry extends IndexGeometry {
         /** Logical scroll distance since the last call: pass to driver.adjustForScroll in the scroll handler. */
@@ -1000,7 +1002,115 @@ declare module 'gexplorer/widgets' {
     export function applyFavoritesMove(from: number, to: number): void
 
     export function getCurrentPath(): string | null
-    export function createLifecycle(ownerId: string): any
+    // ── Lifecycle ──────────────────────────────────────────────────────────
+    // State that outlives the component: a widget unmounts on tab switch (and
+    // sidebar collapse) but its owner lives on until the host destroys it —
+    // pane closed for good, tab closed, widget removed. Use your sourceId as
+    // the owner id.
+    //
+    //   const life = createLifecycle(props.sourceId)
+    //   const page = life.cell('page', 0)                       // same Ref after remount
+    //   const src  = life.persistRef('listing', null, { dispose: s => s?.close() })
+    export type LifecycleVisibility = 'visible' | 'collapsed'
+    export type PersistOptions<T> = {
+        /** Called with the current value when the owner is destroyed (close a listing, free a handle…). */
+        dispose?: (value: T) => void
+    }
+    export type HydratePolicy = 'always' | 'once' | 'never'
+    export interface LifecycleWorkerHandle {
+        status: Readonly<Ref<string>>
+        stats: Readonly<Ref<any>>
+        pid: Readonly<Ref<number | null>>
+        crashCount: Readonly<Ref<number>>
+        isRunning: ComputedRef<boolean>
+        isCrashed: ComputedRef<boolean>
+        restart(): Promise<void>
+        send(command: string, payload?: Record<string, any>): Promise<void>
+        ping(): Promise<void>
+    }
+    export interface WidgetLifecycle {
+        /** 'collapsed' while the host has the widget folded away (sidebar). */
+        readonly visibility: Ref<LifecycleVisibility>
+        onSuspend(fn: () => void): () => void
+        onResume(fn: () => void): () => void
+        /**
+         * Runs once when the host destroys the owner. Survives unmount: register it
+         * once (or use persistRef's `dispose`), or call the returned function on unmount.
+         */
+        onDestroy(fn: () => void): () => void
+
+        /** Snapshot a ref on suspend, write it back on resume. */
+        bindRef<T>(key: string, target: Ref<T>, opts?: { hydrate?: HydratePolicy }): () => void
+        bindReactive<T extends object>(key: string, target: T, opts?: { hydrate?: HydratePolicy; deep?: boolean }): () => void
+        snapshotNow(key?: string): void
+        hydrateNow(key?: string): void
+
+        /** The same Ref instance across unmount/remount until the owner is destroyed. */
+        persistRef<T>(key: string, initial: T | (() => T), opts?: PersistOptions<T>): Ref<T>
+        /** The same shallow-reactive object across unmount/remount. */
+        persistReactive<T extends object>(key: string, initial: T | (() => T)): T
+        cell<T>(key: string, initial: T | (() => T), opts?: PersistOptions<T>): Ref<T>
+        defineCells<T extends Record<string, any>>(shape: T): { [K in keyof T]: Ref<T[K]> }
+        group<T extends Record<string, any>>(ns: string, shape: T): { [K in keyof T]: Ref<T[K]> }
+
+        /** Timers paused while suspended; return a disposer. */
+        keepInterval(fn: () => void, ms: number): () => void
+        keepTimeout(fn: () => void, ms: number): () => void
+
+        /** Observe and command a background worker registered by this widget (call in setup()). */
+        worker(workerId: string): LifecycleWorkerHandle
+    }
+    export function createLifecycle(ownerId: string): WidgetLifecycle
+
+    // ── Host actions (props.runAction) ────────────────────────────────────
+    // The host passes runAction to every widget. setView merges a patch into
+    // the widget's view config; the parent persists it like a layout change
+    // (per folder for Items widgets).
+    export type HostAction =
+        | { type: 'nav'; to: string; replace?: boolean }
+        | { type: 'open'; path: string }
+        | { type: 'openUrl'; url: string; options?: { askUser?: boolean; title?: string } }
+        | { type: 'setView'; patch: Record<string, unknown> }
+
+    // ── Paging (view option rendered by the host) ─────────────────────────
+    // Declare it in the manifest to get "Single page" / "Paged ▸" in the
+    // Layout menu:  contexts: { grid: { layouts: [...], paging: { pageSizes: [100, 500], defaultPageSize: 500 } } }
+    // The choice arrives in props.config.view.paging:
+    //   undefined → not known yet (the host is still looking up the folder)
+    //   null      → no choice recorded for this folder
+    //   ViewPaging → the user's choice ('single' is an explicit choice too)
+    export type WidgetPagingDef = { pageSizes: number[]; defaultPageSize: number }
+    export type ViewPaging = { mode: 'single' | 'paged'; pageSize: number }
+
+    // ── Pane chrome ────────────────────────────────────────────────────────
+    // The host draws a strip around the widget (header mode: one row above
+    // it; overlay mode: floating over its top row). Widgets add their own
+    // controls to its slot:
+    //
+    //   const chrome = useWidgetChrome(() => isPaged.value)
+    //   <Teleport v-if="chrome.target.value" :to="chrome.target.value">
+    //     <Pager v-if="chrome.expanded.value" /> <Badge v-else />
+    //   </Teleport>
+    //
+    // In overlay mode the slot is collapsed and click-through until the user
+    // holds Ctrl in the focused pane; render a compact, passive form then.
+    export type PaneChromeMode = 'header' | 'overlay'
+    export type WidgetChrome = {
+        /** 'header' or 'overlay' (the user's choice). */
+        mode: Readonly<Ref<PaneChromeMode>>
+        /** Element to <Teleport> controls into; null until the host has rendered it. */
+        target: Readonly<Ref<HTMLElement | null>>
+        /** Full controls when true (always in header mode); compact passive form when false. */
+        expanded: Readonly<Ref<boolean>>
+        /** Expands the controls now (overlay mode), e.g. before focusing an input in them. */
+        reveal(): void
+    }
+    /**
+     * Joins the host's pane chrome. `active` says whether the widget has controls
+     * to show right now; the header only takes a row while it has content.
+     * Throws outside a WidgetHost. Call in setup().
+     */
+    export function useWidgetChrome(active?: Ref<boolean> | ComputedRef<boolean> | (() => boolean) | boolean): WidgetChrome
     export function useAudio(): any
 
     export function registerWidgetMenus(widgetType: string, config: any): void
