@@ -9,11 +9,11 @@ import {
   type FileRefData 
 } from 'gexplorer/widgets'
 
-const { 
-  fsWriteText,
-  authorizeFileRefs, 
-  fileRefsToPlaylistItems
- } = inject<WidgetSdk>('widgetSdk') ?? {}
+// The widget SDK is injected INSIDE usePlaylist() (see there): inject() only
+// works during a component's setup(). At module top level it returns
+// undefined, which left fsWriteText / authorizeFileRefs /
+// fileRefsToPlaylistItems undefined: "gt is not a function" when adding files
+// through the host dialog, and playlist save always fell back to a download.
 // Reuse converter (refs → gex:// items → tracks)
 
 // ---------- Lazy SDK import for FS wrappers (no Vue hooks here) ----------
@@ -28,9 +28,14 @@ async function tryReadText(path: string): Promise<string | null> {
 }
 */
 
-async function tryWriteText(path: string, text: string): Promise<boolean> {
+async function tryWriteText(
+    write: WidgetSdk['fsWriteText'],
+    path: string,
+    text: string
+): Promise<boolean> {
+    if (!write) return false
     try {
-        await fsWriteText(path, text)
+        await write(path, text)
         return true
     } catch {
         return false
@@ -79,6 +84,11 @@ export function usePlaylist(
   receiverWidgetId: string
 ) {
   ensureUnloadHook()
+
+  // Called from Widget.vue's setup(), so inject() works here.
+  const sdk = inject<WidgetSdk>('widgetSdk')
+  if (!sdk) throw new Error('[local-player] usePlaylist: widgetSdk is not provided')
+  const { fsWriteText, authorizeFileRefs, fileRefsToPlaylistItems } = sdk
 
   // ---- internal helpers (dialog-based) ----
   function toHostFilters(defs: Array<{ name: string; extensions: string[] }>) {
@@ -246,7 +256,7 @@ export function usePlaylist(
         })
         const targetPath: string | undefined = sel?.path || (sel?.paths?.[0] ?? undefined)
 
-        if (targetPath && await tryWriteText(targetPath, text)) return
+        if (targetPath && await tryWriteText(fsWriteText, targetPath, text)) return
         
       } catch { /* fall through to browser fallback */ }
 

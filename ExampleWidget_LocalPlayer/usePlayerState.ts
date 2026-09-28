@@ -19,9 +19,14 @@ export type Track = {
     _ownedBlob?: boolean
 }
 
-const { mintStreamHttp } = inject<WidgetSdk>('widgetSdk') ?? {}
-
 export function usePlayerState(sourceId: string) {
+    // Called from Widget.vue's setup(), so inject() works here. It used to run
+    // at module top level, where inject() returns undefined, so mintStreamHttp
+    // was undefined and renewing an expired stream URL threw.
+    const sdk = inject<WidgetSdk>('widgetSdk')
+    if (!sdk) throw new Error('[local-player] usePlayerState: widgetSdk is not provided')
+    const { mintStreamHttp } = sdk
+
     const life = createLifecycle(sourceId)
     const { prime, acquireElement, playlists } = useAudio()
     const sel = { ownerId: sourceId, category: 'music' as const, key: 'local-player' }

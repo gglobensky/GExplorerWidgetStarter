@@ -1,21 +1,32 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from '/runtime/vue.js'
 import { iconFor } from 'gexplorer/widgets'
+import type { ListingEntry, ListingSortKey, ListingSortDir } from 'gexplorer/widgets'
 
 /* -----------------------------------------------
    Types
 ------------------------------------------------ */
-type SortKey = 'name' | 'kind' | 'ext' | 'size' | 'modified'
-type SortDir = 'asc' | 'desc'
+type SortKey = ListingSortKey
+type SortDir = ListingSortDir
 type ResCol = 'name' | 'ext' | 'size' | 'mod'
 type DetailWeights = { name: number; ext: number; size: number; mod: number }
 
 /* -----------------------------------------------
    Props
+   Rows are virtual (L3b): Widget.vue hands in the visible item `indices`
+   (useVirtualList), `rowAt` / `isSelected` lookups, and the geometry
+   (`totalHeight`, `offsetY`). Unloaded rows render as placeholders; one
+   hidden sizer row gives the row height (rows must stay one line).
 ------------------------------------------------ */
 const props = defineProps<{
-  entries:          any[]
-  selected:         Set<string>
+  indices:          number[]
+  rowAt:            (index: number) => ListingEntry | undefined
+  isSelected:       (index: number) => boolean
+  iconKeyOf:        (entry: ListingEntry) => string
+  totalHeight:      number
+  offsetY:          number
+  bindSizer:        (el: any) => void
+  bindRows:         (el: any) => void
   iconsTick:        number
   sourceId:         string
   sortKey:          SortKey
@@ -33,12 +44,10 @@ const props = defineProps<{
    Emits
 ------------------------------------------------ */
 const emit = defineEmits<{
-  (e: 'rowDown', payload: { id: string; mods: any }): void
+  (e: 'rowDown', payload: { index: number; ev: PointerEvent }): void
   (e: 'rowMove', payload: { x: number; y: number }): void
-  (e: 'rowUp', payload: { id: string }): void
-  (e: 'dblclick', payload: { id: string; entry: any }): void
-  (e: 'dragstart', payload: { entry: any; event: DragEvent }): void
-  (e: 'dragend'): void
+  (e: 'rowUp', payload: { index: number }): void
+  (e: 'dblclick', payload: { index: number }): void
   (e: 'headerClick', key: SortKey): void
   (e: 'surfacePointerDown', event: PointerEvent): void
   (e: 'surfacePointerMove', event: PointerEvent): void
@@ -132,8 +141,8 @@ function entryDimName(e: any): boolean {
    element makes the rows re-render when icons land. (entry.Icon, read before,
    was never set by anything.)
 ------------------------------------------------ */
-function iconOf(e: any): string {
-  return iconFor({ iconKey: e?.IconKey, kind: e?.Kind, ext: e?.Ext })
+function iconOf(e: ListingEntry): string {
+  return iconFor({ iconKey: props.iconKeyOf(e), kind: e.Kind, ext: e.Ext })
 }
 function iconIsImg(e: any): boolean {
   const icon = iconOf(e)
@@ -176,8 +185,8 @@ function modLabel(e: any) {
 /* -----------------------------------------------
    Helpers
 ------------------------------------------------ */
-function modsFromEvent(e: PointerEvent | MouseEvent | KeyboardEvent) {
-  return { ctrl: e.ctrlKey || false, meta: (e as any).metaKey || false, shift: e.shiftKey || false, alt: e.altKey || false }
+function keyOf(i: number): string {
+  return props.rowAt(i)?.Name ?? `\u0000placeholder:${i}`
 }
 
 function normalizeWeights(o: DetailWeights): DetailWeights {
@@ -269,12 +278,6 @@ function contentGridWidth(): number {
 /* -----------------------------------------------
    Event Handlers
 ------------------------------------------------ */
-function handleRowDown(id: string, event: PointerEvent) { emit('rowDown', { id, mods: modsFromEvent(event) }) }
-function handleRowMove(x: number, y: number)            { emit('rowMove', { x, y }) }
-function handleRowUp(id: string)                        { emit('rowUp', { id }) }
-function handleDblClick(id: string, entry: any)         { emit('dblclick', { id, entry })}
-function handleDragStart(entry: any, event: DragEvent)  { emit('dragstart', { entry, event }) }
-function handleDragEnd()                                { emit('dragend') }
 
 function onHeaderClickFiltered(nextKey: SortKey, ev: MouseEvent) {
   const t = ev.target as HTMLElement | null
@@ -344,62 +347,77 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl })
         :style="{ left: marqueeRect.x + 'px', top: marqueeRect.y + 'px', width: marqueeRect.w + 'px', height: marqueeRect.h + 'px' }"
       />
 
-      <div class="details-pad" ref="padEl">
-        <div class="details-grid">
-          <button
-            class="row"
-            :key="e.FullPath"
-            :data-path="e.FullPath"
-            v-for="(e, i) in entries"
-            :class="{
-              selected:             selected.has(e.FullPath),
-              'folder-drop-target': e.FullPath === props.folderDropTarget,
-              'vfs-ghost':          e.Meta?.blobState === 'ghost',
-              'vfs-fetching':       e.Meta?.blobState === 'fetching',
-              'vfs-unseeded':       e.Meta?.blobState === 'unseeded',
-            }"
-            :style="entryStyle(e)"
-            @pointerdown.stop="(ev) => handleRowDown(e.FullPath, ev)"
-            @pointermove.stop="(ev) => handleRowMove(ev.clientX, ev.clientY)"
-            @click.stop.prevent="() => handleRowUp(e.FullPath)"
-            @dblclick.stop.prevent="() => handleDblClick(e.FullPath, e)"
-          >
-            <!-- Name cell -->
-            <div class="td td-name" :title="e.Name || e.FullPath">
-              <span class="icon">
-                <img v-if="iconIsImg(e)" :src="iconSrc(e)" alt="" />
-                <span v-else>{{ iconText(e) }}</span>
-              </span>
+      <div class="details-pad" ref="padEl" :style="{ height: totalHeight + 'px' }">
+        <div class="details-grid" :ref="bindRows" :style="{ transform: `translateY(${offsetY}px)` }">
+          <template v-for="i in indices" :key="keyOf(i)">
+            <button
+              v-if="rowAt(i)"
+              class="row"
+              :data-path="rowAt(i)!.FullPath"
+              :data-index="i"
+              :data-kind="rowAt(i)!.Kind"
+              :class="{
+                selected:             isSelected(i),
+                'folder-drop-target': rowAt(i)!.FullPath === props.folderDropTarget,
+                'vfs-ghost':          rowAt(i)!.Meta?.blobState === 'ghost',
+                'vfs-fetching':       rowAt(i)!.Meta?.blobState === 'fetching',
+                'vfs-unseeded':       rowAt(i)!.Meta?.blobState === 'unseeded',
+              }"
+              :style="entryStyle(rowAt(i)!)"
+              @pointerdown.stop="(ev) => emit('rowDown', { index: i, ev })"
+              @pointermove.stop="(ev) => emit('rowMove', { x: ev.clientX, y: ev.clientY })"
+              @click.stop.prevent="() => emit('rowUp', { index: i })"
+              @dblclick.stop.prevent="() => emit('dblclick', { index: i })"
+            >
+              <!-- Name cell -->
+              <div class="td td-name" :title="rowAt(i)!.Name">
+                <span class="icon">
+                  <img v-if="iconIsImg(rowAt(i)!)" :src="iconSrc(rowAt(i)!)" alt="" />
+                  <span v-else>{{ iconText(rowAt(i)!) }}</span>
+                </span>
 
-              <!-- VFS state badge — only rendered when provider declares one.
-                   Completely agnostic: any VFS scheme can show a badge here
-                   by returning badge/badgeTitle/animated from getEntryStyle. -->
-              <span
-                v-if="entryBadge(e)"
-                class="vfs-badge"
-                :class="{ 'vfs-badge--animated': entryBadge(e)?.animated }"
-                :title="entryBadge(e)?.title"
-              >{{ entryBadge(e)?.text }}</span>
+                <!-- VFS state badge — only rendered when provider declares one.
+                     Completely agnostic: any VFS scheme can show a badge here
+                     by returning badge/badgeTitle/animated from getEntryStyle. -->
+                <span
+                  v-if="entryBadge(rowAt(i)!)"
+                  class="vfs-badge"
+                  :class="{ 'vfs-badge--animated': entryBadge(rowAt(i)!)?.animated }"
+                  :title="entryBadge(rowAt(i)!)?.title"
+                >{{ entryBadge(rowAt(i)!)?.text }}</span>
 
-              <span
-                class="name"
-                :class="{ 'vfs-dim-name': entryDimName(e) }"
-                :data-rename-id="e.FullPath"
-                :data-rename-value="e.Name"
-                :data-widget-id="sourceId"
-              >{{ e.Name || e.FullPath }}</span>
-            </div>
+                <span
+                  class="name"
+                  :class="{ 'vfs-dim-name': entryDimName(rowAt(i)!) }"
+                  :data-rename-id="rowAt(i)!.FullPath"
+                  :data-rename-value="rowAt(i)!.Name"
+                  :data-widget-id="sourceId"
+                >{{ rowAt(i)!.Name }}</span>
+              </div>
 
-            <div class="td td-ext"  :title="e.Ext || ''">{{ e.Ext || '' }}</div>
-            <div class="td td-size" :title="sizeLabel(e)">
-              <span class="num">{{ sizeParts(e?.Size).num }}</span>
-              <span class="unit">{{ sizeParts(e?.Size).unit }}</span>
+              <div class="td td-ext"  :title="rowAt(i)!.Ext">{{ rowAt(i)!.Ext }}</div>
+              <div class="td td-size" :title="sizeLabel(rowAt(i)!)">
+                <span class="num">{{ sizeParts(rowAt(i)!.Size).num }}</span>
+                <span class="unit">{{ sizeParts(rowAt(i)!.Size).unit }}</span>
+              </div>
+              <div class="td td-mod" :title="modLabel(rowAt(i)!)">
+                <span class="date">{{ modParts(rowAt(i)!.ModifiedAt).date }}</span>
+                <span class="time">{{ modParts(rowAt(i)!.ModifiedAt).time }}</span>
+              </div>
+            </button>
+            <div v-else class="row placeholder" :data-index="i" aria-hidden="true">
+              <div class="td td-name"><span class="icon" /><span class="name">&nbsp;</span></div>
+              <div class="td td-ext" /><div class="td td-size" /><div class="td td-mod" />
             </div>
-            <div class="td td-mod" :title="modLabel(e)">
-              <span class="date">{{ modLabel(e).split(' ')[0] }}</span>
-              <span class="time">{{ modParts(e?.ModifiedAt).time }}</span>
-            </div>
-          </button>
+          </template>
+        </div>
+
+        <!-- Row-height probe for useVirtualList (same classes as a row, never visible) -->
+        <div class="details-grid sizer-grid" aria-hidden="true">
+          <div class="row sizer" :ref="bindSizer">
+            <div class="td td-name"><span class="icon" /><span class="name">X</span></div>
+            <div class="td td-ext">X</div><div class="td td-size">X</div><div class="td td-mod">X</div>
+          </div>
         </div>
       </div>
     </div>
@@ -563,9 +581,21 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl })
   cursor: pointer;
   font-size: var(--local-font-md);
   text-align: var(--items-row-text-align, left);
-  content-visibility: auto;
-  contain-intrinsic-size: 32px;
 }
+
+.details-grid { will-change: transform; }
+
+/* Sizer: an out-of-flow copy of a row, measured by useVirtualList. */
+.sizer-grid {
+  position: absolute;
+  top: 0;
+  left: var(--items-gutter-left, 5%);
+  right: var(--items-gutter-right, 5%);
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.placeholder { opacity: 0.35; }
 
 .row:focus, .row:focus-visible { outline: none !important; }
 .row { cursor: grab; }

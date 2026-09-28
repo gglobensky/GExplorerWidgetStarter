@@ -53,7 +53,11 @@ declare module 'gexplorer/widgets' {
         openFolder?: (entry: any) => Promise<void>
 
         // Read cap
-        fsListDirSmart?: (path: string, options?: FsListDirOptions) => Promise<FsListDirResult>
+        /**
+         * Paged listing of a folder (sorted and filtered by the backend) or of a
+         * VFS path. Starts loading at once; close() it (useListing does) when done.
+         */
+        openListing?: (path: string, options?: OpenListingOptions) => ListingSource
 
         // Write cap
         fsMkdir?: (path: string) => Promise<void>
@@ -190,15 +194,6 @@ declare module 'gexplorer/widgets' {
 
     // ── FS types ───────────────────────────────────────────────────────────
 
-    export type FsListDirOptions = {
-        sortBy?: 'name' | 'kind' | 'ext' | 'size' | 'modified'
-        sortDir?: 'asc' | 'desc'
-        filterExts?: string[]
-        activeOptions?: string[]
-        chunked?: boolean
-        chunkSize?: number
-    }
-
     export type FsEntry = {
         Name: string
         FullPath: string
@@ -206,12 +201,6 @@ declare module 'gexplorer/widgets' {
         Size?: number
         Modified?: string
         Ext?: string
-    }
-
-    export type FsListDirResult = {
-        ok: boolean
-        entries: FsEntry[]
-        error?: string
     }
 
     export type DriveStats = {
@@ -520,14 +509,64 @@ declare module 'gexplorer/widgets' {
     export type SortableHandle = Record<string, any>
     export type ItemsAdapter = Record<string, any>
     export type Mods = Record<string, any>
-    export type GeometryAdapter = Record<string, any>
-    export type ScrollerAdapter = Record<string, any>
+    // ── Marquee ────────────────────────────────────────────────────────────
+    // Coordinates are viewport-relative (the scroll element's padding box);
+    // call driver.adjustForScroll(dy) from the scroll handler.
 
-    export type Rect = {
-        x: number
-        y: number
-        width: number
-        height: number
+    export type Point = { x: number; y: number }
+    export type Rect = { x: number; y: number; w: number; h: number }
+    /** Inclusive [first, last] item indices. */
+    export type IndexRange = readonly [number, number]
+
+    /** DOM lists: every item's rect; drives an id engine (createSelectionEngine). */
+    export type RectGeometry = {
+        itemRects(): Array<{ id: string; rect: Rect }>
+        pointFromClient(clientX: number, clientY: number): Point
+        contentRect(): Rect
+    }
+    /** Virtual lists: index ranges under a rect; drives a RangeSelectionTarget (createListSelection). */
+    export type IndexGeometry = {
+        hitRanges(rect: Rect): IndexRange[]
+        pointFromClient(clientX: number, clientY: number): Point
+        contentRect(): Rect
+    }
+    export type GeometryAdapter = RectGeometry | IndexGeometry
+
+    export type ScrollerAdapter = {
+        scrollTop(): number
+        maxScrollTop(): number
+        scrollBy(dy: number): void
+    }
+
+    export type SelectionEngineLite = {
+        replaceSelection(next: Iterable<string>, opts?: { reason?: string; focusId?: string | null; anchorId?: string | null }): void
+        getSelected(): Set<string>
+    }
+    export type RangeSelectionTarget = {
+        marqueeBegin(combine: 'replace' | 'add' | 'toggle'): void
+        marqueeUpdate(ranges: IndexRange[]): void
+        marqueeEnd(): void
+        marqueeCancel(): void
+    }
+
+    export type MarqueeConfig = {
+        enabled: boolean
+        startThresholdPx?: number
+        fps?: number
+        guardTopPx?: number
+        autoscroll?: { enabled: boolean; baseSpeed?: number; speedMultiplier?: number; maxDistancePx?: number }
+        combine?: 'auto' | 'replace' | 'add' | 'toggle'
+        policy?: 'windows' | 'mac'
+    }
+    export type MarqueeEvents = { rectChanged?: (rect: Rect | null) => void; log?: (e: any) => void }
+    export type MarqueeDriver = {
+        pointerDown(ev: PointerEvent, mods: { ctrl: boolean; meta: boolean; shift: boolean; alt: boolean }): void
+        pointerMove(ev: PointerEvent): void
+        pointerUp(ev: PointerEvent): void
+        recomputeNow(reason?: string): void
+        adjustForScroll(dy: number): void
+        cancel(): void
+        destroy(): void
     }
 
     export type DropIntent = 'before' | 'after' | 'into'
@@ -599,6 +638,263 @@ declare module 'gexplorer/widgets' {
     export function createLinearSortable(options: CreateSortableOptions): SortableHandle
     export function useSortable(options: any): any
     export function useScrollHints(options: any): any
+
+    // ── Listings ───────────────────────────────────────────────────────────
+    // A ListingSource is the row source behind any list-shaped widget. Get one
+    // from sdk.openListing (folders, Read cap), createMemoryListing (your own
+    // rows), or implement the interface yourself: useListing and
+    // useVirtualList work with any implementation.
+    //
+    // Rows are addressed by index in the current order; `version` bumps on
+    // every new order (sort, refresh), after which rows must be re-read.
+
+    export type ListingSortKey = 'name' | 'ext' | 'size' | 'modified' | 'kind'
+    export type ListingSortDir = 'asc' | 'desc'
+    export interface ListingSort {
+        key: ListingSortKey
+        dir: ListingSortDir
+        /** Folders ahead of files in both directions. Default true. */
+        foldersFirst: boolean
+    }
+    export interface ListingFilter {
+        /** Allowed extensions, lowercase without dot. Folders always pass. */
+        exts?: string[]
+        /** Windows: hide .exe files that are not GUI programs. */
+        guiOnly?: boolean
+        /** Include hidden entries (Hidden attribute on Windows, dot-names elsewhere). Default false. */
+        showHidden?: boolean
+        /** Keep only these kinds (a folder junction / symlink is a 'link'). Default: all. */
+        kinds?: Array<'dir' | 'file' | 'link'>
+    }
+    export interface ListingEntry {
+        Name: string
+        FullPath: string
+        Kind: 'dir' | 'file' | 'link'
+        /** Lowercase with dot; '' for folders and extensionless files. */
+        Ext: string
+        Size: number | null
+        ModifiedAt: number | null
+        IconKey: string
+        Hidden: boolean
+        [extra: string]: any
+    }
+    export type ListingStatus = 'loading' | 'ready' | 'error' | 'closed'
+    export interface ListingError { code: string; message: string }
+    export interface ListingSnapshot {
+        readonly status: ListingStatus
+        readonly total: number
+        /** Bumps on every new order. 0 = nothing loaded yet. */
+        readonly version: number
+        readonly sort: ListingSort
+        readonly progress: { phase: 'scan' | 'sort'; scanned: number } | null
+        /** Changed on disk; a refresh is scheduled. */
+        readonly stale: boolean
+        readonly error: ListingError | null
+        /** Bumps when fetched rows arrive. */
+        readonly rowsTick: number
+        readonly basePath: string
+    }
+    export type ListingListener = (snapshot: ListingSnapshot) => void
+    export interface ListingSource {
+        snapshot(): ListingSnapshot
+        subscribe(listener: ListingListener): () => void
+        /** Row at index in the current version; undefined while not loaded yet. */
+        at(index: number): ListingEntry | undefined
+        /** Rows on screen: loads what is missing around them (only the latest call counts). */
+        ensure(start: number, end: number): void
+        setSort(sort: Partial<ListingSort>): void
+        /** Indices of names in the current order (-1 = absent). */
+        find(names: string[]): Promise<number[]>
+        /**
+         * Rows [start, end) of the current order, fetched as needed. Rejects with
+         * code 'E_VERSION' if the order changes meanwhile, or if `version` is given
+         * and is no longer current.
+         */
+        rows(start: number, end: number, version?: number): Promise<ListingEntry[]>
+        refresh(): void
+        /** Defers refreshes until the returned release is called (batch operations). */
+        holdRefresh?(): () => void
+        close(): void
+    }
+    export interface OpenListingOptions {
+        sort?: Partial<ListingSort>
+        filter?: ListingFilter
+        /** Stable consumer id (e.g. instance id): a new listing with the same owner replaces the old one. */
+        owner?: string
+        /** Reload when the folder changes on disk. Default true. */
+        autoRefresh?: boolean
+        /** On access denied, ask for elevated access and retry. Default true. */
+        consent?: boolean
+    }
+    export interface MemoryListingOptions {
+        sort?: Partial<ListingSort>
+        filter?: ListingFilter
+        basePath?: string
+        /** Used by refresh() to reload the rows. */
+        load?: () => Promise<any[]>
+    }
+    export interface MemoryListingSource extends ListingSource {
+        /** Replaces the rows. */
+        setRows(rows: any[]): void
+        markStale(): void
+    }
+    export function createMemoryListing(rows: any[], options?: MemoryListingOptions): MemoryListingSource
+
+    export type VirtualAnchor = { index: number; offset: number; edge: 'top' | 'bottom' }
+    export type ScrollAlign = 'start' | 'center' | 'end' | 'nearest'
+    export interface UseVirtualListOptions {
+        scrollEl: Ref<HTMLElement | null>
+        /** Hidden row with the same classes as a real row: its height is the row height. */
+        sizerEl: Ref<HTMLElement | null>
+        /** Element holding the rows; its CSS row-gap is used when `gap` is omitted. */
+        rowsEl?: Ref<HTMLElement | null>
+        count: Ref<number> | (() => number)
+        gap?: number | (() => number)
+        /** Px from the top of the scroll content to the first row. */
+        contentOffset?: number | (() => number)
+        /** Extra rows above and below the viewport. Default 6. */
+        overscan?: number
+        onRange?: (start: number, end: number) => void
+    }
+    /**
+     * Windowing: every row has the same height; only rows in view (+ overscan)
+     * are rendered. Handles lists taller than the browser's element limit.
+     */
+    export interface VirtualList {
+        start: ComputedRef<number>
+        end: ComputedRef<number>
+        indices: ComputedRef<number[]>
+        totalHeight: ComputedRef<number>
+        offsetY: ComputedRef<number>
+        rowPitch: ComputedRef<number>
+        /** Row height without the gap. */
+        rowHeight: Ref<number>
+        /** Logical px of the viewport top into the rows (uncapped). */
+        logicalTop: ComputedRef<number>
+        viewportHeight: Ref<number>
+        /** Logical y of a viewport-relative y. */
+        logicalYAt(viewY: number): number
+        /** Reads the scroll position now (normally updated once per frame). */
+        syncScroll(): void
+        scrollToIndex(index: number, align?: ScrollAlign): void
+        /** Row under a clientY, -1 outside the rows. */
+        indexAtClientY(clientY: number): number
+        viewTopOfIndex(index: number): number
+        isIndexVisible(index: number): boolean
+        captureAnchor(prefer?: number | null): VirtualAnchor | null
+        restoreAnchor(anchor: VirtualAnchor, index?: number): void
+        measure(): void
+    }
+    export function useVirtualList(options: UseVirtualListOptions): VirtualList
+
+    // ── Virtual geometry (marquee on a useVirtualList) ────────────────────
+    export interface VirtualGeometryOptions {
+        vlist: Pick<VirtualList, 'logicalYAt' | 'logicalTop' | 'rowPitch' | 'rowHeight' | 'syncScroll'>
+        scrollEl: Ref<HTMLElement | null>
+        /** Number of items (not visual rows). */
+        count: () => number
+        /** Items per visual row (grid). Default 1. */
+        columns?: () => number
+        /** Grid cell geometry, viewport-relative px. */
+        cell?: () => { x0: number; width: number; gapX: number }
+    }
+    export interface VirtualGeometry extends IndexGeometry {
+        /** Logical scroll distance since the last call: pass to driver.adjustForScroll in the scroll handler. */
+        consumeScrollDelta(): number
+    }
+    export function createVirtualGeometry(options: VirtualGeometryOptions): VirtualGeometry
+
+    // ── List selection (virtual lists over a ListingSource) ───────────────
+    // Stores names (survives re-sorts); Ctrl+A is "all except". Fed by row
+    // gestures, marquee ranges (it is a RangeSelectionTarget) and actions.
+    // Actions are not bound to keys: map keys to them in your widget.
+    export type CombineMode = 'replace' | 'add' | 'toggle'
+    export type SelectMods = { ctrl: boolean; meta: boolean; shift: boolean; alt?: boolean }
+    export type FocusAction = 'up' | 'down' | 'left' | 'right' | 'pageUp' | 'pageDown' | 'home' | 'end'
+    export type SelectionLimit = { kind: 'range' | 'resolve'; count: number; max: number }
+    export interface ListSelectionOptions {
+        source: () => ListingSource | null
+        /** Items per visual row (grid). Default 1. */
+        columns?: () => number
+        /** Items per page for pageUp / pageDown. Default 20. */
+        pageSize?: () => number
+        policy?: 'windows' | 'mac'
+        /** Largest Shift / marquee range. Default 50,000. */
+        maxRange?: number
+        /** Largest "all except" selection selectedPaths / selectedEntries read. Default 200,000. */
+        maxResolve?: number
+        dragThresholdPx?: number
+        onLimit?: (limit: SelectionLimit) => void
+        /** Focus moved by an action: scroll the index into view. */
+        onFocusMove?: (index: number) => void
+    }
+    export interface ListSelectionState {
+        /** false: ids are the selected names; true: everything except ids. */
+        readonly all: boolean
+        readonly ids: ReadonlySet<string>
+        readonly focusId: string | null
+        readonly anchorId: string | null
+        /** A range / marquee is shown but not yet turned into names. */
+        readonly pending: boolean
+        readonly tick: number
+    }
+    export interface ListSelection extends RangeSelectionTarget {
+        state(): ListSelectionState
+        subscribe(listener: (s: ListSelectionState) => void): () => void
+        isSelected(index: number): boolean
+        isSelectedId(id: string): boolean
+        count(): number
+        focusIndex(): number | null
+        anchorIndex(): number | null
+        rowDown(index: number, mods: SelectMods): void
+        rowMove(clientX: number, clientY: number): void
+        rowUp(index: number): void
+        dragStart(): void
+        /** extend: Shift range from the anchor; keepSelection: move focus only (Ctrl). */
+        focusMove(action: FocusAction, how?: { extend?: boolean; keepSelection?: boolean }): void
+        toggleFocused(): void
+        extendTo(to: number, combine?: CombineMode, from?: number): void
+        selectAll(): void
+        clear(): void
+        setIds(ids: Iterable<string>, marks?: { focusId?: string | null; anchorId?: string | null }): void
+        /** Waits for a range still being resolved to names. */
+        settle(): Promise<void>
+        selectedPaths(): Promise<string[]>
+        selectedEntries(): Promise<ListingEntry[]>
+        destroy(): void
+    }
+    export function createListSelection(options: ListSelectionOptions): ListSelection
+
+    export interface UseListingOptions {
+        /** Keeps the view in place across re-sorts and refreshes. */
+        vlist?: Pick<VirtualList, 'start' | 'end' | 'captureAnchor' | 'restoreAnchor' | 'scrollToIndex'>
+        /** Name of the focused row (preferred anchor while visible). */
+        focusName?: () => string | null | undefined
+        /** Close a source when the ref moves to another. Default true. */
+        closeReplaced?: boolean
+        /** Close the source when the component goes away. Default true. */
+        closeOnDispose?: boolean
+    }
+    export interface UseListingReturn {
+        source: Ref<ListingSource | null>
+        snapshot: Ref<ListingSnapshot>
+        status: ComputedRef<ListingStatus>
+        total: ComputedRef<number>
+        version: ComputedRef<number>
+        sort: ComputedRef<ListingSort>
+        progress: ComputedRef<ListingSnapshot['progress']>
+        stale: ComputedRef<boolean>
+        error: ComputedRef<ListingError | null>
+        basePath: ComputedRef<string>
+        /** Row at index (reactive to arriving rows); undefined = placeholder. */
+        rowAt(index: number): ListingEntry | undefined
+        /** Resolves once no keep-my-place restore is running. */
+        settled(): Promise<void>
+    }
+    export function useListing(
+        source: Ref<ListingSource | null> | ListingSource,
+        options?: UseListingOptions
+    ): UseListingReturn
     export function useSnapResize(options: any): any
     export function createDragTrigger(options: any): any
 
@@ -608,7 +904,14 @@ declare module 'gexplorer/widgets' {
         callbacks?: any
     ): SelectionEngine
 
-    export function createMarqueeDriver(adapter: GeometryAdapter): any
+    /** Index geometry needs a RangeSelectionTarget, rect geometry an id engine (checked at creation). */
+    export function createMarqueeDriver(
+        config: MarqueeConfig,
+        geometry: GeometryAdapter,
+        scroller: ScrollerAdapter,
+        target: SelectionEngineLite | RangeSelectionTarget,
+        events?: MarqueeEvents
+    ): MarqueeDriver
 
     export function fsValidate(path: string): Promise<{
         ok: boolean
@@ -664,18 +967,24 @@ declare module 'gexplorer/widgets' {
     export function setActiveDragPayload(payload: GexDnDPayload, sourceId: string): void
     export function clearActiveDragPayload(): void
 
+    /**
+     * Starts a native (OLE) drag of `paths`. Resolves once the drag is under way:
+     * `resolvedPaths` is empty when a VFS drag hook cancelled it. `options.entries`
+     * (the dragged entries) is what VFS drag hooks receive.
+     */
     export function startNativeDrag(
         paths: string[],
         preview: { label: string; icon?: string; count?: number },
         callbacks: {
-            onDragOver?: (x: number, y: number) => void
-            onDragLeave?: () => void
-            onDrop?: () => void
+            onDragOver: (x: number, y: number) => void
+            onDragLeave: () => void
+            onDrop: (x: number, y: number) => void
             onExternalResult?: (effect: string) => void
         },
         x: number,
-        y: number
-    ): () => void
+        y: number,
+        options?: { cwd?: string; entries?: any[] }
+    ): Promise<{ cleanup: () => void; resolvedPaths: string[] }>
 
     export function createWidgetMessaging(sourceId: string): ScopedMessaging
 
@@ -695,8 +1004,57 @@ declare module 'gexplorer/widgets' {
     export function useAudio(): any
 
     export function registerWidgetMenus(widgetType: string, config: any): void
-    export function startRename(options: any): any
+    export type RenameOptions = {
+        /** Returns an error message, or null when the new name is valid. */
+        validate?: (value: string) => string | null
+        onCommit: (newValue: string) => void | Promise<void>
+        onCancel?: () => void
+        /** Select the whole text on focus (default true). */
+        selectAll?: boolean
+        /** Select only the name before the extension (default false). */
+        selectBasename?: boolean
+        /** Widget instance id: scopes the element search to this widget. */
+        widgetId?: string
+    }
+    /** Inline rename over the element with data-rename-id === id (it must be rendered). */
+    export function startRename(id: string, options: RenameOptions): Promise<void>
+
+    /** Style hints a VFS provider declares for an entry (ghost, fetching...); null for plain files. */
+    export type VfsStateStyle = {
+        opacity?: number
+        cursor?: string
+        background?: string
+        badge?: string
+        badgeTitle?: string
+        animated?: boolean
+        dimName?: boolean
+    }
+    export function getEntryStyle(entry: any): VfsStateStyle | null
     export function useDialog(): any
 
     export function useSlotProviders(slotId: string): ComputedRef<SlotProvider[]>
+
+    // ── Snackbar ───────────────────────────────────────────────────────────
+    export type SnackAction = { label: string; onClick?: () => void | Promise<void>; id?: string }
+    export type SnackOptions = {
+        /** Dedupe key. */
+        id?: string
+        text: string
+        actions?: SnackAction[]
+        /** Shows a "never show again" control. */
+        neverLabel?: string
+        /** Auto-dismiss after this many ms. */
+        timeoutMs?: number
+        dedupe?: 'skip' | 'replace' | 'bump'
+    }
+    export type SnackResult =
+        | { type: 'action'; actionId?: string }
+        | { type: 'timeout' }
+        | { type: 'dismiss' }
+        | { type: 'never' }
+    export function show(options: SnackOptions): Promise<SnackResult>
+    /** Shown until the user picks "never" (remembered under prefKey). */
+    export function showOnce(prefKey: string, options: SnackOptions): Promise<SnackResult>
+    /** Dismisses one snack by id, or all without an id. */
+    export function dismiss(id?: string): void
 }

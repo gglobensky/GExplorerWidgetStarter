@@ -6,6 +6,11 @@
 // Drop target: receives via onWidgetMessage 'dnd:drop' — delivered
 //              by the global drop dispatcher (drop-dispatcher.ts).
 //              No longer owns its own onPush listener.
+//
+// L3b: rows are virtual, so nothing here reads an entries array. The
+// dragged items come from `dragEntries` (the selection model resolves
+// them), folder targets are read from the row element (data-kind), and
+// refreshes go through the listing (`refresh`).
 // ------------------------------------------------------------------
 
 import { ref, onUnmounted, type Ref, type ComputedRef, inject } from '/runtime/vue.js'
@@ -17,18 +22,21 @@ import {
     startNativeDrag,
     WidgetSdk
 } from 'gexplorer/widgets'
-import type { GexDnDPayload, ScopedMessaging } from 'gexplorer/widgets'
+import type { GexDnDPayload, ScopedMessaging, ListingEntry } from 'gexplorer/widgets'
 
 
 export interface UseItemsDragDropOptions {
     sourceId:       string
     messaging:      ScopedMessaging       // ← passed in from Widget.vue, not created here
-    entries:        Ref<any[]>
-    selected:       Ref<Set<string>>
     cwd:            Ref<string>
     merged:         ComputedRef<any>
     marqueeActive:  ComputedRef<boolean>
-    loadDir:        (path: string) => Promise<void>
+    /** Items to drag when `entry` is pressed: the selection if it contains it, else just it. */
+    dragEntries:    (entry: ListingEntry) => Promise<ListingEntry[]>
+    /** A drag crossed the threshold (keeps a multi-selection from collapsing). */
+    onDragStarted?: () => void
+    /** Reload the listed folder. */
+    refresh:        () => void
     emit:           (event: string, payload: any) => void
 }
 
@@ -36,7 +44,7 @@ export interface UseItemsDragDropReturn {
     isDragging:       Ref<boolean>
     isDropActive:     Ref<boolean>
     folderDropTarget: Ref<string | null>
-    onItemPointerDown: (entry: any, event: PointerEvent) => void
+    onItemPointerDown: (entry: ListingEntry, event: PointerEvent) => void
     dispose:          () => void
 }
 
@@ -60,25 +68,16 @@ function guessMimeType(filename: string): string {
     return map[ext] || 'application/octet-stream'
 }
 
-function findFolderTarget(startEl: Element | null, entries: any[]): string | null {
-    let el: Element | null = startEl
-    while (el) {
-        if (el instanceof HTMLElement && el.matches('.row[data-path]')) {
-            const path = el.dataset.path
-            if (path) {
-                const entry = entries.find(e => e.FullPath === path)
-                if (entry?.Kind === 'dir') return path
-            }
-        }
-        el = el.parentElement
-    }
-    return null
+function findFolderTarget(startEl: Element | null): string | null {
+    const row = startEl?.closest?.('.row[data-path]') as HTMLElement | null
+    if (!row || row.dataset.kind !== 'dir') return null
+    return row.dataset.path || null
 }
 
 // ── Composable ─────────────────────────────────────────────────────────────────
 
 export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDragDropReturn {
-    const { sourceId, messaging, entries, selected, cwd, merged, marqueeActive, loadDir  } = options
+    const { sourceId, messaging, cwd, merged, marqueeActive, dragEntries, refresh } = options
     const { fsMove, fsCopy } = inject<WidgetSdk>('widgetSdk') ?? {}
     const { send, on } = messaging
 
@@ -112,7 +111,7 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
             payloadType: payload.type,
             srcId: payload.source?.widgetId,
             sourceId,
-            specificTarget: findFolderTarget(document.elementFromPoint(x, y), entries.value),
+            specificTarget: findFolderTarget(document.elementFromPoint(x, y)),
             cwd: cwd.value,
         })
         if (payload.type !== 'gex/file-refs') return
@@ -120,7 +119,7 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
         const srcId = payload.source?.widgetId
 
         const el = document.elementFromPoint(x, y)
-        const specificTarget = findFolderTarget(el, entries.value)
+        const specificTarget = findFolderTarget(el)
 
         if (srcId === sourceId && !specificTarget) return
 
@@ -151,7 +150,7 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
             // fsMove is VFS-aware in the SDK — VFS sources are extracted and
             // copied transparently; physical sources are moved as normal.
             await fsMove?.(sources.map(from => ({ from, to: target })))
-            await loadDir(cwd.value || merged.value?.rpath || '')
+            refresh()
 
             // Notify source widget to refresh if cross-widget move
             if (srcId && srcId !== sourceId) {
@@ -168,7 +167,7 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
     on('dnd:drop', async (msg: any) => {
         const { x, y, data: payload } = msg.payload
         isDropActive.value    = true
-        folderDropTarget.value = findFolderTarget(document.elementFromPoint(x, y), entries.value)
+        folderDropTarget.value = findFolderTarget(document.elementFromPoint(x, y))
         await executeDrop(payload, x, y)
         resetDragState()
         isDropActive.value    = false
@@ -179,7 +178,7 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
 
     function onNativeDragOver(x: number, y: number) {
         isDropActive.value    = true
-        folderDropTarget.value = findFolderTarget(document.elementFromPoint(x, y), entries.value)
+        folderDropTarget.value = findFolderTarget(document.elementFromPoint(x, y))
     }
 
     function onNativeDragLeave() {
@@ -190,12 +189,9 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
     async function onExternalResult(effect: string) {
         console.log('[items-dnd] onExternalResult fired, effect:', effect, 'extracting:', extracting)
         extracting = false
-        const refreshDir = cwd.value || merged.value?.rpath || ''
         resetDragState()
         console.log('[items-dnd] after resetDragState, isDragging:', isDragging.value)
-        if (effect === 'move' && refreshDir) {
-            await loadDir(refreshDir)
-        }
+        if (effect === 'move') refresh()
     }
 
     // ── Pointer-down entry point ───────────────────────────────────────────────
@@ -208,23 +204,30 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
         const startY = ev.clientY
         const THRESHOLD = 5
 
-        function onMove(moveEv: PointerEvent) {
+        async function onMove(moveEv: PointerEvent) {
             const dx = moveEv.clientX - startX
             const dy = moveEv.clientY - startY
             if (dx * dx + dy * dy < THRESHOLD * THRESHOLD) return
 
             teardown()
             if (isDragging.value) return
+            isDragging.value = true
+            options.onDragStarted?.()
 
-            const paths = selected.value.size > 0
-                ? [...selected.value]
-                : [entry.FullPath]
+            // The selection resolves its own entries (it may hold rows that are
+            // not loaded); a selection too large to drag is refused there.
+            let items: ListingEntry[]
+            try {
+                items = await dragEntries(entry)
+            } catch (err) {
+                console.warn('[items-dnd] drag cancelled:', err)
+                isDragging.value = false
+                return
+            }
+            if (!items.length) { isDragging.value = false; return }
 
-            const selectedEntries = paths
-                .map(p => entries.value.find(x => x.FullPath === p))
-                .filter(Boolean)
-
-            const fileRefs = selectedEntries.map(e => ({
+            const paths = items.map(e => e.FullPath)
+            const fileRefs = items.map(e => ({
                 path: e.FullPath,
                 name: e.Name ?? '',
                 size: e.Size ?? 0,
@@ -243,7 +246,6 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
                 sourceId,
             })
             setActiveDragPayload(payload, sourceId)
-            isDragging.value = true
 
             extracting = true
             startNativeDrag(
@@ -261,7 +263,9 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
                 },
                 moveEv.clientX,
                 moveEv.clientY,
-                { cwd: cwd.value, entries: selected }, 
+                // VFS drag hooks receive the dragged entries (this used to pass
+                // the selection Ref, so the hooks never ran).
+                { cwd: cwd.value, entries: items },
             ).then(({ cleanup, resolvedPaths }) => {
                 extracting = false
 
