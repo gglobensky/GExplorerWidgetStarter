@@ -68,6 +68,20 @@ function guessMimeType(filename: string): string {
     return map[ext] || 'application/octet-stream'
 }
 
+function isVfsPath(p: string): boolean {
+    return /^[a-z][a-z0-9+.-]*:\/\//i.test(p)
+}
+
+function leafName(p: string): string {
+    const t = p.replace(/[\\/]+$/, '')
+    return t.slice(Math.max(t.lastIndexOf('\\'), t.lastIndexOf('/')) + 1)
+}
+
+function joinDir(dir: string, name: string): string {
+    const sep = dir.includes('/') && !dir.includes('\\') ? '/' : '\\'
+    return /[\\/]$/.test(dir) ? dir + name : dir + sep + name
+}
+
 function findFolderTarget(startEl: Element | null): string | null {
     const row = startEl?.closest?.('.row[data-path]') as HTMLElement | null
     if (!row || row.dataset.kind !== 'dir') return null
@@ -149,7 +163,9 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
 
             // fsMove is VFS-aware in the SDK — VFS sources are extracted and
             // copied transparently; physical sources are moved as normal.
-            await fsMove?.(sources.map(from => ({ from, to: target })))
+            // `to` is the full destination path (folder + name); a vault
+            // target (scheme://) still takes the folder: the vault names it.
+            await fsMove?.(sources.map(from => ({ from, to: isVfsPath(target) ? target : joinDir(target, leafName(from)) })))
             refresh()
 
             // Notify source widget to refresh if cross-widget move

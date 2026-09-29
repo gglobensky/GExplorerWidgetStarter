@@ -212,6 +212,10 @@ const RESTORE_SELECTION_MAX = 50_000
 const life = createLifecycle(props.sourceId)
 const shelf = life.persistRef<Shelf | null>('items.listing', null, { dispose: (s) => s?.source.close() })
 let pendingRestore: SavedView | null = null
+// What the current source was opened for: openDir skips a second open of the
+// same folder with the same filter (navigation sets the cwd and the host's
+// rpath at once, which used to open, and scan, every folder twice).
+let openedFor: { path: string; key: string } | null = null
 
 function listingFilter(): ListingFilter {
   const f = activeFilter.value
@@ -231,6 +235,8 @@ function openDir(path: string) {
   lnkIconKeys.clear()
   lnkProbed.clear()
   const key = JSON.stringify(listingFilter())
+  if (source.value && openedFor && openedFor.path === path && openedFor.key === key &&
+      source.value.snapshot().status !== 'closed') return
   const kept = shelf.value
 
   if (kept && !source.value) {
@@ -243,6 +249,7 @@ function openDir(path: string) {
       kept.view = null
       pageIndex.value = pendingRestore?.page ?? 0
       source.value = kept.source
+      openedFor = { path, key }
       return
     }
     kept.source.close()          // not attached to anything: close it here
@@ -251,9 +258,12 @@ function openDir(path: string) {
 
   selection.clear()
   pageIndex.value = 0
-  if (!path) { source.value = null; return }
+  if (!path) { source.value = null; openedFor = null; return }
+  openedFor = { path, key }
   source.value = openListing?.(path, {
-    owner: props.instanceId,
+    // One owner per pane: the backend closes the pane's previous listing when
+    // it opens a new one (instanceId is not passed by every host placement).
+    owner: props.instanceId || props.sourceId,
     sort: { key: sortKey.value, dir: sortDir.value, foldersFirst: true },
     filter: listingFilter(),
   }) ?? null

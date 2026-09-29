@@ -62,6 +62,14 @@ declare module 'gexplorer/widgets' {
         // Write cap
         fsMkdir?: (path: string) => Promise<void>
         fsWriteText?: (path: string, text: string, overwrite?: boolean) => Promise<void>
+        /**
+         * Copy / move files and folders. `to` is the full destination path of each
+         * item (folder + name), never just the folder. Nothing is replaced: a taken
+         * name gets a new one from the app naming pattern ("a (2).txt"); a copy onto
+         * its own path makes a duplicate, a move onto its own path does nothing.
+         * Shows the progress dialog for long jobs and a snackbar for renames and
+         * failures; rejects if any item failed.
+         */
         fsCopy?: (items: Array<{ from: string; to: string }>) => Promise<void>
         fsMove?: (items: Array<{ from: string; to: string }>) => Promise<void>
         fsRename?: (oldPath: string, newPath: string) => Promise<{ ok: boolean; error?: string }>

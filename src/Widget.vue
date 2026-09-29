@@ -212,6 +212,10 @@ const RESTORE_SELECTION_MAX = 50_000
 const life = createLifecycle(props.sourceId)
 const shelf = life.persistRef<Shelf | null>('items.listing', null, { dispose: (s) => s?.source.close() })
 let pendingRestore: SavedView | null = null
+// What the current source was opened for: openDir skips a second open of the
+// same folder with the same filter (navigation sets the cwd and the host's
+// rpath at once, which used to open, and scan, every folder twice).
+let openedFor: { path: string; key: string } | null = null
 
 function listingFilter(): ListingFilter {
   const f = activeFilter.value
@@ -231,6 +235,8 @@ function openDir(path: string) {
   lnkIconKeys.clear()
   lnkProbed.clear()
   const key = JSON.stringify(listingFilter())
+  if (source.value && openedFor && openedFor.path === path && openedFor.key === key &&
+      source.value.snapshot().status !== 'closed') return
   const kept = shelf.value
 
   if (kept && !source.value) {
@@ -243,6 +249,7 @@ function openDir(path: string) {
       kept.view = null
       pageIndex.value = pendingRestore?.page ?? 0
       source.value = kept.source
+      openedFor = { path, key }
       return
     }
     kept.source.close()          // not attached to anything: close it here
@@ -251,9 +258,12 @@ function openDir(path: string) {
 
   selection.clear()
   pageIndex.value = 0
-  if (!path) { source.value = null; return }
+  if (!path) { source.value = null; openedFor = null; return }
+  openedFor = { path, key }
   source.value = openListing?.(path, {
-    owner: props.instanceId,
+    // One owner per pane: the backend closes the pane's previous listing when
+    // it opens a new one (instanceId is not passed by every host placement).
+    owner: props.instanceId || props.sourceId,
     sort: { key: sortKey.value, dir: sortDir.value, foldersFirst: true },
     filter: listingFilter(),
   }) ?? null
@@ -341,18 +351,17 @@ const vlist = useVirtualList({
   },
   contentOffset: () => (layout.value === 'details' ? 0 : isGrid.value ? S.value.gap : LIST_TOP_PAD),
   overscan: 6,
-  onRange: () => ensureVisible(),
+  // Runs immediately, inside useVirtualList: must not touch `vlist` itself.
+  onRange: (s, e) => ensureRows(s, e),
 })
 
-/** Loads the rows on screen (source indices of the current page window). */
-function ensureVisible() {
+/** Loads the rows of visual rows [s, e) of the current page window (source indices). */
+function ensureRows(s: number, e: number) {
   const c = cols.value
-  const from = pageStart.value + vlist.start.value * c
-  const to = pageStart.value + Math.min(pageLen.value, vlist.end.value * c)
-  source.value?.ensure(from, to)
+  source.value?.ensure(pageStart.value + s * c, pageStart.value + Math.min(pageLen.value, e * c))
 }
 // Same rendered range on another page still needs that page's rows.
-watch(pageStart, () => ensureVisible())
+watch(pageStart, () => ensureRows(vlist.start.value, vlist.end.value))
 
 // Re-measure when the layout, item size or column count changes the rows.
 watch([layout, () => merged.value.itemSize, cols], () => nextTick(() => vlist.measure()))
