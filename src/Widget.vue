@@ -61,10 +61,8 @@ const {
   openListing,
   shortcutsProbe,
   fsRename,
-  fsCopy,
-  fsMove,
   loadIconPack,
-  clipboardGetFiles,
+  fsPasteClipboard,
   openEntry: sdkOpenEntry,
   openFolder: sdkOpenFolder
 } = sdk ?? {}
@@ -236,7 +234,7 @@ function openDir(path: string) {
   lnkProbed.clear()
   const key = JSON.stringify(listingFilter())
   if (source.value && openedFor && openedFor.path === path && openedFor.key === key &&
-      source.value.snapshot().status !== 'closed') return
+      !['closed', 'error'].includes(source.value.snapshot().status)) return
   const kept = shelf.value
 
   if (kept && !source.value) {
@@ -535,47 +533,41 @@ function emitSelectionChanged() {
   emit('event', { type: 'selectionChanged', payload })
 }
 
-/** Ctrl+A: instant "all"; folders up to the resolve cap become explicit names in the background. */
-const SELECT_ALL_RESOLVE_MAX = 200_000
-async function selectAllItems() {
+/** Ctrl+A: "all" (any size); actions get it as a backend selection reference. */
+function selectAllItems() {
   selection.selectAll()
-  const s = source.value
-  if (!s || total.value === 0 || total.value > SELECT_ALL_RESOLVE_MAX) return
-  const version = s.snapshot().version
-  try {
-    const rows = await s.rows(0, s.snapshot().total, version)
-    if (source.value !== s || !selState.value.all || selState.value.ids.size) return   // changed meanwhile
-    const focusId = selState.value.focusId
-    selection.setIds(rows.map(r => r.Name), { focusId, anchorId: selState.value.anchorId ?? focusId })
-  } catch { /* order changed: stays "all" */ }
 }
 
 /* -----------------------------------------------
    Context menu (evaluated at right-click)
 ------------------------------------------------ */
+/** Items shown in the menu's selection sample: the focused one first, then the visible ones. */
+const MENU_SAMPLE_MAX = 20
+
 function contextMenuOptions() {
-  const paths = selectedPathsNow()
-  if (!paths) {
-    const n = selection.count()
-    showSnack({
-      id: 'items-selection-limit',
-      text: n <= SELECT_ALL_RESOLVE_MAX
-        ? 'The selection is still being prepared; try again in a moment.'
-        : `Actions on all ${n.toLocaleString()} items of this folder aren't supported yet (up to ${SELECT_ALL_RESOLVE_MAX.toLocaleString()}).`,
-      timeoutMs: 6000,
-      dedupe: 'replace',
-    })
-    return null
-  }
+  // Refreshes wait while the menu is open, so the sample and count match the rows.
+  const release = source.value?.holdRefresh?.()
+  const count = selection.count()
+  const visible = visibleSelectedEntries()
+  const fi = selection.focusIndex()
+  const focused = fi == null ? undefined : rowAt(fi)
+  const preferred = focused && selection.isSelectedId(focused.Name)
+    ? [focused, ...visible.filter(e => e !== focused)]
+    : visible
+  // The selection as it is now; each action builds the reference when it sends
+  // (against the listing current then), so a refresh after the menu is harmless.
+  const payload = selection.capture()
+
   return {
     widgetType:   'items',
     widgetId:     props.sourceId,
     location:     { area: 'grid' as const },
-    target:       paths.length > 0 ? ('selection' as const) : ('background' as const),
+    target:       count > 0 ? ('selection' as const) : ('background' as const),
     path:         cwd.value || merged.value.rpath || '',   // host resolves VFS
-    selection:    paths,
+    selection:    { count, sample: selection.sample(MENU_SAMPLE_MAX, preferred), payload },
     widgetConfig: props.config,
-    entries:      visibleSelectedEntries(),
+    entries:      visible,
+    onClose:      () => release?.(),
   }
 }
 
@@ -862,7 +854,7 @@ function runItemsAction(action: ItemsAction): void {
     case 'move': return selection.focusMove(arg as FocusAction, { keepSelection: true })
   }
   switch (action) {
-    case 'select.all': void selectAllItems(); return
+    case 'select.all': selectAllItems(); return
     case 'select.toggleFocused': selection.toggleFocused(); return
     case 'select.clear': selection.clear(); return
     case 'open.focused': {
@@ -872,8 +864,9 @@ function runItemsAction(action: ItemsAction): void {
       return
     }
     case 'rename.focused': {
-      const paths = selectedPathsNow()
-      if (paths?.length === 1) void startItemRename(paths[0])
+      if (selection.count() !== 1) return
+      const one = selection.sample(1)[0]
+      if (one) void startItemRename(one.path)
       return
     }
     case 'page.next': goToPage(currentPage.value + 1); return
@@ -1004,30 +997,21 @@ async function startItemRename(itemPath: string): Promise<void> {
    Clipboard paste
 ------------------------------------------------ */
 async function pasteFromClipboard() {
+  const targetDir = cwd.value
+  if (!targetDir || !fsPasteClipboard) return
+  // One refresh after the whole paste, not one per file event.
+  const s = source.value
+  const release = s?.holdRefresh?.()
   try {
-    const state = await clipboardGetFiles?.()
-    if (!state) return
-    if (!state.hasFiles || state.count === 0) return
-    const targetDir = cwd.value
-    if (!targetDir) return
-
-    const items = state.paths.map((sourcePath: string) => ({ from: sourcePath, to: joinPath(targetDir, basename(sourcePath)) }))
-
-    // One refresh after the whole batch, not one per file event.
-    const s = source.value
-    const release = s?.holdRefresh?.()
-    try {
-      if (state.operation === 'cut') await fsMove?.(items)
-      else await fsCopy?.(items)
-      selection.clear()
-    } catch (err: any) {
-      console.error('[Items] Paste operation failed:', err?.message ?? err)
-    } finally {
-      s?.refresh()      // deferred while held: runs once on release
-      release?.()
-    }
+    // The backend reads the clipboard and runs one job (any count), with
+    // the progress dialog, Stop / Cancel and the completion snackbar.
+    const job = await fsPasteClipboard(targetDir)
+    if (job) selection.clear()
   } catch (err: any) {
-    console.error('[Items] Failed to paste:', err?.message ?? err)
+    console.error('[Items] Paste failed:', err?.message ?? err)
+  } finally {
+    s?.refresh()      // deferred while held: runs once on release
+    release?.()
   }
 }
 
@@ -1083,6 +1067,9 @@ watch(colW, (w) => {
 /* -----------------------------------------------
    Drag & drop
 ------------------------------------------------ */
+/** Largest drag carried as entries; bigger drags carry a selection reference. */
+const DRAG_LIST_MAX = 1000
+
 const {
   isDragging,
   isDropActive,
@@ -1095,8 +1082,21 @@ const {
   cwd,
   merged,
   marqueeActive,
-  dragEntries: async (entry) =>
-    selection.isSelectedId(entry.Name) ? await selection.selectedEntries() : [entry],
+  // Up to DRAG_LIST_MAX items travel as entries (every drop target takes
+  // them); more go as a selection reference the backend expands.
+  dragSource: async (entry) => {
+    if (!selection.isSelectedId(entry.Name)) return { entries: [entry] }
+    const count = selection.count()
+    if (count <= DRAG_LIST_MAX) return { entries: await selection.selectedEntries() }
+    const payload = await selection.toPayload()
+    if (!payload.selection) return { entries: await selection.selectedEntries() }   // no backend listing
+    return {
+      selection: payload.selection,
+      count,
+      dir: listing.basePath.value || cwd.value,
+      sample: visibleSelectedEntries().slice(0, 20),   // loaded rows (labels / previews)
+    }
+  },
   onDragStarted: () => selection.dragStart(),
   refresh,
   emit: emit as (event: string, payload: any) => void,

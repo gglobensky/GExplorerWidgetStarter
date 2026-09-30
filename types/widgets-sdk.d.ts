@@ -72,6 +72,18 @@ declare module 'gexplorer/widgets' {
          */
         fsCopy?: (items: Array<{ from: string; to: string }>) => Promise<void>
         fsMove?: (items: Array<{ from: string; to: string }>) => Promise<void>
+        /**
+         * Read + Write caps. Copy / move a selection reference (any size, e.g. a
+         * 'gex/file-selection' drop) from sourceDir into targetDir: one job, with
+         * the same dialog, snackbar and Undo as fsCopy / fsMove.
+         */
+        fsTransfer?: (operation: 'copy' | 'move', selection: SelectionRef, sourceDir: string, targetDir: string, count: number) => Promise<unknown>
+        /**
+         * Read cap. The files of a 'gex/file-refs' or 'gex/file-selection' drop (a
+         * selection resolved by the backend; rejects with code E_TOO_MANY above max,
+         * default 10,000).
+         */
+        resolveDropRefs?: (payload: GexDnDPayload, max?: number) => Promise<FileRefData[]>
         fsRename?: (oldPath: string, newPath: string) => Promise<{ ok: boolean; error?: string }>
 
         renameApplyBatch?: (
@@ -109,9 +121,19 @@ declare module 'gexplorer/widgets' {
         }>
 
         // Clipboard cap
-        clipboardCopyFiles?: (paths: string[]) => Promise<void>
-        clipboardCutFiles?: (paths: string[]) => Promise<void>
-        clipboardGetFiles?: () => Promise<ClipboardState>
+        /** Paths, or a ListSelection.toPayload() result (any size: a reference expanded by the backend). */
+        clipboardCopyFiles?: (files: string[] | SelectionPayload) => Promise<void>
+        clipboardCutFiles?: (files: string[] | SelectionPayload) => Promise<void>
+        /** pathsLimit: return at most that many paths (`count` is always exact). */
+        clipboardGetFiles?: (opts?: { pathsLimit?: number }) => Promise<ClipboardState>
+        /**
+         * Clipboard + Write caps. Pastes the OS clipboard into targetDir (copy, or
+         * move after a cut), any count, as one backend job: progress dialog,
+         * Stop / Cancel, new names for taken names, completion snackbar. Resolves
+         * with the job, or undefined when there was nothing to paste; rejects if
+         * items failed.
+         */
+        fsPasteClipboard?: (targetDir: string) => Promise<unknown | undefined>
 
         // P2P / SP2P public identity + invite APIs
         p2pGetIdentity?: () => Promise<P2PIdentity>
@@ -242,9 +264,24 @@ declare module 'gexplorer/widgets' {
 
     export type GexDnDType =
         | 'gex/file-refs'
+        | 'gex/file-selection'
         | 'gex/text'
         | 'gex/url'
         | 'gex/custom'
+
+    /**
+     * 'gex/file-selection' data: a large selection dragged as a reference into
+     * the source's listing (no paths). resolveDropRefs(payload) gives the files;
+     * fsTransfer moves / copies it as one job.
+     */
+    export interface FileSelectionData {
+        selection: SelectionRef
+        count: number
+        /** The folder the items are in. */
+        dir: string
+        /** The first few (labels, previews). */
+        sample: FileRefData[]
+    }
 
     export type GexDnDPayload<T = any> = {
         type: GexDnDType | string
@@ -722,8 +759,27 @@ declare module 'gexplorer/widgets' {
         refresh(): void
         /** Defers refreshes until the returned release is called (batch operations). */
         holdRefresh?(): () => void
+        /** The backend listing a SelectionRef can point into; null for memory / VFS listings. */
+        backendListing?(): { listingId: string } | null
         close(): void
     }
+
+    /**
+     * A selection as the backend reads it: a reference into an open listing
+     * (any size). Build it with ListSelection.toPayload().
+     */
+    export type SelectionRef = {
+        listingId: string
+        version?: number
+        base: 'none' | 'all'
+        include?: { ranges?: Array<[number, number]>; names?: string[] }
+        exclude?: { ranges?: Array<[number, number]>; names?: string[] }
+        count?: number
+    }
+    /** What operations take for a selection: a reference, or the paths. Spread it into a request. */
+    export type SelectionPayload =
+        | { selection: SelectionRef; paths?: undefined }
+        | { paths: string[]; selection?: undefined }
     export interface OpenListingOptions {
         sort?: Partial<ListingSort>
         filter?: ListingFilter
@@ -871,6 +927,20 @@ declare module 'gexplorer/widgets' {
         settle(): Promise<void>
         selectedPaths(): Promise<string[]>
         selectedEntries(): Promise<ListingEntry[]>
+        /**
+         * The selection for an operation, any size: a SelectionRef when the
+         * listing has a backend listing, else the paths.
+         */
+        toPayload(): Promise<SelectionPayload>
+        /**
+         * Freezes the selection now and returns a payload maker: each call builds
+         * the reference against the listing current at that moment (call it right
+         * before sending, e.g. after a confirmation dialog; a folder refresh in
+         * between is harmless since the selection is names).
+         */
+        capture(): () => Promise<SelectionPayload>
+        /** Up to `max` selected items without fetching (`preferred` first: e.g. the focused / visible rows). */
+        sample(max: number, preferred?: ListingEntry[]): Array<{ path: string; name: string; kind?: ListingEntry['Kind'] }>
         destroy(): void
     }
     export function createListSelection(options: ListSelectionOptions): ListSelection
@@ -982,8 +1052,14 @@ declare module 'gexplorer/widgets' {
      * `resolvedPaths` is empty when a VFS drag hook cancelled it. `options.entries`
      * (the dragged entries) is what VFS drag hooks receive.
      */
+    /**
+     * source: the paths, or a selection reference (large selections: the
+     * backend builds the OS drag data; no VFS hooks; above 10,000 items it can
+     * only be dropped inside GExplorer). `started` is false when
+     * the drag was cancelled before the OS took over.
+     */
     export function startNativeDrag(
-        paths: string[],
+        source: string[] | { selection: SelectionRef; count?: number },
         preview: { label: string; icon?: string; count?: number },
         callbacks: {
             onDragOver: (x: number, y: number) => void
@@ -994,7 +1070,7 @@ declare module 'gexplorer/widgets' {
         x: number,
         y: number,
         options?: { cwd?: string; entries?: any[] }
-    ): Promise<{ cleanup: () => void; resolvedPaths: string[] }>
+    ): Promise<{ cleanup: () => void; resolvedPaths: string[]; started: boolean }>
 
     export function createWidgetMessaging(sourceId: string): ScopedMessaging
 

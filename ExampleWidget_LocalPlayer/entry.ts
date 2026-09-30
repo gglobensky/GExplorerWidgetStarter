@@ -7,7 +7,31 @@ export default {
     id:      'local-player',
     version: '1.0.0',
     Component: Widget,
-    dropAccepts: ['gex/file-refs'],
+
+    // ── Drops ────────────────────────────────────────────────────────────────
+    // Reference example of a drop zone (host: widgets/dnd/dropSpec.ts). Every
+    // field is shown; the ones marked "default" could be left out.
+    //
+    // The zone is tied to an element in the template: <div v-gex-drop="'queue'">
+    // (here the widget root, so drops work in the compact and expanded layouts).
+    // The host decides on every hover whether the zone takes what is dragged,
+    // shows why not in the cursor tip, and delivers only the audio files of a
+    // mixed drop ('dnd:drop' { data, zone: 'queue', skipped }).
+    drop: {
+        zones: {
+            queue: {
+                label: 'Queue',                                   // default: the zone id, capitalized
+                payloads: ['gex/file-refs', 'gex/file-selection'], // default
+                accepts: {
+                    kinds: ['file'],                              // default with mime / extensions: files only
+                    mime: ['audio/*'],                            // audio files (the host's file-type table)
+                    maxCount: 10_000,                             // resolveDropRefs' cap (DROP_REFS_MAX)
+                },
+                autoFilter: true,                                 // default: take the audio of a mixed drop
+                effect: 'copy',                                   // default: the files stay where they are
+            },
+        },
+    },
 
     menuContexts: [
         { id: 'player.track',      label: 'Track in queue', icon: '🎵', builtin: false },

@@ -12,6 +12,8 @@ import {
   fileRefsToPlaylistItems,
   createWidgetMessaging,
   authorizeFileRefs,
+  resolveDropRefs,
+  show as showSnack,
   FileRefData
 } from 'gexplorer/widgets'
 
@@ -413,12 +415,33 @@ function onDragEnter(e: DragEvent) { prevent(e); draggingOver.value = true }
 function onDragOver(e: DragEvent) { prevent(e) }
 function onDragLeave(e: DragEvent) { prevent(e); draggingOver.value = false }
 
-async function handleFileRefs(payload: any) {
+/**
+ * A drop on the 'queue' zone (manifest drop.zones.queue). The host already kept
+ * only the audio files (autoFilter): a small drag arrives as file refs, a large
+ * selection as a reference that resolveDropRefs expands (only its audio files).
+ */
+async function handleDrop(payload: any) {
+    let refs: FileRefData[]
+    try {
+        refs = await resolveDropRefs(payload)
+    } catch (err: any) {
+        console.warn('[local-player] drop not resolved:', err)
+        showSnack({
+            id: 'local-player:drop',
+            dedupe: 'replace',
+            text: err?.code === 'E_SELECTION_STALE'
+                ? 'The folder changed during the drag. Drag the files again.'
+                : `Could not add the dropped files: ${err?.message ?? err}`,
+            timeoutMs: 6000,
+        })
+        return
+    }
+    if (!refs.length) return
     const auth = await authorizeFileRefs(
-        'local-player', props.sourceId, payload, ['Read']
+        'local-player', props.sourceId, { ...payload, type: 'gex/file-refs', data: refs }, ['Read']
     )
     if (!auth.ok) return
-    const tracks = await refsToTracks(payload.data as FileRefData[], 'local-player', props.sourceId)
+    const tracks = await refsToTracks(refs, 'local-player', props.sourceId)
     await appendTracks(tracks)
     if (state.queue.value.length === tracks.length && tracks.length) await play(0)
 }
@@ -512,8 +535,9 @@ onMounted(async () => {
   applyPlaybackRate()
 
   on('dnd:drop', async (msg: any) => {
+      if (msg.payload?.zone !== 'queue') return
       const payload = msg.payload?.data
-      if (payload?.type === 'gex/file-refs') await handleFileRefs(payload)
+      if (payload?.type === 'gex/file-refs' || payload?.type === 'gex/file-selection') await handleDrop(payload)
   })
   on('widget:action', async (msg: any) => {
       await onWidgetAction(msg)
@@ -586,6 +610,7 @@ onBeforeUnmount(() => {
 <template>
   <div
     ref="widgetRootEl"
+    v-gex-drop="'queue'"
     class="widget-root"
     :style="{ '--widget-w': (containerWidth || hostWidth) + 'px' }"
   >

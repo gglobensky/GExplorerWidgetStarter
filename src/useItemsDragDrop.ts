@@ -8,9 +8,13 @@
 //              No longer owns its own onPush listener.
 //
 // L3b: rows are virtual, so nothing here reads an entries array. The
-// dragged items come from `dragEntries` (the selection model resolves
+// dragged items come from `dragSource` (the selection model resolves
 // them), folder targets are read from the row element (data-kind), and
 // refreshes go through the listing (`refresh`).
+//
+// L5c: a large selection is dragged as a reference ('gex/file-selection':
+// SelectionRef + count + a sample): the backend builds the OS drag data from
+// it and a drop here moves it with fsTransfer, so no paths cross IPC.
 // ------------------------------------------------------------------
 
 import { ref, onUnmounted, type Ref, type ComputedRef, inject } from '/runtime/vue.js'
@@ -22,7 +26,12 @@ import {
     startNativeDrag,
     WidgetSdk
 } from 'gexplorer/widgets'
-import type { GexDnDPayload, ScopedMessaging, ListingEntry } from 'gexplorer/widgets'
+import type { GexDnDPayload, ScopedMessaging, ListingEntry, SelectionRef, FileSelectionData, FileRefData } from 'gexplorer/widgets'
+
+/** What a drag carries: the entries themselves, or a large selection as a reference. */
+export type ItemsDragSource =
+    | { entries: ListingEntry[] }
+    | { selection: SelectionRef; count: number; dir: string; sample: ListingEntry[] }
 
 
 export interface UseItemsDragDropOptions {
@@ -31,8 +40,8 @@ export interface UseItemsDragDropOptions {
     cwd:            Ref<string>
     merged:         ComputedRef<any>
     marqueeActive:  ComputedRef<boolean>
-    /** Items to drag when `entry` is pressed: the selection if it contains it, else just it. */
-    dragEntries:    (entry: ListingEntry) => Promise<ListingEntry[]>
+    /** What to drag when `entry` is pressed: the selection if it contains it, else just it. */
+    dragSource:     (entry: ListingEntry) => Promise<ItemsDragSource>
     /** A drag crossed the threshold (keeps a multi-selection from collapsing). */
     onDragStarted?: () => void
     /** Reload the listed folder. */
@@ -68,6 +77,16 @@ function guessMimeType(filename: string): string {
     return map[ext] || 'application/octet-stream'
 }
 
+function toFileRef(e: ListingEntry): FileRefData {
+    return {
+        path: e.FullPath,
+        name: e.Name ?? '',
+        size: e.Size ?? 0,
+        mimeType: guessMimeType(e.FullPath),
+        isDirectory: e.Kind === 'dir',
+    }
+}
+
 function isVfsPath(p: string): boolean {
     return /^[a-z][a-z0-9+.-]*:\/\//i.test(p)
 }
@@ -91,8 +110,8 @@ function findFolderTarget(startEl: Element | null): string | null {
 // ── Composable ─────────────────────────────────────────────────────────────────
 
 export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDragDropReturn {
-    const { sourceId, messaging, cwd, merged, marqueeActive, dragEntries, refresh } = options
-    const { fsMove, fsCopy } = inject<WidgetSdk>('widgetSdk') ?? {}
+    const { sourceId, messaging, cwd, merged, marqueeActive, dragSource, refresh } = options
+    const { fsMove, fsTransfer, resolveDropRefs } = inject<WidgetSdk>('widgetSdk') ?? {}
     const { send, on } = messaging
 
     const isDragging       = ref(false)
@@ -128,7 +147,7 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
             specificTarget: findFolderTarget(document.elementFromPoint(x, y)),
             cwd: cwd.value,
         })
-        if (payload.type !== 'gex/file-refs') return
+        if (payload.type !== 'gex/file-refs' && payload.type !== 'gex/file-selection') return
 
         const srcId = payload.source?.widgetId
 
@@ -144,13 +163,27 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
                 return
             }
 
-            const refs = (payload.data ?? []) as any[]
-            if (!refs.length) return
-
             const target = specificTarget ?? cwd.value ?? merged.value?.rpath ?? ''
             if (!target) return
-
             const destNorm = normalizeDir(target)
+
+            // A large selection: moved by the backend as one job (any size).
+            if (payload.type === 'gex/file-selection' && !isVfsPath(target)) {
+                const data = payload.data as FileSelectionData
+                if (normalizeDir(data.dir) === destNorm) return
+                if (!fsTransfer) return
+                await fsTransfer('move', data.selection, data.dir, target, data.count)
+                refresh()
+                if (srcId && srcId !== sourceId) send(srcId, 'fs:refresh-after-drop', { kind: 'fs.move', target })
+                return
+            }
+
+            // Paths (a vault target takes them one by one, so a selection is resolved first).
+            const refs: FileRefData[] = payload.type === 'gex/file-selection'
+                ? (await resolveDropRefs?.(payload)) ?? []
+                : (payload.data ?? []) as FileRefData[]
+            if (!refs.length) return
+
             const sources = refs
                 .map(r => String(r?.path ?? ''))
                 .filter(p => {
@@ -216,6 +249,14 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
         console.log('[items-dnd] onItemPointerDown called', { entry: entry.Name, button: ev.button })
         if (ev.button !== 0 || marqueeActive.value) return
 
+        // No pointer events reach the page while an OS drag runs, so a drag
+        // state still set here is left over from a drag that ended without
+        // telling us: clear it rather than ignoring every later drag.
+        if (isDragging.value) {
+            extracting = false
+            resetDragState()
+        }
+
         const startX = ev.clientX
         const startY = ev.clientY
         const THRESHOLD = 5
@@ -230,30 +271,66 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
             isDragging.value = true
             options.onDragStarted?.()
 
-            // The selection resolves its own entries (it may hold rows that are
-            // not loaded); a selection too large to drag is refused there.
-            let items: ListingEntry[]
+            // The selection resolves what is dragged (it may hold rows that are
+            // not loaded); a large one comes back as a reference.
+            let source: ItemsDragSource
             try {
-                items = await dragEntries(entry)
+                source = await dragSource(entry)
             } catch (err) {
                 console.warn('[items-dnd] drag cancelled:', err)
                 isDragging.value = false
                 return
             }
+
+            const ghostIcon = entry.Kind === 'dir' ? '📁' : '📄'
+            const callbacks = {
+                onDragOver:      onNativeDragOver,
+                onDragLeave:     onNativeDragLeave,
+                onDrop:          () => resetDragState(),
+                onExternalResult,
+            }
+
+            if ('selection' in source) {
+                const data: FileSelectionData = {
+                    selection: source.selection,
+                    count: source.count,
+                    dir: source.dir,
+                    sample: source.sample.map(toFileRef),
+                }
+                setActiveDragPayload(createGexPayload('gex/file-selection', data, { widgetType: 'items', widgetId: sourceId }), sourceId)
+                console.log('[items] drag of a selection reference', { count: source.count, sourceId })
+
+                extracting = true
+                startNativeDrag(
+                    { selection: source.selection, count: source.count },
+                    {
+                        // Past the OS drag limit, other apps refuse it: the cursor
+                        // tip says why while over them (the host's refusal rules).
+                        label: `${source.count.toLocaleString()} items`,
+                        icon: ghostIcon,
+                        count: source.count,
+                    },
+                    callbacks,
+                    moveEv.clientX,
+                    moveEv.clientY,
+                ).then(({ cleanup, started }) => {
+                    extracting = false
+                    if (!started) { resetDragState(); return }
+                    cleanupDrag = cleanup
+                }).catch(() => {
+                    extracting = false
+                    resetDragState()
+                })
+                return
+            }
+
+            const items = source.entries
             if (!items.length) { isDragging.value = false; return }
 
             const paths = items.map(e => e.FullPath)
-            const fileRefs = items.map(e => ({
-                path: e.FullPath,
-                name: e.Name ?? '',
-                size: e.Size ?? 0,
-                mimeType: guessMimeType(e.FullPath),
-                isDirectory: e.Kind === 'dir',
-            }))
-
             const payload = createGexPayload(
                 'gex/file-refs',
-                fileRefs,
+                items.map(toFileRef),
                 { widgetType: 'items', widgetId: sourceId }
             )
 
@@ -267,27 +344,21 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
             startNativeDrag(
                 paths,
                 {
-                    label: paths.length > 1 ? `${paths.length} items` : entry.Name,
-                    icon:  entry.Kind === 'dir' ? '📁' : '📄',
+                    label: paths.length > 1 ? `${paths.length.toLocaleString()} items` : entry.Name,
+                    icon:  ghostIcon,
                     count: paths.length,
                 },
-                {
-                    onDragOver:      onNativeDragOver,
-                    onDragLeave:     onNativeDragLeave,
-                    onDrop:          () => resetDragState(),
-                    onExternalResult,
-                },
+                callbacks,
                 moveEv.clientX,
                 moveEv.clientY,
-                // VFS drag hooks receive the dragged entries (this used to pass
-                // the selection Ref, so the hooks never ran).
+                // VFS drag hooks receive the dragged entries.
                 { cwd: cwd.value, entries: items },
-            ).then(({ cleanup, resolvedPaths }) => {
+            ).then(({ cleanup, started }) => {
                 extracting = false
 
-                // startNativeDrag returns empty resolvedPaths when drag was
-                // cancelled by a VFS hook (e.g. all-ghost selection)
-                if (!resolvedPaths.length) {
+                // Not started: cancelled by a VFS hook (e.g. all-ghost
+                // selection) or the pointer came up while resolving.
+                if (!started) {
                     resetDragState()  // clears payload, resets isDragging
                     return
                 }

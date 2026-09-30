@@ -57,7 +57,12 @@ export default {
     id:      'items',
     version: '0.3.1',
     Component: Widget,
-    dropAccepts: ['gex/file-refs'],
+    // Takes files and folders anywhere in the pane (dropped on a folder row: into
+    // that folder). Moves them (Shift / Ctrl choice: backlog). See the host's
+    // widgets/dnd/dropSpec.ts for every field and its default.
+    drop: {
+        effect: 'move',
+    },
 	menus: menuConfig,
 
     // ── Context declarations ────────────────────────────────────────────────

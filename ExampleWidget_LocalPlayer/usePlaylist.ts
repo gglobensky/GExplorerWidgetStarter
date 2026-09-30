@@ -147,12 +147,13 @@ export function usePlaylist(
     }
 
     const startEmpty = queue.value.length === 0
-    queue.value.push(...imported)
+    // A new array: the queue's sortable view (useSortable) follows reassignments only.
+    queue.value = queue.value.concat(imported)
+    playlists.setItems(sel, toPlaylistItems(), { keepCurrent: true })
     if (startEmpty && queue.value.length) {
       const idx = await playlists.playIndex(sel, 0, music)
       if (idx >= 0) { currentIndex.value = idx; isPlaying.value = true }
     }
-    ensureDnD()
   }
 
   function parseM3U(text: string): Track[] {
@@ -191,7 +192,8 @@ export function usePlaylist(
       try { URL.revokeObjectURL(t.url); blobRegistry.delete(t.url) } catch {}
     }
     const wasCurrent = realIndex === currentIndex.value
-    queue.value.splice(realIndex, 1)
+    // A new array: the queue's sortable view (useSortable) follows reassignments only.
+    queue.value = queue.value.filter((_, i) => i !== realIndex)
     if (queue.value.length === 0) { clearQueue(); return }
     if (wasCurrent) {
       const nextIdx = Math.min(realIndex, queue.value.length - 1)
@@ -204,7 +206,6 @@ export function usePlaylist(
     } else if (realIndex < currentIndex.value) {
       currentIndex.value -= 1
     }
-    ensureDnD()
     playlists.setItems(sel, toPlaylistItems(), { keepCurrent: true })
   }
 
@@ -226,7 +227,6 @@ export function usePlaylist(
     }
     queue.value = []
     currentIndex.value = -1
-    ensureDnD()
     playlists.setItems(sel, toPlaylistItems(), { keepCurrent: true })
   }
 
