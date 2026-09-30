@@ -8,7 +8,8 @@
    ROWS       useVirtualList renders only the visible rows (+ overscan);
               layouts get item indices and look rows up with rowAt(i).
    SELECTION  createListSelection (names; "all except"; ranges resolved in
-              the background). Marquee = createMarqueeDriver over
+              the background, large ones held by the backend as selection
+              sets). Marquee = createMarqueeDriver over
               createVirtualGeometry (hit ranges from row math).
    KEYS       one KEYMAP table -> named actions (to be replaced by the app's
               input controller; nothing else hard-codes keys).
@@ -36,6 +37,8 @@ import {
   useWidgetChrome,
   show as showSnack,
   showOnce,
+  showZoneTip,
+  type ZoneTipHandle,
   type ScrollerAdapter,
   type Rect,
   type WidgetSdk,
@@ -461,7 +464,7 @@ const selection = createListSelection({
     showSnack({
       id: 'items-selection-limit',
       text: l.kind === 'range'
-        ? `Selecting ${l.count.toLocaleString()} items with one range isn't supported yet (up to ${l.max.toLocaleString()}). Ctrl+A selects everything.`
+        ? `Selecting ${l.count.toLocaleString()} items with one range isn't supported in this view (up to ${l.max.toLocaleString()}). Ctrl+A selects everything.`
         : `This action handles up to ${l.max.toLocaleString()} items; ${l.count.toLocaleString()} are selected.`,
       timeoutMs: 7000,
       dedupe: 'replace',
@@ -477,7 +480,30 @@ selection.subscribe((s) => {
   selState.value = s
   selTick.value++
   scheduleSelectionEvent()
+  showSelectionTip(s.pending)
 })
+
+/* -----------------------------------------------
+   Selected count: a tip in the default tooltip zone (bottom-right, the
+   user's choice later), shown as long as something is selected; once the
+   selection is empty it says so and goes 1.5 s later.
+------------------------------------------------ */
+const SELECTION_TIP_MS = 1500
+let selectionTip: ZoneTipHandle | null = null
+let tipShown = { count: 0, pending: false }
+
+function showSelectionTip(pending: boolean) {
+  const count = selection.count()
+  if (count === tipShown.count && pending === tipShown.pending) return   // focus moves, rows arriving
+  tipShown = { count, pending }
+  if (!pending && count === 0) {
+    if (selectionTip?.visible) selectionTip.update({ content: 'Nothing selected', durationMs: SELECTION_TIP_MS })
+    return
+  }
+  const options = { content: pending ? 'Selecting…' : `${count.toLocaleString()} selected` }
+  if (selectionTip?.visible) selectionTip.update(options)
+  else selectionTip = showZoneTip(options)
+}
 
 const listing = useListing(source, {
   vlist: itemView,
@@ -498,9 +524,9 @@ function isSelected(i: number): boolean {
 /** Selected paths without any fetch (explicit selections); null = too large / unresolved. */
 function selectedPathsNow(): string[] | null {
   const st = selState.value
-  if (st.all) return null
+  if (st.base !== 'none') return null
   const base = listing.basePath.value || cwd.value
-  return [...st.ids].map(n => joinPath(base, n))
+  return [...st.add].map(n => joinPath(base, n))
 }
 
 /** Selected rows that are on screen (kinds for the context resolver). */
@@ -717,6 +743,9 @@ function onScrollContainerPointerDown(ev: PointerEvent) {
   else (ev.currentTarget as HTMLElement)?.focus?.({ preventScroll: true })
 }
 
+/** The press being released started on the surface (not on a row). */
+let surfacePress = false
+
 function onSurfacePointerDown(ev: PointerEvent) {
   if (ev.button !== 0) return
   const fromDetails = layout.value === 'details' && ev.currentTarget === detailsScrollEl.value
@@ -732,6 +761,7 @@ function onSurfacePointerDown(ev: PointerEvent) {
   ;(ev.currentTarget as Element)?.setPointerCapture?.(ev.pointerId)
   scrollEl.value?.focus({ preventScroll: true })
 
+  surfacePress = true
   lastClientX = ev.clientX; lastClientY = ev.clientY
   geo.consumeScrollDelta()
   driver.pointerDown(ev, modsFromEvent(ev))
@@ -750,6 +780,12 @@ function onSurfacePointerUp(ev: PointerEvent) {
   if (ev.button !== 0) return
   if (layout.value === 'details' && ev.currentTarget === scrollEl.value) return
 
+  // Row presses also bubble a pointerup here: only a press that started on
+  // the surface may clear (a Ctrl+click that deselects a row is not a
+  // background click, though the row under the pointer is then unselected).
+  const fromSurface = surfacePress
+  surfacePress = false
+
   const wasMarquee = marqueeActive.value
   if (wasMarquee) {
     driver.adjustForScroll(geo.consumeScrollDelta())
@@ -759,7 +795,7 @@ function onSurfacePointerUp(ev: PointerEvent) {
   window.removeEventListener('pointerup', onSurfacePointerUp)
 
   // A plain click on the background (no marquee) clears the selection.
-  if (!wasMarquee && pointerInsideScroller(ev.clientX, ev.clientY) && !isOverSelectedRowAtPoint(ev.clientX, ev.clientY)) {
+  if (fromSurface && !wasMarquee && pointerInsideScroller(ev.clientX, ev.clientY) && !isOverSelectedRowAtPoint(ev.clientX, ev.clientY)) {
     selection.clear()
   }
 }
@@ -788,6 +824,21 @@ function onRowDown({ index, ev }: { index: number; ev: PointerEvent }) {
   // (the context menu then acts on the whole selection); no modifiers.
   const mods = ev.button === 2 ? { ctrl: false, meta: false, shift: false } : modsFromEvent(ev)
   selection.rowDown(index, mods)
+  keepKeyboardFocus()
+}
+
+/**
+ * Rows are virtual <button>s: a click focuses the row, and once keys scroll
+ * it out of the rendered range it is unmounted and focus falls to <body>, so
+ * the keys stop reaching onKeyDown (Shift / Ctrl + arrows stalled after a
+ * screenful). Keyboard focus belongs to the scroller: moved there after the
+ * browser's own mousedown focus (which follows pointerdown).
+ */
+function keepKeyboardFocus() {
+  setTimeout(() => {
+    const el = scrollEl.value
+    if (el && document.activeElement !== el && el.contains(document.activeElement)) el.focus({ preventScroll: true })
+  }, 0)
 }
 
 function onRowMove({ x, y }: { x: number; y: number }) { selection.rowMove(x, y) }
@@ -1212,12 +1263,15 @@ function saveView() {
   const a = itemView.captureAnchor(selection.focusIndex())
   const name = a ? rowAt(a.index)?.Name : undefined
   const st = selState.value
-  const keepSelection = (!st.all && st.ids.size <= RESTORE_SELECTION_MAX) || (st.all && st.ids.size === 0)
+  // Names and plain "all" are kept; a backend selection set goes with the
+  // selection model (released on unmount).
+  const keepSelection = (st.base === 'none' && st.add.size <= RESTORE_SELECTION_MAX) ||
+    (st.base === 'all' && st.remove.size === 0)
   kept.view = {
     page: currentPage.value,
     anchor: a && name ? { name, offset: a.offset, edge: a.edge } : null,
     selection: keepSelection
-      ? { all: st.all, ids: st.all ? [] : [...st.ids], focusId: st.focusId, anchorId: st.anchorId }
+      ? { all: st.base === 'all', ids: st.base === 'none' ? [...st.add] : [], focusId: st.focusId, anchorId: st.anchorId }
       : null,
   }
 }
@@ -1323,6 +1377,7 @@ on('items:reloadAndRename', async (msg: any) => {
 })
 
 onBeforeUnmount(() => {
+  selectionTip?.hide()
   saveView()      // before the selection goes away
   if (iconsRaf) cancelAnimationFrame(iconsRaf)
   if (selectionEventTimer) clearTimeout(selectionEventTimer)

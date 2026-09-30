@@ -759,8 +759,11 @@ declare module 'gexplorer/widgets' {
         refresh(): void
         /** Defers refreshes until the returned release is called (batch operations). */
         holdRefresh?(): () => void
-        /** The backend listing a SelectionRef can point into; null for memory / VFS listings. */
-        backendListing?(): { listingId: string } | null
+        /**
+         * The backend listing a SelectionRef can point into; null for memory / VFS
+         * listings. version: the backend's number for the order shown now.
+         */
+        backendListing?(): { listingId: string; version: number } | null
         close(): void
     }
 
@@ -772,7 +775,8 @@ declare module 'gexplorer/widgets' {
         listingId: string
         version?: number
         base: 'none' | 'all'
-        include?: { ranges?: Array<[number, number]>; names?: string[] }
+        /** set: a selection set held by the backend (large Shift / marquee ranges). */
+        include?: { ranges?: Array<[number, number]>; names?: string[]; set?: string }
         exclude?: { ranges?: Array<[number, number]>; names?: string[] }
         count?: number
     }
@@ -885,22 +889,29 @@ declare module 'gexplorer/widgets' {
         /** Items per page for pageUp / pageDown. Default 20. */
         pageSize?: () => number
         policy?: 'windows' | 'mac'
-        /** Largest Shift / marquee range. Default 50,000. */
+        /** Largest range turned into names in the frontend; larger ones become backend sets. Default 5,000. */
+        localRange?: number
+        /** Largest range on a source without a backend listing (no sets there). Default 50,000. */
         maxRange?: number
-        /** Largest "all except" selection selectedPaths / selectedEntries read. Default 200,000. */
+        /** Largest selection selectedPaths / selectedEntries read. Default 200,000. */
         maxResolve?: number
         dragThresholdPx?: number
         onLimit?: (limit: SelectionLimit) => void
         /** Focus moved by an action: scroll the index into view. */
         onFocusMove?: (index: number) => void
     }
+    /**
+     * selected(name) = add.has(name) || (!remove.has(name) && inBase(name)).
+     * base 'none': `add` is the selection; 'all': everything except `remove`;
+     * 'set': a backend selection set (large range), with the Ctrl-clicks since in add / remove.
+     */
     export interface ListSelectionState {
-        /** false: ids are the selected names; true: everything except ids. */
-        readonly all: boolean
-        readonly ids: ReadonlySet<string>
+        readonly base: 'none' | 'all' | 'set'
+        readonly add: ReadonlySet<string>
+        readonly remove: ReadonlySet<string>
         readonly focusId: string | null
         readonly anchorId: string | null
-        /** A range / marquee is shown but not yet turned into names. */
+        /** A range / marquee is shown but not yet applied. */
         readonly pending: boolean
         readonly tick: number
     }
@@ -908,6 +919,7 @@ declare module 'gexplorer/widgets' {
         state(): ListSelectionState
         subscribe(listener: (s: ListSelectionState) => void): () => void
         isSelected(index: number): boolean
+        /** Exact for names and "all"; for a set, known for the rows isSelected() evaluated (on screen). */
         isSelectedId(id: string): boolean
         count(): number
         focusIndex(): number | null
@@ -923,7 +935,7 @@ declare module 'gexplorer/widgets' {
         selectAll(): void
         clear(): void
         setIds(ids: Iterable<string>, marks?: { focusId?: string | null; anchorId?: string | null }): void
-        /** Waits for a range still being resolved to names. */
+        /** Waits for a range still being applied. */
         settle(): Promise<void>
         selectedPaths(): Promise<string[]>
         selectedEntries(): Promise<ListingEntry[]>
@@ -936,7 +948,8 @@ declare module 'gexplorer/widgets' {
          * Freezes the selection now and returns a payload maker: each call builds
          * the reference against the listing current at that moment (call it right
          * before sending, e.g. after a confirmation dialog; a folder refresh in
-         * between is harmless since the selection is names).
+         * between is harmless since the selection is names). A backend set is
+         * held until the maker is garbage-collected.
          */
         capture(): () => Promise<SelectionPayload>
         /** Up to `max` selected items without fetching (`preferred` first: e.g. the focused / visible rows). */
@@ -944,6 +957,30 @@ declare module 'gexplorer/widgets' {
         destroy(): void
     }
     export function createListSelection(options: ListSelectionOptions): ListSelection
+
+    /**
+     * A tooltip shown by code in a tooltip zone (status such as "N selected").
+     * zones: the widget's choice (wins); omitted: DEFAULT_TIP_ZONES (bottom-right,
+     * later the user's choice). durationMs: hides that long after the last show /
+     * update; omitted: until hide().
+     */
+    export type ZoneTipOptions = {
+        content: string
+        icon?: string
+        tone?: 'normal' | 'refused' | 'warning'
+        detail?: string
+        shortcut?: string
+        zones?: string[]
+        durationMs?: number
+        anchorEl?: HTMLElement
+    }
+    export type ZoneTipHandle = {
+        update(options: ZoneTipOptions): void
+        hide(): void
+        readonly visible: boolean
+    }
+    export function showZoneTip(options: ZoneTipOptions): ZoneTipHandle
+    export const DEFAULT_TIP_ZONES: readonly string[]
 
     export interface UseListingOptions {
         /** Keeps the view in place across re-sorts and refreshes. */
