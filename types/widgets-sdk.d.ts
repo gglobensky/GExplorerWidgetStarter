@@ -134,6 +134,23 @@ declare module 'gexplorer/widgets' {
          * items failed.
          */
         fsPasteClipboard?: (targetDir: string) => Promise<unknown | undefined>
+        /**
+         * Runs a context-menu action (e.g. 'fs.delete') without opening the
+         * menu, with the options v-context-menu takes (widgetType is filled in
+         * by the host). The action asks for what it needs itself (consent,
+         * confirmation). Resolves false when the action is unknown or does not
+         * apply. For keyboard shortcuts.
+         */
+        runMenuAction?: (actionId: string, options: {
+            widgetId: string
+            location: { area: string }
+            target: 'selection' | 'item' | 'background' | string
+            path?: string
+            selection?: unknown
+            widgetConfig?: unknown
+            entries?: unknown[]
+            onClose?: () => void
+        }) => Promise<boolean>
 
         // P2P / SP2P public identity + invite APIs
         p2pGetIdentity?: () => Promise<P2PIdentity>

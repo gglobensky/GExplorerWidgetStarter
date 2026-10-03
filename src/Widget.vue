@@ -66,6 +66,7 @@ const {
   fsRename,
   loadIconPack,
   fsPasteClipboard,
+  runMenuAction,
   openEntry: sdkOpenEntry,
   openFolder: sdkOpenFolder
 } = sdk ?? {}
@@ -597,6 +598,21 @@ function contextMenuOptions() {
   }
 }
 
+/**
+ * Runs a context-menu action on the selection, as if picked from the menu
+ * (same options; nothing selected: the background, where most such actions
+ * do not apply and nothing happens).
+ */
+function runMenuActionOnSelection(actionId: string) {
+  if (!runMenuAction) {
+    console.warn('[items] key action unavailable (host SDK has no runMenuAction):', actionId)
+    return
+  }
+  void runMenuAction(actionId, contextMenuOptions()).then(ran => {
+    if (!ran) console.log('[items] key action did not run:', actionId)
+  })
+}
+
 /* -----------------------------------------------
    Icons (visible rows only)
 ------------------------------------------------ */
@@ -869,6 +885,7 @@ type ItemsAction =
   | 'select.all' | 'select.toggleFocused' | 'select.clear'
   | 'open.focused' | 'rename.focused'
   | 'page.next' | 'page.prev' | 'page.goto'
+  | `run:${string}`                  // a context-menu action (host or widget), e.g. 'run:fs.delete'
 
 const FOCUS_KEYS: Record<string, FocusAction> = {
   ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
@@ -889,6 +906,8 @@ const KEYMAP: Record<string, ItemsAction> = {
   'Alt+PageDown': 'page.next',
   'Alt+PageUp': 'page.prev',
   'Ctrl+G': 'page.goto',
+  'Delete': 'run:fs.delete',                    // to the Trash
+  'Shift+Delete': 'run:fs.deletePermanent',     // permanently (asks first)
 }
 
 function keyCombo(ev: KeyboardEvent): string {
@@ -898,6 +917,7 @@ function keyCombo(ev: KeyboardEvent): string {
 }
 
 function runItemsAction(action: ItemsAction): void {
+  if (action.startsWith('run:')) { runMenuActionOnSelection(action.slice(4)); return }
   const [group, arg] = action.split('.') as [string, string]
   switch (group) {
     case 'focus': return selection.focusMove(arg as FocusAction)
