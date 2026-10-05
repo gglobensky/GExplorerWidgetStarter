@@ -1,11 +1,9 @@
 // /src/widgets/favorites/useFavoritesData.ts
-import { ref, watch, onMounted, onBeforeUnmount } from '/runtime/vue.js'
+import { ref, watch, onMounted, onBeforeUnmount, inject } from '/runtime/vue.js'
 import {
   FavoriteEntry,
   FavoriteTreeNode,
-  getFavorites,
-  getGlobalFavorites,
-  createWidgetMessaging
+  type WidgetSdk,
 } from 'gexplorer/widgets'
 import {
   buildRootRows,
@@ -22,7 +20,17 @@ export type UseFavoritesDataOptions = {
 export function useFavoritesData(opts: UseFavoritesDataOptions) {
   const { sourceId, configData, groupValue, instanceId } = opts
 
-  const { send, on, cleanup } = createWidgetMessaging(sourceId)
+  // The user's favorites come through the widget's SDK ('Favorites' cap in entry.ts).
+  const sdk = inject<WidgetSdk>('widgetSdk')
+  const getFavorites = sdk?.getFavorites
+  const getGlobalFavorites = sdk?.getGlobalFavorites
+  if (!getFavorites || !getGlobalFavorites)
+    console.error("[favorites] the SDK has no favorites: declare the 'Favorites' capability in entry.ts")
+
+  // Bound to this instance by the host (sandbox C3b): no id passed.
+  const messaging = sdk?.messaging?.()
+  if (!messaging) throw new Error('[favorites] widgetSdk.messaging is not available')
+  const { send, on, cleanup } = messaging
 
   // Core state
   const loading = ref(false)
@@ -58,6 +66,7 @@ export function useFavoritesData(opts: UseFavoritesDataOptions) {
     error.value = null
 
     try {
+      if (!getFavorites) throw new Error("no 'Favorites' capability")
       const svc = await getFavorites(sourceId)
       if (Array.isArray(svc)) {
         favorites.value = svc
@@ -90,6 +99,7 @@ export function useFavoritesData(opts: UseFavoritesDataOptions) {
    */
   async function refreshRootFolders() {
     try {
+      if (!getGlobalFavorites) throw new Error("no 'Favorites' capability")
       const tree = await getGlobalFavorites()
       fullTree.value = tree
       rootRows.value = buildRootRows(tree, favorites.value)

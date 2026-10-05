@@ -1,6 +1,5 @@
 // widgets/game-library/entry.ts
 import Widget from './Widget.vue'
-import { registerWidgetMenus } from 'gexplorer/widgets'
 
 const menuConfig = {
   contributions: [
@@ -45,13 +44,14 @@ const menuConfig = {
   ],
 }
 
-registerWidgetMenus('game-library', menuConfig)
-
 export default {
   api: '1.0',
   id: 'game-library',
   version: '0.1.0',
   Component: Widget,
+
+  // Registered by the host when the widget loads (registerWidgetMenus is not in the SDK).
+  menus: menuConfig,
 
   contexts: {
     grid: {

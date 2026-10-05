@@ -1,9 +1,9 @@
 // /src/widgets/favorites/useFavoritesSortable.ts
-import { ref, type Ref } from '/runtime/vue.js'
-import { 
+import { ref, inject, type Ref } from '/runtime/vue.js'
+import {
   useSortable,
   DropIntent,
-  applyFavoritesMove
+  type WidgetSdk
 } from 'gexplorer/widgets'
 import {
     rowId,
@@ -35,6 +35,13 @@ export type UseFavoritesSortableOptions = {
 }
 
 export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
+  // The user's favorites come through the widget's SDK ('Favorites' cap in entry.ts).
+  const sdk = inject<WidgetSdk>('widgetSdk')
+  const need = <K extends keyof WidgetSdk>(k: K): NonNullable<WidgetSdk[K]> => {
+    const f = sdk?.[k]
+    if (!f) throw new Error(`the SDK has no ${String(k)}: declare the 'Favorites' capability in entry.ts`)
+    return f as NonNullable<WidgetSdk[K]>
+  }
     const {
         layout,
         listEl,
@@ -129,7 +136,7 @@ export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
         const { kind: targetKind, key: targetKey } = parseRootRowId(targetRowId)
         dragJustEnded = true
         try {
-            await applyFavoritesMove({ movedKind, movedKey, targetKind, targetKey, placement })
+            await need('applyFavoritesMove')({ movedKind, movedKey, targetKind, targetKey, placement })
             await refreshRootFolders()
             await refreshFavorites()
             broadcastFavoritesChanged('move')

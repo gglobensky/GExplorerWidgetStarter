@@ -56,5 +56,6 @@ export default {
   capabilities: [
 		{ cap: 'Read',  reason: 'Reads favorite paths to display them' },
 		{ cap: 'Write', reason: 'Adds and removes favorites' },
+		{ cap: 'Favorites', reason: "Shows and edits your favorites" },
 	]
 }

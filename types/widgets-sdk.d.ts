@@ -84,6 +84,33 @@ declare module 'gexplorer/widgets' {
          * default 10,000).
          */
         resolveDropRefs?: (payload: GexDnDPayload, max?: number) => Promise<FileRefData[]>
+        /**
+         * Read cap. Starts an OS drag of these items, as this widget (same
+         * arguments as the old free startNativeDrag, now deprecated).
+         */
+        startNativeDrag?: (
+            source: string[] | { selection: SelectionRef; count?: number },
+            preview: { label: string; icon?: string; count?: number },
+            callbacks: {
+                onDragOver: (x: number, y: number) => void
+                onDragLeave: () => void
+                onDrop: (x: number, y: number) => void
+                onExternalResult?: (effect: string) => void
+            },
+            x: number,
+            y: number,
+            options?: { cwd?: string; entries?: any[] }
+        ) => Promise<{ cleanup: () => void; resolvedPaths: string[]; started: boolean }>
+        /**
+         * This widget instance's lifecycle, bound to the instance by the host
+         * (replaces createLifecycle(ownerId)). Same object on every call.
+         */
+        lifecycle?: () => WidgetLifecycle
+        /**
+         * Messaging between widget instances, sent as this instance (replaces
+         * createWidgetMessaging(sourceId)). A new handle per call: cleanup() it.
+         */
+        messaging?: () => ScopedMessaging
         fsRename?: (oldPath: string, newPath: string) => Promise<{ ok: boolean; error?: string }>
 
         renameApplyBatch?: (
@@ -135,22 +162,25 @@ declare module 'gexplorer/widgets' {
          */
         fsPasteClipboard?: (targetDir: string) => Promise<unknown | undefined>
         /**
-         * Runs a context-menu action (e.g. 'fs.delete') without opening the
-         * menu, with the options v-context-menu takes (widgetType is filled in
-         * by the host). The action asks for what it needs itself (consent,
-         * confirmation). Resolves false when the action is unknown or does not
-         * apply. For keyboard shortcuts.
+         * Write cap. Deletes paths, or a selection (count + sample + payload,
+         * any size, e.g. what the context menu gets): to the Trash, or
+         * permanently. The host's own delete: confirmation, the operation's
+         * dialog, locked files, Trash room, Undo.
          */
-        runMenuAction?: (actionId: string, options: {
-            widgetId: string
-            location: { area: string }
-            target: 'selection' | 'item' | 'background' | string
-            path?: string
-            selection?: unknown
-            widgetConfig?: unknown
-            entries?: unknown[]
-            onClose?: () => void
-        }) => Promise<boolean>
+        fsDelete?: (
+            items: string[] | { count: number; sample: Array<{ path: string; name: string; kind?: 'dir' | 'file' | 'link' }>; payload: () => Promise<SelectionPayload> },
+            opts?: { permanent?: boolean }
+        ) => Promise<unknown>
+
+        // ── Favorites cap: the user's favorites (the host's shared format) ──
+        getFavorites?: (sourceId: string) => Promise<FavoriteEntry[]>
+        getGlobalFavorites?: () => Promise<FavoriteTreeNode[]>
+        addFavorite?: (path: string, label?: string, parentFolderId?: string) => Promise<void>
+        addFolder?: (label: string, parentFolderId?: string) => Promise<void>
+        removeFavorite?: (path: string) => Promise<void>
+        removeFolder?: (folderId: string) => Promise<void>
+        reorderGlobalRootNodes?: (nodeIds: string[]) => Promise<void>
+        applyFavoritesMove?: (spec: FavoritesMoveSpec) => Promise<void>
 
         // P2P / SP2P public identity + invite APIs
         p2pGetIdentity?: () => Promise<P2PIdentity>
@@ -238,6 +268,7 @@ declare module 'gexplorer/widgets' {
         | 'P2PDirect'
         | 'SecureStorage'
         | 'Chat'
+        | 'Favorites'
 
     // ── FS types ───────────────────────────────────────────────────────────
 
@@ -755,6 +786,13 @@ declare module 'gexplorer/widgets' {
         /** Bumps when fetched rows arrive. */
         readonly rowsTick: number
         readonly basePath: string
+        /**
+         * True while a folder shown for the first time is still being read: the
+         * rows so far in disk order (not sorted), total growing, status
+         * 'loading'. Positions never change meanwhile; the sorted order then
+         * replaces them as a new version. Absent = false.
+         */
+        readonly partial?: boolean
     }
     export type ListingListener = (snapshot: ListingSnapshot) => void
     export interface ListingSource {
@@ -1047,13 +1085,6 @@ declare module 'gexplorer/widgets' {
         events?: MarqueeEvents
     ): MarqueeDriver
 
-    export function fsValidate(path: string): Promise<{
-        ok: boolean
-        exists?: boolean
-        isDir?: boolean
-        error?: string
-    }>
-
     /** Entry shape the icon helpers read (fs:listDir fields, lower-cased). */
     export type IconEntry = { iconKey?: string; kind?: string; ext?: string }
     /** Cached system icon (data URL) for entry.iconKey, else a pack icon or emoji. */
@@ -1078,13 +1109,6 @@ declare module 'gexplorer/widgets' {
         count?: number
     }): HTMLElement
 
-    export function authorizeFileRefs(
-        widgetType: string,
-        widgetId: string,
-        payload: GexDnDPayload,
-        caps?: string[]
-    ): Promise<{ ok: boolean; reason?: string }>
-
     export function authorizeDrop(
         widgetType: string,
         widgetId: string,
@@ -1092,52 +1116,28 @@ declare module 'gexplorer/widgets' {
         validator: DnDValidator
     ): Promise<{ ok: boolean; reason?: string }>
 
-    export function fileRefsToPlaylistItems(
-        refs: FileRefData[],
-        receiverWidgetType: string,
-        receiverWidgetId: string
-    ): Promise<PlaylistItem[]>
-
     export function setActiveDragPayload(payload: GexDnDPayload, sourceId: string): void
     export function clearActiveDragPayload(): void
 
-    /**
-     * Starts a native (OLE) drag of `paths`. Resolves once the drag is under way:
-     * `resolvedPaths` is empty when a VFS drag hook cancelled it. `options.entries`
-     * (the dragged entries) is what VFS drag hooks receive.
-     */
-    /**
-     * source: the paths, or a selection reference (large selections: the
-     * backend builds the OS drag data; no VFS hooks; above 10,000 items it can
-     * only be dropped inside GExplorer). `started` is false when
-     * the drag was cancelled before the OS took over.
-     */
-    export function startNativeDrag(
-        source: string[] | { selection: SelectionRef; count?: number },
-        preview: { label: string; icon?: string; count?: number },
-        callbacks: {
-            onDragOver: (x: number, y: number) => void
-            onDragLeave: () => void
-            onDrop: (x: number, y: number) => void
-            onExternalResult?: (effect: string) => void
-        },
-        x: number,
-        y: number,
-        options?: { cwd?: string; entries?: any[] }
-    ): Promise<{ cleanup: () => void; resolvedPaths: string[]; started: boolean }>
-
-    export function createWidgetMessaging(sourceId: string): ScopedMessaging
+    // Removed (sandbox C3c, 2026-10-05): fsValidate, startNativeDrag,
+    // createWidgetMessaging, createLifecycle, authorizeFileRefs,
+    // fileRefsToPlaylistItems, resolveDropRefs. Use the SDK object's versions
+    // (sdk.fsValidate, sdk.startNativeDrag, sdk.messaging(), sdk.lifecycle(),
+    // sdk.authorizeFileRefs, sdk.fileRefsToPlaylistItems, sdk.resolveDropRefs):
+    // the host binds them to your widget.
 
     export function subscribeDrives(callback: (drives: DriveSnapshot[]) => void): () => void
     export function getDrives(): DriveSnapshot[]
 
-    export function getFavorites(): FavoritesConfig
-    export function getGlobalFavorites(): FavoriteEntry[]
-    export function addFavorite(entry: FavoriteEntry): void
-    export function addFolder(node: FavoriteTreeNode): void
-    export function removeFavorite(id: string): void
-    export function removeFolder(id: string): void
-    export function applyFavoritesMove(from: number, to: number): void
+    // Favorites: through the SDK (getFavorites, addFavorite...: 'Favorites' cap).
+    export type FavoritesMovePlacement = 'before' | 'after' | 'inside'
+    export type FavoritesMoveSpec = {
+        movedKind: 'folder' | 'item'
+        movedKey: string        // folder.id or item.path
+        targetKind: 'folder' | 'item'
+        targetKey: string       // folder.id or item.path
+        placement: FavoritesMovePlacement
+    }
 
     export function getCurrentPath(): string | null
     // ── Lifecycle ──────────────────────────────────────────────────────────
@@ -1198,7 +1198,6 @@ declare module 'gexplorer/widgets' {
         /** Observe and command a background worker registered by this widget (call in setup()). */
         worker(workerId: string): LifecycleWorkerHandle
     }
-    export function createLifecycle(ownerId: string): WidgetLifecycle
 
     // ── Host actions (props.runAction) ────────────────────────────────────
     // The host passes runAction to every widget. setView merges a patch into
@@ -1251,7 +1250,6 @@ declare module 'gexplorer/widgets' {
     export function useWidgetChrome(active?: Ref<boolean> | ComputedRef<boolean> | (() => boolean) | boolean): WidgetChrome
     export function useAudio(): any
 
-    export function registerWidgetMenus(widgetType: string, config: any): void
     export type RenameOptions = {
         /** Returns an error message, or null when the new name is valid. */
         validate?: (value: string) => string | null

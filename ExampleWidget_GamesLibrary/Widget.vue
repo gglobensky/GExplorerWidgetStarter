@@ -1,6 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from '/runtime/vue.js'
-import { onWidgetMessage } from 'gexplorer/widgets'
+import { ref, computed, watch, onMounted, onBeforeUnmount, inject } from '/runtime/vue.js'
+import type { WidgetSdk } from 'gexplorer/widgets'
+
+// Messaging bound to this instance by the host (sdk.messaging(); the free
+// onWidgetMessage is not exported any more).
+const sdk = inject<WidgetSdk>('widgetSdk')
 
 // --- props/emits (copying your Items contract) ---
 type HostAction =
@@ -146,19 +150,21 @@ function refresh() {
 const offMsg = ref<null | (() => void)>(null)
 
 onMounted(() => {
-  offMsg.value = onWidgetMessage(props.sourceId, async (msg) => {
-    if (msg.topic === 'gamelib:refresh') refresh()
-    if (msg.topic === 'gamelib:rescan') refresh()
+  const messaging = sdk?.messaging?.()
+  if (!messaging) { console.warn('[gamelib] widgetSdk.messaging is not available'); return }
+  messaging.on('gamelib:refresh', () => refresh())
+  messaging.on('gamelib:rescan', () => refresh())
 
-    // selection-scoped actions
-    if (msg.topic === 'gamelib:openStore' && selected.value?.key) {
-      // later: open store page (steam://store/<appid> maybe)
-      console.log('[gamelib] open store for', selected.value.key)
-    }
-    if (msg.topic === 'gamelib:openFolder' && selected.value?.installDir) {
-      props.runAction?.({ type: 'open', path: selected.value.installDir })
-    }
+  // selection-scoped actions
+  messaging.on('gamelib:openStore', () => {
+    if (!selected.value?.key) return
+    // later: open store page (steam://store/<appid> maybe)
+    console.log('[gamelib] open store for', selected.value.key)
   })
+  messaging.on('gamelib:openFolder', () => {
+    if (selected.value?.installDir) props.runAction?.({ type: 'open', path: selected.value.installDir })
+  })
+  offMsg.value = messaging.cleanup
 })
 
 onBeforeUnmount(() => {

@@ -1,13 +1,9 @@
 // /src/widgets/favorites/useFavoritesDialog.ts
-import { ref, computed } from '/runtime/vue.js'
+import { ref, computed, inject } from '/runtime/vue.js'
 import {
-  getGlobalFavorites,
-  addFavorite,
-  addFolder,
-  removeFavorite,
-  removeFolder,
   getCurrentPath,
-  FavoriteTreeNode
+  FavoriteTreeNode,
+  type WidgetSdk
 } from 'gexplorer/widgets'
 import { guessLabelFromPath } from './favorites.model'
 
@@ -20,6 +16,13 @@ export type UseFavoritesDialogOptions = {
 export type FolderOption = { id: string; label: string; depth: number }
 
 export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
+  // The user's favorites come through the widget's SDK ('Favorites' cap in entry.ts).
+  const sdk = inject<WidgetSdk>('widgetSdk')
+  const need = <K extends keyof WidgetSdk>(k: K): NonNullable<WidgetSdk[K]> => {
+    const f = sdk?.[k]
+    if (!f) throw new Error(`the SDK has no ${String(k)}: declare the 'Favorites' capability in entry.ts`)
+    return f as NonNullable<WidgetSdk[K]>
+  }
   const {
     refreshFavorites,
     refreshRootFolders,
@@ -54,7 +57,7 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
    */
   async function refreshFolderOptions() {
     try {
-      const tree = await getGlobalFavorites()
+      const tree = await need('getGlobalFavorites')()
 
       const opts: FolderOption[] = []
 
@@ -110,12 +113,12 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
     try {
       if (addMode.value === 'folder') {
         if (!label) return
-        await addFolder(label, parentId)
+        await need('addFolder')(label, parentId)
         await refreshFolderOptions()
         await refreshRootFolders()
       } else {
         if (!path) return
-        await addFavorite(path, label || undefined, parentId)
+        await need('addFavorite')(path, label || undefined, parentId)
         await refreshRootFolders()
       }
 
@@ -144,7 +147,7 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
 
     error.value = null
     try {
-      await removeFolder(folderId)
+      await need('removeFolder')(folderId)
 
       // Reload tree + flat favorites so UI is fully in sync
       await refreshRootFolders()
@@ -164,7 +167,7 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
   async function handleRemoveFavorite(path: string) {
     error.value = null
     try {
-      await removeFavorite(path)
+      await need('removeFavorite')(path)
 
       // Reload tree + flat favorites so UI is fully in sync
       await refreshRootFolders()

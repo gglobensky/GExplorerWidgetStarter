@@ -1,7 +1,6 @@
 // usePlayerState.ts - Core player state and audio rack integration
 import { ref, computed, onMounted, inject } from '/runtime/vue.js '
 import { 
-    createLifecycle,
     useAudio,
     WidgetSdk
 } from 'gexplorer/widgets'
@@ -27,7 +26,8 @@ export function usePlayerState(sourceId: string) {
     if (!sdk) throw new Error('[local-player] usePlayerState: widgetSdk is not provided')
     const { mintStreamHttp } = sdk
 
-    const life = createLifecycle(sourceId)
+    // Bound to this instance by the host (sandbox C3b): no id passed.
+    const life = sdk.lifecycle!()
     const { prime, acquireElement, playlists } = useAudio()
     const sel = { ownerId: sourceId, category: 'music' as const, key: 'local-player' }
     const music = acquireElement({

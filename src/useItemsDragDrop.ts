@@ -19,11 +19,9 @@
 
 import { ref, onUnmounted, type Ref, type ComputedRef, inject } from '/runtime/vue.js'
 import {
-    authorizeFileRefs,
     createGexPayload,
     setActiveDragPayload,
     clearActiveDragPayload,
-    startNativeDrag,
     WidgetSdk
 } from 'gexplorer/widgets'
 import type { GexDnDPayload, ScopedMessaging, ListingEntry, SelectionRef, FileSelectionData, FileRefData } from 'gexplorer/widgets'
@@ -111,7 +109,8 @@ function findFolderTarget(startEl: Element | null): string | null {
 
 export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDragDropReturn {
     const { sourceId, messaging, cwd, merged, marqueeActive, dragSource, refresh } = options
-    const { fsMove, fsTransfer, resolveDropRefs } = inject<WidgetSdk>('widgetSdk') ?? {}
+    // startNativeDrag: the SDK's, which says which widget drags (sandbox C3b).
+    const { fsMove, fsTransfer, resolveDropRefs, startNativeDrag, authorizeFileRefs } = inject<WidgetSdk>('widgetSdk') ?? {}
     const { send, on } = messaging
 
     const isDragging       = ref(false)
@@ -157,7 +156,7 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
         if (srcId === sourceId && !specificTarget) return
 
         try {
-            const auth = await authorizeFileRefs('items', sourceId, payload)
+            const auth = await authorizeFileRefs!('items', sourceId, payload)
             if (!auth?.ok) {
                 console.warn('[items] drop not authorized:', auth?.reason)
                 return
@@ -301,7 +300,7 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
                 console.log('[items] drag of a selection reference', { count: source.count, sourceId })
 
                 extracting = true
-                startNativeDrag(
+                startNativeDrag!(
                     { selection: source.selection, count: source.count },
                     {
                         // Past the OS drag limit, other apps refuse it: the cursor
@@ -341,7 +340,7 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
             setActiveDragPayload(payload, sourceId)
 
             extracting = true
-            startNativeDrag(
+            startNativeDrag!(
                 paths,
                 {
                     label: paths.length > 1 ? `${paths.length.toLocaleString()} items` : entry.Name,
