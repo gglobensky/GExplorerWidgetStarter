@@ -113,9 +113,14 @@ declare module 'gexplorer/widgets' {
         messaging?: () => ScopedMessaging
         fsRename?: (oldPath: string, newPath: string) => Promise<{ ok: boolean; error?: string }>
 
+        /**
+         * Renames in place as one move job (progress, Stop / Cancel, Undo, administrator
+         * rights when the folder needs them, like fsMove). Resolves when the job ended:
+         * the renames that did not happen are in `failed`. The widget's identity is
+         * added by the app (no ticket argument).
+         */
         renameApplyBatch?: (
-            renames: { from: string; to: string }[],
-            ticket?: { widgetHash: string }
+            renames: { from: string; to: string }[]
         ) => Promise<RenameApplyResult>
 
         // Metadata cap
