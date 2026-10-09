@@ -32,8 +32,6 @@ import {
   useListing,
   startRename,
   useWidgetChrome,
-  show as showSnack,
-  showOnce,
   showZoneTip,
   type ZoneTipHandle,
   type ScrollerAdapter,
@@ -58,6 +56,11 @@ import { useItemsDragDrop } from './useItemsDragDrop'
 
 const sdk = inject<WidgetSdk>('widgetSdk')
 if (!sdk) throw new Error('[items] widgetSdk is not provided')
+if (!sdk.ui) throw new Error('[items] widgetSdk.ui is not available')
+// Snackbars through this instance's ui(): the host shows the widget's name with them.
+const ui = sdk.ui()
+const showSnack = ui.snack
+const showOnce = ui.snackOnce
 const {
   fsValidate,
   openListing,

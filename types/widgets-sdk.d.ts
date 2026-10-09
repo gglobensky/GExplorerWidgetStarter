@@ -111,6 +111,26 @@ declare module 'gexplorer/widgets' {
          * createWidgetMessaging(sourceId)). A new handle per call: cleanup() it.
          */
         messaging?: () => ScopedMessaging
+        /**
+         * This instance's audio (the host's audio rack, bound to the instance: replaces
+         * useAudio()). Handles are released when the instance unmounts, unless a background
+         * job holds them (jobs().ensure(...).hold(handle)). Same object on every call.
+         */
+        audio?: () => WidgetAudio
+        /**
+         * This instance's background jobs: kinds declared in entry.ts `jobs`. A job outlives
+         * the instance unmounting (its card shows in the operations tray meanwhile) and ends
+         * with the instance's removal, the card's Stop, end(), or GEM Shell closing.
+         * Same object on every call.
+         */
+        jobs?: () => WidgetJobs
+        /**
+         * This instance's message boxes and snackbars (examples: WidgetUi below). The host titles
+         * a box with the widget's name ("Local Player — Clear the queue?") and shows the name
+         * before a snackbar's text. Boxes open only while the instance is on screen, one at a
+         * time, and close when it unmounts. Same object on every call.
+         */
+        ui?: () => WidgetUi
         fsRename?: (oldPath: string, newPath: string) => Promise<{ ok: boolean; error?: string }>
 
         /**
@@ -718,6 +738,10 @@ declare module 'gexplorer/widgets' {
         src: string
         name?: string
         type?: string
+        /** The file streamed (its URL expires: renew it from here). */
+        sourcePath?: string
+        /** When the stream URL expires (ISO or ms), null: no expiry. */
+        expiresAt?: string | number | null
     }
 
     // ── Slot providers ─────────────────────────────────────────────────────
@@ -1253,7 +1277,130 @@ declare module 'gexplorer/widgets' {
      * Throws outside a WidgetHost. Call in setup().
      */
     export function useWidgetChrome(active?: Ref<boolean> | ComputedRef<boolean> | (() => boolean) | boolean): WidgetChrome
-    export function useAudio(): any
+    // ── Audio (sdk.audio()) ─────────────────────────────────────────────
+    export type AudioCategory = 'music' | 'sfx' | 'voice' | 'custom'
+    export interface AudioHandle {
+        readonly id: string
+        readonly ownerId: string
+        readonly category: AudioCategory
+        play(): Promise<void>
+        pause(): void
+        load(): void
+        release(): void
+        readonly paused: boolean
+        readonly readyState: number
+        readonly duration: number
+        src: string
+        currentTime: number
+        volume: number
+        muted: boolean
+        loop: boolean
+        playbackRate: number
+        addEventListener: HTMLMediaElement['addEventListener']
+        removeEventListener: HTMLMediaElement['removeEventListener']
+    }
+    export type AudioPlaylistItem = { id: string; src: string; name?: string; type?: string; sourcePath?: string; expiresAt?: string | number; [k: string]: unknown }
+    /** A playlist of this instance: its key (and category, default 'music'). */
+    export type AudioPlaylistSel = { key: string; category?: AudioCategory }
+    export type AudioPlaylistState = { items: AudioPlaylistItem[]; currentIdx: number; repeat: 'off' | 'one' | 'all'; shuffle: boolean; dedupe: boolean; version: number }
+    export interface WidgetAudio {
+        prime(): Promise<void>
+        /** This instance's element for <key> (the same one on every call while it lives). */
+        acquireElement(opts: {
+            key: string
+            category?: AudioCategory
+            suspendPolicy?: 'continue' | 'pause' | 'duck'
+            initialProps?: Partial<{ src: string; loop: boolean; volume: number; muted: boolean; preload: 'auto' | 'metadata' | 'none' }>
+        }): AudioHandle
+        playOneShot(url: string, opts?: { volume?: number; category?: AudioCategory }): Promise<AudioHandle>
+        release(handle: AudioHandle): void
+        list(): unknown[]
+        /** Renews this instance's expiring stream URLs (sdk.mintStreamHttp). null: none. */
+        setRenewProvider(fn: ((a: { ownerId: string; sourcePath: string; mimeHint?: string }) =>
+            Promise<{ url: string; expiresAt?: string | number; mimeType?: string }>) | null): void
+        state: {
+            primed: Readonly<Ref<boolean>>
+            /** This instance's music playing now, or null. */
+            nowPlaying: Readonly<Ref<{ id: string; ownerId: string; src?: string } | null>>
+        }
+        playlists: {
+            register(sel: AudioPlaylistSel, items: AudioPlaylistItem[], opts?: { repeat?: 'off' | 'one' | 'all'; shuffle?: boolean; dedupe?: boolean; autoNext?: 'off' | 'linear' }): string
+            setItems(sel: AudioPlaylistSel, items: AudioPlaylistItem[], opts?: { keepCurrent?: boolean; dedupe?: boolean }): void
+            get(sel: AudioPlaylistSel): AudioPlaylistState | null
+            setOptions(sel: AudioPlaylistSel, opts: { repeat?: 'off' | 'one' | 'all'; shuffle?: boolean; dedupe?: boolean }): void
+            bindToHandle(sel: AudioPlaylistSel, handle: AudioHandle): void
+            unbind(sel: AudioPlaylistSel): void
+            playIndex(sel: AudioPlaylistSel, index: number, handle: AudioHandle): Promise<number>
+            next(sel: AudioPlaylistSel, handle: AudioHandle): Promise<number>
+            prev(sel: AudioPlaylistSel, handle: AudioHandle): Promise<number>
+        }
+    }
+
+    // ── Background jobs (sdk.jobs(), entry.ts `jobs`) ─────────────────────
+    /** entry.ts: `jobs: { <kind>: { card: Component } }`. */
+    export type WidgetJobDeclaration = {
+        /** Shown in the operations tray (inside the host's frame: title, Open, Stop) while no instance is mounted. */
+        card?: any
+        /**
+         * After a crash, a lost window or the end of the session: 'none' (default), 'ask' (a card
+         * asks: Open and resume / Resume when opened / Discard), 'resume' (resumed when the widget
+         * is opened). Get it back with jobs().whenPending(kind, fn).
+         */
+        recovery?: 'none' | 'ask' | 'resume'
+        /** The version of what checkpoint() saves (default 0). */
+        stateVersion?: number
+        /** Updated since the interruption: 'restart' (default: params only) or 'migrate' (old state, stale: true). */
+        onNewVersion?: 'restart' | 'migrate'
+        /** Recoverable only when the user keeps widgets' state after a restart (the job needs it). */
+        requiresRestore?: boolean
+        /** Closing GEM Shell ends it without a question: false only for now. */
+        blocksClose?: false
+    }
+    export interface WidgetJob {
+        readonly id: string
+        readonly kind: string
+        /** The title in the card's frame. */
+        update(patch: { title?: string }): void
+        /** Keeps a handle from this instance's sdk.audio() alive until the job ends, then releases it. */
+        hold(handle: AudioHandle): void
+        /**
+         * The job needs the user (true) or no longer does (false): its card is marked and the
+         * operations tray's flap wiggles until the tray is opened. A widget that is not on
+         * screen can't open a message box: call for attention, and ask once it is opened.
+         */
+        attention(on: boolean): void
+        /** How far it got (kinds with recovery; plain data, at most 16 KB): saved at most every 2 s, the latest wins. */
+        checkpoint(state: unknown): void
+        end(): void
+        readonly alive: boolean
+    }
+    /** An interrupted job handed back by jobs().whenPending(). */
+    export interface WidgetPendingJob {
+        readonly kind: string
+        readonly title: string
+        readonly params: unknown
+        /** Its last checkpoint, or null (none, or dropped: the widget was updated and its kind restarts). */
+        readonly state: unknown
+        /** The widget was updated since and its kind migrates: `state` is the old version's. */
+        readonly stale: boolean
+        readonly reason: 'crash' | 'handover' | 'session'
+        readonly savedAt: number
+        /** Starts the job again (same params); apply `state` yourself. */
+        resume(opts?: { title?: string }): WidgetJob
+        /** Forgets it. */
+        discard(): void
+    }
+    export interface WidgetJobs {
+        /** Starts a job of a declared kind, or returns this instance's running one. <params>: what it is (plain data, at most 16 KB), kept for its recovery. */
+        ensure(kind: string, opts: { title: string; params?: unknown }): WidgetJob
+        /** This instance's running job of <kind>, or null. */
+        current(kind: string): WidgetJob | null
+        /**
+         * <fn> gets this instance's interrupted job of <kind> once it may be resumed (at once, or
+         * when the user answers its card). Call in setup(); returns the unsubscribe (call it on unmount).
+         */
+        whenPending(kind: string, fn: (job: WidgetPendingJob) => void): () => void
+    }
 
     export type RenameOptions = {
         /** Returns an error message, or null when the new name is valid. */
@@ -1285,7 +1432,8 @@ declare module 'gexplorer/widgets' {
 
     export function useSlotProviders(slotId: string): ComputedRef<SlotProvider[]>
 
-    // ── Snackbar ───────────────────────────────────────────────────────────
+    // ── Message boxes and snackbars: sdk.ui() ───────────────────────────────
+    // The free show / showOnce / dismiss were removed (2026-10-08): use sdk.ui().snack...
     export type SnackAction = { label: string; onClick?: () => void | Promise<void>; id?: string }
     export type SnackOptions = {
         /** Dedupe key. */
@@ -1303,9 +1451,194 @@ declare module 'gexplorer/widgets' {
         | { type: 'timeout' }
         | { type: 'dismiss' }
         | { type: 'never' }
-    export function show(options: SnackOptions): Promise<SnackResult>
-    /** Shown until the user picks "never" (remembered under prefKey). */
-    export function showOnce(prefKey: string, options: SnackOptions): Promise<SnackResult>
-    /** Dismisses one snack by id, or all without an id. */
-    export function dismiss(id?: string): void
+    export type MbVariant = 'info' | 'warning' | 'danger' | 'question'
+    /** Where a content item goes: stacked under the message, or on the buttons' row (at its left). */
+    export type MbRegion = 'body' | 'footer'
+    export type MbAlign = 'start' | 'center' | 'end' | 'fill'
+    type MbItemBase = { id?: string; region?: MbRegion; align?: MbAlign }
+    /**
+     * A built-in content item of a message box. Its value is in result.values[id]:
+     * checkbox boolean, input string, choices the option id (null when none).
+     */
+    export type MbItem =
+        | (MbItemBase & { type: 'text'; text: string; tone?: 'normal' | 'muted' | 'warning' })
+        | (MbItemBase & { type: 'checkbox'; id: string; label: string; value?: boolean })
+        | (MbItemBase & {
+            type: 'input'; id: string; label?: string; value?: string; placeholder?: string
+            /** An error message, or null when valid (shown under it once typed in; `requires` waits for null). */
+            validate?: (value: string) => string | null
+        })
+        | (MbItemBase & { type: 'choices'; id: string; label?: string; options: Array<{ id: string; label: string; detail?: string }>; value?: string })
+        | (MbItemBase & { type: 'list'; items: string[]; label?: string })
+        | (MbItemBase & { type: 'progress'; total: number; done: number; note?: string; countLabel?: string })
+
+    /** What a button's onClick returns: false keeps the box open; { failed } also disables that button (its tooltip says why). */
+    export type MbClickResult = void | boolean | { failed: string }
+
+    export type WidgetUiButton = {
+        label: string
+        /** What result.button says for this button (default: its label). */
+        id?: string
+        /** Runs before the box closes (see MbClickResult). While an async one runs, the buttons are disabled. */
+        onClick?: () => MbClickResult | Promise<MbClickResult>
+        /** Enter presses it; it has the focus when the box opens (unless it is a danger button). */
+        default?: boolean
+        /** Escape presses it. */
+        cancel?: boolean
+        /** Shown in the warning colour. */
+        danger?: boolean
+        /** Disabled until the content item with this id is satisfied (checked / valid / chosen). */
+        requires?: string
+        /** Tooltip. */
+        title?: string
+    }
+
+    export type WidgetMessageBoxOptions = {
+        /** Shown after the widget's name: "<Widget> — <title>". */
+        title: string
+        message?: string
+        /** Smaller text under the message. */
+        detail?: string
+        variant?: MbVariant
+        /** Built-in items, in order (no custom component). */
+        content?: MbItem[]
+        /** Up to 4. None: a single OK. */
+        buttons?: WidgetUiButton[]
+        /** Pixels (320–720). */
+        width?: number
+    }
+
+    export type WidgetMessageBoxResult = {
+        /** The clicked button's id (or label); null: closed without a button (unmounted, close(), not on screen). */
+        button: string | null
+        values: Record<string, unknown>
+    }
+
+    /** A box that can change while it is open (openMessageBox). */
+    export interface WidgetMessageBox {
+        result: Promise<WidgetMessageBoxResult>
+        update(patch: Partial<Pick<WidgetMessageBoxOptions, 'message' | 'detail' | 'variant' | 'content' | 'buttons'>>): void
+        close(): void
+    }
+
+    /**
+     * sdk.ui(): this instance's message boxes and snackbars.
+     *
+     * Rules: a box opens only while the instance is on screen (else it resolves at once with
+     * button null: call job.attention(true) instead); one box at a time per instance (the next
+     * waits); the instance unmounts: its box closes (button null). Clicks, Enter and Escape count
+     * only from the user.
+     *
+     * @example
+     * const ui = sdk.ui!()
+     *
+     * // Tell, ask, ask for a text.
+     * await ui.alert('The playlist was opened without its last 3 songs.')
+     * if (await ui.confirm('Remove all 42 songs?', { title: 'Clear the queue', okLabel: 'Clear', danger: true })) clear()
+     * const name = await ui.prompt('Name of the playlist:', { value: 'Evening', validate: v => v.trim() ? null : 'A name is needed.' })
+     *
+     * // "Don't ask again" on the buttons' row.
+     * const r = await ui.messageBox({
+     *     title: 'Replace the queue?',
+     *     message: 'Playing this folder replaces the 12 songs in the queue.',
+     *     content: [{ type: 'checkbox', id: 'remember', label: "Don't ask again", region: 'footer' }],
+     *     buttons: [{ label: 'Cancel', cancel: true }, { label: 'Replace', id: 'replace', default: true }],
+     * })
+     * if (r.button === 'replace' && r.values.remember) prefs.askReplace = false
+     *
+     * // A button disabled until a box is checked; a list; a right-aligned checkbox.
+     * await ui.messageBox({
+     *     title: 'Enable sharing',
+     *     content: [
+     *         { type: 'text', text: 'Shared folders are visible to the peers of this room.' },
+     *         { type: 'list', label: 'Folders', items: ['D:\\Music', 'D:\\Podcasts'] },
+     *         { type: 'checkbox', id: 'ok', label: 'I understand', align: 'end' },
+     *     ],
+     *     buttons: [{ label: 'Cancel', cancel: true }, { label: 'Enable', default: true, requires: 'ok' }],
+     * })
+     *
+     * // One of several options.
+     * const pick = await ui.messageBox({
+     *     title: 'Duplicate songs',
+     *     content: [{ type: 'choices', id: 'how', value: 'skip', options: [
+     *         { id: 'skip', label: 'Skip them' },
+     *         { id: 'add', label: 'Add them again', detail: 'They will play twice.' },
+     *     ] }],
+     *     buttons: [{ label: 'Cancel', cancel: true }, { label: 'Continue', id: 'go', default: true }],
+     * })
+     *
+     * // A check before closing: a failed try disables the button, the box stays.
+     * await ui.messageBox({
+     *     title: 'Connect',
+     *     content: [{ type: 'input', id: 'url', label: 'Server', placeholder: 'https://…' }],
+     *     buttons: [{ label: 'Cancel', cancel: true }, {
+     *         label: 'Connect', default: true, requires: 'url',
+     *         onClick: async () => (await tryConnect()) ? undefined : { failed: 'The server did not answer.' },
+     *     }],
+     * })
+     *
+     * // Progress in a box that changes while open.
+     * const box = ui.openMessageBox({
+     *     title: 'Scanning',
+     *     content: [{ type: 'progress', total: files.length, done: 0 }],
+     *     buttons: [{ label: 'Stop', id: 'stop', cancel: true }],
+     * })
+     * box.update({ content: [{ type: 'progress', total: files.length, done: 5, note: files[4] }] })
+     * box.close()
+     *
+     * // Snackbars (ids are this widget's own).
+     * const s = await ui.snack({ id: 'undo', text: 'Song removed.', actions: [{ label: 'Undo', id: 'undo' }] })
+     * if (s.type === 'action') restore()
+     * ui.snackOnce('hint.dragToQueue', { text: 'Tip: drag songs onto the queue to add them.' })
+     */
+    export interface WidgetUi {
+        alert(message: string, opts?: { title?: string; detail?: string; variant?: MbVariant; okLabel?: string }): Promise<void>
+        /** true: OK. */
+        confirm(message: string, opts?: { title?: string; detail?: string; okLabel?: string; cancelLabel?: string; danger?: boolean }): Promise<boolean>
+        /** The text, or null when cancelled. OK waits until validate() returns null. */
+        prompt(message: string, opts?: {
+            title?: string; detail?: string; label?: string; value?: string; placeholder?: string
+            validate?: (value: string) => string | null; okLabel?: string; cancelLabel?: string
+        }): Promise<string | null>
+        messageBox(opts: WidgetMessageBoxOptions): Promise<WidgetMessageBoxResult>
+        openMessageBox(opts: WidgetMessageBoxOptions): WidgetMessageBox
+        snack(opts: SnackOptions): Promise<SnackResult>
+        /** Shown until the user picks "never" (remembered for this widget type under <key>). */
+        snackOnce(key: string, opts: SnackOptions): Promise<SnackResult>
+        /** Dismisses this widget's snackbar <id>, or all of this widget's snackbars. */
+        dismissSnack(id?: string): void
+        /**
+         * A short text after the widget's name in the header its place gives it (the
+         * sidebar's): ui.setHeaderStatus('Song name') → "Local Player · Song name". It
+         * scrolls when it doesn't fit; mostly seen while the widget is collapsed (the
+         * header is all that shows). null clears it. At most 200 characters, one line.
+         */
+        setHeaderStatus(text: string | null): void
+    }
+}
+
+// ── Shared UI components (registered by GEM Shell; use them in templates) ──
+//
+//   <gex-marquee :text="title" />
+//     One line that scrolls when it doesn't fit its box (ellipsis + tooltip with
+//     prefers-reduced-motion). Props: text, speed (px/s, 35), direction ('left' |
+//     'right'), paused (e.g. while resizing), tip (full text in a tooltip, true).
+//     Emits overflow(boolean). Style it through .gex-marquee.
+//
+//   <gex-fold-header v-model:folded="queueFolded" label="Queue" :status="`${n} songs`">
+//     <template #actions><button>…</button></template>
+//   </gex-fold-header>
+//     A thin title strip: double-click (or Enter / Space) folds / unfolds; its tooltip
+//     says so (`hint` replaces it). Hide what it heads when folded. Actions on the
+//     right don't fold. The same strip heads every widget in the sidebar.
+//     Style it through .gex-fold-header (height: --gex-fold-header-h, 18px).
+declare module 'vue' {
+    export interface GlobalComponents {
+        'gex-marquee': import('vue').DefineComponent<{
+            text: string; speed?: number; direction?: 'left' | 'right'; paused?: boolean; tip?: boolean
+        }>
+        'gex-fold-header': import('vue').DefineComponent<{
+            label: string; status?: string | null; folded?: boolean; hint?: string; paused?: boolean
+        }>
+    }
 }

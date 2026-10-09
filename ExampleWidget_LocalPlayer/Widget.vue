@@ -9,7 +9,6 @@ import CompactLayout from './CompactLayout.vue'
 import ExpandedLayout from './ExpandedLayout.vue'
 
 import {
-  show as showSnack,
   FileRefData,
   type WidgetSdk,
 } from 'gexplorer/widgets'
@@ -61,6 +60,9 @@ const expandedLayoutRef = ref<InstanceType<typeof ExpandedLayout> | null>(null)
 const sdk = inject<WidgetSdk>('widgetSdk')
 if (!sdk?.messaging) throw new Error('[local-player] widgetSdk.messaging is not available')
 const { send, on, cleanup } = sdk.messaging()
+if (!sdk.ui) throw new Error('[local-player] widgetSdk.ui is not available')
+// Snackbars through this instance's ui(): the host shows the widget's name with them.
+const ui = sdk.ui()
 // The drop helpers of this widget's SDK: they say which widget receives (the
 // free versions, where the widget named itself, are gone; sandbox C3c).
 const fileRefsToPlaylistItems = sdk.fileRefsToPlaylistItems!
@@ -69,6 +71,93 @@ const resolveDropRefs = sdk.resolveDropRefs!
 
 // ===== PLAYER STATE =====
 const state = usePlayerState(props.sourceId)
+
+// ===== BACKGROUND PLAYBACK =====
+// A job (entry.ts `jobs.playback`) keeps the music element alive when this widget
+// unloads: the rack goes on playing the queue, and PlayerCard.vue shows in the
+// operations tray meanwhile. Started on the first play; it ends with the card's Stop,
+// a cleared queue, or this player being removed from its layout. Pausing keeps it.
+const jobs = sdk.jobs!()
+function ensurePlaybackJob() {
+  jobs.ensure('playback', { title: 'Music' }).hold(state.music)
+}
+watch(() => state.queue.value.length, n => {
+  if (n === 0) { jobs.current('playback')?.end(); ui.setHeaderStatus(null) }
+})
+
+// ===== HEADER STATUS =====
+// The sidebar's header shows the song: "Local Player · Song" ("Paused · Song").
+// Kept up to date by the music element's own events (bound once per element), so it
+// goes on while no view is mounted: collapsed in the sidebar, the job playing on.
+function bindHeaderStatus() {
+  const el = state.music as any
+  if (el.__lpHeaderStatus) return
+  el.__lpHeaderStatus = true
+  const { playlists, sel } = state
+  const update = () => {
+    const pl = playlists.get(sel)
+    const it = pl && pl.currentIdx >= 0 ? pl.items[pl.currentIdx] : null
+    const name: string = it?.name ?? ''
+    ui.setHeaderStatus(name ? (el.paused ? `Paused · ${name}` : name) : null)
+  }
+  for (const ev of ['play', 'pause', 'ended', 'emptied', 'rack:playlistindex']) el.addEventListener(ev, update)
+  update()
+}
+
+// Where it is, for recovery (the host saves it at most every 2 s): track, time, playing.
+function checkpointPlayback() {
+  jobs.current('playback')?.checkpoint({
+    trackId: state.current.value?.id ?? null,
+    index: state.currentIndex.value,
+    position: state.music.currentTime || 0,
+    playing: !state.music.paused,
+  })
+}
+
+// The last run stopped while it played (entry.ts: recovery 'resume'): the queue came back
+// with the player's state; continue at the same track and time (paused if it was).
+const stopWhenPending = jobs.whenPending('playback', p => {
+  const st = (p.state ?? {}) as { trackId?: string | null; index?: number; position?: number; playing?: boolean }
+  // By the track (the restored queue may be older than the checkpoint), else by its place
+  const byId = st.trackId ? state.queue.value.findIndex(t => t.id === st.trackId) : -1
+  const index = byId >= 0 ? byId : typeof st.index === 'number' ? st.index : -1
+  if (index < 0 || index >= state.queue.value.length) { p.discard(); return }
+  p.resume({ title: 'Music' }).hold(state.music)
+  void resumeAt(index, Number(st.position) || 0, st.playing !== false)
+})
+
+async function resumeAt(index: number, position: number, playing: boolean) {
+  console.log('[local-player] resuming', { index, track: state.queue.value[index]?.name, position, playing })
+  await play(index)
+  if (position > 1) await seekWhenReady(position)
+  if (!playing) pause()
+}
+
+/**
+ * Seeks once the element knows the track's length: a seek before that (readyState 0)
+ * may be lost when the browser starts loading. Only on the track it was asked for
+ * (the element moved on meanwhile: no seek). Gives up after 5 s.
+ */
+function seekWhenReady(position: number): Promise<void> {
+  const el = state.music
+  const src = el.src
+  return new Promise<void>(resolve => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const apply = () => {
+      el.removeEventListener('loadedmetadata', apply)
+      if (timer) clearTimeout(timer)
+      if (el.src === src) {
+        try { el.currentTime = position } catch { /* not seekable */ }
+        console.log('[local-player] resumed at', { asked: position, now: el.currentTime, ready: el.readyState })
+      }
+      resolve()
+    }
+    if (el.readyState >= 1) { apply(); return }
+    el.addEventListener('loadedmetadata', apply)
+    timer = setTimeout(apply, 5000)
+  })
+}
+
 
 // ===== LAYOUT =====
 const widgetRootEl = ref<HTMLElement | null>(null)
@@ -99,7 +188,10 @@ async function refsToTracks(
     id: it.id || it.src,
     url: it.src,
     name: it.name || it.src.split(/[\\/]/).pop() || 'track',
-    type: it.type
+    type: it.type,
+    // The stream URL expires (and dies with GEM Shell): the rack renews it from the file
+    sourcePath: it.sourcePath,
+    expiresAt: it.expiresAt ?? null,
   }))
 }
 
@@ -255,6 +347,9 @@ const onRackIndex = (e: Event) => {
 // ===== PLAYER CONTROLS =====
 async function play(index?: number) {
   await state.prime()
+  // Shown in two places (instance 'global'): the other copy's unmount may have
+  // unbound the shared queue from the element (no job yet): bind it again.
+  state.playlists.bindToHandle(state.sel, state.music)
   state.isLoading.value = true
 
   if (typeof index === 'number') {
@@ -282,6 +377,14 @@ async function play(index?: number) {
       state.isLoading.value = false
       return
     }
+  }
+
+  // Nothing playable on the element (a queue restored after a restart: its stream URLs
+  // died with the last run; or its URL failed): through the playlist, which mints a new one.
+  const el = state.music as any
+  if (state.currentIndex.value >= 0 && (!el.currentSrc || el.error || el.networkState === 3)) {
+    state.isLoading.value = false
+    return play(state.currentIndex.value)
   }
 
   try { await state.music.play(); state.isPlaying.value = true } catch { state.isPlaying.value = false }
@@ -431,8 +534,8 @@ async function handleDrop(payload: any) {
         refs = await resolveDropRefs(payload)
     } catch (err: any) {
         console.warn('[local-player] drop not resolved:', err)
-        showSnack({
-            id: 'local-player:drop',
+        ui.snack({
+            id: 'drop',
             dedupe: 'replace',
             text: err?.code === 'E_SELECTION_STALE'
                 ? 'The folder changed during the drag. Drag the files again.'
@@ -459,10 +562,11 @@ async function onDrop(e: DragEvent) {
 }
 
 // ===== MEDIA EVENTS =====
-const onMediaPlay = () => { applyPlaybackRate(); state.isPlaying.value = true }
-const onMediaPause = () => { state.isPlaying.value = false }
+const onMediaPlay = () => { applyPlaybackRate(); state.isPlaying.value = true; ensurePlaybackJob() }
+const onMediaPause = () => { state.isPlaying.value = false; checkpointPlayback() }
 const onTimeUpdate = async () => {
   state.currentTime.value = state.music.currentTime || 0
+  checkpointPlayback()
 }
 
 const onLoadedMeta = (e: Event) => {
@@ -495,6 +599,16 @@ const onVolumeChange = () => {
 }
 
 function hydrateFromHandle() {
+  // Back while the job played on: the rack may have moved to another track meanwhile.
+  if (jobs.current('playback')) {
+    const pl = state.playlists.get(state.sel)
+    const item = pl && pl.currentIdx >= 0 ? pl.items[pl.currentIdx] : null
+    const real = item ? state.queue.value.findIndex(t => t.id === item.id) : -1
+    if (real >= 0) {
+      state.currentIndex.value = real
+      state.selectedIndex.value = real
+    }
+  }
   state.volume.value = state.music.volume
   if (state.volume.value > 0) state.lastNonZeroVolume.value = state.volume.value
   state.isPlaying.value = !state.music.paused
@@ -523,6 +637,7 @@ onMounted(async () => {
   })
   state.playlists.setItems(state.sel, state.toPlaylistItems(), { keepCurrent: true })
   state.playlists.bindToHandle(state.sel, state.music)
+  bindHeaderStatus()
 
   await nextTick()
   seedMeasureNow()
@@ -544,9 +659,8 @@ onMounted(async () => {
       const payload = msg.payload?.data
       if (payload?.type === 'gex/file-refs' || payload?.type === 'gex/file-selection') await handleDrop(payload)
   })
-  on('widget:action', async (msg: any) => {
-      await onWidgetAction(msg)
-  })
+  // 'widget:action' (context menu: Play / Enqueue) comes through the host, which calls
+  // the exposed onWidgetAction below: listening to it here too ran each action twice.
 })
 
 
@@ -606,7 +720,9 @@ onBeforeUnmount(() => {
   state.music.removeEventListener('error', onMediaError)
   state.music.removeEventListener('rack:playlistindex', onRackIndex as EventListener)
 
-  state.playlists.unbind(state.sel)
+  stopWhenPending()
+  // While the playback job runs, the rack keeps going through the queue without us.
+  if (!jobs.current('playback')) state.playlists.unbind(state.sel)
   cleanup() 
 })
   defineExpose({ onWidgetAction })

@@ -140,8 +140,10 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
    * Remove a folder and all its nested contents
    */
   async function handleRemoveFolder(folderId: string) {
-    const ok = window.confirm(
-      'Delete this folder and ALL nested favorites inside it? This cannot be undone.'
+    // A box titled with the widget's name, by the host (sdk.ui()).
+    const ok = await sdk?.ui?.().confirm(
+      'Its favorites and the folders inside it go with it. This cannot be undone.',
+      { title: 'Delete this folder?', okLabel: 'Delete', danger: true },
     )
     if (!ok) return
 

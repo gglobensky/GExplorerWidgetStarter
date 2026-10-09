@@ -1,12 +1,20 @@
 // src/widgets/music/src/entry.ts
 
 import Widget from './Widget.vue'
+import PlayerCard from './PlayerCard.vue'
 
 export default {
     api:     '1.0',
     id:      'local-player',
     version: '1.0.0',
     Component: Widget,
+
+    // ── Instance ─────────────────────────────────────────────────────────────
+    // 'global': one player for the whole shell. Placed in the sidebar and in a
+    // hub's grid (or in two hubs), every copy shows the same queue and the same
+    // music; a drop or a menu action is handled once (by the copy last used).
+    // Default 'placement': one instance per spot in a layout.
+    instance: 'global',
 
     // ── Drops ────────────────────────────────────────────────────────────────
     // Reference example of a drop zone (host: widgets/dnd/dropSpec.ts). Every
@@ -31,6 +39,20 @@ export default {
                 effect: 'copy',                                   // default: the files stay where they are
             },
         },
+    },
+
+    // ── Background jobs ──────────────────────────────────────────────────────
+    // The music goes on when the player unloads (another tab, a closed sidebar):
+    // Widget.vue starts the 'playback' job on its first play and holds its audio
+    // element in it. While no Local Player is on screen, PlayerCard shows in the
+    // operations tray (the host's frame adds Open and Stop). Closing GEM Shell
+    // ends it, without a question.
+    // Recovery (claude/job-recovery-design.md, R): GEM Shell stopped while it played (a
+    // crash, its window lost, the session ended): the next start resumes at the same track
+    // and time once the player is opened. Only when the user keeps widgets' state after a
+    // restart (requiresRestore): the queue comes back with it.
+    jobs: {
+        playback: { card: PlayerCard, recovery: 'resume', requiresRestore: true },
     },
 
     menuContexts: [
