@@ -645,6 +645,10 @@ function selectAllItems() {
 /** Items shown in the menu's selection sample: the focused one first, then the visible ones. */
 const MENU_SAMPLE_MAX = 20
 
+/**
+ * What the menu (and Delete) work on: the folder, the selection, the visible rows. The host
+ * names the widget (ui.contextMenu, 2026-10-09): this widget no longer says it is 'items'.
+ */
 function contextMenuOptions() {
   // Refreshes wait while the menu is open, so the sample and count match the rows.
   const release = source.value?.holdRefresh?.()
@@ -660,16 +664,18 @@ function contextMenuOptions() {
   const payload = selection.capture()
 
   return {
-    widgetType:   'items',
-    widgetId:     props.sourceId,
-    location:     { area: 'grid' as const },
-    target:       count > 0 ? ('selection' as const) : ('background' as const),
+    area:         'grid' as const,
     path:         cwd.value || merged.value.rpath || '',   // host resolves VFS
     selection:    { count, sample: selection.sample(MENU_SAMPLE_MAX, preferred), payload },
     widgetConfig: props.config,
     entries:      visible,
     onClose:      () => release?.(),
   }
+}
+
+/** Right-click: the host's menu for this widget (file / folder / multi / background, resolved by the host). */
+function openContextMenu(e: MouseEvent) {
+  void ui.contextMenu(e, contextMenuOptions())
 }
 
 /**
@@ -1517,7 +1523,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction })
   <div
     ref="rootEl"
     class="items-root"
-    v-context-menu="contextMenuOptions"
+    @contextmenu="openContextMenu"
     :style="hostVars"
     :class="{
       dragging: isDragging,

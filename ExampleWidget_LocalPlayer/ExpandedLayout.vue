@@ -3,6 +3,20 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from '/run
 import { createDragTrigger, useScrollHints, useSnapResize } from 'gexplorer/widgets'
 import type { TooltipOptions } from 'gexplorer/widgets'
 import type { Track } from './usePlayerState'
+import { reasonText } from './usePlaylist'
+
+/**
+ * A track's tooltip: its name, then its length (the playing one: the element's); a greyed
+ * one says why it can't play and that playing it tries again.
+ */
+function rowTip(t: Track) {
+  const isCurrent = t.id === props.queue[props.currentIndex]?.id
+  const secs = isCurrent && props.duration ? props.duration : t.duration
+  const lines: string[] = []
+  if (secs) lines.push(fmtTime(secs))
+  if (t.missing) lines.push(`Can't be played: ${reasonText(t.missingReason)}`, 'Double-click to try again')
+  return lines.length ? { content: t.name, detail: lines.join('\n') } : t.name
+}
 
 const props = defineProps<{
   // State
@@ -61,10 +75,12 @@ const emit = defineEmits<{
   (e: 'commit-rename'): void
   (e: 'update:draft-queue-name', value: string): void
   (e: 'save-playlist'): void
+  (e: 'clear-queue'): void
   (e: 'row-dblclick', track: Track): void
   (e: 'row-click', index: number): void
   (e: 'start-row-drag', index: number, event: MouseEvent): void
   (e: 'remove-at', index: number): void
+  (e: 'row-menu', track: Track, event: MouseEvent): void
 }>()
 
 // Measure row height from DOM (used for snap resize step)
@@ -138,6 +154,21 @@ const { style: queueStyle, onResizeDown: onQueueResizeDown, heightPx } = useSnap
   paddingPx: () => headerPx.value,
 })
 
+// Narrow classes: two fixed control rows (transport, then the rest) instead of clipping.
+const compact = computed(() => ['narrow', 'ultra', 'micro'].includes(props.layoutClass))
+
+// The queue's height: the user's chosen height (dragged) at most, its content at least
+// (no empty rows under a short queue, 2026-10-09). It may also shrink to the room the
+// player has (CSS flex: 0 1 auto), so the bottom handle never spills over its outline.
+const queueStyleEff = computed(() => {
+  const base = queueStyle.value as Record<string, string>
+  if (!base.height) return base
+  const chosen = parseFloat(base.height)
+  const content = (headerPx.value || 0) + props.displayQueue.length * (rowStepPx.value || 32)
+  const px = Math.max(0, Math.min(chosen, content))
+  return { ...base, height: px + 'px', maxHeight: px + 'px', flex: '0 1 auto' }
+})
+
 // Set initial height (8 rows by default)
 watch([snapStepPx, snapPadPx, () => props.showQueue], ([step, pad, visible]) => {
   if (visible && step > 0 && heightPx.value === null) {
@@ -190,8 +221,12 @@ const seekTooltip = computed((): TooltipOptions => ({
   content: fmtTime(props.currentTime) + ' / ' + fmtTime(props.duration || 0),
 }))
 
-function onBeginRenameDblClick(e: MouseEvent) {
-  const el = e.currentTarget as HTMLElement
+// ✎: the rename box over the queue's head, as wide as the player allows.
+const queueHeadEl = ref<HTMLElement | null>(null)
+
+function onBeginRename() {
+  const el = queueHeadEl.value
+  if (!el) return
   const r = el.getBoundingClientRect()
 
   // measure the widget container
@@ -199,14 +234,11 @@ function onBeginRenameDblClick(e: MouseEvent) {
   const containerLeft = container?.left ?? 0
   const containerWidth = container?.width ?? Math.min(420, window.innerWidth)
 
-  // desired width = title width + padding, but clamp to container
-  const desired = Math.max(220, Math.min(r.width + 120, containerWidth - 24))
+  // desired width = the head's width, at least 220, clamped to the container
+  const desired = Math.max(220, Math.min(r.width, containerWidth - 24))
 
   // keep overlay within container bounds
-  const left = Math.min(
-    r.left,
-    containerLeft + containerWidth - desired - 12
-  )
+  const left = Math.max(containerLeft + 4, Math.min(r.left, containerLeft + containerWidth - desired - 12))
 
   renameOverlayPos.value = { left, top: r.top, width: desired }
   emit('begin-rename')
@@ -301,16 +333,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
     <div class="controls" :class="layoutClass" ref="controlsEl">
       <!-- Row 1 -->
       <div class="row-1">
-        <!-- Add Files button -->
-        <button
-          v-if="['wide', 'medium'].includes(layoutClass)"
-          class="btn add-left narrow"
-          type="button"
-          v-gex-tooltip="'Add files to the queue'"
-          @click.stop.prevent="emit('click-pick')"
-        >
-          + Add
-        </button>
+        <!-- Adding files: the ➕ under the queue's name (and the empty queue's button), every layout -->
 
         <!-- Transport controls -->
         <div class="transport-group">
@@ -344,14 +367,16 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
           </button>
         </div>
 
+        <!-- The rest: on row 1 in wide / medium; its own row in the narrow classes (CSS) -->
+        <div class="aux-group">
         <!-- Playback Rate -->
         <button
-          v-if="['wide', 'medium'].includes(layoutClass)"
+          v-if="layoutClass !== 'micro'"
           class="btn narrow"
           type="button"
           v-gex-tooltip="{ content: 'Playback speed', detail: 'Left-click to increase · Right-click to decrease' }"
           @click="emit('adjust-speed', 0.1)"
-          @contextmenu.prevent="emit('adjust-speed', -0.1)"
+          @contextmenu.prevent.stop="emit('adjust-speed', -0.1)"
         >
           {{ playbackRateLabel }}
         </button>
@@ -378,17 +403,6 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
           {{ repeat === 'one' ? '🔂' : '🔁' }}
         </button>
 
-        <!-- Add Files (ultra/micro) -->
-        <button
-          v-if="['ultra', 'micro'].includes(layoutClass)"
-          class="btn add-right narrow"
-          type="button"
-          v-gex-tooltip="'Add files to the queue'"
-          @click.stop.prevent="emit('click-pick')"
-        >
-          +
-        </button>
-
         <!-- Volume (with popover) -->
         <button
           ref="volBtnEl"
@@ -399,6 +413,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
         >
           {{ volumeIcon }}
         </button>
+        </div>
       </div>
 
       <!-- Row 2: Seek bar + time -->
@@ -436,93 +451,76 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
       />
     </div>
 
-    <!-- Queue Header -->
-    <div v-if="queue.length" class="queue-header">
-      <div class="qh-left">
-        <template v-if="!renaming">
-          <strong class="qh-title" @dblclick="onBeginRenameDblClick" v-gex-tooltip="{ content: 'Rename playlist', detail: 'Double-click to edit' }">
-            {{ queueName }}
-          </strong>
+    <!-- Queue head (2026-10-09): the shared fold header — double-click folds / unfolds the
+         list, ✎ renames; a long name scrolls instead of pushing anything out. -->
+    <div v-if="queue.length" ref="queueHeadEl" class="queue-head">
+      <gex-fold-header
+        :label="queueName"
+        :status="String(queue.length)"
+        :folded="!showQueue"
+        :hint="showQueue ? 'Double-click to fold the list' : 'Double-click to show the list'"
+        @update:folded="emit('toggle-queue')"
+      >
+        <template #actions>
+          <button class="icon-btn qh-edit" type="button" v-gex-tooltip="'Rename the playlist'" @click.stop="onBeginRename">✎</button>
         </template>
-        <template v-else>
-          <div
-            v-if="renaming && renameOverlayPos"
-            class="rename-overlay"
-            :style="{
-                left: renameOverlayPos.left + 'px',
-                top: renameOverlayPos.top + 'px',
-                width: renameOverlayPos.width + 'px'
-            }"
-            >
-            <input
-                ref="nameInput"
-                class="qh-input big"
-                :value="draftQueueName"
-                @input="emit('update:draft-queue-name', ($event.target as HTMLInputElement).value)"
-                @keydown.enter.prevent="emit('commit-rename')"
-                @keydown.esc.prevent="emit('cancel-rename')"
-                @blur="emit('commit-rename')"
-            />
-            <div class="ro-actions">
-                <button class="icon-btn" v-gex-tooltip="'Save name'" @mousedown.prevent @click="emit('commit-rename')">✓</button>
-                <button class="icon-btn" v-gex-tooltip="'Cancel rename'" @mousedown.prevent @click="emit('cancel-rename')">✕</button>
-            </div>
-            </div>
-        </template>
-        <span class="count">{{ queue.length }}</span>
-      </div>
-      <div class="qh-actions">
-        <button class="icon-btn" v-gex-tooltip="'Save playlist to file'" @click="emit('save-playlist')">💾</button>
+      </gex-fold-header>
+      <div
+        v-if="renaming && renameOverlayPos"
+        class="rename-overlay"
+        :style="{
+            left: renameOverlayPos.left + 'px',
+            top: renameOverlayPos.top + 'px',
+            width: renameOverlayPos.width + 'px'
+        }"
+      >
+        <input
+            ref="nameInput"
+            class="qh-input big"
+            :value="draftQueueName"
+            @input="emit('update:draft-queue-name', ($event.target as HTMLInputElement).value)"
+            @keydown.enter.prevent="emit('commit-rename')"
+            @keydown.esc.prevent="emit('cancel-rename')"
+            @blur="emit('commit-rename')"
+        />
+        <div class="ro-actions">
+            <button class="icon-btn" v-gex-tooltip="'Save name'" @mousedown.prevent @click="emit('commit-rename')">✓</button>
+            <button class="icon-btn" v-gex-tooltip="'Cancel rename'" @mousedown.prevent @click="emit('cancel-rename')">✕</button>
+        </div>
       </div>
     </div>
 
-    <!-- Queue Toggle (with top arrows flanking the button) -->
-    <div v-if="queue.length" class="queue-collapse-tab">
-    <!-- Left top hint -->
-    <button
-        v-if="showQueue && hasOverflow && !atTop"
-        class="queue-top-hint clickable"
-        @click="scrollByPage(-1)"
-        v-gex-tooltip="'Scroll up'"
-    >
-        <svg width="24" height="10" viewBox="0 0 24 10">
-        <path d="M3,8 L12,2 L21,8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>
-    </button>
-    <div v-else-if="showQueue && hasOverflow && atTop" class="queue-top-hint">
-        <div class="handle-line"></div>
+    <!-- Under the head: 🗑 on the left, ➕ 💾 on the right; in the middle, "scroll up" when the
+         list is scrolled down (not in micro: no room). -->
+    <div v-if="queue.length" class="queue-tools">
+      <div class="qt-side qt-left">
+        <button class="icon-btn" type="button" v-gex-tooltip="'Clear the queue'" @click="emit('clear-queue')">🗑</button>
+      </div>
+      <div class="qt-mid">
+        <button
+          v-if="showQueue && hasOverflow && !atTop && layoutClass !== 'micro'"
+          class="queue-top-hint clickable"
+          type="button"
+          @click="scrollByPage(-1)"
+          v-gex-tooltip="'Scroll up'"
+        >
+          <svg width="24" height="10" viewBox="0 0 24 10">
+            <path d="M3,8 L12,2 L21,8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+      <div class="qt-side qt-right">
+        <button class="icon-btn" type="button" v-gex-tooltip="{ content: 'Add to the queue', detail: 'Audio files and playlists' }" @click.stop.prevent="emit('click-pick')">➕</button>
+        <button class="icon-btn" type="button" v-gex-tooltip="{ content: 'Save playlist to file', detail: 'M3U8: opens in other players too' }" @click="emit('save-playlist')">💾</button>
+      </div>
     </div>
 
-    <button
-        class="tab-btn"
-        :aria-expanded="showQueue"
-        @click="emit('toggle-queue')"
-        v-gex-tooltip="showQueue ? 'Hide queue' : 'Show queue'">
-        <span v-if="showQueue">▴</span><span v-else>▾</span>
-    </button>
-
-    <!-- Right top hint (mirror of left) -->
-    <button
-        v-if="showQueue && hasOverflow && !atTop"
-        class="queue-top-hint clickable"
-        @click="scrollByPage(-1)"
-        v-gex-tooltip="'Scroll up'"
-    >
-        <svg width="24" height="10" viewBox="0 0 24 10">
-        <path d="M3,8 L12,2 L21,8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>
-    </button>
-    <div v-else-if="showQueue && hasOverflow && atTop" class="queue-top-hint">
-        <div class="handle-line"></div>
-    </div>
-    </div>
-    
     <!-- Queue List -->
     <div
     v-if="queue.length && showQueue"
     class="queue"
     ref="queueEl"
-    :style="queueStyle"
+    :style="queueStyleEff"
     >
     <div class="row header">
         <span>#</span><span>Title</span><span class="dur">Length</span><span class="act"></span>
@@ -541,11 +539,12 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
         }"
         @dblclick="emit('row-dblclick', t)"
         @click="onRowClick(i, $event)"
+        @contextmenu="emit('row-menu', t, $event)"
         @pointerdown="emit('start-row-drag', i, $event)"
     >
         <span class="idx">{{ i + 1 }}</span>
 
-        <span class="title" :title="t.name">
+        <span class="title" v-gex-tooltip="rowTip(t)">
         <template v-if="t.id === queue[currentIndex]?.id">
             <span
             :ref="setMarqueeBox"
@@ -562,8 +561,20 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
         <template v-else>
             {{ t.name }}
         </template>
-        <span v-if="t.missing" class="skip-tag" v-gex-tooltip="'File not found on disk'">[missing]</span>
+        <span v-if="t.missing" class="skip-tag">[missing]</span>
         </span>
+
+        <!-- Narrowest lists (no ✕ column): a ✕ over the title's end, on hover / selection -->
+        <button
+            v-if="['ultra', 'micro'].includes(layoutClass)"
+            class="icon-btn row-x"
+            type="button"
+            v-gex-tooltip="{ content: 'Remove from queue', detail: 'Or select it and press Delete' }"
+            @click.stop="emit('remove-at', i)"
+            @pointerdown.stop
+        >
+            ✕
+        </button>
 
         <span class="dur">
           {{
@@ -676,6 +687,23 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
 .seek { width: 100%; height: 4px; }
 .time-label { opacity: 0.8; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
+/* Secondary buttons (speed, shuffle, repeat, volume); wide / medium: at the row's right end */
+.aux-group { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.controls.wide .aux-group,
+.controls.medium .aux-group { margin-left: auto; }
+.player-root.micro .aux-group .btn { padding: 0 4px; min-width: 0; }
+
+/* Narrow classes: two fixed rows, transport centred, the rest spread below */
+.controls.narrow .row-1,
+.controls.ultra .row-1,
+.controls.micro .row-1 { flex-wrap: wrap; height: auto; row-gap: 6px; }
+.controls.narrow .transport-group,
+.controls.ultra .transport-group,
+.controls.micro .transport-group { flex: 1 0 100%; justify-content: center; }
+.controls.narrow .aux-group,
+.controls.ultra .aux-group,
+.controls.micro .aux-group { flex: 1 0 100%; justify-content: space-between; gap: 4px; }
+
 /* Layout tweaks (no height changes) */
 .controls.wide .row-2,
 .controls.medium .row-2 { justify-content: space-between; }
@@ -725,38 +753,34 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
 }
 .vol-vertical { writing-mode: vertical-rl; direction: ltr; height: 120px; }
 
-/* ====================== QUEUE HEADER ====================== */
-.queue-header {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-top: 8px; padding: 6px 8px;
-  border: 1px solid var(--border, #555); border-radius: var(--radius-sm, 6px);
+/* ====================== QUEUE HEAD (gex-fold-header, restyled) ====================== */
+.queue-head { margin-top: 8px; min-width: 0; }
+.queue-head .gex-fold-header {
+  height: 28px; padding: 0 4px 0 8px; font-size: 13px; font-weight: 600; letter-spacing: 0;
+  opacity: 1; border: 1px solid var(--border, #555); border-radius: var(--radius-sm, 6px);
   background: var(--surface-1, #1a1a1a);
 }
-.qh-left { display: flex; align-items: baseline; gap: 8px; }
-.qh-title { cursor: text; }
+.queue-head .gex-fold-header.folded { border-bottom-color: var(--border, #555); }
+.queue-head .gex-fold-header:hover { background: var(--surface-3, #333); }
 .qh-input { height: 24px; padding: 0 6px; border-radius: 4px; border: 1px solid var(--border, #555);
   background: var(--surface-2, #222); color: var(--fg, #eee);
 }
-.qh-actions { display: flex; gap: 6px; }
-.count { opacity: 0.7; font-size: 12px; }
 .icon-btn { width: 22px; height: 22px; border-radius: 4px; border: 1px solid var(--border, #555);
   display: grid; place-items: center; background: var(--surface-2, #222); color: var(--fg, #eee);
   cursor: pointer; transition: all 0.12s ease;
 }
 .icon-btn:hover { background: var(--surface-3, #333); border-color: var(--accent, #4ea1ff); }
 
-/* ====================== QUEUE TOGGLE + TOP HINT ====================== */
-.queue-collapse-tab {
-  display: flex; align-items: center; justify-content: center; gap: 8px;
-  margin: 2px 0 6px;
+/* ====================== QUEUE TOOLS + TOP HINT ====================== */
+/* 🗑 | scroll up | ➕ 💾 under the head; the sides take equal room so the middle stays centred. */
+.queue-tools {
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+  margin: 4px 0 6px; min-width: 0;
 }
-.tab-btn {
-  min-width: 44px; height: 14px; padding: 0 8px; line-height: 14px;
-  border: 1px solid var(--border, #555); border-top: none; border-radius: 0 0 10px 10px;
-  background: var(--surface-1, #1a1a1a); color: var(--fg, #eee);
-  display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.12s ease;
-}
-.tab-btn:hover { background: var(--surface-3, #333); border-color: var(--accent, #4ea1ff); }
+.qt-side { display: flex; gap: 6px; min-width: 0; }
+.qt-left { justify-content: flex-start; }
+.qt-right { justify-content: flex-end; }
+.qt-mid { display: flex; justify-content: center; min-width: 0; }
 
 .queue-top-hint { 
   width: 24px; height: 12px; display: grid; place-items: center; 
@@ -790,6 +814,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
 
 /* ====================== QUEUE LIST ====================== */
 .queue {
+  min-height: 0;
   overflow-y: auto; 
   overflow-x: hidden; 
   contain: layout paint;
@@ -813,7 +838,16 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
   position: sticky; top: 0; background: var(--surface-2, #222);
   font-weight: 600; border-top: none; box-shadow: none; z-index: 5;
 }
-.row.item { cursor: grab; }
+.row.item { cursor: grab; position: relative; }
+
+/* ✕ over the title's end (ultra / micro: no ✕ column) */
+.row-x {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  opacity: 0; pointer-events: none; transition: opacity .12s ease;
+  box-shadow: -10px 0 10px var(--surface-2, #222);
+}
+.row.item:hover .row-x,
+.row.item.selected .row-x { opacity: 1; pointer-events: auto; }
 .row.item:active { cursor: grabbing; }
 .row.item.selected { outline: 2px solid var(--accent, #4ea1ff); outline-offset: -2px; }
 .row.item.current {

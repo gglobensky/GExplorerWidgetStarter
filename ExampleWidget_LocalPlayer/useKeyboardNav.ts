@@ -6,7 +6,9 @@ export function useKeyboardNav(
   queue: Ref<Track[]>,
   selectedIndex: Ref<number>,
   hasTracks: Ref<boolean>,
-  play: (index?: number) => Promise<void>
+  play: (index?: number) => Promise<void>,
+  /** Delete: removes the selected track (only while a queue row is selected: a click outside the queue clears it). */
+  removeAt?: (index: number) => void | Promise<void>
 ) {
   
   function onKeydown(e: KeyboardEvent) {
@@ -33,6 +35,13 @@ export function useKeyboardNav(
     } else if (e.key === 'Enter' && selectedIndex.value >= 0) {
       e.preventDefault()
       play(selectedIndex.value)
+    } else if (e.key === 'Delete' && selectedIndex.value >= 0 && removeAt && !target.isContentEditable) {
+      e.preventDefault()
+      const i = selectedIndex.value
+      void Promise.resolve(removeAt(i)).then(() => {
+        // The next track takes the selection (Delete again removes it).
+        selectedIndex.value = queue.value.length ? Math.min(i, queue.value.length - 1) : -1
+      })
     } else if (e.key === 'Escape') {
       e.preventDefault()
       selectedIndex.value = -1

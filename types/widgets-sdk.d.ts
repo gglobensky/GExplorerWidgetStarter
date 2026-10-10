@@ -54,6 +54,15 @@ declare module 'gexplorer/widgets' {
 
         // Read cap
         /**
+         * A whole small text file: { text, encoding }. Decoded by the host: a byte order mark,
+         * else UTF-8, else the system's ANSI code page (encoding: 'utf-8', 'utf-8-bom',
+         * 'utf-16le', 'utf-16be', 'cp1252'...). maxBytes: default 2 MB, at most 8 MB; a larger
+         * file fails, never cut short. A protected folder asks for administrator rights once.
+         * Rejects with an Error whose `code` is E_NOT_FOUND, E_IS_FOLDER, E_TOO_LARGE,
+         * E_ACCESS_DENIED, E_NEEDS_ELEVATION, E_ELEVATION_DECLINED or E_READ_FAILED.
+         */
+        fsReadText?: (path: string, opts?: { maxBytes?: number }) => Promise<{ text: string; encoding: string }>
+        /**
          * Paged listing of a folder (sorted and filtered by the backend) or of a
          * VFS path. Starts loading at once; close() it (useListing does) when done.
          */
@@ -61,7 +70,13 @@ declare module 'gexplorer/widgets' {
 
         // Write cap
         fsMkdir?: (path: string) => Promise<void>
-        fsWriteText?: (path: string, text: string, overwrite?: boolean) => Promise<void>
+        /**
+         * Write cap. Writes a whole text file (UTF-8; bom: true starts it with a byte order
+         * mark). overwrite false (the default): fails when the file exists. Rejects on failure.
+         * After ui().saveFile() the widget already holds write consent there: pass overwrite: true
+         * (the user confirmed replacing an existing file in the dialog).
+         */
+        fsWriteText?: (path: string, text: string, opts?: { overwrite?: boolean; bom?: boolean }) => Promise<void>
         /**
          * Copy / move files and folders. `to` is the full destination path of each
          * item (folder + name), never just the folder. Nothing is replaced: a taken
@@ -87,6 +102,9 @@ declare module 'gexplorer/widgets' {
         /**
          * Read cap. Starts an OS drag of these items, as this widget (same
          * arguments as the old free startNativeDrag, now deprecated).
+         * options.payload: what a drop inside GEM Shell receives ({ type, data }, e.g.
+         * { type: 'gex/file-refs', data: refs }). The host adds the source (this widget
+         * instance) and clears it when the drag ends: no setActiveDragPayload any more.
          */
         startNativeDrag?: (
             source: string[] | { selection: SelectionRef; count?: number },
@@ -99,7 +117,7 @@ declare module 'gexplorer/widgets' {
             },
             x: number,
             y: number,
-            options?: { cwd?: string; entries?: any[] }
+            options?: { cwd?: string; entries?: any[]; payload?: OwnedDragPayload }
         ) => Promise<{ cleanup: () => void; resolvedPaths: string[]; started: boolean }>
         /**
          * This widget instance's lifecycle, bound to the instance by the host
@@ -148,12 +166,34 @@ declare module 'gexplorer/widgets' {
         loadIconPack?: () => Promise<void>
 
         // Media cap
-        mintStreamHttp?: (path: string, mimeHint?: string) => Promise<string>
+        /**
+         * Duration (ms) and tags of audio / video files, one item per path, in order (fields
+         * absent: not known; Windows: the shell's properties; Linux: none yet). Never prompts.
+         */
+        mediaInfo?: (paths: string[]) => Promise<Array<{
+            path: string
+            durationMs?: number | null
+            title?: string | null
+            artist?: string | null
+            album?: string | null
+            year?: number | null
+            width?: number | null
+            height?: number | null
+        }>>
 
+        /** A stream URL for a file, for this widget. Rejects E_NOT_FOUND when the file is not there. */
+        mintStreamHttp?: (path: string, mimeHint?: string) => Promise<{ url: string; mimeType?: string; expiresAt?: string }>
+
+        /**
+         * Playable items for files (stream URLs minted for this widget). opts.onFailed: a file
+         * that can't be played (code E_NOT_FOUND, declined rights...) is reported and skipped;
+         * without it, the first failure rejects the whole call.
+         */
         fileRefsToPlaylistItems?: (
             refs: FileRefData[],
             receiverWidgetType: string,
-            receiverWidgetId: string
+            receiverWidgetId: string,
+            opts?: { onFailed?: (ref: FileRefData, code: string, error: unknown) => void }
         ) => Promise<PlaylistItem[]>
 
         // Network cap
@@ -1145,8 +1185,10 @@ declare module 'gexplorer/widgets' {
         validator: DnDValidator
     ): Promise<{ ok: boolean; reason?: string }>
 
-    export function setActiveDragPayload(payload: GexDnDPayload, sourceId: string): void
-    export function clearActiveDragPayload(): void
+    /** What a drop inside GEM Shell receives from sdk.startNativeDrag (the host adds the source). */
+    export type OwnedDragPayload = { type: GexDnDType | string; data: unknown; metadata?: Record<string, any> }
+    // setActiveDragPayload / clearActiveDragPayload: removed 2026-10-10 (the widget named the
+    // drag's source). Pass the payload to sdk.startNativeDrag (options.payload).
 
     // Removed (sandbox C3c, 2026-10-05): fsValidate, startNativeDrag,
     // createWidgetMessaging, createLifecycle, authorizeFileRefs,
@@ -1428,7 +1470,7 @@ declare module 'gexplorer/widgets' {
         dimName?: boolean
     }
     export function getEntryStyle(entry: any): VfsStateStyle | null
-    export function useDialog(): any
+    // useDialog removed 2026-10-09: sdk.ui().openFiles / saveFile / pickFolder.
 
     export function useSlotProviders(slotId: string): ComputedRef<SlotProvider[]>
 
@@ -1592,6 +1634,26 @@ declare module 'gexplorer/widgets' {
      * ui.snackOnce('hint.dragToQueue', { text: 'Tip: drag songs onto the queue to add them.' })
      */
     export interface WidgetUi {
+        /**
+         * Opens this widget's right-click menu at the event: call it from a 'contextmenu'
+         * listener (only the user's own right-click, only while on screen; the menu closes
+         * if the widget leaves the screen). The host names the widget: its own items
+         * (manifest menus.items, back to its exposed onMenuItem), other widgets' actions for
+         * that context (they get opts.selection as paths) and the user's own commands.
+         *
+         *   // entry.ts
+         *   menuContexts: [{ id: 'player.track', label: 'Track in queue', icon: '🎵', subject: 'files' }],
+         *   menus: { items: [
+         *       { id: 'play',   label: 'Play',              icon: '▶', contexts: ['player.track'] },
+         *       { id: 'remove', label: 'Remove from queue', icon: '✕', contexts: ['player.track'] },
+         *   ] },
+         *
+         *   // Widget.vue
+         *   <div class="row" @contextmenu="e => ui.contextMenu(e, { context: 'player.track', ref: t.id, selection: [t.path] })">
+         *   function onMenuItem(m: WidgetMenuItemMessage) { if (m.itemId === 'remove') removeById(m.ref) }
+         *   defineExpose({ onMenuItem })
+         */
+        contextMenu(event: MouseEvent, opts?: WidgetContextMenuOptions): Promise<void>
         alert(message: string, opts?: { title?: string; detail?: string; variant?: MbVariant; okLabel?: string }): Promise<void>
         /** true: OK. */
         confirm(message: string, opts?: { title?: string; detail?: string; okLabel?: string; cancelLabel?: string; danger?: boolean }): Promise<boolean>
@@ -1614,6 +1676,82 @@ declare module 'gexplorer/widgets' {
          * header is all that shows). null clears it. At most 200 characters, one line.
          */
         setHeaderStatus(text: string | null): void
+        /**
+         * The host's file dialog, titled "<Widget> — <title>" (default "Open"): the files
+         * chosen, null when cancelled. Only while the widget is on screen; closes when it
+         * leaves. filters: [{ label: 'Audio', extensions: ['mp3', 'flac'] }].
+         * access 'write': the widget may also write the files chosen (edit them in place),
+         * those files only, while GEM Shell runs: what the user picks is the grant, no other
+         * prompt (a folder needing administrator rights: the consent dialog asks once).
+         */
+        openFiles(opts?: { title?: string; startIn?: string; filters?: WidgetFileFilter[]; multiple?: boolean; access?: 'read' | 'write' }): Promise<string[] | null>
+        /**
+         * The host's save dialog: the full path chosen, null when cancelled. An existing file
+         * was confirmed by the user ("Replace it?") and the widget may write THAT FILE (only),
+         * while GEM Shell runs, with no other prompt: fsWriteText(path, text, { overwrite: true }).
+         */
+        saveFile(opts?: { title?: string; startIn?: string; filters?: WidgetFileFilter[]; suggestedName?: string }): Promise<string | null>
+        /**
+         * The host's folder dialog: the folder chosen, null when cancelled. access 'write': the
+         * widget may write in it (and its subfolders: an export destination), while GEM Shell runs.
+         */
+        pickFolder(opts?: { title?: string; startIn?: string; access?: 'read' | 'write' }): Promise<string | null>
+    }
+
+    /** A "Type" choice of a file dialog: extensions without the dot ('mp3'). */
+    export type WidgetFileFilter = { label: string; extensions: string[] }
+
+    /** A listing's selection as a menu takes it (count, the first items, the operation payload). */
+    export type MenuSelection = {
+        count: number
+        sample: Array<{ path: string; name: string; kind?: 'dir' | 'file' | 'link' }>
+        payload: () => Promise<SelectionPayload>
+    }
+
+    export type WidgetContextMenuOptions = {
+        /**
+         * One of the widget's declared menuContexts ids ('player.track'), or a file context
+         * ('file' | 'folder' | 'multi' | 'background'). Omitted: resolved from the selection.
+         */
+        context?: string
+        /** What the click is about in the widget's own terms (a track id): given back to onMenuItem. */
+        ref?: string
+        /** The files the click is about: other widgets' actions and the user's commands work on them. */
+        selection?: MenuSelection | string[]
+        /** The folder the widget shows (file widgets). */
+        path?: string
+        /** The visible entries, to tell a folder from a file (file widgets). */
+        entries?: Array<{ FullPath: string; Kind?: string }>
+        /** Default: the place the host gave the widget (the Layout submenu). */
+        area?: 'grid' | 'sidebar' | 'toolbar' | 'embedded'
+        /** The widget's config (the Layout submenu shows the current layout). */
+        widgetConfig?: any
+        /** Called once when the menu closes (after the chosen item ran), or right away when nothing shows. */
+        onClose?: () => void
+    }
+
+    /**
+     * One of the manifest's menus.items. id: short ('remove'), named '<widgetType>.<id>' by the
+     * host. contexts: the widget's declared menuContexts (or file contexts) it shows in; the
+     * order of the list is the default layout. when: declarative conditions only.
+     */
+    export type WidgetMenuItemDecl = {
+        id: string
+        type?: 'command' | 'separator'
+        label?: string
+        icon?: string
+        contexts: string[]
+        when?: Record<string, unknown>
+    }
+
+    /** What the widget's exposed onMenuItem receives when one of its items is chosen. */
+    export type WidgetMenuItemMessage = {
+        /** The short id from menus.items. */
+        itemId: string
+        /** The context the menu was opened for. */
+        context: string
+        /** The ref passed to contextMenu(), if any. */
+        ref?: string
     }
 }
 

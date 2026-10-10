@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch, inject } from 'vue'
 import { usePlayerState } from './usePlayerState'
-import { usePlaylist, INPUT_ACCEPT } from './usePlaylist'
+import { usePlaylist, reasonText } from './usePlaylist'
 import { useMarquee } from './useMarquee'
 import { useDnD } from './useDnD'
 import { useKeyboardNav } from './useKeyboardNav'
@@ -11,7 +11,9 @@ import ExpandedLayout from './ExpandedLayout.vue'
 import {
   FileRefData,
   type WidgetSdk,
+  type WidgetMenuItemMessage,
 } from 'gexplorer/widgets'
+import type { Track } from './usePlayerState'
 
 const isDropActive = ref(false)
 
@@ -47,13 +49,6 @@ const onMediaError = (e: Event) => {
   })
 }
 
-type Track = {
-  id: string
-  url: string
-  name: string
-  type?: string
-}
-
 const expandedLayoutRef = ref<InstanceType<typeof ExpandedLayout> | null>(null)
 
 // Bound to this instance by the host (sandbox C3b): no id passed.
@@ -63,10 +58,8 @@ const { send, on, cleanup } = sdk.messaging()
 if (!sdk.ui) throw new Error('[local-player] widgetSdk.ui is not available')
 // Snackbars through this instance's ui(): the host shows the widget's name with them.
 const ui = sdk.ui()
-// The drop helpers of this widget's SDK: they say which widget receives (the
-// free versions, where the widget named itself, are gone; sandbox C3c).
-const fileRefsToPlaylistItems = sdk.fileRefsToPlaylistItems!
-const authorizeFileRefs = sdk.authorizeFileRefs!
+// The drop helper of this widget's SDK: it says which widget receives (the free
+// version, where the widget named itself, is gone; sandbox C3c).
 const resolveDropRefs = sdk.resolveDropRefs!
 
 // ===== PLAYER STATE =====
@@ -177,31 +170,6 @@ function commonDir(paths: string[]) {
   return shared.endsWith(':') ? shared + '/' : shared || '/'
 }
 
-// Convert file-refs → streaming playlist items (gex://) → Tracks
-async function refsToTracks(
-  refs: FileRefData[],
-  receiverWidgetType: string,
-  receiverWidgetId: string
-): Promise<Track[]> {
-  const items = await fileRefsToPlaylistItems(refs, receiverWidgetType, receiverWidgetId)
-  return items.map(it => ({
-    id: it.id || it.src,
-    url: it.src,
-    name: it.name || it.src.split(/[\\/]/).pop() || 'track',
-    type: it.type,
-    // The stream URL expires (and dies with GEM Shell): the rack renews it from the file
-    sourcePath: it.sourcePath,
-    expiresAt: it.expiresAt ?? null,
-  }))
-}
-
-// Push tracks into queue and sync the underlying playlists engine
-async function appendTracks(tracks: Track[]) {
-  if (!tracks.length) return
-  state.queue.value = state.queue.value.concat(tracks)
-  state.playlists.setItems(state.sel, state.toPlaylistItems(), { keepCurrent: true })
-}
-
 // rAF + idle-gated width pipeline ------------------------------------------
 let pendingWidth: number | null = null
 let rafForWidth = 0
@@ -295,25 +263,16 @@ const dnd = useDnD(
 )
 
 // ===== PLAYLIST OPS =====
-const playlist = usePlaylist(
-  state.queue,
-  state.currentIndex,
-  state.queueName,
-  state.isPlaying,
-  state.music,
-  state.playlists,
-  state.sel,
-  state.toPlaylistItems,
-  'local-player',
-  props.sourceId
-)
+// Files, playlists (M3U8), removing, clearing; plays through play() below.
+const playlist = usePlaylist(state, props.sourceId, play)
 
 // ===== KEYBOARD NAV =====
 const keyboard = useKeyboardNav(
   state.queue,
   state.selectedIndex,
   state.hasTracks,
-  play
+  play,
+  playlist.removeAt
 )
 
 // ===== MARQUEE =====
@@ -330,21 +289,72 @@ type RackIndexEvt = CustomEvent<{
   index?: number
   item?: { id?: string; url?: string } | null
 }>
+// The rack's index is ITS list's (playable tracks only): the item's id says which queue track.
 const onRackIndex = (e: Event) => {
   const d = (e as RackIndexEvt).detail
-  let real = typeof d.index === 'number' ? d.index : -1
-  if (real < 0 && d.item) {
-    const { id, url } = d.item
-    if (id) real = state.queue.value.findIndex(t => t.id === id)
-    if (real < 0 && url) real = state.queue.value.findIndex(t => t.url === url)
-  }
-  if (real >= 0) {
-    if (state.currentIndex.value !== real) state.currentIndex.value = real
-    if (state.selectedIndex.value !== real) state.selectedIndex.value = real
-  }
+  let real = state.queueIndexOfRack(typeof d.index === 'number' ? d.index : -1, d.item?.id)
+  if (real < 0 && d.item?.url) real = state.queue.value.findIndex(t => t.url === d.item!.url)
+  if (real < 0) return
+  // Moving on by itself (end of a track, Next): missing tracks it went over are said.
+  if (!jumping && !state.shuffle.value) reportSkipped(state.currentIndex.value, real)
+  if (state.currentIndex.value !== real) state.currentIndex.value = real
+  if (state.selectedIndex.value !== real) state.selectedIndex.value = real
+}
+
+/** Missing tracks between <from> and <to> (going forward; a wrap to the start is not reported). */
+function reportSkipped(from: number, to: number) {
+  if (from < 0 || to <= from + 1) return
+  const skipped = state.queue.value.slice(from + 1, to).filter(t => !t.url)
+  if (!skipped.length) return
+  ui.snack({
+    id: 'missing',
+    dedupe: 'replace',
+    text: skipped.length === 1
+      ? `Skipped "${skipped[0].name}": ${reasonText(skipped[0].missingReason)}.`
+      : `Skipped ${skipped.length} tracks that can't be played.`,
+    timeoutMs: 5000,
+  } as any)
 }
 
 // ===== PLAYER CONTROLS =====
+// Set while playing a track on purpose: the rack's index event that comes with it is a
+// jump, not the player moving on by itself (no "skipped" snackbar).
+let jumping = 0
+
+/**
+ * Plays queue track <index>. A missing one is tried again (the file may be back); still not
+ * playable: a snackbar says why and the next playable track after it plays (2026-10-09).
+ */
+async function playQueueIndex(index: number): Promise<void> {
+  if (index < 0 || index >= state.queue.value.length) return
+  if (!state.queue.value[index].url && !(await playlist.retryMissing(index))) {
+    const t = state.queue.value[index]
+    ui.snack({
+      id: 'missing',
+      dedupe: 'replace',
+      text: `Skipped "${t?.name}": ${reasonText(t?.missingReason)}.`,
+      timeoutMs: 5000,
+    } as any)
+    const after = state.queue.value.findIndex((x, i) => i > index && !!x.url)
+    if (after < 0) return
+    index = after
+  }
+  const rackIdx = state.rackIndexOf(index)
+  if (rackIdx < 0) return
+  const id = state.queue.value[index].id
+  let idx = -1
+  jumping++
+  try { idx = await state.playlists.playIndex(state.sel, rackIdx, state.music) }
+  finally { jumping-- }
+  if (idx < 0) return
+  const real = state.queueIndexOfRack(idx, idx === rackIdx ? id : null)
+  if (real >= 0) {
+    state.currentIndex.value = real
+    state.selectedIndex.value = real
+    state.isPlaying.value = true
+  }
+}
+
 async function play(index?: number) {
   await state.prime()
   // Shown in two places (instance 'global'): the other copy's unmount may have
@@ -353,34 +363,21 @@ async function play(index?: number) {
   state.isLoading.value = true
 
   if (typeof index === 'number') {
-    if (index >= 0 && index < state.queue.value.length && state.queue.value[index]?.url) {
-      const idx = await state.playlists.playIndex(state.sel, index, state.music)
-      if (idx >= 0) {
-        state.currentIndex.value = idx
-        state.selectedIndex.value = idx
-        state.isPlaying.value = true
-      }
-    }
-    state.isLoading.value = false
+    try { await playQueueIndex(index) } finally { state.isLoading.value = false }
     return
   }
 
   if (state.currentIndex.value === -1) {
     const first = state.queue.value.findIndex(t => !!t.url)
     if (first >= 0) {
-      const idx = await state.playlists.playIndex(state.sel, first, state.music)
-      if (idx >= 0) {
-        state.currentIndex.value = idx
-        state.selectedIndex.value = idx
-        state.isPlaying.value = true
-      }
-      state.isLoading.value = false
+      try { await playQueueIndex(first) } finally { state.isLoading.value = false }
       return
     }
   }
 
   // Nothing playable on the element (a queue restored after a restart: its stream URLs
-  // died with the last run; or its URL failed): through the playlist, which mints a new one.
+  // died with the last run; or its URL failed; or the current track is missing): through
+  // the playlist, which mints a new one.
   const el = state.music as any
   if (state.currentIndex.value >= 0 && (!el.currentSrc || el.error || el.networkState === 3)) {
     state.isLoading.value = false
@@ -401,26 +398,23 @@ function togglePlay() {
   state.isPlaying.value ? pause() : play()
 }
 
+// next / prev answer the rack's index: the queue's is found by the rack's current item.
+function afterRackMove(idx: number) {
+  if (idx < 0) { pause(); return }
+  const pl = state.playlists.get(state.sel)
+  const real = state.queueIndexOfRack(idx, pl?.items?.[idx]?.id)
+  if (real >= 0) {
+    state.currentIndex.value = real
+    state.selectedIndex.value = real
+  }
+}
+
 function next() {
-  state.playlists.next(state.sel, state.music).then((idx: number) => {
-    if (idx >= 0) {
-      state.currentIndex.value = idx
-      state.selectedIndex.value = idx
-    } else {
-      pause()
-    }
-  })
+  state.playlists.next(state.sel, state.music).then(afterRackMove)
 }
 
 function prev() {
-  state.playlists.prev(state.sel, state.music).then((idx: number) => {
-    if (idx >= 0) {
-      state.currentIndex.value = idx
-      state.selectedIndex.value = idx
-    } else {
-      pause()
-    }
-  })
+  state.playlists.prev(state.sel, state.music).then(afterRackMove)
 }
 
 function seek(e: Event) {
@@ -468,8 +462,8 @@ function toggleRepeat() {
 }
 
 async function clickPick() {
-  // Prefer host dialog; falls back to browser picker or <input> inside the hook.
-  await playlist.loadAndMerge()
+  // The host's file dialog: audio files and playlists (.m3u / .m3u8).
+  await playlist.openViaDialog()
 }
 
 function toggleQueue() {
@@ -502,13 +496,9 @@ function commitRename() {
 
 // ===== ROW INTERACTIONS =====
 async function onRowDblClick(track: any) {
-if (dnd.isDragging.value) return
+  if (dnd.isDragging.value) return
   const realIdx = state.queue.value.findIndex(t => t.id === track.id)
-  const idx = await state.playlists.playIndex(state.sel, realIdx, state.music)
-  if (idx >= 0) {
-    state.currentIndex.value = idx
-    state.selectedIndex.value = idx
-  }
+  if (realIdx >= 0) await play(realIdx)
 }
 
 function onRowClick(index: number) {
@@ -545,13 +535,9 @@ async function handleDrop(payload: any) {
         return
     }
     if (!refs.length) return
-    const auth = await authorizeFileRefs(
-        'local-player', props.sourceId, { ...payload, type: 'gex/file-refs', data: refs }, ['Read']
-    )
-    if (!auth.ok) return
-    const tracks = await refsToTracks(refs, 'local-player', props.sourceId)
-    await appendTracks(tracks)
-    if (state.queue.value.length === tracks.length && tracks.length) await play(0)
+    // Audio files are added (playing when nothing could play before); a playlist file asks
+    // "Add / Replace" when the queue isn't empty.
+    await playlist.addPaths(refs.filter(r => !(r as any).isDirectory).map(r => r.path))
 }
 
 async function onDrop(e: DragEvent) {
@@ -654,6 +640,9 @@ onMounted(async () => {
 
   applyPlaybackRate()
 
+  // Tracks without a known length (a queue restored, added before durations were read).
+  void playlist.probeDurations()
+
   on('dnd:drop', async (msg: any) => {
       if (msg.payload?.zone !== 'queue') return
       const payload = msg.payload?.data
@@ -669,44 +658,58 @@ async function onWidgetAction(msg: any) {
     if (msg.topic !== 'widget:action') return
     console.log('[local-player] widget:action received', msg.payload)
 
-    const { actionId, tokens } = msg.payload
-    const path: string = tokens?.path ?? ''
-    console.log('[local-player] path:', path)
-    if (!path) return
+    const { actionId, tokens, args } = msg.payload
+    // The selection's audio files and playlists (the host filtered it by the actions'
+    // extensions: entry.ts), as a list; tokens.paths is the same, newline-joined.
+    const paths: string[] = Array.isArray(args?.paths) ? args.paths
+        : String(tokens?.paths ?? tokens?.path ?? '').split('\n').filter(Boolean)
+    const skipped = Number(args?.skipped) || 0
+    if (!paths.length) return
 
-    const syntheticRef: FileRefData = {
-        name: path.split(/[\\/]/).pop() ?? path,
-        path,
-        kind: 'file',
-    }
-    console.log('[local-player] syntheticRef:', syntheticRef)
+    // Play: an empty queue becomes them; else asks (Add and play / Replace / Cancel).
+    // Enqueue: added at the end (plays when nothing could play before).
+    if (actionId === 'play') await playlist.addPaths(paths, 'play', skipped)
+    else if (actionId === 'enqueue') await playlist.addPaths(paths, 'add', skipped)
+}
 
-    const authorized = await authorizeFileRefs(
-        'local-player',
-        props.sourceId,
-        { type: 'gex/file-refs', data: [syntheticRef] },
-        ['Read']
-    )
-    console.log('[local-player] authorized:', authorized)
-    if (!authorized.ok) return
+// ===== CONTEXT MENUS (claude/widget-context-menus-design.md, 2026-10-09) =====
+// The host builds them: this widget's own items (entry.ts menus.items, back to onMenuItem),
+// other widgets' actions for the context, and the user's own commands. A track's menu has
+// its file as subject (other widgets' actions and the user's commands get its path).
 
-    const tracks = await refsToTracks([syntheticRef], 'local-player', props.sourceId)
-    console.log('[local-player] tracks:', tracks)
-    if (!tracks.length) return
+/** Right-click on a queue row: the track's menu (the row gets selected, so it shows what the menu is about). */
+function onTrackMenu(t: Track, e: MouseEvent) {
+  const idx = state.queue.value.findIndex(x => x.id === t.id)
+  if (idx >= 0) state.selectedIndex.value = idx
+  void ui.contextMenu(e, {
+    context: 'player.track',
+    ref: t.id,
+    selection: t.sourcePath ? [t.sourcePath] : [],
+    widgetConfig: props.config,
+  })
+}
 
-      if (actionId === 'play') {
-          // Replace queue and start from the new track
-          state.queue.value = tracks
-          state.playlists.setItems(state.sel, state.toPlaylistItems(), { keepCurrent: false })
-          await play(0)
-      } else if (actionId === 'enqueue') {
-          await appendTracks(tracks)
-          // If queue was empty, start playing
-          if (state.queue.value.length === tracks.length) {
-              await play(0)
-          }
-      }
+/** Right-click anywhere else on the player: its menu (Add files…, playlists, Clear, Layout). */
+function onPlayerMenu(e: MouseEvent) {
+  void ui.contextMenu(e, { context: 'player.background', widgetConfig: props.config })
+}
+
+/** One of this widget's menu items was chosen (the host calls it: defineExpose below). */
+async function onMenuItem(m: WidgetMenuItemMessage) {
+  const index = m.ref ? state.queue.value.findIndex(t => t.id === m.ref) : -1
+  switch (m.itemId) {
+    // Track menu (the track may be gone since the menu opened: then nothing happens)
+    case 'play':    if (index >= 0) await playQueueIndex(index); break
+    case 'remove':  if (index >= 0) await playlist.removeAt(index); break
+    case 'replace': if (m.ref) await playlist.replaceItem(m.ref); break
+    // Player menu
+    case 'add':     await playlist.openViaDialog(); break
+    case 'open':    await playlist.openPlaylistViaDialog(); break
+    case 'save':    await playlist.savePlaylist(); break
+    case 'clear':   await playlist.confirmClearQueue(); break
+    default: console.warn('[local-player] unknown menu item', m.itemId)
   }
+}
 
 onBeforeUnmount(() => {
   if (rafForWidth) cancelAnimationFrame(rafForWidth)
@@ -725,7 +728,7 @@ onBeforeUnmount(() => {
   if (!jobs.current('playback')) state.playlists.unbind(state.sel)
   cleanup() 
 })
-  defineExpose({ onWidgetAction })
+  defineExpose({ onWidgetAction, onMenuItem })
 </script>
 
 <template>
@@ -733,6 +736,7 @@ onBeforeUnmount(() => {
     ref="widgetRootEl"
     v-gex-drop="'queue'"
     class="widget-root"
+    @contextmenu="onPlayerMenu"
     :style="{ '--widget-w': (containerWidth || hostWidth) + 'px' }"
   >
     <!-- Compact Layout -->
@@ -799,11 +803,13 @@ onBeforeUnmount(() => {
       @cancel-rename="cancelRename"
       @commit-rename="commitRename"
       @update:draft-queue-name="(v) => draftQueueName = v"
-      @save-playlist="playlist.savePlaylistGexm"
+      @save-playlist="playlist.savePlaylist"
+      @clear-queue="playlist.confirmClearQueue"
       @row-dblclick="onRowDblClick"
       @row-click="onRowClick"
       @start-row-drag="dnd.startRowDrag"
       @remove-at="playlist.removeAt"
+      @row-menu="onTrackMenu"
       @drag-enter="onDragEnter"
       @drag-over="onDragOver"
       @drag-leave="onDragLeave"
