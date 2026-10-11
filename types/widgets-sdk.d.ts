@@ -880,7 +880,12 @@ declare module 'gexplorer/widgets' {
          * and is no longer current.
          */
         rows(start: number, end: number, version?: number): Promise<ListingEntry[]>
-        refresh(): void
+        /**
+         * Reload now. `user: true` only when the user asked (a Refresh command): in a
+         * folder whose access was denied it asks again (consent dialog, then the
+         * Windows prompt). Automatic refreshes leave it out and never ask.
+         */
+        refresh(opts?: { user?: boolean }): void
         /** Defers refreshes until the returned release is called (batch operations). */
         holdRefresh?(): () => void
         /**

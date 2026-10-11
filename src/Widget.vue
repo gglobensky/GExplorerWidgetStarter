@@ -285,8 +285,9 @@ function openDirNow(path: string) {
   shelf.value = source.value && !inDialog.value ? { path, key, source: source.value, view: null } : null
 }
 
-function refresh() {
-  source.value?.refresh()
+/** Reads the folder again. `user`: the user asked (Refresh): a denied folder asks for access again. */
+function refresh(opts?: { user?: boolean }) {
+  source.value?.refresh(opts)
 }
 
 /* -----------------------------------------------
@@ -1443,7 +1444,7 @@ const statusText = computed(() => {
   if (!merged.value.rpath) return '(no path)'
   if (s.status === 'error') {
     switch (s.error?.code) {
-      case 'E_ACCESS_DENIED': return 'Access to this folder was denied.'
+      case 'E_ACCESS_DENIED': return 'Access to this folder was denied. Refresh (right-click → Refresh) to ask for access again.'
       case 'E_NOT_FOUND': return 'This folder no longer exists.'
       default: return s.error?.message || 'The folder could not be read.'
     }
@@ -1487,7 +1488,8 @@ onMounted(() => {
   })
 })
 
-on('items:refresh', () => refresh())
+// The context menu's Refresh (a host message): the user's own, so a denied folder asks again.
+on('items:refresh', () => refresh({ user: true }))
 
 on('items:startRename', (msg: any) => {
   const path = msg.payload?.path
