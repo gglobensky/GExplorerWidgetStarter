@@ -1,6 +1,14 @@
 import type { ListingSource } from 'gexplorer/widgets'
 
-export type Root = { id: string; label: string; path: string; group: string; kind: 'folder' | 'favorite' | 'destination' | 'unavailable'; reason?: string }
+export type Root = {
+  id: string
+  label: string
+  path: string
+  group: string
+  kind: 'folder' | 'favorite' | 'destination' | 'unavailable'
+  reason?: string
+  capacity?: { total?: number; free?: number; fsType?: string; kind?: string }
+}
 export type RootState = {
   expanded: string[]
   selected: string
@@ -9,14 +17,15 @@ export type RootState = {
   rootTotal?: number
   anchor?: string
   limits?: Record<string, number>
+  columnPath?: string
   narrowPath?: string
   narrowScroll?: number
   narrowAnchor?: string
-  beforeFocus?: { expanded: string[]; scroll: number; anchor?: string; narrowPath?: string; narrowScroll?: number; narrowAnchor?: string }
+  beforeFocus?: { expanded: string[]; scroll: number; anchor?: string; columnPath?: string; narrowPath?: string; narrowScroll?: number; narrowAnchor?: string }
 }
 export type TreeMemory = { active: string; roots: Record<string, RootState>; recent: string[] }
 export interface RootSource {
-  open(path: string): ListingSource
+  open(path: string, options?: { consent?: boolean }): ListingSource
   navigate(path: string): void
 }
 export const newState = (): RootState => ({ expanded: [], selected: '', focus: '', scroll: 0 })
@@ -32,6 +41,11 @@ export function within(path: string, parent: string): boolean {
   return a === b || a.startsWith(b === '/' ? b : b + '/')
 }
 export function label(path: string): string { return path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path }
+function parent(path: string): string {
+  const value = path.replace(/[\\/]+$/, '')
+  const index = Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\'))
+  return index < 0 ? '' : value.slice(0, index) || '/'
+}
 export function minimizeOthers(expanded: string[], branch: string): string[] {
   return expanded.filter(path => within(path, branch) || within(branch, path))
 }
@@ -123,6 +137,23 @@ export class TreeController {
     if (!this.root) return
     const visit = (n: Node): Node | undefined => key(n.path) === key(path) ? n : n.children.map(visit).find(Boolean)
     return visit(this.root)
+  }
+  async revealChild(path: string): Promise<Node | undefined> {
+    const existing = this.find(path)
+    if (existing) return existing
+    const s = this.sessions.get(key(parent(path)))
+    if (!s) return
+    try {
+      const [index] = await s.source.find([label(path)])
+      if (index < 0 || !this.live(s)) return
+      const limit = Math.ceil((index + 1) / 80) * 80
+      if (limit > s.node.limit) {
+        s.node.limit = limit
+        ;(this.state.limits ??= {})[key(s.node.path)] = limit
+      }
+      await this.read(s)
+      return this.find(path)
+    } catch { return }
   }
   toggle(node: Node) {
     if (this.isExpanded(node.path)) {

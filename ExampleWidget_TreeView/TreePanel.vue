@@ -2,18 +2,20 @@
 import { computed, getCurrentInstance, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useScrollHints } from 'gexplorer/widgets'
 import { TreeController, key, label, newState, within, type Node, type Root, type RootSource, type TreeMemory, type TreeRow } from './tree'
+import TreeColumn from './TreeColumn.vue'
 import './tree.css'
 
-const props = defineProps<{ roots: Root[]; source: RootSource; memory: TreeMemory; icon?: (path: string) => string; initialPath?: string | null }>()
+const props = defineProps<{ roots: Root[]; source: RootSource; memory: TreeMemory; icon?: (path: string) => string; initialPath?: string | null; context?: string; widgetId?: string }>()
 const emit = defineEmits<{
   (e: 'navigate', path: string): void
   (e: 'favorite', root: Root): void
-  (e: 'add'): void
+  (e: 'add', path: string): void
   (e: 'refreshRoots'): void
-  (e: 'menu', event: MouseEvent, path: string): void
+  (e: 'menu', event: MouseEvent, path: string, layout: 'tree' | 'columns'): void
+  (e: 'clipboard', operation: 'copy' | 'cut' | 'paste', path: string): void
 }>()
 const tick = ref(0), selector = ref(false), query = ref(''), focused = ref('')
-const panel = ref<HTMLElement | null>(null), scroll = ref<HTMLElement | null>(null), selectorScroll = ref<HTMLElement | null>(null), selectButton = ref<HTMLElement | null>(null), search = ref<HTMLInputElement | null>(null)
+const panel = ref<HTMLElement | null>(null), scroll = ref<HTMLElement | null>(null), selectorScroll = ref<HTMLElement | null>(null), columnsScroll = ref<HTMLElement | null>(null), selectButton = ref<HTMLElement | null>(null), search = ref<HTMLInputElement | null>(null)
 const scrollTop = ref(0), viewport = ref(480), panelWidth = ref(999)
 const hoverCounts = ref<Record<string, { status: 'loading' | 'ready' | 'error'; total?: number; error?: string }>>({})
 const treeId = `tv-${getCurrentInstance()?.uid}`
@@ -30,6 +32,7 @@ controller = new TreeController(props.source, onTreeChange)
 const root = computed(() => props.roots.find(r => r.id === props.memory.active))
 const state = computed(() => props.memory.roots[props.memory.active])
 const narrow = computed(() => panelWidth.value < 242)
+const columns = computed(() => props.context === 'grid' && panelWidth.value >= 448)
 const narrowNode = computed(() => {
   void tick.value
   const path = state.value?.narrowPath
@@ -46,6 +49,25 @@ const narrowParent = computed(() => {
   const node = narrowNode.value
   if (!node || key(node.path) === key(activePath.value)) return null
   return controller.rows().find(row => row.type === 'node' && key(row.node.path) === key(node.path))?.parent || activePath.value
+})
+const columnNodes = computed(() => {
+  void tick.value
+  const first = controller.root
+  if (!first) return []
+  const result = [first]
+  const target = state.value?.columnPath || activePath.value
+  let current = first
+  while (target && key(current.path) !== key(target)) {
+    const child = current.children.find(candidate => within(target, candidate.path))
+    if (!child) break
+    result.push(child); current = child
+  }
+  return result
+})
+const createTarget = computed(() => {
+  if (columns.value) return columnNodes.value[columnNodes.value.length - 1]?.path || activePath.value
+  if (narrow.value) return narrowNode.value?.path || activePath.value
+  return state.value?.columnPath || activePath.value
 })
 const activeRow = computed(() => rows.value.findIndex(r => r.type === 'node' && key(r.node.path) === key(focused.value)))
 const groups = computed(() => {
@@ -81,6 +103,7 @@ function mountRoot() {
     : { scroll: state.value?.scroll || 0, anchor: state.value?.anchor }
   controller.setRoot(r?.kind === 'folder' ? activePath.value : '', state.value || newState())
   if (state.value && state.value.narrowPath && !within(state.value.narrowPath, activePath.value)) state.value.narrowPath = activePath.value
+  if (state.value && (!state.value.columnPath || !within(state.value.columnPath, activePath.value))) state.value.columnPath = activePath.value
   focused.value = state.value?.selected || ''
   scrollTop.value = 0
   tick.value++
@@ -102,10 +125,11 @@ function focusFolder(path: string) {
   saveScroll()
   if (!state.value.focus) state.value.beforeFocus = {
     expanded: [...state.value.expanded], scroll: state.value.scroll, anchor: state.value.anchor,
-    narrowPath: state.value.narrowPath, narrowScroll: state.value.narrowScroll, narrowAnchor: state.value.narrowAnchor,
+    narrowPath: state.value.narrowPath, narrowScroll: state.value.narrowScroll, narrowAnchor: state.value.narrowAnchor, columnPath: state.value.columnPath,
   }
   state.value.focus = path; state.value.scroll = 0; state.value.anchor = undefined
   state.value.narrowPath = path; state.value.narrowScroll = 0; state.value.narrowAnchor = undefined
+  state.value.columnPath = path
   mountRoot()
 }
 function exitFocus() {
@@ -156,12 +180,31 @@ function rootTip(r: Root) {
   const count = props.memory.roots[r.id]?.rootTotal
   const folders = count === undefined ? '' : `${count.toLocaleString()} ${count === 1 ? 'folder' : 'folders'} · `
   const kind = r.kind === 'favorite' ? 'Favorite · ' : ''
-  return { content: `Go to ${r.label}`, detail: `${folders}${kind}${r.path}` }
+  const capacity = driveCapacity(r)
+  return { content: `Go to ${r.label}`, detail: `${folders}${capacity ? `${capacity} · ` : ''}${kind}${r.path}` }
+}
+function formatBytes(bytes?: number) {
+  if (bytes === undefined || !Number.isFinite(bytes)) return ''
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+  let value = Math.max(0, bytes), unit = 0
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++ }
+  return `${value >= 100 || unit === 0 ? value.toFixed(0) : value >= 10 ? value.toFixed(1) : value.toFixed(2)} ${units[unit]}`
+}
+function driveCapacity(r: Root) {
+  const total = formatBytes(r.capacity?.total), free = formatBytes(r.capacity?.free)
+  if (free && total) return `${free} free of ${total}`
+  if (total) return `${total} total`
+  return ''
+}
+function driveUsed(r: Root) {
+  const total = r.capacity?.total, free = r.capacity?.free
+  return total && free !== undefined ? `${Math.max(0, Math.min(100, (total - free) / total * 100))}%` : '0%'
 }
 function folderTip(node: Node) {
   const known = node.version >= 0 ? { status: 'ready' as const, total: node.total } : hoverCounts.value[key(node.path)]
   let count = 'Hover to count subfolders'
   if (known?.status === 'loading') count = 'Counting subfolders…'
+  else if (known?.status === 'error' && /access denied|elevat|administrator/i.test(known.error || '')) count = 'Needs elevated access'
   else if (known?.status === 'error') count = known.error ? `Could not count subfolders: ${known.error}` : 'Subfolder count unavailable'
   else if (known?.status === 'ready') count = known.total === 0 ? 'No subfolders' : `${known.total?.toLocaleString()} ${known.total === 1 ? 'subfolder' : 'subfolders'}`
   return { content: node.name, detail: `${count} · ${node.path}` }
@@ -182,7 +225,7 @@ function beginCountProbe(node: Node) {
   probe.timer = setTimeout(() => {
     probe.timer = undefined
     try {
-      const source = props.source.open(node.path)
+      const source = props.source.open(node.path, { consent: false })
       probe.source = source
       const update = () => {
         const snapshot = source.snapshot()
@@ -204,7 +247,7 @@ function endCountProbe(node: Node) {
 function closeCountProbes() { for (const id of [...countProbes.keys()]) finishCountProbe(id) }
 function enterNarrow(row: TreeRow) {
   if (!controller.isExpanded(row.node.path)) controller.toggle(row.node)
-  if (state.value) { state.value.narrowPath = row.node.path; state.value.narrowScroll = 0; state.value.narrowAnchor = undefined }
+  if (state.value) { state.value.narrowPath = row.node.path; state.value.columnPath = row.node.path; state.value.narrowScroll = 0; state.value.narrowAnchor = undefined }
   focused.value = ''
   scrollTop.value = 0
   nextTick(() => { if (scroll.value) scroll.value.scrollTop = 0; scroll.value?.focus() })
@@ -215,6 +258,7 @@ function leaveNarrow() {
   if (!node || !parent || !state.value) return
   if (controller.isExpanded(node.path)) controller.toggle(node)
   state.value.narrowPath = parent
+  state.value.columnPath = parent
   state.value.narrowScroll = 0; state.value.narrowAnchor = undefined
   focused.value = node.path
   scrollTop.value = 0
@@ -222,7 +266,40 @@ function leaveNarrow() {
 }
 function toggle(row: TreeRow) {
   if (narrow.value) enterNarrow(row)
-  else { focused.value = row.node.path; controller.toggle(row.node); nextTick(() => scroll.value?.focus()) }
+  else {
+    focused.value = row.node.path
+    const closing = controller.isExpanded(row.node.path)
+    controller.toggle(row.node)
+    if (state.value) state.value.columnPath = closing && within(state.value.columnPath || '', row.node.path) ? row.parent || activePath.value : row.node.path
+    nextTick(() => scroll.value?.focus())
+  }
+}
+function openColumn(row: TreeRow) {
+  if (!controller.isExpanded(row.node.path)) controller.toggle(row.node)
+  if (state.value) state.value.columnPath = row.node.path
+  focused.value = row.node.path
+  nextTick(() => scrollColumnsToEnd('smooth'))
+}
+function scrollColumnsToEnd(behavior: ScrollBehavior = 'auto') {
+  const element = columnsScroll.value
+  if (element) element.scrollTo({ left: element.scrollWidth, behavior })
+}
+function closeColumn(index: number) {
+  const owner = columnNodes.value[index]
+  const previous = columnNodes.value[index - 1]
+  if (!owner || !previous || !state.value) return
+  if (controller.isExpanded(owner.path)) controller.toggle(owner)
+  state.value.columnPath = previous.path
+  focused.value = owner.path
+}
+function foldColumn(index: number) {
+  if (index === 0) {
+    controller.minimize()
+    if (state.value) state.value.columnPath = activePath.value
+    focused.value = activePath.value
+    return
+  }
+  closeColumn(index)
 }
 async function moveTo(row: TreeRow) {
   focused.value = row.node.path
@@ -235,6 +312,28 @@ async function moveTo(row: TreeRow) {
   scrollTop.value = el.scrollTop
   await nextTick()
 }
+async function showCreated(path: string) {
+  controller.refresh()
+  const expires = Date.now() + 5000
+  let node = controller.find(path)
+  while (!node && Date.now() < expires) {
+    await new Promise(resolve => setTimeout(resolve, 80))
+    node = await controller.revealChild(path)
+  }
+  if (!node || !state.value) return false
+  state.value.selected = path
+  focused.value = path
+  if (!columns.value) {
+    const row = rows.value.find(candidate => candidate.type === 'node' && key(candidate.node.path) === key(path))
+    if (row) await moveTo(row)
+  }
+  await nextTick()
+  await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+  const target = [...(panel.value?.querySelectorAll<HTMLElement>('[data-rename-id]') || [])]
+    .find(element => key(element.dataset.renameId || '') === key(path))
+  target?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  return !!target
+}
 let typed = '', typedAt = 0
 function keydown(event: KeyboardEvent) {
   if (event.target !== scroll.value) return
@@ -245,7 +344,10 @@ function keydown(event: KeyboardEvent) {
   const index = nodes.findIndex(r => key(r.node.path) === key(focused.value))
   const row = nodes[index]
   let target: TreeRow | undefined
-  if (event.key === 'ArrowDown') target = nodes[Math.min(nodes.length - 1, index + 1)]
+  if ((event.ctrlKey || event.metaKey) && ['c', 'x', 'v'].includes(event.key.toLowerCase())) {
+    const path = row?.node.path || narrowNode.value?.path || activePath.value
+    emit('clipboard', event.key.toLowerCase() === 'c' ? 'copy' : event.key.toLowerCase() === 'x' ? 'cut' : 'paste', path)
+  } else if (event.key === 'ArrowDown') target = nodes[Math.min(nodes.length - 1, index + 1)]
   else if (event.key === 'ArrowUp') target = nodes[Math.max(0, index - 1)]
   else if (event.key === 'Home') target = nodes[0]
   else if (event.key === 'End') target = nodes[nodes.length - 1]
@@ -299,7 +401,13 @@ watch(rows, async (next, previous) => {
   }
   if (state.value?.anchor && !previous.length) restoreScroll()
 })
+watch([columns, () => columnNodes.value.length, columnsScroll], async ([enabled]) => {
+  if (!enabled) return
+  await nextTick()
+  scrollColumnsToEnd()
+}, { flush: 'post' })
 const { hasOverflow, atStart, atEnd, scrollByPage } = useScrollHints({ scrollEl: scroll, axis: 'y', deps: () => `${rows.value.length}:${viewport.value}:${selector.value}`, minPageStep: 60 })
+const { hasOverflow: columnsHaveOverflow, atStart: columnsAtStart, atEnd: columnsAtEnd, scrollByPage: scrollColumnsByPage } = useScrollHints({ scrollEl: columnsScroll, axis: 'x', wheel: { mode: 'transpose', source: 'x' }, deps: () => `${columns.value}:${columnNodes.value.length}:${panelWidth.value}`, minPageStep: 180 })
 const { hasOverflow: selectorHasOverflow, atStart: selectorAtStart, atEnd: selectorAtEnd, scrollByPage: scrollSelectorByPage } = useScrollHints({
   scrollEl: selectorScroll,
   axis: 'y',
@@ -310,14 +418,14 @@ let scrollObserver: ResizeObserver | undefined, panelObserver: ResizeObserver | 
 watch(scroll, el => { scrollObserver?.disconnect(); if (el) { scrollObserver = new ResizeObserver(() => viewport.value = el.clientHeight); scrollObserver.observe(el); viewport.value = el.clientHeight } })
 watch(panel, el => { panelObserver?.disconnect(); if (el) { panelObserver = new ResizeObserver(() => panelWidth.value = el.clientWidth); panelObserver.observe(el); panelWidth.value = el.clientWidth } })
 onBeforeUnmount(() => { saveScroll(); closeCountProbes(); scrollObserver?.disconnect(); panelObserver?.disconnect(); controller.close() })
-defineExpose({ choose, focusFolder, command, exitFocus, reveal, root, selector })
+defineExpose({ choose, focusFolder, command, exitFocus, reveal, showCreated, root, selector })
 </script>
 
 <template>
-  <section ref="panel" class="tv-panel" :class="{ 'tv-narrow': narrow }" aria-label="Tree View">
+  <section ref="panel" class="tv-panel" :class="{ 'tv-narrow': narrow, 'tv-grid-context': context === 'grid' }" aria-label="Tree View">
     <header class="tv-header">
       <button ref="selectButton" class="tv-root" :aria-expanded="selector" aria-label="Choose root" v-gex-tooltip="{ content: 'Go to', detail: root ? `${root.label} · ${root.path}` : 'Choose a root or favorite.' }" @click="selector = !selector"><span class="tv-root-icon">▱</span><span>{{ root?.label || 'Choose a root' }}</span><span class="tv-chevron">⌄</span></button>
-      <button class="tv-tool" v-gex-tooltip="{ content: 'Add folder', detail: 'Choose another folder to use as a Tree View root.' }" aria-label="Add folder root" @click="emit('add')">＋</button>
+      <button class="tv-tool" :disabled="!createTarget" v-gex-tooltip="{ content: 'New folder', detail: createTarget ? `Create a folder in ${label(createTarget)} and rename it.` : 'Choose a root first.' }" :aria-label="createTarget ? `Create new folder in ${label(createTarget)}` : 'Choose a root before creating a folder'" @click="createTarget && emit('add', createTarget)">＋</button>
       <button class="tv-tool" v-gex-tooltip="{ content: 'Refresh', detail: 'Reload roots and the folders currently open in the tree.' }" aria-label="Refresh folders and roots" @click="controller.refresh(); emit('refreshRoots')">↻</button>
     </header>
     <div v-if="selector" class="tv-selector" @keydown.esc.stop="selector = false; selectButton?.focus()">
@@ -328,7 +436,7 @@ defineExpose({ choose, focusFolder, command, exitFocus, reveal, root, selector }
         <div ref="selectorScroll" class="tv-root-results">
           <section v-for="group in groups" :key="group.name">
             <h3>{{ group.name }}</h3>
-            <button v-for="r in group.roots" :key="r.id" class="tv-root-option" :disabled="r.kind === 'unavailable'" v-gex-tooltip="rootTip(r)" @click="choose(r)"><span>{{ r.kind === 'favorite' ? '☆' : r.kind === 'unavailable' ? '◌' : '▱' }}</span><span><strong>{{ r.label }}</strong><small>{{ r.reason || r.path }}</small></span><span v-if="r.id === memory.active">✓</span></button>
+            <button v-for="r in group.roots" :key="r.id" class="tv-root-option" :disabled="r.kind === 'unavailable'" v-gex-tooltip="rootTip(r)" @click="choose(r)"><span>{{ r.kind === 'favorite' ? '☆' : r.kind === 'unavailable' ? '◌' : '▱' }}</span><span><strong>{{ r.label }}</strong><small>{{ r.reason || (driveCapacity(r) ? `${driveCapacity(r)} · ${r.path}` : r.path) }}</small><span v-if="r.capacity?.total" class="tv-drive-meter" aria-hidden="true"><i :style="{ width: driveUsed(r) }"></i></span></span><span v-if="r.id === memory.active">✓</span></button>
           </section>
           <p v-if="!groups.length" class="tv-notice">No matching roots.</p>
         </div>
@@ -342,14 +450,21 @@ defineExpose({ choose, focusFolder, command, exitFocus, reveal, root, selector }
         <button v-if="narrowParent" v-gex-tooltip="{ content: `Go up to ${label(narrowParent)}`, detail: narrowParent }" :aria-label="`Collapse ${narrowNode.name} and show ${label(narrowParent)}`" @click="leaveNarrow"><span class="tv-folder-up-icon" aria-hidden="true"><span>↑</span></span><strong>{{ label(narrowParent) }}</strong></button>
         <div :title="narrowNode.path"><span>▱</span><strong>{{ narrowNode.name }}</strong></div>
       </div>
-      <div class="tv-tree-shell">
+      <div v-if="columns" class="tv-columns-shell">
+        <button v-if="columnsHaveOverflow" class="tv-column-page tv-column-page-left" :disabled="columnsAtStart" :aria-label="columnsAtStart ? 'At first folder level' : 'Show previous folder levels'" @click="scrollColumnsByPage(-1)">{{ columnsAtStart ? '│' : '‹' }}</button>
+        <div ref="columnsScroll" class="tv-columns-strip">
+          <TreeColumn v-for="(node, index) in columnNodes" :key="node.path" :owner="node" :rows="controller.levelRows(node, index + 1)" :column="index" :active-child="columnNodes[index + 1]?.path" :selected="state?.selected" :focused="focused" :icon="icon" :widget-id="widgetId" :expanded="path => controller.isExpanded(path)" :tip="folderTip" @open="openColumn" @back="closeColumn" @fold="foldColumn" @navigate="navigate" @focus="focused = $event" @clipboard="(operation, path) => emit('clipboard', operation, path)" @menu="(event, path) => emit('menu', event, path, 'columns')" @more="controller.more($event)" @retry="controller.retry($event)" @probe="beginCountProbe" @end-probe="endCountProbe" />
+        </div>
+        <button v-if="columnsHaveOverflow" class="tv-column-page tv-column-page-right" :disabled="columnsAtEnd" :aria-label="columnsAtEnd ? 'At current folder level' : 'Show deeper folder levels'" @click="scrollColumnsByPage(1)">{{ columnsAtEnd ? '│' : '›' }}</button>
+      </div>
+      <div v-else class="tv-tree-shell">
         <button v-if="hasOverflow" class="tv-scroll-hint tv-scroll-up" :disabled="atStart" :aria-label="atStart ? 'At top' : 'Scroll up'" @click="scrollByPage(-1)"><span>{{ atStart ? '—' : '▲' }}</span></button>
         <div ref="scroll" class="tv-tree" tabindex="0" role="tree" :aria-label="narrow && narrowNode ? `${narrowNode.name} folders` : root?.label || 'Folders'" :aria-activedescendant="activeRow >= start && activeRow < start + visible.length ? `${treeId}-row-${activeRow}` : undefined" @keydown="keydown" @scroll="onScroll">
           <div :style="{ height: `${rows.length * 30}px`, position: 'relative' }">
-          <div v-for="(row, i) in visible" :id="`${treeId}-row-${start + i}`" :key="row.id" class="tv-row" :class="{ 'tv-selected': state?.selected && key(state.selected) === key(row.node.path) && row.type === 'node', 'tv-keyboard': focused && key(focused) === key(row.node.path) && row.type === 'node', 'tv-spine': state?.selected && within(state.selected, row.node.path) && row.type === 'node', 'tv-status': row.type !== 'node' }" :style="{ top: `${(start + i) * 30}px`, paddingLeft: `${Math.min(row.depth - 1, 7) * 14 + 4}px` }" :role="row.type === 'node' ? 'treeitem' : undefined" :aria-level="row.type === 'node' ? row.depth : undefined" :aria-expanded="row.type === 'node' ? controller.isExpanded(row.node.path) : undefined" :aria-selected="row.type === 'node' ? key(state?.selected || '') === key(row.node.path) : undefined" :aria-posinset="row.pos" :aria-setsize="row.size" :aria-busy="row.type === 'node' && controller.isExpanded(row.node.path) && row.node.status === 'loading' ? true : undefined" @contextmenu.prevent="emit('menu', $event, row.node.path)">
+          <div v-for="(row, i) in visible" :id="`${treeId}-row-${start + i}`" :key="row.id" class="tv-row" :class="{ 'tv-selected': state?.selected && key(state.selected) === key(row.node.path) && row.type === 'node', 'tv-keyboard': focused && key(focused) === key(row.node.path) && row.type === 'node', 'tv-spine': state?.selected && within(state.selected, row.node.path) && row.type === 'node', 'tv-status': row.type !== 'node' }" :style="{ top: `${(start + i) * 30}px`, paddingLeft: `${Math.min(row.depth - 1, 7) * 14 + 4}px` }" :role="row.type === 'node' ? 'treeitem' : undefined" :aria-level="row.type === 'node' ? row.depth : undefined" :aria-expanded="row.type === 'node' ? controller.isExpanded(row.node.path) : undefined" :aria-selected="row.type === 'node' ? key(state?.selected || '') === key(row.node.path) : undefined" :aria-posinset="row.pos" :aria-setsize="row.size" :aria-busy="row.type === 'node' && controller.isExpanded(row.node.path) && row.node.status === 'loading' ? true : undefined" @contextmenu.prevent="emit('menu', $event, row.node.path, 'tree')">
             <template v-if="row.type === 'node'">
               <button class="tv-disclosure" tabindex="-1" :aria-label="narrow ? `Show ${row.node.name}` : `${controller.isExpanded(row.node.path) ? 'Collapse' : 'Expand'} ${row.node.name}`" @click="toggle(row)">{{ narrow ? '›' : controller.isExpanded(row.node.path) ? '⌄' : '›' }}</button>
-              <button class="tv-name" tabindex="-1" v-gex-tooltip="folderTip(row.node)" @mouseenter="beginCountProbe(row.node)" @mouseleave="endCountProbe(row.node)" @focus="beginCountProbe(row.node)" @blur="endCountProbe(row.node)" @click="navigate(row.node.path); scroll?.focus()"><img v-if="imageIcon(row.node.path)" :src="icon(row.node.path)" alt="" /><span v-else class="tv-folder">{{ icon(row.node.path) || '▱' }}</span><span>{{ row.node.name }}</span></button>
+              <button class="tv-name" tabindex="-1" :data-rename-id="row.node.path" :data-rename-value="row.node.name" :data-widget-id="widgetId || undefined" v-gex-tooltip="folderTip(row.node)" @mouseenter="beginCountProbe(row.node)" @mouseleave="endCountProbe(row.node)" @focus="beginCountProbe(row.node)" @blur="endCountProbe(row.node)" @click="navigate(row.node.path); scroll?.focus()"><img v-if="imageIcon(row.node.path)" :src="icon(row.node.path)" alt="" /><span v-else class="tv-folder">{{ icon(row.node.path) || '▱' }}</span><span>{{ row.node.name }}</span></button>
             </template>
             <template v-else-if="row.type === 'error'"><span :title="row.node.error">{{ row.node.error }}</span><button @click="controller.retry(row.node)">Retry</button></template>
             <template v-else-if="row.type === 'more'"><button :disabled="row.node.loadingMore" @click="controller.more(row.node)">{{ row.node.loadingMore ? 'Loading…' : `Show more (${row.node.children.length} of ${row.node.total})` }}</button></template>

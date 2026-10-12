@@ -24,4 +24,4 @@ if (Test-Path -LiteralPath $target) {
 Copy-Item -LiteralPath $source -Destination $target -Force
 if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne $sourceHash) { throw 'Copied bundle hash does not match.' }
 Write-Output "Tree View copied and SHA-256 verified: $target"
-Write-Output 'Restart GEM Shell, then add Tree View using the sidebar widget picker.'
+Write-Output 'Restart GEM Shell, then add Tree View using the sidebar, grid, or toolbar widget picker.'

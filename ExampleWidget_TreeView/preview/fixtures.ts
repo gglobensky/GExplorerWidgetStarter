@@ -2,8 +2,8 @@ import type { ListingEntry, ListingListener, ListingSnapshot, ListingSource } fr
 import type { Root, RootSource } from '../tree'
 
 export const roots: Root[] = [
-  { id: 'work', label: 'Work folders', path: 'C:/Sample work', group: 'Files', kind: 'folder' },
-  { id: 'archive', label: 'Archive', path: 'D:/Sample archive', group: 'Files', kind: 'folder' },
+  { id: 'work', label: 'Work folders', path: 'C:/Sample work', group: 'Files', kind: 'folder', capacity: { total: 1_000_204_886_016, free: 312_458_280_960, fsType: 'NTFS', kind: 'fixed' } },
+  { id: 'archive', label: 'Archive', path: 'D:/Sample archive', group: 'Files', kind: 'folder', capacity: { total: 2_000_398_934_016, free: 1_482_840_129_536, fsType: 'NTFS', kind: 'fixed' } },
   { id: 'favorite', label: 'Design notes', path: 'C:/Sample work/Projects/GEM/Design', group: 'Favorites', kind: 'favorite' },
   { id: 'hub', label: 'Sample Hub', path: '', group: 'Available later', kind: 'unavailable', reason: 'Preview only · public Hub catalog required' },
   { id: 'trash', label: 'Recycle Bin', path: '', group: 'Available later', kind: 'unavailable', reason: 'Preview only · listing provider required' },

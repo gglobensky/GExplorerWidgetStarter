@@ -7,7 +7,7 @@ export function useScrollHints(options: {
   axis?: 'x' | 'y'
   deps?: () => unknown
   eps?: number
-  wheel?: 'off' | 'native' | 'transpose'
+  wheel?: 'off' | 'native' | 'transpose' | { mode: 'off' | 'native' | 'transpose'; source?: 'auto' | 'x' | 'y' }
   pageRatio?: number
   minPageStep?: number
 }) {
@@ -37,10 +37,11 @@ export function useScrollHints(options: {
     })
   }
   function onWheel(event: WheelEvent) {
-    if (!element || options.wheel !== 'transpose' || !hasOverflow.value) return
-    const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY)
-      ? event.deltaX
-      : event.deltaY
+    const mode = typeof options.wheel === 'string' ? options.wheel : options.wheel?.mode
+    if (!element || mode !== 'transpose' || !hasOverflow.value) return
+    const source = typeof options.wheel === 'object' ? options.wheel.source || 'auto' : 'auto'
+    const delta = source === 'x' ? event.deltaX : source === 'y' ? event.deltaY
+      : Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY
     if (!delta) return
     if (horizontal) element.scrollLeft += delta
     else element.scrollTop += delta
@@ -53,7 +54,7 @@ export function useScrollHints(options: {
     element = next
     if (!element) return
     element.addEventListener('scroll', scheduleUpdate, { passive: true })
-    if (options.wheel === 'transpose')
+    if ((typeof options.wheel === 'string' ? options.wheel : options.wheel?.mode) === 'transpose')
       element.addEventListener('wheel', onWheel, { passive: false })
     observer = new ResizeObserver(scheduleUpdate)
     observer.observe(element)

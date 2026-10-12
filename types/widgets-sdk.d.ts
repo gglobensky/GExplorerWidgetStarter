@@ -2,7 +2,7 @@
 // Public API surface for GExplorer widget development.
 // Copy this file into your widget project's types/ folder.
 
-import type { ComputedRef, Ref } from 'vue'
+import type { Component, ComputedRef, Ref } from 'vue'
 
 declare module 'gexplorer/widgets' {
 
@@ -69,6 +69,7 @@ declare module 'gexplorer/widgets' {
         openListing?: (path: string, options?: OpenListingOptions) => ListingSource
 
         // Write cap
+        /** Creates an absolute physical folder, or a widget-VFS folder from an explicit/relative VFS path. */
         fsMkdir?: (path: string) => Promise<void>
         /**
          * Write cap. Writes a whole text file (UTF-8; bom: true starts it with a byte order
@@ -1659,6 +1660,16 @@ declare module 'gexplorer/widgets' {
          *   defineExpose({ onMenuItem })
          */
         contextMenu(event: MouseEvent, opts?: WidgetContextMenuOptions): Promise<void>
+        /** Opens custom widget content in the host overlay, anchored to this instance's element. */
+        openPopover(opts: {
+            anchor: HTMLElement
+            component: Component
+            props?: Record<string, unknown>
+            placement?: 'below' | 'above' | 'right' | 'left'
+            maxWidth?: number
+            maxHeight?: number
+            onClose?: () => void
+        }): { close(): void; update(props: Record<string, unknown>): void }
         alert(message: string, opts?: { title?: string; detail?: string; variant?: MbVariant; okLabel?: string }): Promise<void>
         /** true: OK. */
         confirm(message: string, opts?: { title?: string; detail?: string; okLabel?: string; cancelLabel?: string; danger?: boolean }): Promise<boolean>
