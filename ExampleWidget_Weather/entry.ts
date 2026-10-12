@@ -3,25 +3,25 @@ import Widget from './Widget.vue'
 export default {
   api: '1.0',
   id: 'weather',
-  version: '0.1.0',
+  version: '1.2.6',
   Component: Widget,
   
-  // NEW: Declare context support
+  // Grid-first; sidebar uses the responsive layout. Toolbar support is deferred.
   contexts: {
     grid: {
       minSize: { cols: 2, rows: 2 },
-      maxSize: { cols: 4, rows: 4 },
-      defaultSize: { cols: 2, rows: 2 }
+      maxSize: { cols: 12, rows: 8 },
+      defaultSize: { cols: 4, rows: 3 }
     },
     sidebar: {
-      minHeight: 150
+      minHeight: 160
     }
   },
   
   defaults: {
-    data: { location: 'TOP/31,80' },
-    view: { refreshInterval: 300000 }
+    data: {},
+    view: { units: 'C', coloredIcons: true, atmosphere: true, forecastDays: 3, refreshInterval: 900000 }
   },
   
-  capabilities: ['Network']
+  capabilities: [{ cap: 'Network', reason: 'Searches locations and retrieves weather forecasts from Open-Meteo.' }]
 }

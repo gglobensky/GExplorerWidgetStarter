@@ -1,0 +1,419 @@
+.weather {
+  --weather-base: var(--surface-1, #19222e);
+  --weather-fg: var(--fg, #edf3fa);
+  --weather-border: var(--border, #526477);
+  --weather-panel: color-mix(
+    in srgb,
+    var(--weather-base) 93%,
+    var(--weather-fg)
+  );
+  --weather-muted: color-mix(
+    in srgb,
+    var(--weather-fg) 74%,
+    var(--weather-base)
+  );
+  --weather-sun: #dca632;
+  --weather-cloud: #77a5c2;
+  --weather-rain: #429bd0;
+  color: var(--weather-fg);
+  background: var(--weather-base);
+  font:
+    14px/1.4 "Segoe UI",
+    sans-serif;
+  border-radius: 14px;
+  min-width: 0;
+  height: 100%;
+  overflow: auto;
+  container-type: inline-size;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+}
+.weather * {
+  box-sizing: border-box;
+}
+.weather.atmosphere {
+  background:
+    radial-gradient(ellipse at 95% 0%, #d5a34430, transparent 52%),
+    radial-gradient(ellipse at 0% 30%, #4288bf30, transparent 75%),
+    var(--weather-base);
+}
+.weather[data-scene="rain"].atmosphere,
+.weather[data-scene="storm"].atmosphere {
+  background:
+    linear-gradient(145deg, #647b9a38, #44638e20 60%, transparent),
+    var(--weather-base);
+}
+.weather[data-scene="snow"].atmosphere,
+.weather[data-scene="fog"].atmosphere {
+  background:
+    linear-gradient(135deg, #9ac6d535, transparent), var(--weather-base);
+}
+.weather[data-scene="night"].atmosphere {
+  background:
+    linear-gradient(140deg, #565b9638, #42617a20, transparent),
+    var(--weather-base);
+}
+.weather[data-scene="cloud"].atmosphere {
+  background:
+    linear-gradient(140deg, #7a8b9c30, transparent), var(--weather-base);
+}
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+button {
+  cursor: pointer;
+  border: 1px solid var(--weather-border);
+  background: var(--weather-panel);
+  border-radius: 7px;
+  padding: 5px 9px;
+}
+button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+button:focus-visible,
+input:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent, #65b6f4);
+  outline-offset: 2px;
+}
+h2,
+p {
+  margin: 0;
+}
+h2 {
+  font-size: 14px;
+  font-weight: 600;
+}
+.muted,
+.facts {
+  color: var(--weather-muted);
+}
+.view-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-bottom: 5px;
+}
+.view-switch,
+.range {
+  display: flex;
+  gap: 2px;
+  flex: none;
+  border-radius: 7px;
+  background: var(--weather-panel);
+  padding: 2px;
+}
+.view-switch button,
+.range button {
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+  padding: 4px 7px;
+}
+.view-switch button[aria-pressed="true"],
+.range button[aria-pressed="true"] {
+  background: var(--weather-fg);
+  color: var(--weather-base);
+}
+.single-view-switch {
+  perspective: 900px;
+}
+.single-view-switch .view-toggle {
+  min-width: 66px;
+  background: var(--weather-fg);
+  color: var(--weather-base);
+  backface-visibility: hidden;
+  transform-origin: center;
+}
+.source {
+  color: var(--weather-muted);
+  text-decoration: none;
+  font-size: 15px;
+  padding: 3px;
+  line-height: 1;
+}
+.range {
+  margin-left: auto;
+}
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+  gap: 12px;
+  align-items: start;
+}
+.weather:not(.stacked):not(.forecast-view) .hero {
+  margin-top: auto;
+}
+.location-block {
+  padding-top: 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.location {
+  font-size: 16px;
+  font-weight: 600;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+.location:hover {
+  text-decoration: underline;
+}
+.location-block .muted {
+  font-size: 12px;
+  margin-top: 3px;
+}
+.current {
+  text-align: right;
+  min-width: 0;
+}
+.temperature {
+  font-size: 46px;
+  line-height: 1.05;
+  letter-spacing: -2px;
+  font-variant-numeric: tabular-nums;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.temperature span {
+  font-size: 25px;
+  letter-spacing: -1px;
+}
+.condition {
+  font-size: 14px;
+  margin-top: 2px;
+}
+.facts {
+  font-size: 12px;
+  margin-top: 3px;
+}
+.forecast {
+  perspective: 1400px;
+  margin-top: auto;
+}
+.forecast.stacked {
+  margin-top: auto;
+  padding-top: 12px;
+}
+.forecast-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.forecast-body {
+  border-radius: 9px;
+  background: var(--weather-panel);
+  backface-visibility: hidden;
+  transform-origin: center;
+  padding: 3px;
+}
+.days {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  padding: 2px;
+}
+.days::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+.days.seven {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+.forecast-viewport {
+  min-width: 0;
+}
+.forecast-scroll-control {
+  display: none;
+}
+.day {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 6px 2px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 7px;
+  font-size: 12px;
+}
+.day[aria-pressed="true"] {
+  border-color: var(--accent, #65b6f4);
+  background: color-mix(in srgb, var(--weather-panel) 94%, var(--weather-fg));
+}
+.day:hover {
+  background: color-mix(in srgb, var(--weather-panel) 90%, var(--weather-fg));
+}
+.high-low {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.seven .high-low {
+  font-size: 11px;
+}
+.notice {
+  margin-top: 6px;
+  font-size: 12px;
+}
+.notice button {
+  margin-top: 4px;
+}
+.setup-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.setup-heading button {
+  font-size: 12px;
+  padding: 3px 7px;
+}
+.choice-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.choice-buttons button {
+  flex: 1;
+  font-size: 12px;
+}
+.setup form {
+  display: flex;
+  align-items: end;
+  gap: 6px;
+}
+.setup label {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+}
+.setup input {
+  display: block;
+  min-width: 0;
+  width: 100%;
+  padding: 6px;
+  margin-top: 3px;
+  background: var(--weather-panel);
+  border: 1px solid var(--weather-border);
+  border-radius: 6px;
+}
+.setup p {
+  margin-top: 7px;
+  font-size: 12px;
+}
+.results {
+  padding: 0;
+  margin: 8px 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+}
+.results button {
+  width: 100%;
+  text-align: left;
+}
+.results span {
+  display: block;
+  font-size: 12px;
+  color: var(--weather-muted);
+}
+.flip-out {
+  animation: weather-flip-out 260ms ease-in forwards;
+  pointer-events: none;
+}
+.flip-in {
+  animation: weather-flip-in 320ms ease-out both;
+}
+@keyframes weather-flip-out {
+  to {
+    transform: rotateY(var(--flip-out));
+  }
+}
+@keyframes weather-flip-in {
+  from {
+    transform: rotateY(var(--flip-in));
+  }
+  to {
+    transform: rotateY(0);
+  }
+}
+@container (max-width: 300px) {
+  .view-heading {
+    flex-wrap: wrap;
+  }
+  .source {
+    display: none;
+  }
+  .single-view-switch {
+    margin-inline: auto;
+  }
+  .range {
+    margin-left: 0;
+  }
+  .temperature {
+    font-size: 38px;
+  }
+  .location {
+    font-size: 14px;
+  }
+  .weather.minimal-current .hero {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .forecast-viewport {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr) 24px;
+    gap: 3px;
+    align-items: stretch;
+  }
+  .forecast-scroll-control {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    font-size: 23px;
+    line-height: 1;
+  }
+  .forecast-scroll-control:disabled {
+    opacity: 0.55;
+  }
+  .days,
+  .days.seven {
+    display: flex;
+    gap: 0;
+    padding: 2px;
+    scroll-snap-type: x mandatory;
+    scroll-behavior: smooth;
+  }
+  .day {
+    flex: 0 0 100%;
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+  }
+  .setup form {
+    flex-wrap: wrap;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flip-out,
+  .flip-in {
+    animation: none;
+  }
+}

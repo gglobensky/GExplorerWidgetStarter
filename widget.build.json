@@ -1,5 +1,5 @@
 {
   "widgetType": "items",
-  "outputPublicDir": "C:/Users/gglobensky/source/repos/PhotinoVue1/GExplorer/UserInterface/public",
+  "outputPublicDir": "dist",
   "sourcemap": false
 }

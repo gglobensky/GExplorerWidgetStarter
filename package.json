@@ -6,7 +6,15 @@
   "scripts": {
     "build": "vite build -c vite.config.ts",
     "watch": "vite build -c vite.config.ts --watch",
-    "typecheck": "vue-tsc --noEmit"
+    "typecheck": "vue-tsc --noEmit",
+    "build:weather": "vite build -c vite.weather.config.ts",
+    "typecheck:weather": "vue-tsc --noEmit -p ExampleWidget_Weather/tsconfig.json",
+    "test:weather": "node --experimental-strip-types --test ExampleWidget_Weather/tests/*.test.ts",
+    "build:treeview": "vite build -c vite.treeview.config.ts",
+    "typecheck:treeview": "vue-tsc --noEmit -p ExampleWidget_TreeView/tsconfig.json",
+    "test:treeview": "node --experimental-strip-types --test ExampleWidget_TreeView/tests/*.test.ts",
+    "preview:treeview": "vite -c vite.treeview-preview.config.ts",
+    "copy:treeview:release": "powershell -NoProfile -File tools/copy-treeview-release.ps1"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.1.2",
