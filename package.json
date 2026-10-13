@@ -14,7 +14,12 @@
     "typecheck:treeview": "vue-tsc --noEmit -p ExampleWidget_TreeView/tsconfig.json",
     "test:treeview": "node --experimental-strip-types --test ExampleWidget_TreeView/tests/*.test.ts",
     "preview:treeview": "vite -c vite.treeview-preview.config.ts",
-    "copy:treeview:release": "powershell -NoProfile -File tools/copy-treeview-release.ps1"
+    "copy:treeview:release": "powershell -NoProfile -File tools/copy-treeview-release.ps1",
+    "build:media-library": "vite build -c vite.media-library.config.ts",
+    "typecheck:media-library": "vue-tsc --noEmit -p ExampleWidget_MediaLibrary/tsconfig.json",
+    "test:media-library": "node --experimental-strip-types --test ExampleWidget_MediaLibrary/tests/*.test.ts",
+    "preview:media-library": "vite -c vite.media-library-preview.config.ts",
+    "copy:media-library:release": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/copy-media-library-release.ps1"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.1.2",
