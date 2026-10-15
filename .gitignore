@@ -1,3 +1,5 @@
 node_modules
 dist
 .DS_Store
+# This machine's install location (widget.build.example.json)
+widget.build.json

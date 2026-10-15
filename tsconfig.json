@@ -8,9 +8,8 @@
     "skipLibCheck": true,
     "baseUrl": ".",
     "paths": {
-      "gexplorer/widgets": ["./types/widgets-sdk.d.ts"],
-      "@/*": ["./src/*"]
+      "gexplorer/widgets": ["./types/widgets-sdk.d.ts"]
     }
   },
-  "include": ["src", "tools", "types"]
+  "include": ["shared", "types"]
 }
