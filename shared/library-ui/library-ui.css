@@ -15,7 +15,7 @@
 .gem-library-surface button, .gem-library-surface input, .gem-library-surface select { color:inherit; font:inherit; }
 .gem-library-surface button:focus-visible, .gem-library-surface input:focus-visible, .gem-library-surface select:focus-visible, .gem-library-surface summary:focus-visible { outline:2px solid var(--glu-accent); outline-offset:3px; }
 .glu-artwork { position:absolute; inset:0; display:block; background-image:var(--glu-art); background-size:300% auto; background-position:var(--glu-art-x) var(--glu-art-y); background-repeat:no-repeat; }
-.glu-artwork.cover { background-position:center; background-size:cover; }
+.glu-artwork.cover { background-position:var(--glu-art-x) var(--glu-art-y); background-size:cover; }
 .glu-artwork.placeholder { background-image:linear-gradient(145deg,#4c555c,#242b31 56%,#171c20); background-position:center; background-size:cover; }
 .glu-artwork.placeholder::before { content:""; position:absolute; inset:12% 14%; border:1px solid #ffffff13; background:linear-gradient(135deg,transparent 46%,#ffffff0b 47% 53%,transparent 54%); }
 .glu-artwork.placeholder::after { content:"GEM MEDIA"; position:absolute; right:0; bottom:13%; left:0; color:#dce4e966; font-size:8px; font-weight:650; letter-spacing:.16em; text-align:center; }
@@ -103,9 +103,8 @@
 .glu-preview-label { position:absolute; z-index:2; right:6px; bottom:5px; left:6px; display:flex; align-items:end; justify-content:space-between; gap:4px; text-align:left; }
 .glu-preview-label b { overflow:hidden; font-size:9px; font-weight:600; text-overflow:ellipsis; white-space:nowrap; }
 .glu-preview-label small { color:#d4dde2; font-size:8px; }
-.glu-preview>i { position:absolute; z-index:3; right:0; bottom:0; left:0; height:2px; background:linear-gradient(90deg,var(--glu-accent) 0 45%,#ffffff40 45%); animation:glu-preview-progress 6s linear infinite; transform-origin:left; }
+.glu-preview>i { position:absolute; z-index:3; right:0; bottom:0; left:0; height:2px; background:var(--glu-accent); transform:scaleX(var(--preview-progress,0)); transform-origin:left; transition:transform 180ms linear; }
 @keyframes glu-detail-in { from { opacity:0; transform:translateY(8px); } }
-@keyframes glu-preview-progress { from { transform:scaleX(.08); } to { transform:scaleX(1); } }
 @keyframes glu-preview-loading { to { background-position-x:-240%; } }
 @container (max-width:700px) {
   .glu-detail-body { grid-template-columns:150px minmax(0,1fr); gap:24px; align-items:start; padding:24px 18px 40px; }
@@ -129,5 +128,5 @@
 }
 @media (prefers-reduced-motion:reduce) {
   .glu-case-shell,.glu-case-shine,.glu-detail-case,.glu-preview .glu-artwork { transition:none!important; }
-  .glu-detail,.glu-preview>i { animation:none!important; }
+  .glu-detail { animation:none!important; }
 }

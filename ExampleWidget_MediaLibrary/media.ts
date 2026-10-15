@@ -154,7 +154,7 @@ export function createScannedLibrary(
     const folder = video.path.replace(/[\\/][^\\/]+$/, '').split(/[\\/]/).pop() || 'your media folder'
     const year = video.probe?.year || parsed.year
     const artwork: LibraryArtwork = coverUrl
-      ? { src:coverUrl, x:0, y:0, mode:'cover' }
+      ? { src:coverUrl, x:50, y:50, mode:'cover' }
       : { src:'', x:0, y:0, mode:'placeholder' }
     return {
       id:`local-${hash.toString(36)}`,

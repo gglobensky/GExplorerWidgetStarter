@@ -8,6 +8,9 @@ const props = defineProps<{
   flipped: boolean
   activePreview: number | null
   previewStreamUrl?: string | null
+  previewImageSrcs?: string[]
+  previewFramesLoading?: boolean
+  previewFramesMessage?: string
 }>()
 const emit = defineEmits<{
   (e: 'close'): void
@@ -16,88 +19,107 @@ const emit = defineEmits<{
   (e: 'preview', index: number | null): void
 }>()
 
-const previewReady = ref<boolean[]>([])
-const mountedPreviews = ref(0)
+const previewReady = ref(false)
+const previewProgress = ref(0)
 const previewError = ref('')
-const previewGrid = ref<HTMLElement | null>(null)
-let pendingPreviewCount = 0
+const pendingPreview = ref<number | null>(null)
+let previewStart = 0
+let previewEnd = 0
 let previewTimer: number | undefined
+const PREVIEW_SECONDS = 8
 
 function cueTime(video: HTMLVideoElement, seconds: number) {
   return Number.isFinite(video.duration) ? Math.min(seconds, Math.max(0, video.duration - .25)) : seconds
 }
 
+function previewBackground(index: number) {
+  const src = props.previewImageSrcs?.[index] || props.item.previewImageSrc || props.item.artwork.src
+  return src ? { backgroundImage:`url(${src})` } : undefined
+}
+
 function preparePreview(event: Event, seconds: number, index: number) {
   const video = event.currentTarget as HTMLVideoElement
   const target = cueTime(video, seconds)
+  previewStart = target
+  previewEnd = Number.isFinite(video.duration) ? Math.min(video.duration - .05,target + PREVIEW_SECONDS) : target + PREVIEW_SECONDS
+  previewProgress.value = 0
   try { video.currentTime = target } catch { /* wait for metadata */ }
-  if (Math.abs(video.currentTime - target) < .1) previewSeeked(event, index)
+  if (Math.abs(video.currentTime - target) < .1) previewSeeked(event,index)
 }
 
-function scheduleNextPreview(count: number) {
-  pendingPreviewCount = Math.max(pendingPreviewCount, count)
-  if (props.activePreview !== null || previewError.value) return
+function previewStyle(tone: string, index: number) {
+  return {
+    '--preview-tone':tone,
+    '--preview-progress':activeProgress(index),
+  }
+}
+
+function activeProgress(index: number) {
+  return props.activePreview === index ? String(previewProgress.value) : '0'
+}
+
+function queuePreview(index: number) {
+  if (!props.item.path || !props.previewStreamUrl || previewError.value) return
+  pendingPreview.value = index
   window.clearTimeout(previewTimer)
   previewTimer = window.setTimeout(() => {
-    mountedPreviews.value = Math.min(props.item.previews.length, Math.max(mountedPreviews.value, pendingPreviewCount))
-    pendingPreviewCount = 0
-  }, 180)
+    if (pendingPreview.value === index) emit('preview', index)
+  }, 140)
 }
 
 function previewSeeked(event: Event, index: number) {
   const video = event.currentTarget as HTMLVideoElement
-  video.pause()
-  if (!previewReady.value[index]) {
-    const next = previewReady.value.slice()
-    next[index] = true
-    previewReady.value = next
-    scheduleNextPreview(index + 2)
-  }
-  if (props.activePreview === index) void video.play().catch(() => { /* hover playback depends on codec support */ })
+  previewReady.value = true
+  void video.play().catch(() => { /* hover playback depends on codec support */ })
 }
 
-function activatePreview(event: Event, index: number, seconds: number) {
-  if (previewError.value || !previewReady.value[index]) return
+function updatePreviewProgress(event: Event, index: number) {
+  if (props.activePreview !== index || !previewReady.value) return
+  const video = event.currentTarget as HTMLVideoElement
+  const span = Math.max(.1,previewEnd-previewStart)
+  if (video.currentTime >= previewEnd) {
+    previewProgress.value = 0
+    try { video.currentTime = previewStart } catch { return }
+    return
+  }
+  previewProgress.value = Math.max(0,Math.min(1,(video.currentTime-previewStart)/span))
+}
+
+function stopPreview(event: Event) {
   window.clearTimeout(previewTimer)
-  pendingPreviewCount = Math.max(pendingPreviewCount, mountedPreviews.value + 1)
-  previewGrid.value?.querySelectorAll('video').forEach(video => video.pause())
-  emit('preview', index)
+  pendingPreview.value = null
   const video = (event.currentTarget as HTMLElement).querySelector('video')
-  if (!video) return
-  const target = cueTime(video, seconds)
-  if (Math.abs(video.currentTime - target) > .4) {
-    try { video.currentTime = target } catch { /* seek again when ready */ }
-  } else void video.play().catch(() => { /* hover playback depends on codec support */ })
-}
-
-function stopPreview(event: Event, seconds: number) {
-  const video = (event.currentTarget as HTMLElement).querySelector('video')
-  if (video) {
-    video.pause()
-    try { video.currentTime = cueTime(video,seconds) } catch { /* retain the last decoded frame */ }
-  }
+  video?.pause()
+  previewReady.value = false
+  previewProgress.value = 0
   emit('preview', null)
-  if (pendingPreviewCount) scheduleNextPreview(pendingPreviewCount)
 }
 
 function previewFailed(event: Event) {
   const code = (event.currentTarget as HTMLVideoElement).error?.code
-  previewError.value = code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED ? 'Preview unavailable for this codec' : 'Preview could not be loaded'
+  previewError.value = code === MediaError.MEDIA_ERR_DECODE || code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED
+    ? 'Motion preview unavailable for this codec'
+    : code === MediaError.MEDIA_ERR_NETWORK
+      ? 'Preview stream could not be read'
+      : 'Preview could not be loaded'
   window.clearTimeout(previewTimer)
+  pendingPreview.value = null
+  previewReady.value = false
+  previewProgress.value = 0
+  emit('preview', null)
   console.warn(`[Media Library] ${previewError.value}: ${props.item.title} (media error ${code ?? 'unknown'})`)
 }
 
 watch(() => [props.item.id, props.previewStreamUrl] as const, () => {
   window.clearTimeout(previewTimer)
-  previewReady.value = props.item.previews.map(() => false)
+  previewReady.value = false
+  previewProgress.value = 0
   previewError.value = ''
-  pendingPreviewCount = 0
-  mountedPreviews.value = props.previewStreamUrl && props.item.path ? 1 : 0
+  pendingPreview.value = null
 }, { immediate:true })
 
 onBeforeUnmount(() => {
   window.clearTimeout(previewTimer)
-  previewGrid.value?.querySelectorAll('video').forEach(video => video.pause())
 })
 </script>
 
@@ -144,44 +166,48 @@ onBeforeUnmount(() => {
         </div>
 
         <section class="glu-previews" aria-label="Scene previews">
-          <div class="glu-preview-heading"><h2>Look inside</h2><span>{{ previewError || (item.path ? 'Hover or focus to play' : 'Artwork preview') }}</span></div>
-          <div ref="previewGrid" class="glu-preview-grid">
+          <div class="glu-preview-heading"><h2>Look inside</h2><span>{{ previewError || previewFramesMessage || (previewFramesLoading ? 'Preparing scene stills…' : item.path ? 'Hover or focus to play' : 'Artwork preview') }}</span></div>
+          <div class="glu-preview-grid">
             <button
               v-for="(cue, index) in item.previews"
               :key="cue.seconds"
               type="button"
               class="glu-preview"
               :class="{ playing: activePreview === index }"
-              :style="{ '--preview-tone': cue.tone }"
+              :style="previewStyle(cue.tone,index)"
               :aria-label="`Preview ${cue.label} at ${formatCue(cue.seconds)}`"
-              @pointerenter="activatePreview($event, index, cue.seconds)"
-              @pointerleave="stopPreview($event, cue.seconds)"
-              @focus="activatePreview($event, index, cue.seconds)"
-              @blur="stopPreview($event, cue.seconds)"
+              @pointerenter="queuePreview(index)"
+              @pointerleave="stopPreview($event)"
+              @focus="queuePreview(index)"
+              @blur="stopPreview($event)"
             >
               <ArtworkFrame v-if="!item.path" :artwork="item.artwork" :alt="`${item.title}, ${cue.label}`" wide />
               <span
                 v-else
                 class="glu-preview-frame"
-                :class="{ loading:!previewReady[index] }"
+                :class="{ loading:previewFramesLoading && !(previewImageSrcs?.[index] || item.previewImageSrc || item.artwork.src) }"
+                :style="previewBackground(index)"
                 role="img"
                 :aria-label="`${cue.label} frame from ${item.title}`"
               ></span>
               <video
-                v-if="item.path && previewStreamUrl && index < mountedPreviews && !previewError"
+                v-if="item.path && previewStreamUrl && activePreview === index && !previewError"
+                :key="`${item.id}:${index}`"
+                crossorigin="anonymous"
                 :src="previewStreamUrl"
-                :class="{ ready:previewReady[index] }"
+                :class="{ ready:previewReady }"
                 muted
                 playsinline
                 preload="metadata"
                 controlslist="nodownload"
                 @loadedmetadata="preparePreview($event, cue.seconds, index)"
                 @seeked="previewSeeked($event, index)"
+                @timeupdate="updatePreviewProgress($event,index)"
                 @error="previewFailed"
                 @contextmenu.prevent
               ></video>
               <span class="glu-preview-vignette" aria-hidden="true"></span>
-              <span class="glu-preview-label"><b>{{ activePreview === index ? (item.path ? 'Playing' : 'Preview motion') : previewError ? 'Unavailable' : cue.label }}</b><small>{{ formatCue(cue.seconds) }}</small></span>
+              <span class="glu-preview-label"><b>{{ activePreview === index ? (previewReady ? (item.path ? 'Playing' : 'Preview motion') : 'Loading…') : cue.label }}</b><small>{{ formatCue(cue.seconds) }}</small></span>
               <i v-if="activePreview === index" aria-hidden="true"></i>
             </button>
           </div>

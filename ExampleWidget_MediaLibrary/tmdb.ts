@@ -33,8 +33,37 @@ type SeasonResponse = {
 
 export type TmdbProgress = { completed:number; total:number; title:string }
 export type TmdbEnrichment = { items:LibraryItem[]; matched:number; unmatched:number }
+export type PersistedTmdbMetadata = Pick<LibraryItem,
+  'title'|'year'|'runtimeMinutes'|'rating'|'primaryGenre'|'genres'|'synopsis'|'metadataSource'|
+  'tmdbId'|'tmdbType'|'tmdbPosterPath'|'tmdbStillPath'|'tmdbRating'
+>
 
 const API = 'https://api.themoviedb.org/3'
+const IMAGE_API = 'https://image.tmdb.org/t/p'
+export const TMDB_SECRET_NAME = 'tmdb'
+export const TMDB_SECRET_HOSTS = ['api.themoviedb.org'] as const
+
+export function tmdbImageUrl(path: string | undefined, size: 'w500'|'w780' = 'w500'): string | undefined {
+  const clean = path?.trim()
+  if (!clean || !/^\/[A-Za-z0-9_./-]+$/.test(clean)) return undefined
+  return `${IMAGE_API}/${size}${clean}`
+}
+
+export function persistedTmdbMetadata(item: LibraryItem): PersistedTmdbMetadata | undefined {
+  if (item.metadataSource !== 'tmdb' || item.tmdbId == null) return undefined
+  const {
+    title,year,runtimeMinutes,rating,primaryGenre,genres,synopsis,metadataSource,
+    tmdbId,tmdbType,tmdbPosterPath,tmdbStillPath,tmdbRating,
+  } = item
+  return {
+    title,year,runtimeMinutes,rating,primaryGenre,genres:[...genres],synopsis,metadataSource,
+    tmdbId,tmdbType,tmdbPosterPath,tmdbStillPath,tmdbRating,
+  }
+}
+
+export function applyPersistedTmdbMetadata(item: LibraryItem, metadata: PersistedTmdbMetadata | undefined): LibraryItem {
+  return metadata ? { ...item, ...metadata, genres:[...metadata.genres] } : item
+}
 
 function normalized(value: string | undefined): string {
   return (value ?? '').normalize('NFKD').replace(/\p{Diacritic}/gu, '').toLocaleLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
@@ -71,11 +100,11 @@ function bestResult(results: SearchResult[], title: string, year: number): Searc
   return best && best.titleScore >= 45 ? best.result : undefined
 }
 
-async function json<T>(sdk: WidgetSdk, token: string, path: string, params: Record<string,string> = {}): Promise<T> {
+async function json<T>(sdk: WidgetSdk, path: string, params: Record<string,string> = {}): Promise<T> {
   if (!sdk.networkFetch) throw new Error('The Network capability is unavailable.')
   const query = new URLSearchParams({ language:'en-US', ...params })
   const response = await sdk.networkFetch(`${API}${path}?${query}`, {
-    headers:{ accept:'application/json', Authorization:`Bearer ${token.replace(/^Bearer\s+/i,'').trim()}` },
+    headers:{ accept:'application/json', Authorization:{ secret:TMDB_SECRET_NAME, format:'Bearer {}' } },
   })
   if (!response.ok) {
     if (response.status === 401) throw new Error('TMDB rejected the API Read Access Token.')
@@ -84,8 +113,8 @@ async function json<T>(sdk: WidgetSdk, token: string, path: string, params: Reco
   return response.json() as Promise<T>
 }
 
-async function genres(sdk: WidgetSdk, token: string, type: 'movie'|'tv'): Promise<Map<number,string>> {
-  const response = await json<GenreResponse>(sdk, token, `/genre/${type}/list`)
+async function genres(sdk: WidgetSdk, type: 'movie'|'tv'): Promise<Map<number,string>> {
+  const response = await json<GenreResponse>(sdk, `/genre/${type}/list`)
   return new Map((response.genres ?? []).map(genre => [genre.id,genre.name]))
 }
 
@@ -101,6 +130,7 @@ function applyCommon(item: LibraryItem, result: SearchResult, genreMap: Map<numb
     tmdbId:result.id,
     tmdbType:item.mediaKind === 'episode' ? 'tv' : 'movie',
     tmdbPosterPath:result.poster_path || undefined,
+    tmdbStillPath:result.backdrop_path || undefined,
     tmdbRating:result.vote_average,
     metadataSource:'tmdb',
   }
@@ -109,12 +139,9 @@ function applyCommon(item: LibraryItem, result: SearchResult, genreMap: Map<numb
 export async function enrichWithTmdb(
   sdk: WidgetSdk,
   items: LibraryItem[],
-  token: string,
   onProgress: (progress:TmdbProgress) => void = () => {},
 ): Promise<TmdbEnrichment> {
-  const cleanToken = token.replace(/^Bearer\s+/i,'').trim()
-  if (!cleanToken) throw new Error('Enter a TMDB API Read Access Token.')
-  const [movieGenres,tvGenres] = await Promise.all([genres(sdk,cleanToken,'movie'),genres(sdk,cleanToken,'tv')])
+  const [movieGenres,tvGenres] = await Promise.all([genres(sdk,'movie'),genres(sdk,'tv')])
   const seriesCache = new Map<string,Promise<SearchResult | undefined>>()
   const seasonCache = new Map<string,Promise<SeasonResponse>>()
   const enriched:LibraryItem[] = []
@@ -128,7 +155,7 @@ export async function enrichWithTmdb(
         const seriesKey = normalized(item.seriesTitle)
         let seriesPromise = seriesCache.get(seriesKey)
         if (!seriesPromise) {
-          seriesPromise = json<SearchResponse>(sdk,cleanToken,'/search/tv',{ query:item.seriesTitle, include_adult:'false' })
+          seriesPromise = json<SearchResponse>(sdk,'/search/tv',{ query:item.seriesTitle, include_adult:'false' })
             .then(response => bestResult(response.results ?? [],item.seriesTitle!,item.year))
           seriesCache.set(seriesKey,seriesPromise)
         }
@@ -137,7 +164,7 @@ export async function enrichWithTmdb(
         const seasonKey = `${series.id}:${item.seasonNumber}`
         let seasonPromise = seasonCache.get(seasonKey)
         if (!seasonPromise) {
-          seasonPromise = json<SeasonResponse>(sdk,cleanToken,`/tv/${series.id}/season/${item.seasonNumber}`)
+          seasonPromise = json<SeasonResponse>(sdk,`/tv/${series.id}/season/${item.seasonNumber}`)
           seasonCache.set(seasonKey,seasonPromise)
         }
         const season = await seasonPromise
@@ -150,12 +177,12 @@ export async function enrichWithTmdb(
           year:yearOf(episode?.air_date) || common.year,
           runtimeMinutes:episode?.runtime || common.runtimeMinutes,
           tmdbPosterPath:season.poster_path || series.poster_path || undefined,
-          tmdbStillPath:episode?.still_path || undefined,
+          tmdbStillPath:episode?.still_path || series.backdrop_path || undefined,
           tmdbRating:episode?.vote_average || series.vote_average,
         })
         matched += 1
       } else {
-        const response = await json<SearchResponse>(sdk,cleanToken,'/search/movie',{
+        const response = await json<SearchResponse>(sdk,'/search/movie',{
           query:item.title,
           include_adult:'false',
           ...(item.year ? { year:String(item.year) } : {}),
@@ -167,7 +194,7 @@ export async function enrichWithTmdb(
         matched += 1
       }
     } catch (error) {
-      if (error instanceof Error && /token|Network capability|TMDB request failed/.test(error.message)) throw error
+      if (error instanceof Error && /token|secret|Network capability|TMDB request failed/i.test(error.message)) throw error
       enriched.push(item)
     }
   }

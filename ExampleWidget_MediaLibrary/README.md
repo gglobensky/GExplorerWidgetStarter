@@ -25,14 +25,17 @@ For the isolated sample-data preview, run `pnpm preview:media-library`, then ope
 - Title, year and genre search.
 - Genre quick navigation and an A–Z jump control on every shelf.
 - Multiple persisted source folders, bounded recursive scanning, filename cleanup, local media metadata and folder-based genre inference.
-- Sidecar artwork discovery for a matching image or `poster`, `cover`, or `folder` file. Displaying local images awaits the Shell support described below.
+- Source selection can add the folder currently shown in the picker; its accept action identifies the current or highlighted folder.
+- Sidecar artwork discovery for a matching image or `poster`, `cover`, or `folder` file, imported as safe same-origin image assets.
+- Cached OS video thumbnails when no sidecar cover exists.
 - Series detection for `S01E02`, `1x02`, and `Season 01/Episode 02` layouts, with series shelves as well as genre shelves.
 - Embedded local playback through the Shell's byte-range media stream, with an external-player fallback for unsupported codecs.
+- Player overlays hold the Shell's tooltip quiet mode until playback closes; native fullscreen is also covered by the host.
 - DVD-case selection with a full detail stage.
 - A case front/back turn with synopsis and metadata.
-- Four scene cues loaded as paused video frames one at a time, then played in place on hover. This keeps large episodes responsive while showing real frames before interaction; sample media uses artwork motion.
-- Scene previews return to their initial cue frame when the pointer or keyboard focus leaves them.
-- Optional, manually triggered TMDB matching for movie and episode titles, synopsis, release dates, genres, runtime, rating, and poster/still references. The API Read Access Token is held in memory only and is never written to widget config.
+- Four scene cues are extracted at their exact timestamps by the Shell's bounded ffmpeg service and cached as ordinary image assets. Hover or keyboard focus plays an eight-second loop through one short-lived video decoder; its progress bar follows playback, and leaving restores the extracted still. Sample media uses artwork motion.
+- Persistent custom covers chosen from an image file or captured from the exact frame shown in the player. Captured frames open a focal-point editor so the user chooses the portion kept visible on portrait cases.
+- Optional, manually triggered TMDB matching for movie and episode titles, synopsis, release dates, genres, runtime, rating, cached poster artwork, movie backdrops, and episode stills. Matched metadata is persisted by local media path and restored on later scans; cached artwork is rehydrated without repeating the metadata search. GEM Shell stores the API Read Access Token as an OS-protected secret and the widget refers to it only by name.
 - Neutral grey cases for scanned media without real artwork; the illustrated atlas is reserved for the fictional preview collection.
 - Responsive narrow presentation and reduced-motion support.
 - One shared implementation under `shared/library-ui`, imported and bundled at build time.
@@ -41,14 +44,14 @@ Sample scene cues use artwork-driven motion because the fictional collection has
 
 ## TMDB metadata beta
 
-Add real media folders, open the library menu, enter a TMDB API Read Access Token, and choose **Match with TMDB**. Matching is opt-in and makes no requests while the widget is merely scanning or browsing. Movie filenames are searched as movies; detected series are searched as TV shows and then matched to their season and episode records.
+Add real media folders, open the library menu, choose **Connect TMDB**, enter an API Read Access Token in GEM Shell's protected dialog, and choose **Match with TMDB**. Matching is opt-in and makes no requests while the widget is merely scanning or browsing. Movie filenames are searched as movies; detected series are searched as TV shows and then matched to their season and episode records.
 
 This product uses the TMDB API but is not endorsed or certified by TMDB. Distribution also requires TMDB's approved logo in an About or Credits area and a license appropriate for the project. The text notice is present in the widget; the approved logo asset should be added after TMDB approves the intended use.
 
-## Shell API gap: local images and frame capture
+## Shell integration status
 
-`mintStreamHttp` is usable by `<video>`, but its cross-origin URL is excluded by the widget `img-src` policy and taints a canvas. The widget therefore cannot display a chosen local image or export a video frame with `canvas.toDataURL()`. Custom covers and sidecar artwork should remain disabled until the Shell provides either a widget-safe thumbnail/data URL API, or an image stream with matching CSP and CORS support. A thumbnail API is preferable because it also avoids decoding full-resolution video in the frontend.
+The widget uses `mediaImageCreate` / `mediaImageDelete` for local sidecars, cached OS video thumbnails, validated TMDB URL images, and persistent custom covers. It uses `mediaVideoFramesCreate` for cached scene cues and for a persistent cover made from the current playback time, keeping frame decoding out of WebView2.
 
-TMDB poster and still paths are retained with matched metadata, but remote image URLs are blocked by the same widget `img-src` policy. They are ready to render once the Shell exposes a permitted image proxy or expands image access for an approved host.
+The current and resolved host requirements are tracked in [`API-GAPS.md`](./API-GAPS.md).
 
 The scanner reads up to 3,000 relevant entries per folder, 400 folders and 1,500 videos per refresh. It skips hidden items and folder links, closes every listing after use, and reports truncation or inaccessible folders in the library menu.

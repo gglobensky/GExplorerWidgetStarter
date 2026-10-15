@@ -1,7 +1,7 @@
 export type LibraryArtwork = {
   src: string
-  x: 0 | 50 | 100
-  y: 0 | 100
+  x: number
+  y: number
   mode?: 'atlas' | 'cover' | 'placeholder'
 }
 
@@ -36,6 +36,7 @@ export type LibraryItem = {
   tmdbType?: 'movie' | 'tv'
   tmdbPosterPath?: string
   tmdbStillPath?: string
+  previewImageSrc?: string
   tmdbRating?: number
 }
 

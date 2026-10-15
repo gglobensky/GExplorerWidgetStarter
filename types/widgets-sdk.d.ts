@@ -150,6 +150,17 @@ declare module 'gexplorer/widgets' {
          * time, and close when it unmounts. Same object on every call.
          */
         ui?: () => WidgetUi
+        /**
+         * Network cap. This instance's secrets (API tokens...): the user types one in a frame the
+         * page can't read, the host stores it protected and adds it to requests that name it, for
+         * the hosts it was saved for, over https; the widget never gets the value:
+         *   const { saved } = await sdk.secrets!().prompt({ name: 'tmdb', label: 'TMDB API Read Access Token',
+         *       hosts: ['api.themoviedb.org'], container: el })   // container: optional (else a shell box)
+         *   sdk.networkFetch!(url, { headers: { Authorization: { secret: 'tmdb', format: 'Bearer {}' } } })
+         * A request naming it for another host is refused (E_SECRET_HOST, in the security log); an
+         * unset one: E_SECRET_UNSET. Requests carrying a secret follow no redirect.
+         */
+        secrets?: () => WidgetSecrets
         fsRename?: (oldPath: string, newPath: string) => Promise<{ ok: boolean; error?: string }>
 
         /**
@@ -182,6 +193,46 @@ declare module 'gexplorer/widgets' {
             height?: number | null
         }>>
 
+        /**
+         * An image asset (2026-10-14): the host decodes, resizes and re-encodes it (JPEG / PNG, no
+         * metadata) and serves it from the app's own origin at a stable URL: put `url` in <img src>
+         * as is; a canvas drawing it stays readable. Keep `assetId` with it (to delete it).
+         *   { type: 'file', path }         an image file (JPEG, PNG, GIF, BMP, TIFF), read as this widget
+         *   { type: 'thumbnail', path }    the OS's thumbnail of any file: a video's frame, a photo,
+         *                                  an album's cover (size: the box asked of the OS, ≤ 1024)
+         *   { type: 'bytes', data }        e.g. a frame of a <video crossorigin="anonymous"> playing a
+         *                                  mintStreamHttp URL, drawn to a canvas, canvas.toBlob()
+         *   { type: 'url', url, headers? } an https image (a poster), fetched by the host: needs the
+         *                                  Network capability (the user's permission is asked once,
+         *                                  as networkFetch). Addresses on this computer or the local
+         *                                  network are refused (E_PRIVATE_ADDRESS). With storage
+         *                                  'cache', the same url + headers + options is fetched once.
+         * storage 'cache' (default): shared and evicted when unused for 30 days or beyond 500 MB:
+         * when an <img> fails to load, make it again. 'persistent': kept until deleted, within the
+         * widget's room: 200 MB, more if entry.ts asks for it (`storage: { assets: { mb, reason } }`,
+         * up to 10240) and the user agrees (asked once, the first time it is needed).
+         * Rejects with an Error whose `code` is: E_NOT_FOUND, E_IS_FOLDER, E_NOT_IMAGE, E_FORMAT
+         * (WebP, SVG...), E_TOO_LARGE (over 32 MB or 80 megapixels), E_NO_THUMBNAIL, E_UNAVAILABLE,
+         * E_NEEDS_ELEVATION, E_ELEVATION_DECLINED, E_QUOTA (usedBytes, limitBytes, neededBytes),
+         * E_NEEDS_NETWORK (permission refused), E_PRIVATE_ADDRESS, E_HTTP, E_TIMEOUT, E_NETWORK,
+         * E_UNSUPPORTED (no image support on this system yet: Linux), E_BAD_REQUEST, E_FAILED.
+         */
+        mediaImageCreate?: (source: MediaImageSource, options?: MediaImageOptions) => Promise<MediaImage>
+        /** Deletes one of this widget's image assets. Resolves false when it did not exist. */
+        mediaImageDelete?: (assetId: string) => Promise<boolean>
+        /**
+         * Stills of a video at chosen times, decoded by the host with ffmpeg in its own process
+         * (never in the WebView: no decoder to tear down before playback), as image assets:
+         *   const { frames } = await sdk.mediaVideoFramesCreate!({ path, timesMs: [60_000, 600_000] },
+         *       { width: 320, height: 180 })
+         *   for (const f of frames) if (f.image) img.src = f.image.url   // else f.error: this frame only
+         * 1..24 times per call, at most 1920 px a side. Per frame: E_NO_FRAME (past the end), E_CODEC,
+         * E_TIMEOUT, E_QUOTA. The whole call rejects with E_NOT_FOUND, E_IS_FOLDER, E_UNAVAILABLE
+         * (a folder needing administrator rights), E_UNSUPPORTED (the host has no ffmpeg),
+         * E_BAD_REQUEST. storage 'cache' (default): the same file, time and options are decoded once.
+         */
+        mediaVideoFramesCreate?: (source: { path: string; timesMs: number[] }, options?: MediaImageOptions) => Promise<{ frames: MediaVideoFrame[] }>
+
         /** A stream URL for a file, for this widget. Rejects E_NOT_FOUND when the file is not there. */
         mintStreamHttp?: (path: string, mimeHint?: string) => Promise<{ url: string; mimeType?: string; expiresAt?: string }>
 
@@ -198,11 +249,17 @@ declare module 'gexplorer/widgets' {
         ) => Promise<PlaylistItem[]>
 
         // Network cap
+        /**
+         * An http(s) request made by the host for this widget (its network permission is asked once).
+         * Only public internet addresses: this computer, the local network and cloud metadata addresses
+         * are refused (error 'E_PRIVATE_ADDRESS: ...'). At most 3 redirects, 30 s.
+         */
         networkFetch?: (
             url: string,
             options?: {
                 method?: string
-                headers?: Record<string, string>
+                /** A value may name a secret: { secret: 'tmdb', format: 'Bearer {}' } (sdk.secrets()). */
+                headers?: Record<string, string | SecretRef>
                 body?: string
             }
         ) => Promise<{
@@ -1276,6 +1333,78 @@ declare module 'gexplorer/widgets' {
         worker(workerId: string): LifecycleWorkerHandle
     }
 
+    // ── Secrets (sdk.secrets()) ───────────────────────────────────────────
+    /** A header value naming one of the widget's secrets; format holds one {} (default '{}'). */
+    export type SecretRef = { secret: string; format?: string }
+
+    export type SecretPromptOptions = {
+        /** The secret's name for this widget: lowercase letters, digits, . _ - (64 at most). */
+        name: string
+        /** What the user is asked for, 120 characters at most. */
+        label: string
+        /** The only hosts it is ever sent to (internet host names), 10 at most. */
+        hosts: string[]
+        /** Where the entry frame goes (full width, ~90 px high). It warns when it is covered, faded
+         *  or transformed (the user checks the dots appear as they type). None: a shell box, the
+         *  safest place: snackbars and tooltips wait while it is open, and entry pauses while
+         *  anything covers it. */
+        container?: HTMLElement
+    }
+
+    export interface WidgetSecrets {
+        /** Asks the user; resolves when they save or close it (or the widget leaves the screen). */
+        prompt(opts: SecretPromptOptions): Promise<{ saved: boolean }>
+        /** hint: the value's last 4 characters (none for values under 8 characters). */
+        status(name: string): Promise<{ set: boolean; hint?: string; hosts?: string[]; label?: string; updatedAt?: number }>
+        delete(name: string): Promise<boolean>
+    }
+
+    // ── Image assets (sdk.mediaImageCreate) ───────────────────────────────
+    export type MediaImageSource =
+        | { type: 'file'; path: string }
+        | { type: 'thumbnail'; path: string; size?: number }
+        | { type: 'bytes'; data: Blob | ArrayBuffer | Uint8Array }
+        | { type: 'url'; url: string; headers?: Record<string, string | SecretRef> }
+
+    export type MediaImageOptions = {
+        /** The box (px); either may be absent. Never enlarged; at most 4096 px a side. */
+        width?: number
+        height?: number
+        /** Both sides given: 'cover' (default) fills the box, cropped at the centre; 'contain' fits inside. */
+        fit?: 'cover' | 'contain'
+        /** 'jpeg' (default) or 'png' (keeps transparency). */
+        format?: 'jpeg' | 'png'
+        /** 'cache' (default) or 'persistent'. */
+        storage?: 'cache' | 'persistent'
+    }
+
+    export type MediaImage = {
+        assetId: string
+        /** Same-origin and stable: <img :src="url">. */
+        url: string
+        mimeType: string
+        width: number
+        height: number
+        bytes: number
+        storage: 'cache' | 'persistent'
+    }
+
+    export type MediaVideoFrame = {
+        requestedMs: number
+        /** The time of the frame decoded (seeks are exact). */
+        actualMs?: number
+        image?: MediaImage
+        /** This frame only. */
+        error?: string
+        message?: string
+    }
+
+    /** entry.ts `storage`: room beyond what every widget has (asked of the user once, when needed). */
+    export type WidgetStorageRequest = {
+        /** Persistent image assets: MB (more than 200, at most 10240), and why (shown to the user). */
+        assets?: { mb: number; reason?: string }
+    }
+
     // ── Host actions (props.runAction) ────────────────────────────────────
     // The host passes runAction to every widget. setView merges a patch into
     // the widget's view config; the parent persists it like a layout change
@@ -1283,8 +1412,35 @@ declare module 'gexplorer/widgets' {
     export type HostAction =
         | { type: 'nav'; to: string; replace?: boolean }
         | { type: 'open'; path: string }
-        | { type: 'openUrl'; url: string; options?: { askUser?: boolean; title?: string } }
+        // openUrl: GEM Shell always asks the user first (naming the widget and the site); web links only.
+        | { type: 'openUrl'; url: string; options?: { title?: string } }
         | { type: 'setView'; patch: Record<string, unknown> }
+
+    // ── The props every widget gets (WidgetHost) ──────────────────────────
+    //   const props = defineProps<WidgetProps>()
+    //   props.runAction?.({ type: 'openUrl', url, options: { title: 'TMDB' } })
+    export type WidgetPlacement = {
+        context: 'grid' | 'sidebar' | 'toolbar' | 'embedded' | 'dialog'
+        /** The layout chosen in the Layout menu (or the widget's `variant`). */
+        layout: string
+        /** Sidebar: pixels; elsewhere: grid cells. */
+        size: { width?: number; height?: number } | { cols?: number; rows?: number }
+        phase: 'active' | 'idle'
+        resizing: boolean
+        resizePhase?: 'active' | 'idle'
+    }
+
+    export interface WidgetProps {
+        /** The widget's settings (`data`, `view`), from its defaults and the user's changes. */
+        config?: any
+        theme?: Record<string, string>
+        /** Asks the host to act: navigate, open a file, open a web link (asked first), change the view. */
+        runAction?: (action: HostAction) => void
+        placement: WidgetPlacement
+        editMode?: boolean
+        /** This placement's owner id: lifecycle, messaging, state are keyed on it. */
+        sourceId: string
+    }
 
     // ── Paging (view option rendered by the host) ─────────────────────────
     // Declare it in the manifest to get "Single page" / "Paged ▸" in the
@@ -1700,7 +1856,7 @@ declare module 'gexplorer/widgets' {
          * those files only, while GEM Shell runs: what the user picks is the grant, no other
          * prompt (a folder needing administrator rights: the consent dialog asks once).
          */
-        openFiles(opts?: { title?: string; startIn?: string; filters?: WidgetFileFilter[]; multiple?: boolean; access?: 'read' | 'write' }): Promise<string[] | null>
+        openFiles(opts?: { title?: string; startIn?: string; filters?: WidgetFileFilter[]; multiple?: boolean; access?: 'read' | 'write'; acceptLabel?: string }): Promise<string[] | null>
         /**
          * The host's save dialog: the full path chosen, null when cancelled. An existing file
          * was confirmed by the user ("Replace it?") and the widget may write THAT FILE (only),
@@ -1708,10 +1864,18 @@ declare module 'gexplorer/widgets' {
          */
         saveFile(opts?: { title?: string; startIn?: string; filters?: WidgetFileFilter[]; suggestedName?: string }): Promise<string | null>
         /**
-         * The host's folder dialog: the folder chosen, null when cancelled. access 'write': the
-         * widget may write in it (and its subfolders: an export destination), while GEM Shell runs.
+         * The host's folder dialog: the folder chosen, null when cancelled. The folder highlighted,
+         * or with none highlighted the folder shown (button "Select this folder"). acceptLabel:
+         * the button's text instead ("Add to library"). access 'write': the widget may write in
+         * it (and its subfolders: an export destination), while GEM Shell runs.
          */
-        pickFolder(opts?: { title?: string; startIn?: string; access?: 'read' | 'write' }): Promise<string | null>
+        pickFolder(opts?: { title?: string; startIn?: string; access?: 'read' | 'write'; acceptLabel?: string }): Promise<string | null>
+        /**
+         * Immersive playback: dismisses the host's hover tooltips and shows none until the
+         * returned release() is called, or this instance leaves the screen. Fullscreen (a
+         * <video>'s own) does the same without a call.
+         */
+        quietMode(): () => void
     }
 
     /** A "Type" choice of a file dialog: extensions without the dot ('mp3'). */

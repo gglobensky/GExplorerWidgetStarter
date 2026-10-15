@@ -16,7 +16,8 @@ export default {
   defaults:{ data:{ selectedId:'signal-north', sources:[] }, view:{ atmosphere:true, libraryMode:'shelf' } },
   capabilities:[
     { cap:'Read', reason:'Lets you choose and scan one or more local media folders.' },
-    { cap:'Media', reason:'Reads local video metadata and streams videos for playback and scene previews.' },
+    { cap:'Media', reason:'Reads local video metadata, extracts scene stills, and streams videos for playback and motion previews.' },
     { cap:'Network', reason:'Optionally matches local movies and episodes with TMDB metadata when you provide a token.' },
   ],
+  storage:{ assets:{ mb:512, reason:'Keeps the custom movie covers you choose or capture from playback.' } },
 }
