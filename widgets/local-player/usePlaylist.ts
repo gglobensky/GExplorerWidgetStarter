@@ -10,7 +10,7 @@
 // snackbar says why not and the next playable track plays.
 //
 // .gexm is gone (2026-10-09): it saved each track's stream URL, dead after the session.
-import { inject } from '/runtime/vue.js'
+import { inject } from 'vue'
 import type { WidgetSdk, FileRefData } from 'gexplorer/widgets'
 import type { Track, usePlayerState } from './usePlayerState'
 import { parseM3U, buildM3U, baseName, dirOf } from './m3u'

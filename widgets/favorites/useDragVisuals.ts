@@ -1,5 +1,5 @@
 // /src/widgets/favorites/useDragVisuals.ts
-import { ref, type Ref } from '/runtime/vue.js'
+import { ref, type Ref } from 'vue'
 import type { RootRowId } from './favorites.model'
 import type { 
   DropIntent,

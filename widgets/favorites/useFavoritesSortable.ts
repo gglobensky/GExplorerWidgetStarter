@@ -1,5 +1,5 @@
 // /src/widgets/favorites/useFavoritesSortable.ts
-import { ref, inject, type Ref } from '/runtime/vue.js'
+import { ref, inject, type Ref } from 'vue'
 import {
   useSortable,
   DropIntent,
@@ -25,7 +25,6 @@ export type UseFavoritesSortableOptions = {
     menuContainers: Map<string, HTMLElement>
     refreshFavorites: () => Promise<void>
     refreshRootFolders: () => Promise<void>
-    broadcastFavoritesChanged: (reason: 'move' | 'other') => void
     setupGhostForRow: (id: RootRowId, ev: { clientX: number; clientY: number }) => void
     updateGhostPosition: (ev: PointerEvent) => void
     updateInsertBar: (intent: DropIntent | null, blocked: boolean) => void
@@ -51,7 +50,6 @@ export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
         menuContainers,
         refreshFavorites,
         refreshRootFolders,
-        broadcastFavoritesChanged,
         setupGhostForRow,
         updateGhostPosition,
         updateInsertBar,
@@ -139,7 +137,6 @@ export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
             await need('applyFavoritesMove')({ movedKind, movedKey, targetKind, targetKey, placement })
             await refreshRootFolders()
             await refreshFavorites()
-            broadcastFavoritesChanged('move')
         } catch (err) {
             console.error('[favorites] applyFavoritesMove failed', err)
         }

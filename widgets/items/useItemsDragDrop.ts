@@ -18,7 +18,7 @@
 // it and a drop here moves it with fsTransfer, so no paths cross IPC.
 // ------------------------------------------------------------------
 
-import { ref, onUnmounted, type Ref, type ComputedRef, inject } from '/runtime/vue.js'
+import { ref, onUnmounted, type Ref, type ComputedRef, inject } from 'vue'
 import { WidgetSdk } from 'gexplorer/widgets'
 import type { GexDnDPayload, ScopedMessaging, ListingEntry, SelectionRef, FileSelectionData, FileRefData } from 'gexplorer/widgets'
 

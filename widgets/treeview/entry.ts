@@ -15,6 +15,7 @@ export default {
     { cap: 'Clipboard', reason: 'Copies and cuts selected folders through the OS clipboard.' },
     { cap: 'Write', reason: 'Creates and renames folders, and pastes OS clipboard items into the folder you choose.' },
     { cap: 'Favorites', reason: 'Shows your favorite folders and files in the root selector.' },
+    { cap: 'Location', reason: 'Opens on the folder you are browsing.' },
   ],
   menuContexts: [
     { id: 'treeview.folder', label: 'Tree folder', icon: '▱', subject: 'files' },

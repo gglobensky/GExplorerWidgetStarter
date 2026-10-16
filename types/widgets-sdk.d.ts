@@ -161,6 +161,30 @@ declare module 'gexplorer/widgets' {
          * unset one: E_SECRET_UNSET. Requests carrying a secret follow no redirect.
          */
         secrets?: () => WidgetSecrets
+        /**
+         * Location cap. What the path bar shows: the focused pane's folder, or the tab's location
+         * when no pane is focused. Another widget's virtual folder is given as its scheme only
+         * (gexchange://). To follow changes: onHostChange('location', ...).
+         */
+        getCurrentPath?: () => string
+        /**
+         * Tells this instance when something the host owns changed:
+         * - 'favorites' (Favorites cap): that they changed, not how: re-read them.
+         *     sdk.onHostChange?.('favorites', () => void reload())
+         * - 'location' (Location cap): { locator, cause, own }; own: your widget asked for this
+         *   navigation and the shell went there ({ ignoreOwn: true } skips those).
+         *     sdk.onHostChange?.('location', e => reveal(e.locator))
+         * - 'clipboard' (Clipboard cap): the OS clipboard changed, whichever app changed it; never
+         *   its contents (read them with clipboardGetFiles if you care, e.g. to fade cut rows).
+         * Every event has rev (a per-topic counter, to drop stale async reads).
+         * Throws without the topic's capability. Released when the widget unmounts (the returned
+         * function stops earlier). Several changes within a frame arrive as one event.
+         */
+        onHostChange?: <T extends HostTopic>(
+            topic: T,
+            handler: (event: HostChangeEvent<T>) => void,
+            options?: HostChangeOptions,
+        ) => () => void
         fsRename?: (oldPath: string, newPath: string) => Promise<{ ok: boolean; error?: string }>
 
         /**
@@ -392,6 +416,8 @@ declare module 'gexplorer/widgets' {
         | 'SecureStorage'
         | 'Chat'
         | 'Favorites'
+        /** See which folder you're browsing (sdk.getCurrentPath, the 'location' host topic). */
+        | 'Location'
 
     // ── FS types ───────────────────────────────────────────────────────────
 
@@ -811,22 +837,32 @@ declare module 'gexplorer/widgets' {
 
     // ── Favorites ──────────────────────────────────────────────────────────
 
+    /** A favorite in the flat list (getFavorites). */
     export type FavoriteEntry = {
+        path: string
+        label?: string
+        kind?: 'folder' | 'file' | 'virtual' | 'url'
+        iconKey?: string
+    }
+
+    /** The favorites tree (getGlobalFavorites): items and folders, in the user's order. */
+    export type FavoriteTreeItem = {
         id: string
+        kind: 'item'
         label: string
         path: string
-        icon?: string
     }
-
-    export type FavoriteTreeNode = {
+    export type FavoriteTreeFolder = {
         id: string
+        kind: 'folder'
         label: string
         children: FavoriteTreeNode[]
-        entry?: FavoriteEntry
     }
+    export type FavoriteTreeNode = FavoriteTreeItem | FavoriteTreeFolder
 
     export type FavoritesConfig = {
-        entries: FavoriteEntry[]
+        data?: { entries?: FavoriteEntry[] }
+        view?: { dense?: boolean; showIcons?: boolean }
     }
 
     // ── Playlist ───────────────────────────────────────────────────────────
@@ -1260,6 +1296,29 @@ declare module 'gexplorer/widgets' {
     // sdk.authorizeFileRefs, sdk.fileRefsToPlaylistItems, sdk.resolveDropRefs):
     // the host binds them to your widget.
 
+    // Host change topics (sdk.onHostChange)
+    export type HostTopic = 'favorites' | 'location' | 'clipboard'
+    /** Why the location changed. */
+    export type NavCause = 'navigate' | 'back' | 'forward' | 'focus' | 'tab' | 'restore'
+    export type HostTopicPayloads = {
+        favorites: Record<string, never>
+        location: {
+            /** What the path bar shows (another widget's virtual folder: its scheme only). */
+            locator: string
+            cause: NavCause
+            /** Your widget asked for this navigation, and the shell went where it asked. */
+            own: boolean
+        }
+        /** The OS clipboard changed (any app). Read it through the clipboard API if you care. */
+        clipboard: Record<string, never>
+    }
+    export type HostChangeEvent<T extends HostTopic = HostTopic> =
+        HostTopicPayloads[T] & { topic: T; rev: number }
+    export type HostChangeOptions = {
+        /** Skip the events this widget caused (location). */
+        ignoreOwn?: boolean
+    }
+
     export function subscribeDrives(callback: (drives: DriveSnapshot[]) => void): () => void
     export function getDrives(): DriveSnapshot[]
 
@@ -1273,7 +1332,7 @@ declare module 'gexplorer/widgets' {
         placement: FavoritesMovePlacement
     }
 
-    export function getCurrentPath(): string | null
+    // getCurrentPath: now sdk.getCurrentPath() ('Location' cap, 2026-10-15).
     // ── Lifecycle ──────────────────────────────────────────────────────────
     // State that outlives the component: a widget unmounts on tab switch (and
     // sidebar collapse) but its owner lives on until the host destroys it —

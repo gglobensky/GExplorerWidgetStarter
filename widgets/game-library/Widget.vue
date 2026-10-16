@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount, inject } from '/runtime/vue.js'
+import { ref, computed, watch, onMounted, onBeforeUnmount, inject } from 'vue'
 import type { WidgetSdk } from 'gexplorer/widgets'
 
 // Messaging bound to this instance by the host (sdk.messaging(); the free

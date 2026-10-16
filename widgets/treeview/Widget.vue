@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { getCurrentPath, getDrives, subscribeDrives, iconFor, ensureIconsFor, startRename } from 'gexplorer/widgets'
+import { getDrives, subscribeDrives, iconFor, ensureIconsFor, startRename } from 'gexplorer/widgets'
 import type { DriveStats, FavoriteTreeNode, HostAction, WidgetMenuItemMessage, WidgetSdk } from 'gexplorer/widgets'
 import TreePanel from './TreePanel.vue'
 import TreeToolbar from './TreeToolbar.vue'
@@ -18,7 +18,8 @@ function setPanel(value: InstanceType<typeof TreePanel> | null) { panel.value = 
 const drives = ref(getDrives()), driveStats = ref<Record<string, DriveStats>>({}), favorites = ref<Root[]>([]), temporary = ref<Root[]>([])
 const error = ref(''), busy = ref(false), iconTick = ref(0)
 const iconKeys = new Map<string, string>()
-const initialPath = getCurrentPath()
+// The folder you're browsing when the tree opens ('Location' cap)
+const initialPath = sdk?.getCurrentPath?.() || null
 const available = computed(() => !life || life.visibility.value !== 'collapsed')
 const roots = computed<Root[]>(() => {
   const folders: Root[] = [...drives.value.map(d => {
@@ -63,6 +64,9 @@ async function refreshDriveStats() {
 }
 async function refreshRoots() {
   void refreshDriveStats()
+  await refreshFavorites()
+}
+async function refreshFavorites() {
   const request = ++favoriteRequest
   try {
     const data = await sdk?.getGlobalFavorites?.() || []
@@ -70,8 +74,8 @@ async function refreshRoots() {
     const result: Root[] = []
     const visit = (nodes: FavoriteTreeNode[], group = 'Favorites') => {
       for (const node of nodes) {
-        if (node.entry) result.push({ id: `favorite:${node.entry.id}`, label: node.entry.label || node.label || label(node.entry.path), path: node.entry.path, group, kind: 'favorite' })
-        if (node.children?.length) visit(node.children, group === 'Favorites' ? `Favorites · ${node.label}` : `${group} / ${node.label}`)
+        if (node.kind === 'item') result.push({ id: `favorite:${node.id}`, label: node.label || label(node.path), path: node.path, group, kind: 'favorite' })
+        else if (node.children.length) visit(node.children, group === 'Favorites' ? `Favorites · ${node.label}` : `${group} / ${node.label}`)
       }
     }
     visit(data); favorites.value = result
@@ -183,6 +187,11 @@ function onMenuItem(message: WidgetMenuItemMessage) {
   else panel.value?.command(message.itemId, message.ref || '')
 }
 defineExpose({ onMenuItem })
+// Favorites changed anywhere (this widget, the Favorites widget, the shell): the host tells us.
+sdk?.onHostChange?.('favorites', () => void refreshFavorites())
+// TEMP (2026-10-15, location topic test): remove after testing
+sdk?.onHostChange?.('location', e => console.log('[treeview] location', e.locator, e.cause, e.own ? 'own' : '', e.rev))
+sdk?.onHostChange?.('clipboard', e => console.log('[treeview] clipboard changed', e.rev))
 let offDrives: (() => void) | undefined
 onMounted(() => { offDrives = subscribeDrives(value => { drives.value = value; void refreshDriveStats() }); void refreshRoots() })
 onBeforeUnmount(() => { disposed = true; favoriteRequest++; driveStatsRequest++; offDrives?.() })

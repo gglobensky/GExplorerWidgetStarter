@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from '/runtime/vue.js'
+import { ref, computed } from 'vue'
 
 type LinkItem = {
   id: string

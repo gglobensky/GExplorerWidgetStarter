@@ -1,5 +1,5 @@
 // /src/widgets/favorites/useFavoritesData.ts
-import { ref, watch, onMounted, onBeforeUnmount, inject } from '/runtime/vue.js'
+import { ref, watch, onMounted, inject } from 'vue'
 import {
   FavoriteEntry,
   FavoriteTreeNode,
@@ -14,11 +14,10 @@ export type UseFavoritesDataOptions = {
   sourceId: string
   configData: () => any
   groupValue: () => string
-  instanceId: string
 }
 
 export function useFavoritesData(opts: UseFavoritesDataOptions) {
-  const { sourceId, configData, groupValue, instanceId } = opts
+  const { sourceId, configData, groupValue } = opts
 
   // The user's favorites come through the widget's SDK ('Favorites' cap in entry.ts).
   const sdk = inject<WidgetSdk>('widgetSdk')
@@ -26,11 +25,6 @@ export function useFavoritesData(opts: UseFavoritesDataOptions) {
   const getGlobalFavorites = sdk?.getGlobalFavorites
   if (!getFavorites || !getGlobalFavorites)
     console.error("[favorites] the SDK has no favorites: declare the 'Favorites' capability in entry.ts")
-
-  // Bound to this instance by the host (sandbox C3b): no id passed.
-  const messaging = sdk?.messaging?.()
-  if (!messaging) throw new Error('[favorites] widgetSdk.messaging is not available')
-  const { send, on, cleanup } = messaging
 
   // Core state
   const loading = ref(false)
@@ -44,19 +38,6 @@ export function useFavoritesData(opts: UseFavoritesDataOptions) {
   
   // Mixed root rows: folders + root-level items, in tree order
   const rootRows = ref<RootRow[]>([])
-
-  /**
-   * Broadcast a favorites change event to other widget instances
-   */
-  function broadcastFavoritesChanged(
-    reason: 'add' | 'remove' | 'move' | 'folder-add' | 'folder-remove' | 'other' = 'other'
-  ) {
-    send(
-      undefined,
-      'favorites:changed',
-      { reason },
-    )
-  }
 
   /**
    * Load flat favorites list from service
@@ -112,6 +93,11 @@ export function useFavoritesData(opts: UseFavoritesDataOptions) {
 
   /**
    * Find a folder node by ID in the tree
+   *
+   * TODO(types): return FavoriteTreeFolder | null (narrowed on kind === 'folder') and type
+   * useFolderMenus' findFolderNodeById / openFolderDropdownFromDrag with it: useFolderMenus.ts
+   * reads .children on a plain FavoriteTreeNode in four places, a type error since the starter's
+   * types match the shell's favorites tree (2026-10-15). Runtime is fine: only folders get there.
    */
   function findFolderNodeById(id: string | null): FavoriteTreeNode | null {
     if (!id) return null
@@ -139,25 +125,16 @@ export function useFavoritesData(opts: UseFavoritesDataOptions) {
     )
   }
 
-  // Cross-widget refresh handler
-  let offBus: (() => void) | null = null
-
-  onMounted(async () => {
-    // Initial load
-    await refreshFavorites()
-    await refreshRootFolders()
-
-    // Listen for changes from other widget instances
-    offBus = on('favorites:changed', (msg) => {
-        if (msg.from === instanceId) return
-        void refreshFavorites()
-        void refreshRootFolders()
-    })
+  // Any change, from this widget, another widget or the shell: the host tells us
+  // (the 'favorites' host topic; released by the host when the widget unmounts).
+  sdk?.onHostChange?.('favorites', () => {
+    void refreshFavorites()
+    void refreshRootFolders()
   })
 
-  onBeforeUnmount(() => {
-    offBus?.()
-    cleanup()
+  onMounted(async () => {
+    await refreshFavorites()
+    await refreshRootFolders()
   })
 
   // Watch for config group changes
@@ -177,7 +154,6 @@ export function useFavoritesData(opts: UseFavoritesDataOptions) {
     // Methods
     refreshFavorites,
     refreshRootFolders,
-    broadcastFavoritesChanged,
     findFolderNodeById,
     isRootFolder,
   }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from '/runtime/vue.js'
+import { ref, computed, watch, onMounted } from 'vue'
 import { iconFor } from 'gexplorer/widgets'
 import type { ListingEntry, ListingSortKey, ListingSortDir } from 'gexplorer/widgets'
 

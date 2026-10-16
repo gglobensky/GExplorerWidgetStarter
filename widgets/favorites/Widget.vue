@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, nextTick } from '/runtime/vue.js'
+import { ref, computed, nextTick } from 'vue'
 import { 
   useScrollHints, 
   useSnapResize,
@@ -28,13 +28,6 @@ const props = defineProps<{
   editMode?: boolean
 }>()
 
-// Use the sourceId as our bus instance identifier
-let _instanceSeq = 0
-function makeInstanceId(base: string) {
-    _instanceSeq++
-    return `${base}::${Date.now()}_${_instanceSeq}`
-}
-const instanceId = makeInstanceId(props.sourceId)
 
 const emit = defineEmits<{
   (e: 'updateConfig', config: FavoritesConfig | any): void
@@ -83,14 +76,12 @@ const {
   rootRows,
   refreshFavorites,
   refreshRootFolders,
-  broadcastFavoritesChanged,
   findFolderNodeById,
   isRootFolder,
 } = useFavoritesData({
   sourceId: props.sourceId,
   configData: () => cfg.value.data,
   groupValue: () => group.value,
-  instanceId,
 })
 
 // Used only for the "empty" message gate in the template
@@ -189,7 +180,6 @@ const {
 } = useFavoritesDialog({
   refreshFavorites,
   refreshRootFolders: refreshRootFoldersWithMenuSync,
-  broadcastFavoritesChanged,
 })
 
 // --- Drag Visuals (useDragVisuals) -------------------------------------------
@@ -213,7 +203,6 @@ const sortable = useFavoritesSortable({
   lastDropIntent: dragVisuals.lastDropIntent,
   refreshFavorites,
   refreshRootFolders: refreshRootFoldersWithMenuSync,
-  broadcastFavoritesChanged,
   setupGhostForRow: dragVisuals.setupGhostForRow,
   updateGhostPosition: dragVisuals.updateGhostPosition,
   updateInsertBar: dragVisuals.updateInsertBar,

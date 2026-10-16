@@ -1,7 +1,6 @@
 // /src/widgets/favorites/useFavoritesDialog.ts
-import { ref, computed, inject } from '/runtime/vue.js'
+import { ref, computed, inject } from 'vue'
 import {
-  getCurrentPath,
   FavoriteTreeNode,
   type WidgetSdk
 } from 'gexplorer/widgets'
@@ -10,7 +9,6 @@ import { guessLabelFromPath } from './favorites.model'
 export type UseFavoritesDialogOptions = {
   refreshFavorites: () => Promise<void>
   refreshRootFolders: () => Promise<void>
-  broadcastFavoritesChanged: (reason: 'add' | 'remove' | 'move' | 'folder-add' | 'folder-remove' | 'other') => void
 }
 
 export type FolderOption = { id: string; label: string; depth: number }
@@ -26,7 +24,6 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
   const {
     refreshFavorites,
     refreshRootFolders,
-    broadcastFavoritesChanged,
   } = opts
 
   // Dialog state
@@ -82,7 +79,8 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
    * Open the add dialog (prefills with current path)
    */
   function openAddDialog() {
-    const base = getCurrentPath().trim()
+    // The folder you're browsing ('Location' cap in entry.ts)
+    const base = (sdk?.getCurrentPath?.() ?? '').trim()
     addMode.value = 'item'
     newPath.value = base
     newLabel.value = guessLabelFromPath(base)
@@ -124,9 +122,6 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
 
       await refreshFavorites()
 
-      // Notify other favorites widgets
-      broadcastFavoritesChanged(addMode.value === 'folder' ? 'folder-add' : 'add')
-
       closeAddDialog()
     } catch (e: any) {
       console.error('[favorites] addFavorite/addFolder failed:', e)
@@ -154,9 +149,6 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
       // Reload tree + flat favorites so UI is fully in sync
       await refreshRootFolders()
       await refreshFavorites()
-
-      // Notify other favorites widgets
-      broadcastFavoritesChanged('folder-remove')
     } catch (e: any) {
       console.error('[favorites] removeFolder failed:', e)
       error.value = String(e?.message ?? e ?? 'Error')
@@ -174,8 +166,6 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
       // Reload tree + flat favorites so UI is fully in sync
       await refreshRootFolders()
       await refreshFavorites()
-
-      broadcastFavoritesChanged('remove')
     } catch (e: any) {
       console.error('[favorites] removeFavorite failed:', e)
       error.value = String(e?.message ?? e ?? 'Error')

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from '/runtime/vue.js'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { createDragTrigger, useScrollHints, useSnapResize } from 'gexplorer/widgets'
 import type { TooltipOptions } from 'gexplorer/widgets'
 import type { Track } from './usePlayerState'

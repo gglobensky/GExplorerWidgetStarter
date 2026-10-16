@@ -57,5 +57,6 @@ export default {
 		{ cap: 'Read',  reason: 'Reads favorite paths to display them' },
 		{ cap: 'Write', reason: 'Adds and removes favorites' },
 		{ cap: 'Favorites', reason: "Shows and edits your favorites" },
+		{ cap: 'Location', reason: 'Pre-fills the folder you are browsing when you add a favorite' },
 	]
 }

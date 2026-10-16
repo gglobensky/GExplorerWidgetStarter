@@ -1,5 +1,5 @@
 // useKeyboardNav.ts - Keyboard navigation for queue
-import { onMounted, onBeforeUnmount, type Ref } from '/runtime/vue.js '
+import { onMounted, onBeforeUnmount, type Ref } from 'vue'
 import type { Track } from './usePlayerState'
 
 export function useKeyboardNav(

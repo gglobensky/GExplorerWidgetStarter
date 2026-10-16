@@ -33,7 +33,7 @@ Build GEM Shell in Release, start it, then choose **Tree View** in the sidebar, 
 - Keyboard: Up/Down, Left/Right, Home/End, Enter, Space and sibling type-ahead. Home/End refer to loaded rows; Show more is a keyboard-accessible button. Full paths are available as tooltips.
 - The shared `useScrollHints` API supplies small top and bottom paging controls whenever the tree or root chooser overflows. Native vertical scrollbars are hidden. In column view a normal wheel scrolls the hovered column vertically, while horizontal wheel/trackpad input scrolls the columns.
 - In the sidebar, the widget fills the remaining vertical space. Its fixed header and location controls stay visible while only the folder rows scroll.
-- Favorites reload on mount, selector opening and explicit Refresh. Live Follow and special-root integrations remain unavailable; see `API-GAPS.md`.
+- Favorites reload on mount, explicit Refresh, and whenever they change anywhere (the `favorites` host topic). Live Follow is not built yet (the `location` topic it needs exists); special-root integrations remain unavailable; see `API-GAPS.md`.
 
 ## Isolated interaction preview
 
@@ -49,4 +49,4 @@ Toolbar uses the shared horizontal scroll-hint interface in the preview. Browsin
 
 Controller tests exercise identity boundaries, lazy expansion, reopening remembered descendants, bounded pages, watcher disposal, root switching, delayed results, access-denied retry and empty folders. The browser preview exercises the shared UI. These checks do not prove host consent, native icons, real listings or context menus; the Release copy is the next manual integration checkpoint.
 
-The initial current-path snapshot selects its containing root when available. Automatic ancestor revelation and Follow/Browse require additional integration. Junctions/symbolic links are omitted because `link` does not identify whether the target is a directory. Automatic tidying and pinned branches are deferred.
+The folder you're browsing when the tree opens (`sdk.getCurrentPath()`, Location cap) selects its containing root when available. Automatic ancestor revelation and Follow/Browse can be built on the `location` host topic (not done yet). Junctions/symbolic links are omitted because `link` does not identify whether the target is a directory. Automatic tidying and pinned branches are deferred.

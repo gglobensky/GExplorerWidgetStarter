@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from '/runtime/vue.js'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import type { TooltipOptions } from 'gexplorer/widgets'
 
 const props = defineProps<{

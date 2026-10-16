@@ -1,5 +1,5 @@
 // usePlayerState.ts - Core player state and audio rack integration
-import { ref, computed, onMounted, inject } from '/runtime/vue.js '
+import { ref, computed, onMounted, inject } from 'vue'
 import type { WidgetSdk } from 'gexplorer/widgets'
 export type Track = {
     id: string

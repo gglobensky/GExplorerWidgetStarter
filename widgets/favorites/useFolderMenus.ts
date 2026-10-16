@@ -1,5 +1,5 @@
 // /src/widgets/favorites/useFolderMenus.ts
-import { ref, computed } from '/runtime/vue.js'
+import { ref, computed } from 'vue'
 import type { 
   FavoriteTreeNode, 
   FavoriteEntry 
