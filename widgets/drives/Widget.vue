@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount, inject } from 'vue'
+import { ref, computed, watch, onMounted, inject } from 'vue'
 import {
   type DriveSnapshot,
-  subscribeDrives,
+  getDrives,
   WidgetSdk
 } from 'gexplorer/widgets'
 
+const sdk = inject<WidgetSdk>('widgetSdk')
 const { 
   fsDriveStats
-} = inject<WidgetSdk>('widgetSdk') ?? {}
+} = sdk ?? {}
 
 type HostAction = { type: 'nav'; to: string }
 
@@ -23,8 +24,7 @@ const props = defineProps<{
   }
 }>()
 
-const drives = ref<DriveSnapshot[]>([])
-let unsubDrives: (() => void) | null = null
+const drives = ref<DriveSnapshot[]>(getDrives())
 
 const stats = ref(new Map<string, any>())
 
@@ -80,13 +80,16 @@ const S = computed(() => sizeTokens(cfg.value.itemSize))
 
 // Load drive stats
 async function refreshStats() {
+  // Only drives with media: an empty DVD drive has no capacity to read
   const roots = (drives.value || [])
-    .map(d => d.Root || d.root || d.Name || d.name)
+    .filter(d => d.media === 'present')
+    .map(d => d.root)
     .filter(Boolean)
 
   if (!roots.length) return
 
   try {
+    if (!fsDriveStats) return
     const list = await fsDriveStats(roots)
     const m = new Map<string, any>()
     for (const s of list) m.set(s.root, s)
@@ -96,13 +99,16 @@ async function refreshStats() {
   }
 }
 
-onMounted(() => {
-unsubDrives = subscribeDrives(d => {
-    console.log('[drives-widget] callback received:', d.length, d)
-    drives.value = d
-    void refreshStats()
+// The drive list changed (a drive, a disc, a label, the system-partitions setting): the host says so
+sdk?.onHostChange?.('drives', () => {
+  drives.value = getDrives()
+  void refreshStats()
 })
-})
+
+onMounted(() => { void refreshStats() })
+
+/** No disc / media: shown dimmed, nothing to open. */
+function isEmpty(drive: DriveSnapshot) { return drive.media === 'none' }
 
 function navTo(root: string) {
   if (props.runAction && root) {
@@ -118,9 +124,6 @@ function getUsageColor(pct: number | null) {
   return 'rgba(34, 197, 94, 0.3)'                  // Green
 }
 
-onBeforeUnmount(() => {
-  unsubDrives?.()
-})
 </script>
 
 <template>
@@ -133,8 +136,10 @@ onBeforeUnmount(() => {
         v-for="drive in drives"
         :key="drive.root"
         class="drive-pill"
-        :title="`${drive.root}\n${
-          stats.get(drive.root) 
+        :class="{ empty: isEmpty(drive) }"
+        :title="`${drive.display}\n${
+          isEmpty(drive) ? 'No disc'
+          : stats.get(drive.root) 
             ? fmtBytes(stats.get(drive.root).free) + ' free of ' + fmtBytes(stats.get(drive.root).total)
             : 'Loading...'
         }`"
@@ -147,7 +152,7 @@ onBeforeUnmount(() => {
         }"
         @click="navTo(drive.root)"
       >
-        <span class="pill-label">{{  drive.root }}</span>
+        <span class="pill-label">{{ drive.name }}</span>
         <span v-if="stats.get(drive.root)" class="pill-pct">
           {{ fmtPct(stats.get(drive.root).used, stats.get(drive.root).total) }}%
         </span>
@@ -172,14 +177,17 @@ onBeforeUnmount(() => {
         v-for="drive in drives"
         :key="drive.root"
         class="drive-card"
+        :class="{ empty: isEmpty(drive) }"
+        :title="drive.display"
         @click="navTo(drive.root)"
       >
         <div class="drive-header">
-          <div class="drive-name">{{  drive.name || drive.root }}</div>
-          <div v-if="cfg.showFsType" class="drive-fs">{{ drive.FsType || drive.fsType }}</div>
+          <div class="drive-name">{{ drive.display }}</div>
+          <div v-if="cfg.showFsType && drive.fsType" class="drive-fs">{{ drive.fsType }}</div>
         </div>
-        
-        <div v-if="cfg.showCapacity" class="drive-usage">
+
+        <div v-if="isEmpty(drive)" class="drive-empty">No disc</div>
+        <div v-else-if="cfg.showCapacity" class="drive-usage">
           <div class="usage-bar">
             <div 
               class="usage-fill" 
@@ -239,6 +247,17 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   height: fit-content;
   line-height: 1.2;
+}
+
+.drive-pill.empty,
+.drive-card.empty {
+  opacity: 0.55;
+}
+
+.drive-empty {
+  font-size: 0.85em;
+  opacity: 0.8;
+  font-style: italic;
 }
 
 .drive-pill:hover {

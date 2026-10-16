@@ -24,6 +24,7 @@
 import { ref, shallowRef, computed, watch, onMounted, onBeforeUnmount, nextTick, inject } from 'vue'
 import {
   getEntryStyle,
+  getDrives,
   ensureIconsFor,
   createMarqueeDriver,
   createListSelection,
@@ -289,6 +290,22 @@ function openDirNow(path: string) {
 function refresh(opts?: { user?: boolean }) {
   source.value?.refresh(opts)
 }
+
+/* -----------------------------------------------
+   Empty drive
+   A drive with no disc / media (E_NO_MEDIA) is read again when the host says
+   its media arrived (the 'drives' host topic): inserting the disc is enough.
+------------------------------------------------ */
+function driveRootOf(path: string): string {
+  const m = /^([A-Za-z]:)/.exec(path)
+  return m ? m[1].toUpperCase() : ''
+}
+sdk?.onHostChange?.('drives', () => {
+  const s = listing.snapshot.value
+  if (s.status !== 'error' || s.error?.code !== 'E_NO_MEDIA') return
+  const root = driveRootOf(cwd.value)
+  if (root && getDrives().some(d => d.name.toUpperCase() === root && d.media === 'present')) refresh()
+})
 
 /* -----------------------------------------------
    Folder gone
@@ -1053,6 +1070,15 @@ async function openEntry(e: ListingEntry) {
   const FullPath = e.FullPath
   if (!FullPath) return
   try {
+    // A folder link whose folder is gone: the link itself exists (fsValidate says so), so ask
+    // where it points before opening it (opening it would only fail).
+    if (e.Kind === 'link' && e.LinkTarget === 'dir' && sdk?.fsLinkTarget) {
+      const l = await sdk.fsLinkTarget(FullPath).catch(() => null)
+      if (l?.isLink && l.targetExists === false) {
+        showSnack({ id: 'items-missing', text: `"${e.Name}" is a link to a folder that no longer exists${l.target ? ` (${l.target})` : ''}.`, timeoutMs: 6000, dedupe: 'replace' })
+        return
+      }
+    }
     const v = await fsValidate!(FullPath)
     if (v?.ok && v.exists === false) {
       // Renamed or deleted since the listing was read.
@@ -1446,6 +1472,8 @@ const statusText = computed(() => {
     switch (s.error?.code) {
       case 'E_ACCESS_DENIED': return 'Access to this folder was denied. Refresh (right-click → Refresh) to ask for access again.'
       case 'E_NOT_FOUND': return 'This folder no longer exists.'
+      case 'E_NO_MEDIA': return 'No disc in this drive. Insert one: it opens by itself.'
+      case 'E_LINK_BROKEN': return 'This link points to a folder that no longer exists.'
       default: return s.error?.message || 'The folder could not be read.'
     }
   }

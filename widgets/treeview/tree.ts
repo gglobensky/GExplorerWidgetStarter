@@ -27,6 +27,8 @@ export type TreeMemory = { active: string; roots: Record<string, RootState>; rec
 export interface RootSource {
   open(path: string, options?: { consent?: boolean }): ListingSource
   navigate(path: string): void
+  /** Where a folder link points, and whether it exists (sdk.fsLinkTarget): the link tooltip. */
+  linkTarget?(path: string): Promise<{ target: string | null; targetExists: boolean | null } | null>
 }
 export const newState = (): RootState => ({ expanded: [], selected: '', focus: '', scroll: 0 })
 export const newMemory = (): TreeMemory => ({ active: '', roots: {}, recent: [] })
@@ -50,7 +52,7 @@ export function minimizeOthers(expanded: string[], branch: string): string[] {
   return expanded.filter(path => within(path, branch) || within(branch, path))
 }
 
-export type Node = { path: string; name: string; children: Node[]; total: number; status: 'loading' | 'ready' | 'error'; error: string; version: number; limit: number; loadingMore: boolean }
+export type Node = { path: string; name: string; link?: boolean; children: Node[]; total: number; status: 'loading' | 'ready' | 'error'; error: string; version: number; limit: number; loadingMore: boolean }
 type Session = { node: Node; source: ListingSource; off: () => void; request: number; loadedVersion: number }
 export type TreeRow = { id: string; node: Node; depth: number; parent: string; type: 'node' | 'loading' | 'error' | 'more' | 'empty'; pos?: number; size?: number }
 
@@ -69,8 +71,8 @@ export class TreeController {
     this.root = this.makeNode(path, label(path))
     this.open(this.root)
   }
-  private makeNode(path: string, name: string): Node {
-    return { path, name, children: [], total: 0, status: 'loading', error: '', version: -1, limit: this.state.limits?.[key(path)] || 80, loadingMore: false }
+  private makeNode(path: string, name: string, link = false): Node {
+    return { path, name, link, children: [], total: 0, status: 'loading', error: '', version: -1, limit: this.state.limits?.[key(path)] || 80, loadingMore: false }
   }
   isExpanded(path: string) { return this.state.expanded.some(p => key(p) === key(path)) }
   private live(s: Session) { return this.sessions.get(key(s.node.path)) === s }
@@ -114,8 +116,10 @@ export class TreeController {
       const old = new Map(s.node.children.map(n => [key(n.path), n]))
       s.node.children = entries.map(entry => {
         const existing = old.get(key(entry.FullPath))
-        if (existing) { existing.name = entry.Name; return existing }
-        return this.makeNode(entry.FullPath, entry.Name)
+        // Folder links (junctions, directory symlinks) are listed with the folders (kinds 'dirLink')
+        const link = entry.Kind === 'link' && entry.LinkTarget === 'dir'
+        if (existing) { existing.name = entry.Name; existing.link = link; return existing }
+        return this.makeNode(entry.FullPath, entry.Name, link)
       })
       const retained = new Set(s.node.children.map(n => key(n.path)))
       for (const node of old.values()) if (!retained.has(key(node.path))) this.closeBranch(node.path)

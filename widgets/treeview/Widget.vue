@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { getDrives, subscribeDrives, iconFor, ensureIconsFor, startRename } from 'gexplorer/widgets'
+import { getDrives, iconFor, ensureIconsFor, startRename } from 'gexplorer/widgets'
 import type { DriveStats, FavoriteTreeNode, HostAction, WidgetMenuItemMessage, WidgetSdk } from 'gexplorer/widgets'
 import TreePanel from './TreePanel.vue'
 import TreeToolbar from './TreeToolbar.vue'
@@ -24,7 +24,7 @@ const available = computed(() => !life || life.visibility.value !== 'collapsed')
 const roots = computed<Root[]>(() => {
   const folders: Root[] = [...drives.value.map(d => {
     const capacity = driveStats.value[key(d.root)]
-    return { id: `drive:${key(d.root)}`, label: d.name || d.root, path: d.root, group: 'Files', kind: 'folder' as const, capacity }
+    return { id: `drive:${key(d.root)}`, label: d.display || d.root, path: d.root, group: 'Files', kind: 'folder' as const, capacity }
   }),
     ...(props.config?.data?.folders || []).map(f => ({ id: `folder:${key(f.path)}`, label: f.label, path: f.path, group: 'Files', kind: 'folder' as const })), ...temporary.value]
   return [...folders.filter((r, i) => folders.findIndex(f => key(f.path) === key(r.path)) === i), ...favorites.value]
@@ -33,7 +33,8 @@ function report(message: string) { error.value = message }
 const source: RootSource = {
   open(path, options) {
     if (!sdk?.openListing) throw new Error('Folder listing access is unavailable. Check the widget’s Read permission.')
-    const source = sdk.openListing(path, { filter: { kinds: ['dir'] }, sort: { key: 'name', dir: 'asc', foldersFirst: true }, consent: options?.consent })
+    // Folders and folder links (junctions, directory symlinks); file links stay out
+    const source = sdk.openListing(path, { filter: { kinds: ['dir', 'dirLink'] }, sort: { key: 'name', dir: 'asc', foldersFirst: true }, consent: options?.consent })
     // Keep the source's own methods and receiver intact; prepare icons only for requested rows.
     const rows = source.rows.bind(source)
     source.rows = async (...args) => {
@@ -48,13 +49,21 @@ const source: RootSource = {
     if (!props.runAction) { report('Navigation is not available in this host.'); throw new Error('Navigation unavailable') }
     props.runAction({ type: 'nav', to: path })
   },
+  async linkTarget(path) {
+    if (!sdk?.fsLinkTarget) return null
+    try {
+      const r = await sdk.fsLinkTarget(path)
+      return r.isLink ? { target: r.target, targetExists: r.targetExists } : null
+    } catch { return null }
+  },
 }
 function folderIcon(path: string) { void iconTick.value; return iconFor({ iconKey: iconKeys.get(key(path)), kind: 'dir' }, 18) }
 let favoriteRequest = 0, disposed = false
 let driveStatsRequest = 0
 async function refreshDriveStats() {
   const request = ++driveStatsRequest
-  const paths = drives.value.map(drive => drive.root)
+  // Only drives with media: an empty DVD drive has no capacity to read
+  const paths = drives.value.filter(drive => drive.media === 'present').map(drive => drive.root)
   if (!paths.length || !sdk?.fsDriveStats) { driveStats.value = {}; return }
   try {
     const stats = await sdk.fsDriveStats(paths)
@@ -189,12 +198,10 @@ function onMenuItem(message: WidgetMenuItemMessage) {
 defineExpose({ onMenuItem })
 // Favorites changed anywhere (this widget, the Favorites widget, the shell): the host tells us.
 sdk?.onHostChange?.('favorites', () => void refreshFavorites())
-// TEMP (2026-10-15, location topic test): remove after testing
-sdk?.onHostChange?.('location', e => console.log('[treeview] location', e.locator, e.cause, e.own ? 'own' : '', e.rev))
-sdk?.onHostChange?.('clipboard', e => console.log('[treeview] clipboard changed', e.rev))
-let offDrives: (() => void) | undefined
-onMounted(() => { offDrives = subscribeDrives(value => { drives.value = value; void refreshDriveStats() }); void refreshRoots() })
-onBeforeUnmount(() => { disposed = true; favoriteRequest++; driveStatsRequest++; offDrives?.() })
+// The drive list changed (a drive, a disc, a label, the system-partitions setting)
+sdk?.onHostChange?.('drives', () => { drives.value = getDrives(); void refreshDriveStats() })
+onMounted(() => { void refreshRoots() })
+onBeforeUnmount(() => { disposed = true; favoriteRequest++; driveStatsRequest++ })
 </script>
 
 <template>

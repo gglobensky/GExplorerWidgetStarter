@@ -9,6 +9,8 @@
 .tv-root { min-width:0; display:flex; flex:1; gap:8px; align-items:center; height:30px; text-align:left; border-radius:4px; }
 .tv-root>span:nth-child(2) { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; }
 .tv-root-icon,.tv-folder { color:var(--tv-accent); font-size:19px; flex:none; }
+/* A folder link (junction / directory symlink): the tooltip says where it points */
+.tv-link { flex:none; margin-left:4px; font-size:11px; opacity:.65; }
 .tv-chevron { margin-left:auto; }
 .tv-tool { width:28px; height:30px; flex:none; font-size:17px!important; border-radius:4px; }
 .tv-grid-context .tv-tool { width:34px; height:34px; font-size:19px!important; }

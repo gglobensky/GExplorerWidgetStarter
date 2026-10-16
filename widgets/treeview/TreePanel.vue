@@ -200,14 +200,41 @@ function driveUsed(r: Root) {
   const total = r.capacity?.total, free = r.capacity?.free
   return total && free !== undefined ? `${Math.max(0, Math.min(100, (total - free) / total * 100))}%` : '0%'
 }
+// Folder links: where each points, asked once when hovered (sdk.fsLinkTarget through source.linkTarget)
+type LinkInfo = { status: 'loading' } | { status: 'ready'; target: string | null; exists: boolean | null }
+const linkInfo = ref<Record<string, LinkInfo>>({})
+function probeLink(node: Node) {
+  if (!node.link || !props.source.linkTarget) return
+  const id = key(node.path)
+  if (linkInfo.value[id]) return
+  linkInfo.value = { ...linkInfo.value, [id]: { status: 'loading' } }
+  void props.source.linkTarget(node.path).then(r => {
+    linkInfo.value = { ...linkInfo.value, [id]: { status: 'ready', target: r?.target ?? null, exists: r?.targetExists ?? null } }
+  })
+}
+function linkLine(node: Node): string {
+  const info = linkInfo.value[key(node.path)]
+  if (!info || info.status === 'loading' || !info.target) return 'Link'
+  if (info.exists === false) return `Link to a folder that no longer exists: ${info.target}`
+  // A junction to an ancestor: expanding it shows the same folders again, one level deeper
+  if (within(node.path, info.target)) return `Link to a folder above it: ${info.target}`
+  return `Link to ${info.target}`
+}
+/** A folder link whose folder is gone (known once hovered). */
+function isBrokenLink(node: Node): boolean {
+  const info = linkInfo.value[key(node.path)]
+  return !!node.link && info?.status === 'ready' && info.exists === false
+}
 function folderTip(node: Node) {
+  // Nothing to count behind a broken link
+  if (isBrokenLink(node)) return { content: node.name, detail: `${linkLine(node)} · ${node.path}` }
   const known = node.version >= 0 ? { status: 'ready' as const, total: node.total } : hoverCounts.value[key(node.path)]
   let count = 'Hover to count subfolders'
   if (known?.status === 'loading') count = 'Counting subfolders…'
   else if (known?.status === 'error' && /access denied|elevat|administrator/i.test(known.error || '')) count = 'Needs elevated access'
   else if (known?.status === 'error') count = known.error ? `Could not count subfolders: ${known.error}` : 'Subfolder count unavailable'
   else if (known?.status === 'ready') count = known.total === 0 ? 'No subfolders' : `${known.total?.toLocaleString()} ${known.total === 1 ? 'subfolder' : 'subfolders'}`
-  return { content: node.name, detail: `${count} · ${node.path}` }
+  return { content: node.name, detail: `${node.link ? `${linkLine(node)} · ` : ''}${count} · ${node.path}` }
 }
 function finishCountProbe(id: string, result?: { status: 'ready'; total: number } | { status: 'error'; error: string }) {
   const probe = countProbes.get(id)
@@ -218,12 +245,14 @@ function finishCountProbe(id: string, result?: { status: 'ready'; total: number 
   else { const next = { ...hoverCounts.value }; delete next[id]; hoverCounts.value = next }
 }
 function beginCountProbe(node: Node) {
+  probeLink(node)
   const id = key(node.path)
   if (node.version >= 0 || hoverCounts.value[id]?.status === 'ready' || countProbes.has(id)) return
   hoverCounts.value = { ...hoverCounts.value, [id]: { status: 'loading' } }
   const probe: CountProbe = {}
   probe.timer = setTimeout(() => {
     probe.timer = undefined
+    if (isBrokenLink(node)) { finishCountProbe(id); return }
     try {
       const source = props.source.open(node.path, { consent: false })
       probe.source = source
@@ -464,7 +493,7 @@ defineExpose({ choose, focusFolder, command, exitFocus, reveal, showCreated, roo
           <div v-for="(row, i) in visible" :id="`${treeId}-row-${start + i}`" :key="row.id" class="tv-row" :class="{ 'tv-selected': state?.selected && key(state.selected) === key(row.node.path) && row.type === 'node', 'tv-keyboard': focused && key(focused) === key(row.node.path) && row.type === 'node', 'tv-spine': state?.selected && within(state.selected, row.node.path) && row.type === 'node', 'tv-status': row.type !== 'node' }" :style="{ top: `${(start + i) * 30}px`, paddingLeft: `${Math.min(row.depth - 1, 7) * 14 + 4}px` }" :role="row.type === 'node' ? 'treeitem' : undefined" :aria-level="row.type === 'node' ? row.depth : undefined" :aria-expanded="row.type === 'node' ? controller.isExpanded(row.node.path) : undefined" :aria-selected="row.type === 'node' ? key(state?.selected || '') === key(row.node.path) : undefined" :aria-posinset="row.pos" :aria-setsize="row.size" :aria-busy="row.type === 'node' && controller.isExpanded(row.node.path) && row.node.status === 'loading' ? true : undefined" @contextmenu.prevent="emit('menu', $event, row.node.path, 'tree')">
             <template v-if="row.type === 'node'">
               <button class="tv-disclosure" tabindex="-1" :aria-label="narrow ? `Show ${row.node.name}` : `${controller.isExpanded(row.node.path) ? 'Collapse' : 'Expand'} ${row.node.name}`" @click="toggle(row)">{{ narrow ? '›' : controller.isExpanded(row.node.path) ? '⌄' : '›' }}</button>
-              <button class="tv-name" tabindex="-1" :data-rename-id="row.node.path" :data-rename-value="row.node.name" :data-widget-id="widgetId || undefined" v-gex-tooltip="folderTip(row.node)" @mouseenter="beginCountProbe(row.node)" @mouseleave="endCountProbe(row.node)" @focus="beginCountProbe(row.node)" @blur="endCountProbe(row.node)" @click="navigate(row.node.path); scroll?.focus()"><img v-if="imageIcon(row.node.path)" :src="icon(row.node.path)" alt="" /><span v-else class="tv-folder">{{ icon(row.node.path) || '▱' }}</span><span>{{ row.node.name }}</span></button>
+              <button class="tv-name" tabindex="-1" :data-rename-id="row.node.path" :data-rename-value="row.node.name" :data-widget-id="widgetId || undefined" v-gex-tooltip="folderTip(row.node)" @mouseenter="beginCountProbe(row.node)" @mouseleave="endCountProbe(row.node)" @focus="beginCountProbe(row.node)" @blur="endCountProbe(row.node)" @click="navigate(row.node.path); scroll?.focus()"><img v-if="imageIcon(row.node.path)" :src="icon(row.node.path)" alt="" /><span v-else class="tv-folder">{{ icon(row.node.path) || '▱' }}</span><span>{{ row.node.name }}</span><span v-if="row.node.link" class="tv-link" aria-label="(link)">↗</span></button>
             </template>
             <template v-else-if="row.type === 'error'"><span :title="row.node.error">{{ row.node.error }}</span><button @click="controller.retry(row.node)">Retry</button></template>
             <template v-else-if="row.type === 'more'"><button :disabled="row.node.loadingMore" @click="controller.more(row.node)">{{ row.node.loadingMore ? 'Loading…' : `Show more (${row.node.children.length} of ${row.node.total})` }}</button></template>

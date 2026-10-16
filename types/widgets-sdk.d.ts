@@ -27,6 +27,11 @@ declare module 'gexplorer/widgets' {
             isDir?: boolean
             error?: string
         }>
+        /**
+         * Where the junction / symbolic link at `path` points (one level, as Explorer shows it), and
+         * whether the target exists. Reads the link only: never a prompt. Not .lnk shortcuts.
+         */
+        fsLinkTarget?: (path: string) => Promise<{ isLink: boolean; target: string | null; targetExists: boolean | null; targetIsDir: boolean }>
 
         configRead?: <T = any>(name: string) => Promise<T | null>
         configWrite?: (name: string, data: any) => Promise<void>
@@ -176,6 +181,7 @@ declare module 'gexplorer/widgets' {
          *     sdk.onHostChange?.('location', e => reveal(e.locator))
          * - 'clipboard' (Clipboard cap): the OS clipboard changed, whichever app changed it; never
          *   its contents (read them with clipboardGetFiles if you care, e.g. to fade cut rows).
+         * - 'drives' (no capability): the drive list changed; read getDrives().
          * Every event has rev (a per-topic counter, to drop stale async reads).
          * Throws without the topic's capability. Released when the widget unmounts (the returned
          * function stops earlier). Several changes within a frame arrive as one event.
@@ -828,11 +834,26 @@ declare module 'gexplorer/widgets' {
 
     // ── Drives ─────────────────────────────────────────────────────────────
 
+    export type DriveType = 'fixed' | 'removable' | 'floppy' | 'optical' | 'network' | 'ram' | 'unknown'
+    export type DriveMedia = 'present' | 'none' | 'unknown'
+    export type DriveRole = 'data' | 'system' | 'policy-hidden'
+
     export type DriveSnapshot = {
+        /** "E:\" */
         root: string
+        /** "E:" */
         name: string
-        fsType: string
-        kind: string
+        /** The volume's name, when it has one and the drive is ready. */
+        label?: string
+        /** What to show: "Backup (E:)", or "E:" without a label. */
+        display: string
+        fsType?: string
+        type: DriveType
+        /** present | none (an empty DVD drive / card reader) | unknown (a floppy: not probed until opened) */
+        media: DriveMedia
+        ready: boolean
+        /** data, or system when the user shows system partitions (getDrives never returns policy-hidden ones) */
+        role: DriveRole
     }
 
     // ── Favorites ──────────────────────────────────────────────────────────
@@ -919,8 +940,11 @@ declare module 'gexplorer/widgets' {
         guiOnly?: boolean
         /** Include hidden entries (Hidden attribute on Windows, dot-names elsewhere). Default false. */
         showHidden?: boolean
-        /** Keep only these kinds (a folder junction / symlink is a 'link'). Default: all. */
-        kinds?: Array<'dir' | 'file' | 'link'>
+        /**
+         * Keep only these kinds. Default: all. 'link': every link; 'dirLink': folder links only
+         * (junctions, directory symlinks). A folder tree asks ['dir', 'dirLink'].
+         */
+        kinds?: Array<'dir' | 'file' | 'link' | 'dirLink'>
     }
     export interface ListingEntry {
         Name: string
@@ -932,6 +956,11 @@ declare module 'gexplorer/widgets' {
         ModifiedAt: number | null
         IconKey: string
         Hidden: boolean
+        /**
+         * Links only: 'dir' (a junction / directory symlink: opens as a folder) or 'file' (a file
+         * symlink, a .lnk shortcut). Whether the target still exists: fsLinkTarget(path).
+         */
+        LinkTarget?: 'dir' | 'file'
         [extra: string]: any
     }
     export type ListingStatus = 'loading' | 'ready' | 'error' | 'closed'
@@ -1297,7 +1326,7 @@ declare module 'gexplorer/widgets' {
     // the host binds them to your widget.
 
     // Host change topics (sdk.onHostChange)
-    export type HostTopic = 'favorites' | 'location' | 'clipboard'
+    export type HostTopic = 'favorites' | 'location' | 'clipboard' | 'drives'
     /** Why the location changed. */
     export type NavCause = 'navigate' | 'back' | 'forward' | 'focus' | 'tab' | 'restore'
     export type HostTopicPayloads = {
@@ -1311,6 +1340,8 @@ declare module 'gexplorer/widgets' {
         }
         /** The OS clipboard changed (any app). Read it through the clipboard API if you care. */
         clipboard: Record<string, never>
+        /** The drive list changed (a drive, a disc, a label, the system-partitions setting): getDrives(). */
+        drives: Record<string, never>
     }
     export type HostChangeEvent<T extends HostTopic = HostTopic> =
         HostTopicPayloads[T] & { topic: T; rev: number }
@@ -1319,7 +1350,7 @@ declare module 'gexplorer/widgets' {
         ignoreOwn?: boolean
     }
 
-    export function subscribeDrives(callback: (drives: DriveSnapshot[]) => void): () => void
+    /** The drives to show (free). Changes: sdk.onHostChange('drives', () => ...). */
     export function getDrives(): DriveSnapshot[]
 
     // Favorites: through the SDK (getFavorites, addFavorite...: 'Favorites' cap).
