@@ -56,6 +56,7 @@ export default {
     api:     '1.0',
     id:      'items',
     version: '0.3.1',
+    license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     // Takes files and folders anywhere in the pane (dropped on a folder row: into
     // that folder). Moves them (Shift / Ctrl choice: backlog). See the host's

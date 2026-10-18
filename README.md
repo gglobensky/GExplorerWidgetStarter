@@ -3,6 +3,15 @@
 Widgets for GEM Shell (GExplorer), built against the public widget SDK (`gexplorer/widgets`,
 typed in `types/widgets-sdk.d.ts`).
 
+## Licence
+
+Source-available, free for noncommercial use: the PolyForm Noncommercial License 1.0.0
+(`LICENSE.md`), with an additional permission (`ADDITIONAL-PERMISSION.md`): you may accept
+donations, sponsorships or memberships (such as Patreon) for your work on software made with this
+code, as long as that software stays free of charge for everyone. Selling it, charging for access
+to it, or limiting it to paying supporters is commercial use, which the licence does not allow.
+Each widget declares the licence in its `entry.ts` (`license`).
+
 ## Layout
 
 ```
@@ -50,3 +59,12 @@ Then build GEM Shell in Release: it ships everything in `public/runtime-widgets`
 
 Create `widgets/<type>/entry.ts` with `id: '<type>'` (lowercase letters, digits and dashes) and
 copy a `tsconfig.json` from another widget. `npm run build -- <type>` finds it.
+
+## Credits and licences
+
+GEM Shell's About page (Settings → About GEM Shell → Widgets) lists every widget with what its
+`entry.ts` declares: `license` (the widget's own, an SPDX id), `about` (Markdown) and `credits`
+(`{ name, text?, url?, logo? }`: data sources, services, artwork; `text` is Markdown). The types
+and limits are `WidgetCreditsDeclaration` in `types/widgets-sdk.d.ts`. The build adds `notices`
+itself: the licence of every npm package bundled into `index.js` (`tools/notices.mjs`), and warns
+about a package with no licence or no LICENSE file.

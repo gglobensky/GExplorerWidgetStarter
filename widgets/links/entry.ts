@@ -5,6 +5,7 @@ export default {
   api: '1.0',
   id: 'links',
   version: '1.0.0',
+  license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
   
   contexts: {

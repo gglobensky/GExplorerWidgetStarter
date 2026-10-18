@@ -14,6 +14,9 @@
 // by the JS, assets and lazy imports inlined (GEM Shell's identity hash covers that file: a widget
 // is exactly what was approved). vue and gexplorer/widgets are not bundled: the shell provides
 // them at run time (/runtime/vue.js).
+// NOTICES (2026-10-16, tools/notices.mjs): the built definition carries `notices`, the licence of
+// every npm package bundled into index.js (with its LICENSE / NOTICE text), for GEM Shell's About
+// page; the entry's own `notices` (code copied in by hand) are kept first.
 //
 // INSTALL (unless --no-install): the bundle is copied to GEM Shell's
 // UserInterface/public/runtime-widgets/<type>/ (that folder then holds exactly index.js) and the
@@ -30,6 +33,7 @@ import crypto from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
+import { widgetNotices, wrapperEntry } from './notices.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const WIDGETS = path.join(ROOT, 'widgets')
@@ -228,7 +232,7 @@ async function build(type, { watch = false, install: doInstall = true, sourcemap
         root: ROOT,
         clearScreen: false,
         logLevel: 'info',
-        plugins: [vue(), cssInjectedByJs(), output],
+        plugins: [widgetNotices({ widgetDir: dir, warn: (m) => log(`${type}: ${m}`) }), vue(), cssInjectedByJs(), output],
         define: { 'process.env.NODE_ENV': JSON.stringify('production') },
         build: {
             target: 'es2020',
@@ -239,7 +243,7 @@ async function build(type, { watch = false, install: doInstall = true, sourcemap
             minify: 'esbuild',
             sourcemap: sourcemap ? 'inline' : false,
             assetsInlineLimit: 100 * 1024 * 1024,
-            lib: { entry: path.join(dir, 'entry.ts'), formats: ['es'], fileName: () => 'index.js' },
+            lib: { entry: wrapperEntry(dir), formats: ['es'], fileName: () => 'index.js' },
             rollupOptions: {
                 external: ['vue', 'gexplorer/widgets'],
                 output: {

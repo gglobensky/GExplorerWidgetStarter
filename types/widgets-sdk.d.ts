@@ -1495,6 +1495,58 @@ declare module 'gexplorer/widgets' {
         assets?: { mb: number; reason?: string }
     }
 
+    // ── Credits (entry.ts license / about / credits / notices) ────────────
+    // Shown on GEM Shell's About page (Settings → About GEM Shell → Widgets). Part of the bundle,
+    // so the identity hash covers them. A malformed entry is left out (console error), the widget
+    // still loads. Markdown is GEM Shell's safe subset: headings, paragraphs, lists, quotes, code,
+    // tables, **bold** *italic* ~~struck~~ `code`, [links](https://…); no HTML, no images. Links
+    // open only after the user agrees.
+    //
+    //   import tmdbLogo from './assets/tmdb.png'
+    //   export default {
+    //     id: 'media-library', …,
+    //     license: 'MIT',
+    //     about: 'Browse your movies on video-store shelves. [Source](https://github.com/…)',
+    //     credits: [{ name: 'TMDB', url: 'https://www.themoviedb.org', logo: tmdbLogo,
+    //                 text: 'This product uses the TMDB API but is not endorsed or certified by TMDB.' }],
+    //   }
+    //
+    // `notices` is written by the widget build (one per npm package bundled, with its licence
+    // text); entries an author adds (code copied in by hand) are kept before them.
+    export type WidgetCredit = {
+        /** At most 120 characters. */
+        name: string
+        /** Markdown, at most 8000 characters. */
+        text?: string
+        /** https only. */
+        url?: string
+        /** An imported PNG or JPEG (a data: URL once built), at most about 256 KB. */
+        logo?: string
+    }
+
+    export type WidgetNotice = {
+        name: string
+        version?: string
+        /** SPDX id or expression. */
+        license: string
+        url?: string
+        /** The licence text, verbatim (shown as plain text). */
+        text?: string
+        /** A NOTICE file, verbatim. */
+        notice?: string
+    }
+
+    /** entry.ts fields about the widget and the work it uses. */
+    export type WidgetCreditsDeclaration = {
+        /** The widget's own licence: an SPDX id or expression ('MIT', 'Apache-2.0'). */
+        license?: string
+        /** Markdown, at most 20000 characters: what the widget is, its author, its links. */
+        about?: string
+        /** At most 24. */
+        credits?: WidgetCredit[]
+        notices?: WidgetNotice[]
+    }
+
     // ── Host actions (props.runAction) ────────────────────────────────────
     // The host passes runAction to every widget. setView merges a patch into
     // the widget's view config; the parent persists it like a layout change
@@ -1966,6 +2018,34 @@ declare module 'gexplorer/widgets' {
          * <video>'s own) does the same without a call.
          */
         quietMode(): () => void
+        /**
+         * THE FILES WIDGET ONLY (other widgets get false: they take part through "Open with").
+         * The shell's Create link dialog, prefilled with what the widget suggests: the user checks it and
+         * creates the link, or not. Widgets never write links themselves. Saved on the Desktop by default
+         * (the user can choose another place). Resolves true when something was created; false when
+         * cancelled, or at once when the widget is not on screen. Where it was saved is not told.
+         *   await ui.createLink({ targets: [song.path], name: song.title })
+         *   await ui.createLink({ url: 'https://www.themoviedb.org/movie/603', name: 'The Matrix on TMDB' })
+         */
+        createLink(prefill?: WidgetCreateLinkPrefill): Promise<boolean>
+        /**
+         * THE FILES WIDGET ONLY. After a 'dnd:drop' with link: true (Alt held): shortcuts in <folder> to the
+         * items just dropped on this instance (the host's copy of the drop; once, within seconds).
+         * Resolves with the number made.
+         */
+        createLinksFromDrop(folder: string): Promise<number>
+    }
+
+    /** What sdk.ui().createLink suggests: targets (full paths, one link each, at most 20) or a web address. */
+    export type WidgetCreateLinkPrefill = {
+        targets?: string[]
+        /** http / https only. */
+        url?: string
+        name?: string
+        /** A program's arguments (shown in the dialog's command preview before anything is created). */
+        arguments?: string
+        /** The shortcut's comment. */
+        description?: string
     }
 
     /** A "Type" choice of a file dialog: extensions without the dot ('mp3'). */

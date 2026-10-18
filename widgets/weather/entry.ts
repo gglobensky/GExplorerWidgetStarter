@@ -4,6 +4,7 @@ export default {
   api: '1.0',
   id: 'weather',
   version: '1.2.6',
+  license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
   
   // Grid-first; sidebar uses the responsive layout. Toolbar support is deferred.

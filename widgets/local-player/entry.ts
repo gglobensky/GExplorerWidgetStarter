@@ -11,6 +11,7 @@ export default {
     api:     '1.0',
     id:      'local-player',
     version: '1.0.0',
+    license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
 
     // ── Instance ─────────────────────────────────────────────────────────────

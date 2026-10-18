@@ -13,6 +13,11 @@
 // them), folder targets are read from the row element (data-kind), and
 // refreshes go through the listing (`refresh`).
 //
+// Right-drag (2026-10-17): the host asks at the drop (Move / Copy / Create shortcuts here) and
+// reports copy: true / link: true.
+// Alt-drop (2026-10-17): the host reports link: true; shortcuts to the dropped items are made
+// in the folder dropped on (ui.createLinksFromDrop: the host uses its own copy of the drop).
+//
 // L5c: a large selection is dragged as a reference ('gex/file-selection':
 // SelectionRef + count + a sample): the backend builds the OS drag data from
 // it and a drop here moves it with fsTransfer, so no paths cross IPC.
@@ -106,7 +111,9 @@ function findFolderTarget(startEl: Element | null): string | null {
 export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDragDropReturn {
     const { sourceId, messaging, cwd, merged, marqueeActive, dragSource, refresh } = options
     // startNativeDrag: the SDK's, which says which widget drags (sandbox C3b).
-    const { fsMove, fsTransfer, resolveDropRefs, startNativeDrag, authorizeFileRefs } = inject<WidgetSdk>('widgetSdk') ?? {}
+    const sdk = inject<WidgetSdk>('widgetSdk')
+    const { fsMove, fsCopy, fsTransfer, resolveDropRefs, startNativeDrag, authorizeFileRefs } = sdk ?? {}
+    const ui = sdk?.ui?.()
     const { send, on } = messaging
 
     const isDragging       = ref(false)
@@ -134,7 +141,8 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
 
     // ── Drop execution ─────────────────────────────────────────────────────────
 
-    async function executeDrop(payload: GexDnDPayload, x: number, y: number) {
+    /** op: 'copy' when chosen in the right-drag menu ("Copy here"); otherwise a move. */
+    async function executeDrop(payload: GexDnDPayload, x: number, y: number, op: 'move' | 'copy' = 'move') {
         console.log('[items] executeDrop called', {
             payloadType: payload.type,
             srcId: payload.source?.widgetId,
@@ -167,9 +175,9 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
                 const data = payload.data as FileSelectionData
                 if (normalizeDir(data.dir) === destNorm) return
                 if (!fsTransfer) return
-                await fsTransfer('move', data.selection, data.dir, target, data.count)
+                await fsTransfer(op, data.selection, data.dir, target, data.count)
                 refresh()
-                if (srcId && srcId !== sourceId) send(srcId, 'fs:refresh-after-drop', { kind: 'fs.move', target })
+                if (srcId && srcId !== sourceId && op === 'move') send(srcId, 'fs:refresh-after-drop', { kind: 'fs.move', target })
                 return
             }
 
@@ -193,11 +201,12 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
             // copied transparently; physical sources are moved as normal.
             // `to` is the full destination path (folder + name); a vault
             // target (scheme://) still takes the folder: the vault names it.
-            await fsMove?.(sources.map(from => ({ from, to: isVfsPath(target) ? target : joinDir(target, leafName(from)) })))
+            const items = sources.map(from => ({ from, to: isVfsPath(target) ? target : joinDir(target, leafName(from)) }))
+            await (op === 'copy' ? fsCopy : fsMove)?.(items)
             refresh()
 
             // Notify source widget to refresh if cross-widget move
-            if (srcId && srcId !== sourceId) {
+            if (srcId && srcId !== sourceId && op === 'move') {
                 send(srcId, 'fs:refresh-after-drop', { kind: 'fs.move', target })
             }
             
@@ -209,10 +218,19 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
     // ── Receive drops from global dispatcher ───────────────────────────────────
 
     on('dnd:drop', async (msg: any) => {
-        const { x, y, data: payload } = msg.payload
+        const { x, y, data: payload, link, copy } = msg.payload
         isDropActive.value    = true
         folderDropTarget.value = findFolderTarget(document.elementFromPoint(x, y))
-        await executeDrop(payload, x, y)
+        if (link) {
+            // Alt held: shortcuts in the folder under the cursor (or this one), nothing moved.
+            const target = folderDropTarget.value ?? cwd.value ?? merged.value?.rpath ?? ''
+            if (target && !isVfsPath(target) && ui?.createLinksFromDrop) {
+                try { if (await ui.createLinksFromDrop(target)) refresh() }
+                catch (err) { console.error('[items] link drop failed:', err) }
+            }
+        } else {
+            await executeDrop(payload, x, y, copy ? 'copy' : 'move')
+        }
         resetDragState()
         isDropActive.value    = false
         folderDropTarget.value = null
@@ -242,7 +260,8 @@ export function useItemsDragDrop(options: UseItemsDragDropOptions): UseItemsDrag
 
     function onItemPointerDown(entry: any, ev: PointerEvent) {
         console.log('[items-dnd] onItemPointerDown called', { entry: entry.Name, button: ev.button })
-        if (ev.button !== 0 || marqueeActive.value) return
+        // Left, or right (a right-drag asks where it is dropped: Move / Copy / Create shortcuts, 2026-10-17).
+        if ((ev.button !== 0 && ev.button !== 2) || marqueeActive.value) return
 
         // No pointer events reach the page while an OS drag runs, so a drag
         // state still set here is left over from a drag that ended without

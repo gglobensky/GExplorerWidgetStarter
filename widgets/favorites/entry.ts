@@ -5,6 +5,7 @@ export default {
   api: '1.0',
   id: 'favorites',
   version: '0.1.0',
+  license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
 
   // Where this widget can live

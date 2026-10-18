@@ -139,11 +139,7 @@ watch(() => props.config?.data?.sources, value => {
 })
 watch(() => props.config?.view?.libraryMode, value => { if (value) libraryMode.value = value })
 function saveConfig(data: MediaLibraryConfig['data'], view: MediaLibraryConfig['view']) {
-  const existingData = { ...props.config?.data } as MediaLibraryConfig['data'] & { tmdbToken?: string }
-  // Remove credentials saved by early development builds while preserving the
-  // user's media folders, selection, and custom-cover preferences.
-  delete existingData.tmdbToken
-  emit('event', { type:'update:config', payload:{ ...props.config, data:{ ...existingData, sources:sources.value, customCovers:customCovers.value, ...data }, view:{ ...props.config?.view, ...view } } })
+  emit('event', { type:'update:config', payload:{ ...props.config, data:{ ...props.config?.data, sources:sources.value, customCovers:customCovers.value, ...data }, view:{ ...props.config?.view, ...view } } })
 }
 
 function open(item: LibraryItem) {

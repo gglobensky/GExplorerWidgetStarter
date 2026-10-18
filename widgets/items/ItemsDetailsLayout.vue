@@ -23,6 +23,8 @@ const props = defineProps<{
   rowAt:            (index: number) => ListingEntry | undefined
   isSelected:       (index: number) => boolean
   iconKeyOf:        (entry: ListingEntry) => string
+  /** A folder shortcut that opens outside GEM Shell: badged. */
+  opensElsewhere?: (entry: ListingEntry) => boolean
   totalHeight:      number
   offsetY:          number
   bindSizer:        (el: any) => void
@@ -374,6 +376,7 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl })
                 <span class="icon">
                   <img v-if="iconIsImg(rowAt(i)!)" :src="iconSrc(rowAt(i)!)" alt="" />
                   <span v-else>{{ iconText(rowAt(i)!) }}</span>
+                  <span v-if="opensElsewhere?.(rowAt(i)!)" class="lnk-elsewhere" title="Opens in the system's file manager, not GEM Shell">↗</span>
                 </span>
 
                 <!-- VFS state badge — only rendered when provider declares one.
@@ -615,8 +618,23 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl })
 }
 
 .details-grid .td-name .icon {
+  position: relative;
   width: var(--iconW); height: var(--iconW); flex: 0 0 var(--iconW);
   display: flex; align-items: center; justify-content: center; text-align: center;
+}
+
+/* A folder shortcut that opens outside GEM Shell (shortcuts:probe opensElsewhere, 2026-10-18) */
+.lnk-elsewhere {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  font-size: 0.6em;
+  line-height: 1;
+  padding: 1px 2px;
+  border-radius: 3px;
+  background: var(--items-bg, #111);
+  color: var(--accent, #4ea1ff);
+  pointer-events: auto;
 }
 
 .details-grid .td-name .icon img { width: 100%; height: 100%; object-fit: contain; }

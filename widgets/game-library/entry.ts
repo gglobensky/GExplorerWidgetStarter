@@ -48,6 +48,7 @@ export default {
   api: '1.0',
   id: 'game-library',
   version: '0.1.0',
+  license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
 
   // Registered by the host when the widget loads (registerWidgetMenus is not in the SDK).

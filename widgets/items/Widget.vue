@@ -250,6 +250,7 @@ function openDir(path: string) {
 function openDirNow(path: string) {
   lnkIconKeys.clear()
   lnkProbed.clear()
+  lnkElsewhere.clear()
   const key = JSON.stringify(listingFilter())
   if (source.value && openedFor && openedFor.path === path && openedFor.key === key &&
       !['closed', 'error'].includes(source.value.snapshot().status)) return
@@ -723,6 +724,9 @@ const iconsTick = ref(0)
 const requestedIconKeys = new Set<string>()
 const lnkIconKeys = new Map<string, string>()   // FullPath -> resolved shortcut icon key
 const lnkProbed = new Set<string>()
+// Folder shortcuts that open in the system's file manager, not GEM Shell (shortcuts:probe opensElsewhere): badged.
+const lnkElsewhere = new Set<string>()
+function opensElsewhere(e: ListingEntry): boolean { return lnkElsewhere.has(e.FullPath) }
 
 function iconKeyOf(e: ListingEntry): string {
   return lnkIconKeys.get(e.FullPath) ?? e.IconKey
@@ -749,7 +753,8 @@ async function loadVisibleIcons() {
     try {
       const r: any = await shortcutsProbe(lnks)
       // shortcuts:probe replies { path, iconKey } (camelCase)
-      for (const x of (r?.results ?? []) as Array<{ path: string; iconKey: string }>) {
+      for (const x of (r?.results ?? []) as Array<{ path: string; iconKey: string; opensElsewhere?: boolean }>) {
+        if (x.opensElsewhere) lnkElsewhere.add(x.path); else lnkElsewhere.delete(x.path)
         if (!x.iconKey) continue
         lnkIconKeys.set(x.path, x.iconKey)
         changed = true
@@ -969,9 +974,10 @@ function onRowDblClick({ index }: { index: number }) {
 }
 
 // Capture-phase row pointerdown — fires before the rows' own handlers,
-// starting the drag threshold watch.
+// starting the drag threshold watch. Left, or right: a right-drag asks at the drop
+// (Move / Copy / Create shortcuts here, 2026-10-17).
 function onRowPointerDownCapture(ev: PointerEvent) {
-  if (ev.button !== 0) return
+  if (ev.button !== 0 && ev.button !== 2) return
   const row = (ev.target as HTMLElement | null)?.closest('.row[data-path]') as HTMLElement | null
   if (!row) return
   const e = rowAt(Number(row.dataset.index))
@@ -1611,6 +1617,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction })
         :row-at="rowAt"
         :is-selected="isSelected"
         :icon-key-of="iconKeyOf"
+        :opens-elsewhere="opensElsewhere"
         :total-height="vlist.totalHeight.value"
         :offset-y="vlist.offsetY.value"
         :bind-sizer="bindSizer"
@@ -1643,6 +1650,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction })
         :row-at="rowAt"
         :is-selected="isSelected"
         :icon-key-of="iconKeyOf"
+        :opens-elsewhere="opensElsewhere"
         :total-height="vlist.totalHeight.value"
         :offset-y="vlist.offsetY.value"
         :bind-sizer="bindSizer"
@@ -1663,6 +1671,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction })
         :row-at="rowAt"
         :is-selected="isSelected"
         :icon-key-of="iconKeyOf"
+        :opens-elsewhere="opensElsewhere"
         :total-height="vlist.totalHeight.value"
         :offset-y="vlist.offsetY.value"
         :bind-sizer="bindSizer"

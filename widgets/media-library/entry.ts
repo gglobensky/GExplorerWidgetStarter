@@ -1,9 +1,11 @@
 import Widget from './Widget.vue'
+import tmdbLogo from './assets/tmdb-logo.png?inline'
 
 export default {
   api:'1.0',
   id:'media-library',
   version:'0.4.0',
+  license:'PolyForm-Noncommercial-1.0.0',
   Component:Widget,
   displayName:'Media Library',
   description:'Browse movies on video-store shelves and open a case for details and scene previews.',
@@ -20,4 +22,12 @@ export default {
     { cap:'Network', reason:'Optionally matches local movies and episodes with TMDB metadata when you provide a token.' },
   ],
   storage:{ assets:{ mb:512, reason:'Keeps the custom movie covers you choose or capture from playback.' } },
+  credits:[
+    {
+      name:'TMDB',
+      url:'https://www.themoviedb.org',
+      logo:tmdbLogo,
+      text:'This product uses the TMDB API but is not endorsed or certified by TMDB. When you choose **Match with TMDB**, titles, synopses, ratings, posters and episode stills come from [The Movie Database](https://www.themoviedb.org).',
+    },
+  ],
 }

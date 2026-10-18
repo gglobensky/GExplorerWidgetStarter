@@ -8,6 +8,7 @@ import ChatRoom from './ChatRoom.vue'
 export default {
     id: 'gexchange',
     version: '1.0.0',
+    license: 'PolyForm-Noncommercial-1.0.0',
     displayName: 'GExchange',
     description: 'Secure file sharing and chat rooms',
 

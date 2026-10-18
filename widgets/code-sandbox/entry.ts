@@ -2,6 +2,7 @@
 export default {
     id: 'code-sandbox',
     version: '1.0.0',
+    license: 'PolyForm-Noncommercial-1.0.0',
     Component: {}, // The standalone full-tab widget (to be built later)
     
     // I am hooking into GExchange!

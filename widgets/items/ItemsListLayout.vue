@@ -14,6 +14,8 @@ const props = defineProps<{
   rowAt: (index: number) => ListingEntry | undefined
   isSelected: (index: number) => boolean
   iconKeyOf: (entry: ListingEntry) => string
+  /** A folder shortcut that opens outside GEM Shell: badged. */
+  opensElsewhere?: (entry: ListingEntry) => boolean
   totalHeight: number
   offsetY: number
   bindSizer: (el: any) => void
@@ -64,6 +66,7 @@ function keyOf(i: number): string {
           <div class="icon">
             <img v-if="iconIsImg(rowAt(i)!)" :src="iconOf(rowAt(i)!)" alt="" />
             <span v-else>{{ iconOf(rowAt(i)!) }}</span>
+            <span v-if="opensElsewhere?.(rowAt(i)!)" class="lnk-elsewhere" title="Opens in the system's file manager, not GEM Shell">↗</span>
           </div>
           <div
             class="name"
@@ -119,12 +122,27 @@ function keyOf(i: number): string {
 
 /* Base icon size for LIST (scoped to this layout only) */
 .list-root .icon {
+  position: relative;
   width: calc(var(--base-font-size) * 1.4);
   height: calc(var(--base-font-size) * 1.4);
   flex: 0 0 calc(var(--base-font-size) * 1.4);
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* A folder shortcut that opens outside GEM Shell (shortcuts:probe opensElsewhere, 2026-10-18) */
+.lnk-elsewhere {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  font-size: 0.6em;
+  line-height: 1;
+  padding: 1px 2px;
+  border-radius: 3px;
+  background: var(--items-bg, #111);
+  color: var(--accent, #4ea1ff);
+  pointer-events: auto;
 }
 
 .list-root .icon img {

@@ -45,7 +45,7 @@ Sample scene cues use artwork-driven motion because the fictional collection has
 
 Add real media folders, open the library menu, choose **Connect TMDB**, enter an API Read Access Token in GEM Shell's protected dialog, and choose **Match with TMDB**. Matching is opt-in and makes no requests while the widget is merely scanning or browsing. Movie filenames are searched as movies; detected series are searched as TV shows and then matched to their season and episode records.
 
-This product uses the TMDB API but is not endorsed or certified by TMDB. Distribution also requires TMDB's approved logo in an About or Credits area and a license appropriate for the project. The text notice is present in the widget; the approved logo asset should be added after TMDB approves the intended use.
+This product uses the TMDB API but is not endorsed or certified by TMDB. TMDB requires one of its approved logos and this notice in an About or Credits area: both are in the widget's `credits` (`entry.ts`, logo `assets/tmdb-logo.png`, converted from TMDB's SVG), shown on GEM Shell's About page (Widgets tab). The widget uses each user's own TMDB API Read Access Token until GEM Shell's official widget repo can hand widgets their own secrets.
 
 ## Shell integration status
 
