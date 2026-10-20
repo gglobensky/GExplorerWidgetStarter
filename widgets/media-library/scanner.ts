@@ -5,6 +5,9 @@ export const COVER_EXTENSIONS = ['jpg','jpeg','png','webp'] as const
 
 const videoExts = new Set(VIDEO_EXTENSIONS.map(ext => `.${ext}`))
 const coverExts = new Set(COVER_EXTENSIONS.map(ext => `.${ext}`))
+// `.ts` is both an MPEG transport-stream suffix and the standard TypeScript suffix.
+// Only keep it when the host can identify actual media content.
+const ambiguousVideoExts = new Set(['.ts'])
 
 export type MediaProbe = {
   path: string
@@ -37,6 +40,14 @@ export type ScanResult = {
   videos: ScannedVideo[]
   warnings: string[]
   truncated: boolean
+}
+
+function hasVideoEvidence(probe: MediaProbe | undefined): boolean {
+  return !!probe && (
+    (probe.durationMs != null && probe.durationMs > 0)
+    || (probe.width != null && probe.width > 0)
+    || (probe.height != null && probe.height > 0)
+  )
 }
 
 const MAX_DIRECTORIES = 400
@@ -148,8 +159,9 @@ export async function scanVideoSources(
       }
     }
   }
-  onProgress({ phase:'metadata', folders, videos:videos.length, current:'' })
-  return { videos, warnings, truncated }
+  const accepted = videos.filter(video => !ambiguousVideoExts.has(video.extension) || hasVideoEvidence(video.probe))
+  onProgress({ phase:'metadata', folders, videos:accepted.length, current:'' })
+  return { videos:accepted, warnings, truncated }
 }
 
 export function videoMime(extension: string): string {

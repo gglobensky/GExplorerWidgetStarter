@@ -3,6 +3,19 @@ import type { ScannedVideo } from './scanner'
 
 type MovieSeed = Omit<LibraryItem, 'artwork' | 'previews'>
 
+export type CoverSource = 'custom' | 'tmdb' | 'sidecar' | 'thumbnail'
+
+export function preferredCoverSource(available: {
+  custom?: boolean
+  tmdb?: boolean
+  sidecar?: boolean
+}): CoverSource {
+  if (available.custom) return 'custom'
+  if (available.tmdb) return 'tmdb'
+  if (available.sidecar) return 'sidecar'
+  return 'thumbnail'
+}
+
 const seeds: MovieSeed[] = [
   { id:'signal-north', title:'Signal North', year:2024, runtimeMinutes:118, rating:'PG-13', primaryGenre:'Science Fiction', genres:['Science Fiction','Mystery'], synopsis:'A radio astronomer working through the longest night of winter hears a repeating signal hidden beneath the aurora—and realizes it is answering questions nobody has asked aloud.', progress:.38, addedRank:11 },
   { id:'long-rain', title:'The Long Rain', year:1978, runtimeMinutes:106, rating:'R', primaryGenre:'Crime', genres:['Crime','Thriller'], synopsis:'A weary private investigator follows a missing reel of film through rain-polished streets, where every witness remembers a different ending.', progress:.71, addedRank:4 },
@@ -48,15 +61,20 @@ export function shelvesFor(items: LibraryItem[], query = ''): LibraryShelf[] {
     const found = items.filter(item => [item.title, item.seriesTitle, item.year, ...item.genres].join(' ').toLocaleLowerCase().includes(term))
     return found.length ? [{ id:'search', title:'Search results', note:`${found.length} found`, items:found }] : []
   }
+  const localCollection = items.some(item => !!item.path)
+  const arrivals = (localCollection ? items.filter(item => item.newArrival) : items)
+    .slice().sort((a,b) => b.addedRank-a.addedRank).slice(0,12)
   const shelves: LibraryShelf[] = [
     { id:'continue', title:'Continue watching', note:'Your place is waiting', items:items.filter(item => item.progress && item.progress < .95) },
-    { id:'recent', title:'New arrivals', note:'Fresh on the shelf', items:items.slice().sort((a,b) => b.addedRank-a.addedRank).slice(0,12) },
+    ...(arrivals.length ? [{ id:'recent', title:'New arrivals', note:'Added since the last scan', items:arrivals }] : []),
   ]
   const series = Array.from(new Set(items.flatMap(item => item.seriesTitle ? [item.seriesTitle] : []))).sort((a,b) => a.localeCompare(b, undefined, { numeric:true }))
   for (const title of series) {
     const matches = items
       .filter(item => item.seriesTitle === title)
-      .sort((a,b) => (a.seasonNumber ?? 0) - (b.seasonNumber ?? 0) || (a.episodeNumber ?? 0) - (b.episodeNumber ?? 0) || a.title.localeCompare(b.title, undefined, { numeric:true }))
+      .sort((a,b) => episodeOrder(a).season - episodeOrder(b).season
+        || episodeOrder(a).episode - episodeOrder(b).episode
+        || a.title.localeCompare(b.title, undefined, { numeric:true }))
     shelves.push({ id:`series-${slug(title)}`, title, note:`Series · ${matches.length} ${matches.length === 1 ? 'episode' : 'episodes'}`, items:matches })
   }
   const preferred = ['Science Fiction','Thriller','Drama','Adventure','Fantasy','Crime']
@@ -64,14 +82,86 @@ export function shelvesFor(items: LibraryItem[], query = ''): LibraryShelf[] {
   const genres = [...preferred.filter(genre => foundGenres.includes(genre)), ...foundGenres.filter(genre => !preferred.includes(genre)).sort()]
   for (const genre of genres) {
     const matches = items.filter(item => item.primaryGenre === genre)
-    const mixedMedia = matches.some(item => item.mediaKind === 'episode')
-    if (matches.length) shelves.push({ id:genre.toLocaleLowerCase().split(' ').join('-'), title:genre, note:`${matches.length} ${mixedMedia ? (matches.length === 1 ? 'title' : 'titles') : (matches.length === 1 ? 'movie' : 'movies')}`, items:matches })
+    const seenSeries = new Set<string>()
+    const genreItems = matches.flatMap(item => {
+      if (!item.seriesTitle) return [item]
+      const key = item.seriesTitle.toLocaleLowerCase()
+      if (seenSeries.has(key)) return []
+      seenSeries.add(key)
+      return [seriesGenreCard(matches.filter(candidate => candidate.seriesTitle?.toLocaleLowerCase() === key),item.seriesTitle,genre)]
+    })
+    if (genreItems.length) shelves.push({ id:slug(genre), title:genre, note:`${genreItems.length} ${genreItems.length === 1 ? 'title' : 'titles'}`, items:genreItems })
   }
   return shelves.filter(shelf => shelf.items.length)
 }
 
+export type ShowroomRackRow = {
+  id: string
+  label?: string
+  total: number
+  items: LibraryItem[]
+}
+
+export function showroomTitleCount(items: LibraryItem[], genre: string): number {
+  return items.filter(item => item.primaryGenre === genre).length
+}
+
+export function showroomRowsFor(items: LibraryItem[], genre: string, capacity = 6): ShowroomRackRow[] {
+  const rowCapacity = Math.max(1,Math.floor(capacity))
+  const matching = items.filter(item => item.primaryGenre === genre)
+  const movies = matching
+    .filter(item => !item.seriesTitle)
+    .sort((a,b) => a.title.localeCompare(b.title,undefined,{ numeric:true }))
+  const series = new Map<string,LibraryItem[]>()
+  for (const item of matching) {
+    if (!item.seriesTitle) continue
+    const episodes = series.get(item.seriesTitle) ?? []
+    episodes.push(item)
+    series.set(item.seriesTitle,episodes)
+  }
+  const rows: ShowroomRackRow[] = []
+  for (let index = 0; index < movies.length; index += rowCapacity) {
+    const rowItems = movies.slice(index,index + rowCapacity)
+    rows.push({ id:`titles-${index / rowCapacity}`, total:rowItems.length, items:rowItems })
+  }
+  for (const [title,episodes] of [...series].sort(([a],[b]) => a.localeCompare(b,undefined,{ numeric:true }))) {
+    episodes.sort((a,b) => episodeOrder(a).season - episodeOrder(b).season
+      || episodeOrder(a).episode - episodeOrder(b).episode
+      || a.title.localeCompare(b.title,undefined,{ numeric:true }))
+    rows.push({ id:`series-${slug(title)}`, label:title, total:episodes.length, items:episodes.slice(0,rowCapacity) })
+  }
+  return rows
+}
+
 function slug(value: string): string {
   return value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+}
+
+function episodeOrder(item: LibraryItem): { season:number; episode:number } {
+  const tagged = item.title.match(/\bS(\d{1,3})E(\d{1,4})\b/i)
+  return {
+    season:item.seasonNumber ?? (tagged ? Number(tagged[1]) : Number.MAX_SAFE_INTEGER),
+    episode:item.episodeNumber ?? (tagged ? Number(tagged[2]) : Number.MAX_SAFE_INTEGER),
+  }
+}
+
+function seriesGenreCard(items: LibraryItem[], seriesTitle: string, genre: string): LibraryItem {
+  const representative = items.find(item => item.artwork.src) ?? items[0]
+  return {
+    ...representative,
+    id:`series-link-${slug(genre)}-${slug(seriesTitle)}`,
+    title:seriesTitle,
+    progress:undefined,
+    path:undefined,
+    mimeType:undefined,
+    mediaKind:undefined,
+    seriesTitle:undefined,
+    seasonNumber:undefined,
+    episodeNumber:undefined,
+    targetShelfId:`series-${slug(seriesTitle)}`,
+    synopsis:`Browse all locally discovered episodes of ${seriesTitle}.`,
+    newArrival:items.some(item => item.newArrival),
+  }
 }
 
 const genreAliases: Array<[string, string]> = [
@@ -83,18 +173,39 @@ const genreAliases: Array<[string, string]> = [
   ['war','War'], ['western','Western'],
 ]
 
-export function parseMovieFilename(filename: string): { title: string; year: number } {
-  const stem = filename.replace(/\.[^.]+$/, '')
-  const readable = stem.replace(/[._]+/g, ' ').replace(/\s+/g, ' ').trim()
+const technicalSuffix = /\s+(?:2160p|1080p|720p|576p|480p|4k|8k|uhd|hdr10?\+?|dolby[ ._-]*vision|bluray|blu[ ._-]*ray|b[dr]rip|web[ ._-]*dl|webrip|hdrip|dvdrip|hdtv|remux|x26[45]|h26[45]|hevc|avc|av1|xvid|divx|10[ ._-]*bit|8[ ._-]*bit|aac|ac3|eac3|ddp?(?:[ ._-]*\d(?:[ ._-]*\d)?)?|dts(?:[ ._-]*hd)?|truehd|atmos|flac|multi(?:[ ._-]*audio)?|dual(?:[ ._-]*audio)?|proper|repack)(?:\s|$).*$/i
+const editionSuffix = /\s+(?:director'?s[ ._-]*cut|extended(?:[ ._-]*(?:cut|edition))?|unrated|remastered|theatrical(?:[ ._-]*cut)?|final[ ._-]*cut)$/i
+
+function parsedMovieName(value: string, stripExtension: boolean): { title:string; year:number } {
+  const stem = stripExtension ? value.replace(/\.[A-Za-z0-9]{1,5}$/, '') : value
+  const readable = stem
+    .replace(/^\[(?:yts(?:\.[a-z]+)?|rarbg|eztv|ettv|torrentgalaxy|tgx)\][\s._-]*/i, '')
+    .replace(/\b([hx])[ ._-]?26([45])\b/gi, '$126$2')
+    .replace(/[._]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
   const yearMatch = readable.match(/(?:^|\s|\(|\[)((?:19|20)\d{2})(?=$|\s|\)|\])/)
   const year = yearMatch ? Number(yearMatch[1]) : 0
-  let title = yearMatch ? readable.slice(0, yearMatch.index).trim() : readable
-  title = title.replace(/\s+(?:2160p|1080p|720p|4k|uhd|bluray|brrip|webrip|web-dl|remux|x26[45]|h26[45]|hevc|aac|dts).*$/i, '').trim()
+  let title = yearMatch && readable.slice(0,yearMatch.index).trim()
+    ? readable.slice(0,yearMatch.index).trim()
+    : readable.replace(yearMatch?.[0] ?? '', ' ').trim()
+  title = title.replace(technicalSuffix, '').trim()
   title = title.replace(/[\[(\-\s]+$/, '').trim()
   return { title:title || stem, year }
 }
 
-export type SeriesEpisode = { seriesTitle: string; seasonNumber: number; episodeNumber: number; episodeTitle: string }
+export function parseMovieFilename(filename: string): { title: string; year: number } {
+  return parsedMovieName(filename,true)
+}
+
+export function movieSearchTitles(filename: string, embeddedTitle = ''): string[] {
+  const filenameTitle = parseMovieFilename(filename).title
+  const embedded = embeddedTitle.trim() ? parsedMovieName(embeddedTitle,false).title : ''
+  const candidates = [filenameTitle,filenameTitle.replace(editionSuffix,''),embedded,embedded.replace(editionSuffix,'')]
+  return candidates.map(title => title.trim()).filter((title,index,all) => !!title && all.findIndex(candidate => candidate.toLocaleLowerCase() === title.toLocaleLowerCase()) === index)
+}
+
+export type SeriesEpisode = { seriesTitle: string; seasonNumber: number; episodeNumber?: number; episodeTitle: string }
 
 function cleanMediaWords(value: string): string {
   return value.replace(/[._]+/g, ' ').replace(/\s+/g, ' ').replace(/^[\s-]+|[\s-]+$/g, '').trim()
@@ -120,7 +231,11 @@ export function parseSeriesEpisode(path: string, sourceRoot = ''): SeriesEpisode
   }
   if (folderSeason && folderSeries) {
     const episode = filename.match(/^(?:episode|ep|e)[\s._-]*(\d{1,3})(?:[\s._-]+(.*))?$/i)
+      ?? filename.match(/^\[?(\d{1,3})\]?(?:[\s._-]+(.*))?$/i)
     if (episode) return { seriesTitle:folderSeries, seasonNumber:folderSeason, episodeNumber:Number(episode[1]), episodeTitle:cleanMediaWords(episode[2] ?? '') }
+    const episodeTitle = cleanMediaWords(filename)
+      .replace(/\s+(?:2160p|1080p|720p|4k|uhd|bluray|brrip|webrip|web-dl|remux|x26[45]|h26[45]|hevc|aac|dts).*$/i, '')
+    if (episodeTitle) return { seriesTitle:folderSeries, seasonNumber:folderSeason, episodeTitle }
   }
   return null
 }
@@ -146,21 +261,28 @@ export function createScannedLibrary(
   return videos.map(video => {
     const parsed = parseMovieFilename(video.name)
     const episode = parseSeriesEpisode(video.path, video.sourceRoot)
+    const searchTitles = episode
+      ? movieSearchTitles(episode.seriesTitle)
+      : movieSearchTitles(video.name,video.probe?.title ?? '')
     const hash = stableNumber(video.path)
     const coverUrl = video.coverPath ? coverUrls.get(video.coverPath) : undefined
     const runtimeMinutes = video.probe?.durationMs ? Math.max(1, Math.round(video.probe.durationMs / 60_000)) : 0
     const durationSeconds = Math.max(60, Math.round((video.probe?.durationMs ?? 0) / 1000))
     const primaryGenre = inferGenre(video.path)
     const folder = video.path.replace(/[\\/][^\\/]+$/, '').split(/[\\/]/).pop() || 'your media folder'
-    const year = video.probe?.year || parsed.year
+    // A filename year usually represents the release. Container tags often
+    // contain the encode/import year instead, so only use them as a fallback.
+    const year = parsed.year || video.probe?.year || 0
     const artwork: LibraryArtwork = coverUrl
       ? { src:coverUrl, x:50, y:50, mode:'cover' }
       : { src:'', x:0, y:0, mode:'placeholder' }
     return {
       id:`local-${hash.toString(36)}`,
       title:episode
-        ? `S${String(episode.seasonNumber).padStart(2,'0')}E${String(episode.episodeNumber).padStart(2,'0')}${episode.episodeTitle ? ` · ${episode.episodeTitle}` : ''}`
-        : video.probe?.title?.trim() || parsed.title,
+        ? episode.episodeNumber != null
+          ? `S${String(episode.seasonNumber).padStart(2,'0')}E${String(episode.episodeNumber).padStart(2,'0')}${episode.episodeTitle ? ` · ${episode.episodeTitle}` : ''}`
+          : `Season ${episode.seasonNumber}${episode.episodeTitle ? ` · ${episode.episodeTitle}` : ''}`
+        : parsed.title,
       year,
       runtimeMinutes,
       rating:'LOCAL',
@@ -179,6 +301,7 @@ export function createScannedLibrary(
       seriesTitle:episode?.seriesTitle,
       seasonNumber:episode?.seasonNumber,
       episodeNumber:episode?.episodeNumber,
+      metadataSearchTitles:searchTitles,
     }
   }).sort((a,b) => a.title.localeCompare(b.title, undefined, { numeric:true }))
 }

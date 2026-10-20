@@ -33,6 +33,12 @@ type SeasonResponse = {
 
 export type TmdbProgress = { completed:number; total:number; title:string }
 export type TmdbEnrichment = { items:LibraryItem[]; matched:number; unmatched:number }
+export type TmdbDiagnosticAttempt = {
+  request: { method:'GET'; url:string; body:null; query:Record<string,string> }
+  responseBody: SearchResponse
+  chosen?: SearchResult
+  validation: { requestedTitle:string; requestedYear:number; resultYear:number; normalizedTitleMatch:boolean; yearMatches:boolean }
+}
 export type PersistedTmdbMetadata = Pick<LibraryItem,
   'title'|'year'|'runtimeMinutes'|'rating'|'primaryGenre'|'genres'|'synopsis'|'metadataSource'|
   'tmdbId'|'tmdbType'|'tmdbPosterPath'|'tmdbStillPath'|'tmdbRating'
@@ -42,6 +48,19 @@ const API = 'https://api.themoviedb.org/3'
 const IMAGE_API = 'https://image.tmdb.org/t/p'
 export const TMDB_SECRET_NAME = 'tmdb'
 export const TMDB_SECRET_HOSTS = ['api.themoviedb.org'] as const
+
+const FALLBACK_GENRES:Record<'movie'|'tv',Array<[number,string]>> = {
+  movie:[
+    [28,'Action'],[12,'Adventure'],[16,'Animation'],[35,'Comedy'],[80,'Crime'],[99,'Documentary'],[18,'Drama'],
+    [10751,'Family'],[14,'Fantasy'],[36,'History'],[27,'Horror'],[10402,'Music'],[9648,'Mystery'],[10749,'Romance'],
+    [878,'Science Fiction'],[10770,'TV Movie'],[53,'Thriller'],[10752,'War'],[37,'Western'],
+  ],
+  tv:[
+    [10759,'Action & Adventure'],[16,'Animation'],[35,'Comedy'],[80,'Crime'],[99,'Documentary'],[18,'Drama'],
+    [10751,'Family'],[10762,'Kids'],[9648,'Mystery'],[10763,'News'],[10764,'Reality'],[10765,'Sci-Fi & Fantasy'],
+    [10766,'Soap'],[10767,'Talk'],[10768,'War & Politics'],[37,'Western'],
+  ],
+}
 
 export function tmdbImageUrl(path: string | undefined, size: 'w500'|'w780' = 'w500'): string | undefined {
   const clean = path?.trim()
@@ -63,6 +82,22 @@ export function persistedTmdbMetadata(item: LibraryItem): PersistedTmdbMetadata 
 
 export function applyPersistedTmdbMetadata(item: LibraryItem, metadata: PersistedTmdbMetadata | undefined): LibraryItem {
   return metadata ? { ...item, ...metadata, genres:[...metadata.genres] } : item
+}
+
+export function restorePersistedTmdbMetadata(
+  items: LibraryItem[],
+  records: Record<string,PersistedTmdbMetadata>,
+): { items:LibraryItem[]; restored:number } {
+  let restored = 0
+  return {
+    items:items.map(item => {
+      const metadata = item.path ? records[item.path] : undefined
+      if (!metadata) return item
+      restored += 1
+      return applyPersistedTmdbMetadata(item,metadata)
+    }),
+    restored,
+  }
 }
 
 function normalized(value: string | undefined): string {
@@ -100,6 +135,55 @@ function bestResult(results: SearchResult[], title: string, year: number): Searc
   return best && best.titleScore >= 45 ? best.result : undefined
 }
 
+function searchTitles(item: LibraryItem, primary: string): string[] {
+  return [primary,...(item.metadataSearchTitles ?? [])]
+    .map(title => title.trim())
+    .filter((title,index,all) => !!title && all.findIndex(candidate => normalized(candidate) === normalized(title)) === index)
+}
+
+async function search(
+  sdk: WidgetSdk,
+  type: 'movie'|'tv',
+  titles: string[],
+  year: number,
+): Promise<SearchResult | undefined> {
+  for (const title of titles) {
+    const response = await json<SearchResponse>(sdk,`/search/${type}`,{ query:title, include_adult:'false' })
+    const result = bestResult(response.results ?? [],title,year)
+    if (result) return result
+  }
+  return undefined
+}
+
+export async function diagnoseTmdbItem(sdk: WidgetSdk, item: LibraryItem): Promise<TmdbDiagnosticAttempt[]> {
+  const type = item.mediaKind === 'episode' ? 'tv' : 'movie'
+  const primary = type === 'tv' && item.seriesTitle ? item.seriesTitle : item.title
+  const attempts:TmdbDiagnosticAttempt[] = []
+  for (const title of searchTitles(item,primary)) {
+    const params = { language:'en-US', query:title, include_adult:'false' }
+    const url = `${API}/search/${type}?${new URLSearchParams(params)}`
+    const responseBody = await json<SearchResponse>(sdk,`/search/${type}`,{ query:title, include_adult:'false' })
+    const chosen = bestResult(responseBody.results ?? [],title,item.year)
+    const resultTitle = chosen?.title || chosen?.name
+    const resultYear = yearOf(chosen?.release_date || chosen?.first_air_date)
+    const attempt:TmdbDiagnosticAttempt = {
+      request:{ method:'GET', url, body:null, query:params },
+      responseBody,
+      chosen,
+      validation:{
+        requestedTitle:title,
+        requestedYear:item.year,
+        resultYear,
+        normalizedTitleMatch:!!chosen && normalized(resultTitle) === normalized(title),
+        yearMatches:!!item.year && resultYear === item.year,
+      },
+    }
+    console.info('[Media Library][TMDB query diagnostic]',attempt)
+    attempts.push(attempt)
+  }
+  return attempts
+}
+
 async function json<T>(sdk: WidgetSdk, path: string, params: Record<string,string> = {}): Promise<T> {
   if (!sdk.networkFetch) throw new Error('The Network capability is unavailable.')
   const query = new URLSearchParams({ language:'en-US', ...params })
@@ -114,8 +198,14 @@ async function json<T>(sdk: WidgetSdk, path: string, params: Record<string,strin
 }
 
 async function genres(sdk: WidgetSdk, type: 'movie'|'tv'): Promise<Map<number,string>> {
-  const response = await json<GenreResponse>(sdk, `/genre/${type}/list`)
-  return new Map((response.genres ?? []).map(genre => [genre.id,genre.name]))
+  const fallback = new Map(FALLBACK_GENRES[type])
+  try {
+    const response = await json<GenreResponse>(sdk, `/genre/${type}/list`)
+    return new Map([...fallback,...(response.genres ?? []).map(genre => [genre.id,genre.name] as [number,string])])
+  } catch (error) {
+    console.warn(`[Media Library] TMDB ${type} genres were unavailable; using the built-in genre map.`,error)
+    return fallback
+  }
 }
 
 function applyCommon(item: LibraryItem, result: SearchResult, genreMap: Map<number,string>): LibraryItem {
@@ -141,7 +231,12 @@ export async function enrichWithTmdb(
   items: LibraryItem[],
   onProgress: (progress:TmdbProgress) => void = () => {},
 ): Promise<TmdbEnrichment> {
-  const [movieGenres,tvGenres] = await Promise.all([genres(sdk,'movie'),genres(sdk,'tv')])
+  // The first protected request must finish its consent flow before another exact
+  // URL asks for access, or both can queue separate permission questions.
+  const needsMovieGenres = items.some(item => item.mediaKind !== 'episode')
+  const needsTvGenres = items.some(item => item.mediaKind === 'episode')
+  const movieGenres = needsMovieGenres ? await genres(sdk,'movie') : new Map<number,string>()
+  const tvGenres = needsTvGenres ? await genres(sdk,'tv') : new Map<number,string>()
   const seriesCache = new Map<string,Promise<SearchResult | undefined>>()
   const seasonCache = new Map<string,Promise<SeasonResponse>>()
   const enriched:LibraryItem[] = []
@@ -155,8 +250,7 @@ export async function enrichWithTmdb(
         const seriesKey = normalized(item.seriesTitle)
         let seriesPromise = seriesCache.get(seriesKey)
         if (!seriesPromise) {
-          seriesPromise = json<SearchResponse>(sdk,'/search/tv',{ query:item.seriesTitle, include_adult:'false' })
-            .then(response => bestResult(response.results ?? [],item.seriesTitle!,item.year))
+          seriesPromise = search(sdk,'tv',searchTitles(item,item.seriesTitle),item.year)
           seriesCache.set(seriesKey,seriesPromise)
         }
         const series = await seriesPromise
@@ -182,12 +276,7 @@ export async function enrichWithTmdb(
         })
         matched += 1
       } else {
-        const response = await json<SearchResponse>(sdk,'/search/movie',{
-          query:item.title,
-          include_adult:'false',
-          ...(item.year ? { year:String(item.year) } : {}),
-        })
-        const movie = bestResult(response.results ?? [],item.title,item.year)
+        const movie = await search(sdk,'movie',searchTitles(item,item.title),item.year)
         if (!movie) { enriched.push(item); continue }
         const common = applyCommon(item,movie,movieGenres)
         enriched.push({ ...common, title:movie.title?.trim() || common.title })

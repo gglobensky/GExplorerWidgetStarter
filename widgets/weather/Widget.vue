@@ -407,6 +407,7 @@ onBeforeUnmount(() => {
       'minimal-current': minimalCurrent,
       stacked,
       'forecast-view': activeView === 'forecast',
+      'is-flipping': !!flip || !!viewFlip,
     }"
     :data-scene="scene"
     :style="hostStyle"

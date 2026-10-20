@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createMovieLibrary, createScannedLibrary, inferGenre, parseMovieFilename, parseSeriesEpisode, shelvesFor } from '../media.ts'
+import { createMovieLibrary, createScannedLibrary, inferGenre, movieSearchTitles, parseMovieFilename, parseSeriesEpisode, preferredCoverSource, shelvesFor, showroomRowsFor, showroomTitleCount } from '../media.ts'
 import { chooseCover, scanVideoSources, videoMime } from '../scanner.ts'
+import { inferredSeasonNumber, itemsForSeason, seasonLabel, seasonsFor } from '../../../shared/library-ui/seasons.ts'
 
 const movies = createMovieLibrary(['atlas-a','atlas-b'])
 
@@ -29,6 +30,8 @@ test('search matches titles, years, and secondary genres', () => {
 test('cleans common movie filenames and infers folder genres', () => {
   assert.deepEqual(parseMovieFilename('Arrival.2016.2160p.UHD.BluRay.x265.mkv'), { title:'Arrival', year:2016 })
   assert.deepEqual(parseMovieFilename('Spirited_Away [2001].mp4'), { title:'Spirited Away', year:2001 })
+  assert.deepEqual(parseMovieFilename('[YTS.MX] The.Movie.2023.1080p.WEB-DL.DDP5.1.H.264-GROUP.mkv'), { title:'The Movie', year:2023 })
+  assert.deepEqual(movieSearchTitles('Blade.Runner.Directors.Cut.1982.1080p.BluRay.x265.mkv'), ['Blade Runner Directors Cut','Blade Runner'])
   assert.equal(inferGenre('D:\\Movies\\Science Fiction\\Arrival.mkv'), 'Science Fiction')
   assert.equal(inferGenre('D:\\Home Videos\\Birthday.mp4'), 'Unsorted')
 })
@@ -40,13 +43,63 @@ test('detects common series naming and creates ordered series shelves alongside 
   assert.deepEqual(parseSeriesEpisode('D:\\TV\\Severance\\Season 01\\Episode 4 - The You You Are.mp4', 'D:\\TV'), {
     seriesTitle:'Severance', seasonNumber:1, episodeNumber:4, episodeTitle:'The You You Are',
   })
+  assert.deepEqual(parseSeriesEpisode('D:\\TV\\Severance\\Season 02\\03 - Who Is Alive.mkv', 'D:\\TV'), {
+    seriesTitle:'Severance', seasonNumber:2, episodeNumber:3, episodeTitle:'Who Is Alive',
+  })
+  assert.deepEqual(parseSeriesEpisode('D:\\TV\\Severance\\Season 02\\Bonus Feature.mkv', 'D:\\TV'), {
+    seriesTitle:'Severance', seasonNumber:2, episodeTitle:'Bonus Feature',
+  })
   const episodes = [
     { ...movies[0], id:'ep2', title:'S01E02 · Second', mediaKind:'episode' as const, seriesTitle:'Gem Show', seasonNumber:1, episodeNumber:2 },
-    { ...movies[1], id:'ep1', title:'S01E01 · First', mediaKind:'episode' as const, seriesTitle:'Gem Show', seasonNumber:1, episodeNumber:1 },
+    { ...movies[0], id:'ep1', title:'S01E01 · First', mediaKind:'episode' as const, seriesTitle:'Gem Show', seasonNumber:1, episodeNumber:1 },
+    { ...movies[0], id:'ep-s2', title:'S02E01 · Return', mediaKind:'episode' as const, seriesTitle:'Gem Show', seasonNumber:2, episodeNumber:1 },
+    { ...movies[0], id:'ep-fallback', title:'S01E03 · Third', mediaKind:'episode' as const, seriesTitle:'Gem Show', seasonNumber:undefined, episodeNumber:undefined },
   ]
   const shelves = shelvesFor(episodes)
-  assert.deepEqual(shelves.find(shelf => shelf.id === 'series-gem-show')?.items.map(item => item.id), ['ep1','ep2'])
-  assert.equal(shelves.some(shelf => shelf.id === 'science-fiction'), true)
+  assert.deepEqual(shelves.find(shelf => shelf.id === 'series-gem-show')?.items.map(item => item.id), ['ep1','ep2','ep-fallback','ep-s2'])
+  const genreItems = shelves.find(shelf => shelf.id === 'science-fiction')?.items ?? []
+  assert.equal(genreItems.length,1)
+  assert.equal(genreItems[0].title,'Gem Show')
+  assert.equal(genreItems[0].targetShelfId,'series-gem-show')
+})
+
+test('builds season filters from scanned metadata, filenames, and season folders', () => {
+  const episodes = [
+    { ...movies[0], id:'metadata', title:'Pilot', seasonNumber:1 },
+    { ...movies[0], id:'tagged', title:'Show.S02E03.Return.mkv', seasonNumber:undefined },
+    { ...movies[0], id:'folder', title:'Bonus Feature', path:'D:\\TV\\Show\\Season 03\\Bonus Feature.mkv', seasonNumber:undefined },
+    { ...movies[0], id:'alternate', title:'Show 4x02 Finale', seasonNumber:undefined },
+  ]
+  assert.deepEqual(episodes.map(inferredSeasonNumber),[1,2,3,4])
+  assert.deepEqual(seasonsFor(episodes),[1,2,3,4])
+  assert.deepEqual(itemsForSeason(episodes,3).map(item => item.id),['folder'])
+  assert.equal(seasonLabel(0),'Specials')
+  assert.equal(seasonLabel(3),'Season 3')
+})
+
+test('keeps each series on dedicated showroom shelf rows', () => {
+  const items = [
+    { ...movies[0], id:'movie-b', title:'Movie B' },
+    { ...movies[0], id:'ep-2', title:'S01E02', seriesTitle:'Gem Show', seasonNumber:1, episodeNumber:2 },
+    { ...movies[0], id:'movie-a', title:'Movie A' },
+    { ...movies[0], id:'ep-1', title:'S01E01', seriesTitle:'Gem Show', seasonNumber:1, episodeNumber:1 },
+    { ...movies[0], id:'ep-3', title:'S02E01', seriesTitle:'Gem Show', seasonNumber:2, episodeNumber:1 },
+  ]
+  const rows = showroomRowsFor(items,'Science Fiction',2)
+  assert.deepEqual(rows.map(row => ({ label:row.label, total:row.total, ids:row.items.map(item => item.id) })), [
+    { label:undefined, total:2, ids:['movie-a','movie-b'] },
+    { label:'Gem Show', total:3, ids:['ep-1','ep-2'] },
+  ])
+  assert.equal(showroomTitleCount(items,'Science Fiction'),5)
+})
+
+test('shows only locally discovered items from the latest scan as new arrivals', () => {
+  const local = [
+    { ...movies[0], id:'old', path:'D:\\Movies\\Old.mkv', newArrival:false },
+    { ...movies[1], id:'new', path:'D:\\Movies\\New.mkv', newArrival:true },
+  ]
+  assert.deepEqual(shelvesFor(local).find(shelf => shelf.id === 'recent')?.items.map(item => item.id), ['new'])
+  assert.equal(shelvesFor(local.map(item => ({ ...item, newArrival:false }))).some(shelf => shelf.id === 'recent'), false)
 })
 
 test('prefers movie-matched sidecar artwork and maps stream MIME hints', () => {
@@ -55,6 +108,13 @@ test('prefers movie-matched sidecar artwork and maps stream MIME hints', () => {
   assert.equal(chooseCover('Arrival.mkv', images), 'D:\\Movies\\Arrival.jpg')
   assert.equal(videoMime('.webm'), 'video/webm')
   assert.equal(videoMime('.mp4'), 'video/mp4')
+})
+
+test('orders cover sources as custom, TMDB, sidecar, then generated thumbnail', () => {
+  assert.equal(preferredCoverSource({ custom:true, tmdb:true, sidecar:true }), 'custom')
+  assert.equal(preferredCoverSource({ tmdb:true, sidecar:true }), 'tmdb')
+  assert.equal(preferredCoverSource({ sidecar:true }), 'sidecar')
+  assert.equal(preferredCoverSource({}), 'thumbnail')
 })
 
 test('uses a neutral placeholder for scanned media without a real cover', () => {
@@ -72,6 +132,8 @@ test('recursively scans videos, closes listings, and attaches media details', as
     'D:\\Movies': [
       entry('Science Fiction','D:\\Movies\\Science Fiction','dir'),
       entry('Home.mp4','D:\\Movies\\Home.mp4','file','.mp4'),
+      entry('widget.ts','D:\\Movies\\widget.ts','file','.ts'),
+      entry('Broadcast.ts','D:\\Movies\\Broadcast.ts','file','.ts'),
       entry('poster.jpg','D:\\Movies\\poster.jpg','file','.jpg'),
     ],
     'D:\\Movies\\Science Fiction': [
@@ -88,10 +150,14 @@ test('recursively scans videos, closes listings, and attaches media details', as
         subscribe:() => () => {}, rows:async (start:number,end:number) => rows.slice(start,end), close:() => { closed += 1 },
       }
     },
-    mediaInfo:async (paths:string[]) => paths.map(path => ({ path, durationMs:7_200_000, year:2016 })),
+    mediaInfo:async (paths:string[]) => paths.map(path => path.endsWith('widget.ts')
+      ? { path }
+      : { path, durationMs:7_200_000, year:2016 }),
   } as any
   const result = await scanVideoSources(sdk, ['D:\\Movies'], 'test', () => {}, () => false)
-  assert.equal(result.videos.length, 2)
+  assert.equal(result.videos.length, 3)
+  assert.equal(result.videos.some(video => video.name === 'widget.ts'), false)
+  assert.equal(result.videos.some(video => video.name === 'Broadcast.ts'), true)
   assert.equal(result.videos.find(video => video.name === 'Home.mp4')?.coverPath, 'D:\\Movies\\poster.jpg')
   assert.equal(result.videos.find(video => video.name === 'Arrival.mkv')?.coverPath, 'D:\\Movies\\Science Fiction\\Arrival.jpg')
   assert.equal(result.videos[0].probe?.durationMs, 7_200_000)

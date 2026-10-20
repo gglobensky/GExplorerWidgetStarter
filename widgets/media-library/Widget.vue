@@ -1,42 +1,52 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type { MediaImage, SecretStatus, WidgetSdk } from 'gexplorer/widgets'
+import type { HostAction, MediaImage, WidgetSdk, WidgetSecrets } from 'gexplorer/widgets'
 import { LibraryDetail, MediaShelf, type LibraryItem } from '../../shared/library-ui'
 import { posterAtlases, sampleMovies } from './fixtures'
-import { createScannedLibrary, shelvesFor } from './media'
-import { scanVideoSources, videoMime, type ScanProgress } from './scanner'
+import { createScannedLibrary, preferredCoverSource, shelvesFor } from './media'
+import StoreFloor from './StoreFloor.vue'
+import { applyMetadataOverride, loadMetadataOverrides, saveMetadataOverrides, type MediaMetadataOverride } from './metadata-overrides'
+import { loadScanHistory, mediaPathKey, mergeScanHistory, saveScanHistory } from './scan-history'
+import { scanVideoSources, videoMime, type ScannedVideo, type ScanProgress } from './scanner'
+import { loadMediaSources, saveMediaSources } from './sources'
 import {
-  applyPersistedTmdbMetadata, enrichWithTmdb, persistedTmdbMetadata,
+  applyPersistedTmdbMetadata, diagnoseTmdbItem, enrichWithTmdb, persistedTmdbMetadata, restorePersistedTmdbMetadata,
   TMDB_SECRET_HOSTS, TMDB_SECRET_NAME, tmdbImageUrl,
   type PersistedTmdbMetadata, type TmdbProgress,
 } from './tmdb'
 
-type LibraryMode = 'shelf' | 'rack'
+type LibraryMode = 'shelf' | 'store'
+type DetailMode = 'classic' | 'movie-store'
 type SavedCover = { assetId:string; url:string; x?:number; y?:number }
 type CoverPreference = string | SavedCover
 type SavedCoverStore = { version:1; covers:Record<string,CoverPreference> }
 type TmdbMetadataStore = { version:1; records:Record<string,PersistedTmdbMetadata> }
+type ScanShelf = { sourceKey:string; videos:ScannedVideo[]; items:LibraryItem[]; warnings:string[]; truncated:boolean }
 type PreviewFrameState = { images:string[]; loading:boolean; message:string }
 type CoverFocusDraft = { item:LibraryItem; image:MediaImage; x:number; y:number }
 type MediaLibraryConfig = {
   data?: { selectedId?: string; sources?: string[]; customCovers?: Record<string,CoverPreference> }
-  view?: { atmosphere?: boolean; libraryMode?: LibraryMode }
+  view?: { atmosphere?: boolean; libraryMode?: string; detailMode?: DetailMode }
 }
 const props = defineProps<{
   sourceId?: string
   config?: MediaLibraryConfig
   placement?: { context: 'grid' | 'sidebar' | 'toolbar' | 'embedded'; size?: { width?: number; height?: number } }
-  runAction?: (action: { type: 'open'; path: string }) => void
+  runAction?: (action: HostAction) => void
 }>()
 const emit = defineEmits<{ (e:'event', value:{ type:string; payload:unknown }):void }>()
 const sdk = inject<WidgetSdk>('widgetSdk')
+const life = sdk?.lifecycle?.()
+const scanShelf = life?.persistRef<ScanShelf | null>('media-library.scan-shelf',null) ?? ref<ScanShelf | null>(null)
 const query = ref('')
 const selectedId = ref(props.config?.data?.selectedId || sampleMovies[0].id)
 const sources = ref<string[]>([...(props.config?.data?.sources ?? [])])
 const customCovers = ref<Record<string,CoverPreference>>({ ...(props.config?.data?.customCovers ?? {}) })
 const tmdbMetadata = ref<Record<string,PersistedTmdbMetadata>>({})
-const tmdbSecret = ref<SecretStatus>({ set:false })
+const metadataOverrides = ref<Record<string,MediaMetadataOverride>>({})
+const tmdbSecret = ref<Awaited<ReturnType<WidgetSecrets['status']>>>({ set:false })
 const tmdbSecretBusy = ref(false)
+const tmdbQueryBusy = ref(false)
 const tmdbState = ref<'idle'|'matching'|'ready'|'error'>('idle')
 const tmdbProgress = ref<TmdbProgress | null>(null)
 const tmdbArtworkProgress = ref<{ completed:number; total:number } | null>(null)
@@ -47,8 +57,17 @@ const scanProgress = ref<ScanProgress | null>(null)
 const scanWarnings = ref<string[]>([])
 const scanTruncated = ref(false)
 const scanError = ref('')
-const libraryMode = ref<LibraryMode>(props.config?.view?.libraryMode ?? 'shelf')
+function normalizeLibraryMode(mode: string | undefined): LibraryMode {
+  return mode === 'store' ? 'store' : 'shelf'
+}
+const libraryMode = life?.persistRef<LibraryMode>('media-library.library-mode',normalizeLibraryMode(props.config?.view?.libraryMode))
+  ?? ref<LibraryMode>(normalizeLibraryMode(props.config?.view?.libraryMode))
+if (libraryMode.value !== 'shelf' && libraryMode.value !== 'store') libraryMode.value = 'shelf'
+const detailMode = life?.persistRef<DetailMode>('media-library.detail-mode',props.config?.view?.detailMode ?? 'movie-store')
+  ?? ref<DetailMode>(props.config?.view?.detailMode ?? 'movie-store')
 const genreJump = ref('')
+const storeShelfId = ref<string | null>(null)
+const storeShelfHistory = ref<string[]>([])
 const openId = ref<string | null>(null)
 const flipped = ref(false)
 const activePreview = ref<number | null>(null)
@@ -67,6 +86,11 @@ const scansRealFolders = computed(() => sources.value.length > 0 && !!sdk?.openL
 const libraryItems = computed(() => scansRealFolders.value ? scannedMovies.value : sampleMovies)
 const shelves = computed(() => shelvesFor(libraryItems.value, query.value))
 const genres = computed(() => Array.from(new Set(libraryItems.value.map(item => item.primaryGenre))).sort())
+const completeShelves = computed(() => shelvesFor(libraryItems.value))
+const genreShelves = computed(() => completeShelves.value.filter(shelf => genres.value.includes(shelf.title)))
+const storeFocusedShelf = computed(() => query.value.trim()
+  ? shelves.value[0] ?? null
+  : completeShelves.value.find(shelf => shelf.id === storeShelfId.value) ?? null)
 const openItem = computed(() => libraryItems.value.find(item => item.id === openId.value) ?? null)
 const openPreviewFrames = computed(() => openItem.value?.path ? previewFrames.value[openItem.value.path] : undefined)
 const collectionLabel = computed(() => scansRealFolders.value
@@ -80,8 +104,8 @@ const COVER_STORE = 'custom-covers'
 const TMDB_METADATA_STORE = 'tmdb-metadata'
 const artworkRequests = new Set<string>()
 const previewFrameRequests = new Map<string,Promise<void>>()
-let sidecarMediaPaths = new Set<string>()
 const remoteArtworkPaths = new Set<string>()
+let knownMediaPaths = new Set<string>()
 let releasePlayerQuiet: (() => void) | null = null
 
 function savedCoverUrl(value: CoverPreference | undefined): string | undefined {
@@ -95,6 +119,19 @@ function savedCoverAssetId(value: CoverPreference | undefined): string | undefin
 function savedCoverArtwork(value: CoverPreference | undefined) {
   const src = savedCoverUrl(value)
   return src ? { src, x:typeof value === 'string' ? 50 : value?.x ?? 50, y:typeof value === 'string' ? 50 : value?.y ?? 50, mode:'cover' as const } : undefined
+}
+
+function sourceKey() {
+  return sources.value.map(path => path.replace(/[\\/]+$/,'').toLocaleLowerCase()).join('\n')
+}
+
+function copyItems(items: LibraryItem[]): LibraryItem[] {
+  return items.map(item => ({ ...item, genres:[...item.genres], previews:item.previews.map(cue => ({ ...cue })), artwork:{ ...item.artwork } }))
+}
+
+function syncScanShelfItems() {
+  const cached = scanShelf.value
+  if (cached?.sourceKey === sourceKey()) scanShelf.value = { ...cached, items:copyItems(scannedMovies.value) }
 }
 
 async function loadCustomCovers() {
@@ -131,18 +168,96 @@ async function persistTmdbMetadata() {
   await sdk.configWrite(TMDB_METADATA_STORE, { version:1, records:tmdbMetadata.value } satisfies TmdbMetadataStore)
 }
 
+async function loadLocalMetadata() {
+  try {
+    metadataOverrides.value = await loadMetadataOverrides(sdk)
+  } catch (error) {
+    console.warn('[Media Library] Could not load local metadata edits:',error)
+  }
+}
+
+async function updateLocalMetadata(item: LibraryItem, patch: MediaMetadataOverride) {
+  await updateLocalMetadataItems([item],patch)
+}
+
+async function updateLocalMetadataItems(items: LibraryItem[], patch: MediaMetadataOverride) {
+  const paths = new Set(items.flatMap(item => item.path ? [item.path] : []))
+  if (!paths.size) return
+  const next = { ...metadataOverrides.value }
+  for (const path of paths) next[path] = { ...next[path], ...patch }
+  metadataOverrides.value = next
+  scannedMovies.value = scannedMovies.value.map(candidate => candidate.path && paths.has(candidate.path)
+    ? applyMetadataOverride(candidate,next[candidate.path])
+    : candidate)
+  syncScanShelfItems()
+  try {
+    await saveMetadataOverrides(sdk,next)
+  } catch (error) {
+    console.warn('[Media Library] Could not save local metadata edits:',error)
+    void sdk?.ui?.().snack({ id:'media-library-metadata', dedupe:'replace', text:'The local media edits could not be saved.', timeoutMs:6000 })
+  }
+}
+
+async function loadSources() {
+  try {
+    sources.value = await loadMediaSources(sdk,props.sourceId ?? 'default',sources.value)
+  } catch (error) {
+    console.warn('[Media Library] Could not load saved media sources:',error)
+  }
+}
+
+async function persistSources() {
+  try {
+    await saveMediaSources(sdk,props.sourceId ?? 'default',sources.value)
+  } catch (error) {
+    console.warn('[Media Library] Could not save media sources:',error)
+    void sdk?.ui?.().snack({ id:'media-library-sources', dedupe:'replace', text:'The media folder list could not be saved.', timeoutMs:6000 })
+  }
+}
+
+async function loadKnownMedia() {
+  try {
+    knownMediaPaths = new Set(await loadScanHistory(sdk,props.sourceId ?? 'default'))
+  } catch (error) {
+    console.warn('[Media Library] Could not load scan history:',error)
+  }
+}
+
+async function persistKnownMedia(paths: string[]) {
+  try {
+    await saveScanHistory(sdk,props.sourceId ?? 'default',paths)
+  } catch (error) {
+    console.warn('[Media Library] Could not save scan history:',error)
+  }
+}
+
 watch(() => props.config?.data?.sources, value => {
   const next = [...(value ?? [])]
   if (JSON.stringify(next) === JSON.stringify(sources.value)) return
   sources.value = next
-  void scanSources()
+  void scanSources(true)
 })
-watch(() => props.config?.view?.libraryMode, value => { if (value) libraryMode.value = value })
+watch(() => props.config?.view?.libraryMode, value => { if (value) libraryMode.value = normalizeLibraryMode(value) })
+watch(() => props.config?.view?.detailMode, value => { if (value) detailMode.value = value })
 function saveConfig(data: MediaLibraryConfig['data'], view: MediaLibraryConfig['view']) {
-  emit('event', { type:'update:config', payload:{ ...props.config, data:{ ...props.config?.data, sources:sources.value, customCovers:customCovers.value, ...data }, view:{ ...props.config?.view, ...view } } })
+  emit('event', { type:'update:config', payload:{ ...props.config, data:{ ...props.config?.data, sources:sources.value, customCovers:customCovers.value, ...data }, view:{ ...props.config?.view, libraryMode:libraryMode.value, detailMode:detailMode.value, ...view } } })
+}
+
+async function revealShelf(shelfId: string) {
+  query.value = ''
+  await nextTick()
+  browse.value?.querySelector<HTMLElement>(`[data-shelf-id="${shelfId}"]`)?.scrollIntoView({ behavior:'smooth', block:'start' })
 }
 
 function open(item: LibraryItem) {
+  if (item.targetShelfId) {
+    if (libraryMode.value === 'store') {
+      void focusStoreShelf(item.targetShelfId)
+      return
+    }
+    void revealShelf(item.targetShelfId)
+    return
+  }
   selectedId.value = item.id
   openId.value = item.id
   flipped.value = false
@@ -168,6 +283,7 @@ async function ensureOpenArtwork(item: LibraryItem) {
     // Keep the neutral frame when Windows or the platform has no thumbnail.
   } finally {
     artworkRequests.delete(item.path)
+    syncScanShelfItems()
   }
 }
 function closeDetail() {
@@ -197,7 +313,50 @@ async function play(item: LibraryItem) {
 }
 function setLibraryMode(mode: LibraryMode) {
   libraryMode.value = mode
+  if (mode === 'store') {
+    storeShelfId.value = null
+    storeShelfHistory.value = []
+    genreJump.value = ''
+  }
   saveConfig({ sources:sources.value }, { libraryMode:mode })
+  libraryMenu.value?.removeAttribute('open')
+}
+
+async function focusStoreShelf(shelfId: string) {
+  if (storeShelfId.value && storeShelfId.value !== shelfId) storeShelfHistory.value.push(storeShelfId.value)
+  storeShelfId.value = shelfId
+  genreJump.value = genreShelves.value.some(shelf => shelf.id === shelfId) ? shelfId : ''
+  await nextTick()
+  browse.value?.scrollTo({ top:0, behavior:'smooth' })
+}
+
+async function backFromStoreShelf() {
+  storeShelfId.value = storeShelfHistory.value.pop() ?? null
+  genreJump.value = storeShelfId.value && genreShelves.value.some(shelf => shelf.id === storeShelfId.value) ? storeShelfId.value : ''
+  await nextTick()
+  browse.value?.scrollTo({ top:0, behavior:'smooth' })
+}
+async function showStoreFloor() {
+  storeShelfId.value = null
+  storeShelfHistory.value = []
+  genreJump.value = ''
+  await nextTick()
+  browse.value?.scrollTo({ top:0, behavior:'smooth' })
+}
+async function returnHome() {
+  if (openId.value) closeDetail()
+  query.value = ''
+  genreJump.value = ''
+  if (libraryMode.value === 'store') {
+    await showStoreFloor()
+    return
+  }
+  await nextTick()
+  browse.value?.scrollTo({ top:0, behavior:'smooth' })
+}
+function setDetailMode(mode: DetailMode) {
+  detailMode.value = mode
+  saveConfig({ sources:sources.value }, { detailMode:mode })
   libraryMenu.value?.removeAttribute('open')
 }
 async function addSource() {
@@ -206,27 +365,52 @@ async function addSource() {
   const path = await ui.pickFolder({ title:'Add a media source', startIn:sources.value[sources.value.length - 1], access:'read' })
   if (!path || sources.value.includes(path)) return
   sources.value = [...sources.value, path]
+  await persistSources()
   saveConfig({ sources:sources.value }, { libraryMode:libraryMode.value })
   libraryMenu.value?.removeAttribute('open')
-  void scanSources()
+  void scanSources(true)
   void ui.snack({ id:'media-library-source', dedupe:'replace', text:`Added ${sourceLabel(path)}. Looking for videos now.`, timeoutMs:3200 })
 }
-function removeSource(path: string) {
+async function removeSource(path: string) {
   sources.value = sources.value.filter(source => source !== path)
+  await persistSources()
   saveConfig({ sources:sources.value }, { libraryMode:libraryMode.value })
-  void scanSources()
+  void scanSources(true)
 }
-async function scanSources() {
+async function scanSources(force = false) {
   const revision = ++scanRevision
   artworkProgress.value = null
   tmdbArtworkProgress.value = null
-  sidecarMediaPaths = new Set<string>()
   remoteArtworkPaths.clear()
-  scannedMovies.value = []
   scanWarnings.value = []
   scanTruncated.value = false
   scanError.value = ''
-  if (!sources.value.length || !sdk?.openListing) { scanState.value = 'idle'; return }
+  if (!sources.value.length || !sdk?.openListing) {
+    scannedMovies.value = []
+    scanShelf.value = null
+    scanState.value = 'idle'
+    return
+  }
+  const key = sourceKey()
+  const cached = scanShelf.value
+  if (!force && cached?.sourceKey === key) {
+    scannedMovies.value = copyItems(cached.items).map(item => {
+      const overridden = item.path ? applyMetadataOverride(item,metadataOverrides.value[item.path]) : item
+      const artwork = item.path ? savedCoverArtwork(customCovers.value[item.path]) : undefined
+      return artwork ? { ...overridden, artwork } : overridden
+    })
+    scanWarnings.value = [...cached.warnings]
+    scanTruncated.value = cached.truncated
+    scanState.value = 'ready'
+    scanProgress.value = null
+    if (scannedMovies.value.some(item => item.metadataSource === 'tmdb')) {
+      tmdbState.value = 'ready'
+      tmdbMessage.value = 'Restored the current library from the lifecycle cache.'
+    }
+    void hydratePreferredArtwork(cached.videos,revision)
+    return
+  }
+  scannedMovies.value = []
   scanState.value = 'scanning'
   scanProgress.value = { phase:'folders', folders:0, videos:0, current:sources.value[0] }
   try {
@@ -238,20 +422,47 @@ async function scanSources() {
       () => revision !== scanRevision,
     )
     if (revision !== scanRevision) return
-    sidecarMediaPaths = new Set(result.videos.filter(video => video.coverPath).map(video => video.path))
+    const discovered = new Set(result.videos
+      .map(video => mediaPathKey(video.path))
+      .filter(path => !knownMediaPaths.has(path)))
     const coverUrls = new Map<string,string>()
-    scannedMovies.value = createScannedLibrary(result.videos, posterAtlases, coverUrls).map(item => {
-      const enriched = item.path ? applyPersistedTmdbMetadata(item,tmdbMetadata.value[item.path]) : item
+    const restored = restorePersistedTmdbMetadata(
+      createScannedLibrary(result.videos, posterAtlases, coverUrls),
+      tmdbMetadata.value,
+    )
+    scannedMovies.value = restored.items.map(item => {
       const artwork = item.path ? savedCoverArtwork(customCovers.value[item.path]) : undefined
-      if (item.path && enriched.tmdbPosterPath && !sidecarMediaPaths.has(item.path) && !artwork) remoteArtworkPaths.add(item.path)
-      return artwork ? { ...enriched, artwork } : enriched
+      const local = item.path ? applyMetadataOverride(item,metadataOverrides.value[item.path]) : item
+      const withArrival = local.path ? { ...local, newArrival:discovered.has(mediaPathKey(local.path)) } : local
+      return artwork ? { ...withArrival, artwork } : withArrival
     })
+    if (restored.restored) {
+      tmdbState.value = 'ready'
+      tmdbMessage.value = `${restored.restored} TMDB ${restored.restored === 1 ? 'match' : 'matches'} restored from cache.`
+    } else if (tmdbState.value === 'ready') {
+      tmdbState.value = 'idle'
+      tmdbMessage.value = ''
+    }
+    const updatedHistory = mergeScanHistory(
+      knownMediaPaths,
+      result.videos.map(video => video.path),
+      !result.truncated && !result.warnings.length,
+    )
+    knownMediaPaths = new Set(updatedHistory)
+    await persistKnownMedia(updatedHistory)
+    if (revision !== scanRevision) return
     scanWarnings.value = result.warnings
     scanTruncated.value = result.truncated
     scanState.value = 'ready'
+    scanShelf.value = {
+      sourceKey:key,
+      videos:result.videos.map(video => ({ ...video, probe:video.probe ? { ...video.probe } : undefined })),
+      items:copyItems(scannedMovies.value),
+      warnings:[...result.warnings],
+      truncated:result.truncated,
+    }
     if (scannedMovies.value.length && !scannedMovies.value.some(item => item.id === selectedId.value)) selectedId.value = scannedMovies.value[0].id
-    void hydrateArtwork(result.videos, revision)
-    void hydrateTmdbArtwork(scannedMovies.value,revision)
+    void hydratePreferredArtwork(result.videos, revision)
   } catch (error) {
     if (revision !== scanRevision) return
     scanError.value = error instanceof Error ? error.message : String(error)
@@ -259,9 +470,24 @@ async function scanSources() {
   }
 }
 
+async function hydratePreferredArtwork(
+  videos: Awaited<ReturnType<typeof scanVideoSources>>['videos'],
+  revision: number,
+) {
+  await hydrateTmdbArtwork(scannedMovies.value,revision)
+  if (revision === scanRevision) await hydrateArtwork(videos,revision)
+}
+
 async function hydrateArtwork(videos: Awaited<ReturnType<typeof scanVideoSources>>['videos'], revision: number) {
   if (!sdk?.mediaImageCreate || !videos.length) return
-  const pending = videos.filter(video => !customCovers.value[video.path] && !remoteArtworkPaths.has(video.path))
+  const pending = videos.filter(video => {
+    const source = preferredCoverSource({
+      custom:!!customCovers.value[video.path],
+      tmdb:remoteArtworkPaths.has(video.path),
+      sidecar:!!video.coverPath,
+    })
+    return source === 'sidecar' || source === 'thumbnail'
+  })
   if (!pending.length) return
   artworkProgress.value = { completed:0, total:pending.length }
   const shared = new Map<string,Promise<MediaImage>>()
@@ -302,6 +528,7 @@ async function hydrateArtwork(videos: Awaited<ReturnType<typeof scanVideoSources
 
   await Promise.all(Array.from({ length:Math.min(3, pending.length) }, () => worker()))
   if (revision === scanRevision) artworkProgress.value = null
+  syncScanShelfItems()
 }
 
 async function hydrateTmdbArtwork(items: LibraryItem[], revision: number) {
@@ -310,7 +537,7 @@ async function hydrateTmdbArtwork(items: LibraryItem[], revision: number) {
   const jobs:Job[] = []
   for (const item of items) {
     const poster = tmdbImageUrl(item.tmdbPosterPath,'w500')
-    if (poster && item.path && !customCovers.value[item.path] && !sidecarMediaPaths.has(item.path)) {
+    if (poster && item.path && preferredCoverSource({ custom:!!customCovers.value[item.path], tmdb:true }) === 'tmdb') {
       jobs.push({ id:item.id, path:item.path, kind:'poster', url:poster, width:600, height:900 })
     }
     const still = tmdbImageUrl(item.tmdbStillPath,'w780')
@@ -322,9 +549,12 @@ async function hydrateTmdbArtwork(items: LibraryItem[], revision: number) {
   let cursor = 0
   let imported = 0
   let failed = 0
+  let networkDenied = false
 
-  async function worker() {
-    while (cursor < jobs.length && revision === scanRevision) {
+  async function worker(limit = Number.POSITIVE_INFINITY) {
+    let processed = 0
+    while (cursor < jobs.length && revision === scanRevision && processed < limit) {
+      processed += 1
       const job = jobs[cursor++]
       try {
         const key = `${job.url}|${job.width}x${job.height}`
@@ -341,12 +571,13 @@ async function hydrateTmdbArtwork(items: LibraryItem[], revision: number) {
         scannedMovies.value = scannedMovies.value.map(item => item.id !== job.id ? item
           : job.kind === 'still'
             ? { ...item, previewImageSrc:image.url }
-            : item.path && !customCovers.value[item.path] && !sidecarMediaPaths.has(item.path)
+            : item.path && preferredCoverSource({ custom:!!customCovers.value[item.path], tmdb:true }) === 'tmdb'
               ? { ...item, artwork:{ src:image.url, x:50, y:50, mode:'cover' as const } }
               : item)
         imported += 1
       } catch (error) {
         failed += 1
+        if (/network permission|not granted|declined|E_NEEDS_NETWORK/i.test(error instanceof Error ? error.message : String(error))) networkDenied = true
         console.warn(`[Media Library] Could not import TMDB ${job.kind}:`, error)
       } finally {
         if (revision === scanRevision && tmdbArtworkProgress.value) tmdbArtworkProgress.value = {
@@ -357,14 +588,50 @@ async function hydrateTmdbArtwork(items: LibraryItem[], revision: number) {
     }
   }
 
-  await Promise.all(Array.from({ length:Math.min(3,jobs.length) }, () => worker()))
+  // Let the first image-host request finish its consent flow before issuing other
+  // image URLs. Otherwise each exact URL can queue a separate permission question.
+  await worker(1)
+  if (!networkDenied) await Promise.all(Array.from({ length:Math.min(3,jobs.length-cursor) }, () => worker()))
   if (revision === scanRevision) tmdbArtworkProgress.value = null
+  syncScanShelfItems()
   return { imported, failed }
 }
 
 function directoryOf(path: string): string {
   const index = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))
   return index > 0 ? path.slice(0,index) : path
+}
+
+function showMediaFile(item: LibraryItem) {
+  if (item.path) props.runAction?.({ type:'nav', to:directoryOf(item.path) })
+}
+
+function updateSynopsis(value: string) {
+  if (openItem.value) void updateLocalMetadata(openItem.value,{ synopsis:value })
+}
+
+async function updateGenres(value: string[]) {
+  const item = openItem.value
+  if (!item) return
+  const seriesItems = item.seriesTitle
+    ? scannedMovies.value.filter(candidate => candidate.seriesTitle === item.seriesTitle && candidate.path)
+    : []
+  if (seriesItems.length < 2 || !sdk?.ui) {
+    await updateLocalMetadata(item,{ genres:value })
+    return
+  }
+  const result = await sdk.ui().messageBox({
+    title:'Apply genres to the whole series?',
+    message:`${item.seriesTitle} has ${seriesItems.length} local episodes.`,
+    detail:`Use ${value.join(', ')} for this episode only, or for every episode in the series.`,
+    buttons:[
+      { label:'Cancel', cancel:true },
+      { label:'This episode', id:'episode' },
+      { label:'Whole series', id:'series', default:true },
+    ],
+  })
+  if (result.button === 'series') await updateLocalMetadataItems(seriesItems,{ genres:value })
+  else if (result.button === 'episode') await updateLocalMetadata(item,{ genres:value })
 }
 
 async function replaceCustomCover(item: LibraryItem, image: MediaImage, focus = { x:50, y:50 }) {
@@ -374,6 +641,7 @@ async function replaceCustomCover(item: LibraryItem, image: MediaImage, focus = 
   scannedMovies.value = scannedMovies.value.map(candidate => candidate.path === item.path
     ? { ...candidate, artwork:{ src:image.url, x:focus.x, y:focus.y, mode:'cover' as const } }
     : candidate)
+  syncScanShelfItems()
   await persistCustomCovers()
   saveConfig({ sources:sources.value, customCovers:customCovers.value }, { libraryMode:libraryMode.value })
   if (previous && previous !== image.assetId && sdk?.mediaImageDelete) {
@@ -382,8 +650,48 @@ async function replaceCustomCover(item: LibraryItem, image: MediaImage, focus = 
   }
 }
 
-async function chooseCoverFile() {
-  const item = player.value?.item
+async function removeCustomArtwork(item: LibraryItem) {
+  if (!item.path || !customCovers.value[item.path]) return
+  const path = item.path
+  const previous = savedCoverAssetId(customCovers.value[path])
+  const next = { ...customCovers.value }
+  delete next[path]
+  customCovers.value = next
+  scannedMovies.value = scannedMovies.value.map(candidate => candidate.path === path
+    ? { ...candidate, artwork:{ src:'', x:0, y:0, mode:'placeholder' as const } }
+    : candidate)
+  await persistCustomCovers()
+  saveConfig({ sources:sources.value, customCovers:customCovers.value }, { libraryMode:libraryMode.value })
+  if (previous && sdk?.mediaImageDelete) {
+    const stillUsed = Object.values(customCovers.value).some(value => savedCoverAssetId(value) === previous)
+    if (!stillUsed) void sdk.mediaImageDelete(previous).catch(() => {})
+  }
+  const refreshed = scannedMovies.value.find(candidate => candidate.path === path)
+  if (refreshed?.tmdbPosterPath) await hydrateTmdbArtwork([refreshed],scanRevision)
+  else {
+    const video = scanShelf.value?.videos.find(candidate => candidate.path === path)
+    if (video) await hydrateArtwork([video],scanRevision)
+  }
+  syncScanShelfItems()
+}
+
+async function useTmdbArtwork(item: LibraryItem) {
+  if (!item.path || !item.tmdbPosterPath) return
+  if (customCovers.value[item.path]) {
+    await removeCustomArtwork(item)
+    return
+  }
+  const path = item.path
+  scannedMovies.value = scannedMovies.value.map(candidate => candidate.path === path
+    ? { ...candidate, artwork:{ src:'', x:0, y:0, mode:'placeholder' as const } }
+    : candidate)
+  const refreshed = scannedMovies.value.find(candidate => candidate.path === path)
+  if (refreshed) await hydrateTmdbArtwork([refreshed],scanRevision)
+  syncScanShelfItems()
+}
+
+async function chooseCoverFile(target?: LibraryItem) {
+  const item = target ?? player.value?.item
   const ui = sdk?.ui?.()
   if (!item?.path || !ui?.openFiles || !sdk?.mediaImageCreate || coverBusy.value) return
   const paths = await ui.openFiles({
@@ -405,6 +713,34 @@ async function chooseCoverFile() {
     void ui.snack({ id:'media-library-cover', dedupe:'replace', text:`Could not use that cover: ${error instanceof Error ? error.message : String(error)}`, timeoutMs:6000 })
   } finally {
     coverBusy.value = false
+  }
+}
+
+async function manageArtwork(item: LibraryItem) {
+  const ui = sdk?.ui?.()
+  if (!item.path || !ui) return
+  const tmdbLabel = item.tmdbPosterPath ? 'Use TMDB artwork' : 'Query TMDB'
+  const result = await ui.messageBox({
+    title:`Artwork for ${item.title}`,
+    message:'Choose where this title’s artwork should come from.',
+    detail:'A movie frame opens playback so you can seek to the exact image before saving it.',
+    buttons:[
+      { label:'Cancel', cancel:true },
+      { label:tmdbLabel, id:'tmdb' },
+      { label:'Choose image', id:'image' },
+      { label:'Choose movie frame', id:'frame', default:true },
+    ],
+  })
+  if (result.button === 'image') await chooseCoverFile(item)
+  else if (result.button === 'frame') {
+    await play(item)
+    void ui.snack({ id:'media-library-cover-frame', dedupe:'replace', text:'Seek to the frame you want, then choose “Use current frame as cover”.', timeoutMs:6500 })
+  } else if (result.button === 'tmdb') {
+    if (item.tmdbPosterPath) await useTmdbArtwork(item)
+    else {
+      if (!tmdbSecret.value.set) await promptTmdbSecret()
+      if (tmdbSecret.value.set) await queryTmdb(item,true)
+    }
   }
 }
 
@@ -559,25 +895,71 @@ async function matchTmdb() {
   tmdbState.value = 'matching'
   tmdbMessage.value = ''
   try {
-    const result = await enrichWithTmdb(sdk,scannedMovies.value,progress => { tmdbProgress.value = progress })
+    const matchItems = scannedMovies.value.map(item => {
+      const withoutLocalFlag = item.localMetadataOverride ? { ...item, localMetadataOverride:false } : item
+      return item.path ? applyPersistedTmdbMetadata(withoutLocalFlag,tmdbMetadata.value[item.path]) : withoutLocalFlag
+    })
+    const result = await enrichWithTmdb(sdk,matchItems,progress => { tmdbProgress.value = progress })
     if (revision !== scanRevision) return
-    scannedMovies.value = result.items
     const records = { ...tmdbMetadata.value }
     for (const item of result.items) {
       const metadata = persistedTmdbMetadata(item)
       if (item.path && metadata) records[item.path] = metadata
     }
+    scannedMovies.value = result.items.map(item => item.path ? applyMetadataOverride(item,metadataOverrides.value[item.path]) : item)
     tmdbMetadata.value = records
     await persistTmdbMetadata()
     const artwork = await hydrateTmdbArtwork(result.items,revision)
     if (revision !== scanRevision) return
     tmdbState.value = 'ready'
     tmdbMessage.value = `${result.matched} matched${result.unmatched ? ` · ${result.unmatched} unmatched` : ''}${artwork.imported ? ` · ${artwork.imported} images` : ''}${artwork.failed ? ` · ${artwork.failed} image failures` : ''}`
+    syncScanShelfItems()
     void sdk.ui?.().snack({ id:'media-library-tmdb', dedupe:'replace', text:`TMDB metadata matched ${result.matched} ${result.matched === 1 ? 'title' : 'titles'}.`, timeoutMs:4000 })
   } catch (error) {
     tmdbState.value = 'error'
     tmdbMessage.value = error instanceof Error ? error.message : String(error)
     void sdk.ui?.().snack({ id:'media-library-tmdb', dedupe:'replace', text:tmdbMessage.value, timeoutMs:6000 })
+  }
+}
+
+async function queryTmdb(item: LibraryItem, preferArtwork = false) {
+  if (!sdk?.networkFetch || !tmdbSecret.value.set || tmdbQueryBusy.value) return
+  const revision = scanRevision
+  tmdbQueryBusy.value = true
+  try {
+    const attempts = await diagnoseTmdbItem(sdk,item)
+    const matched = attempts.find(attempt => attempt.chosen)
+    const label = matched?.chosen?.title || matched?.chosen?.name
+    if (matched) {
+      const current = scannedMovies.value.find(candidate => candidate.path && candidate.path === item.path) ?? item
+      const withoutLocalFlag = current.localMetadataOverride ? { ...current, localMetadataOverride:false } : current
+      const base = current.path ? applyPersistedTmdbMetadata(withoutLocalFlag,tmdbMetadata.value[current.path]) : withoutLocalFlag
+      const result = await enrichWithTmdb(sdk,[base])
+      if (revision !== scanRevision) return
+      const providerItem = result.items[0]
+      const metadata = persistedTmdbMetadata(providerItem)
+      if (result.matched && providerItem && current.path && metadata) {
+        tmdbMetadata.value = { ...tmdbMetadata.value, [current.path]:metadata }
+        const applied = applyMetadataOverride(providerItem,metadataOverrides.value[current.path])
+        scannedMovies.value = scannedMovies.value.map(candidate => candidate.path === current.path ? applied : candidate)
+        await persistTmdbMetadata()
+        await hydrateTmdbArtwork([providerItem],revision)
+        if (preferArtwork && providerItem.tmdbPosterPath) await useTmdbArtwork(applied)
+        syncScanShelfItems()
+        tmdbState.value = 'ready'
+        tmdbMessage.value = `Applied ${label || 'the TMDB match'} (${matched.validation.resultYear || 'year unknown'})${preferArtwork && providerItem.tmdbPosterPath ? ' with its TMDB artwork' : ''}. The diagnostic was logged to the console.`
+      } else {
+        tmdbMessage.value = `The diagnostic found ${label || 'a candidate'}, but the enrichment pass rejected it. Both queries were logged to the console.`
+      }
+    } else {
+      tmdbMessage.value = `Debug query returned no acceptable match across ${attempts.length} ${attempts.length === 1 ? 'query' : 'queries'}. Request parameters and response bodies were logged to the console.`
+    }
+    void sdk.ui?.().snack({ id:'media-library-tmdb-debug', dedupe:'replace', text:tmdbMessage.value, timeoutMs:7000 })
+  } catch (error) {
+    tmdbMessage.value = error instanceof Error ? error.message : String(error)
+    void sdk.ui?.().snack({ id:'media-library-tmdb-debug', dedupe:'replace', text:`TMDB debug query failed: ${tmdbMessage.value}`, timeoutMs:7000 })
+  } finally {
+    tmdbQueryBusy.value = false
   }
 }
 
@@ -653,6 +1035,10 @@ function sourceLabel(path: string) {
 async function jumpToGenre() {
   if (!genreJump.value) return
   query.value = ''
+  if (libraryMode.value === 'store') {
+    await focusStoreShelf(genreJump.value)
+    return
+  }
   await nextTick()
   const target = browse.value?.querySelector<HTMLElement>(`[data-shelf-id="${genreJump.value}"]`)
   target?.scrollIntoView({ behavior:'smooth', block:'start' })
@@ -662,11 +1048,12 @@ function keydown(event: KeyboardEvent) {
   if (coverFocusDraft.value) cancelCoverFocus()
   else if (player.value) closePlayer()
   else if (openId.value) closeDetail()
+  else if (libraryMode.value === 'store' && storeShelfId.value) void backFromStoreShelf()
   event.stopPropagation()
 }
 onMounted(async () => {
   document.addEventListener('pointerdown', outsideMenu, true)
-  await Promise.all([loadCustomCovers(),loadTmdbMetadata(),refreshTmdbSecret()])
+  await Promise.all([loadSources(),loadKnownMedia(),loadCustomCovers(),loadTmdbMetadata(),loadLocalMetadata(),refreshTmdbSecret()])
   void scanSources()
 })
 onBeforeUnmount(() => {
@@ -680,12 +1067,15 @@ onBeforeUnmount(() => {
   <section
     class="media-library gem-library-surface"
     :class="{ sidebar: placement?.context === 'sidebar', atmosphere: config?.view?.atmosphere !== false }"
-    aria-label="Media Library"
+    aria-label="GEM Video Club"
     @keydown="keydown"
   >
     <header class="media-library-topbar">
-      <div class="media-library-brand"><span aria-hidden="true">◆</span><div><strong>Video Store</strong><small>{{ collectionLabel }}</small></div></div>
-      <label class="media-library-search"><span aria-hidden="true">⌕</span><input v-model="query" type="search" placeholder="Find a movie or genre" aria-label="Find a movie or genre" /><button v-if="query" type="button" aria-label="Clear search" @click="query = ''">×</button></label>
+      <button class="media-library-brand" type="button" aria-label="Return to GEM Video Club home" title="GEM Video Club home" @click="returnHome">
+        <span class="media-library-brand-logo" aria-hidden="true"><i>GEM</i><b>VIDEO CLUB</b></span>
+        <small>{{ collectionLabel }}</small>
+      </button>
+      <div class="media-library-search" role="search"><span aria-hidden="true">⌕</span><input v-model="query" type="text" inputmode="search" enterkeyhint="search" autocomplete="off" :spellcheck="false" placeholder="Find a movie or genre" aria-label="Find a movie or genre" /><button v-if="query" type="button" aria-label="Clear search" @click="query = ''">×</button></div>
       <div class="media-library-tools">
         <label class="media-library-genres">
           <span aria-hidden="true">▦</span>
@@ -698,9 +1088,14 @@ onBeforeUnmount(() => {
           <summary aria-label="Open library menu" title="Library menu"><span aria-hidden="true">☰</span></summary>
           <div class="media-library-menu-panel">
             <p class="media-library-menu-label">Display</p>
-            <div class="media-library-mode" role="group" aria-label="Library display mode">
+            <div class="media-library-mode media-library-display-mode" role="group" aria-label="Library display mode">
               <button type="button" :class="{ active:libraryMode === 'shelf' }" @click="setLibraryMode('shelf')"><span aria-hidden="true">▰</span>Shelves</button>
-              <button type="button" :class="{ active:libraryMode === 'rack' }" @click="setLibraryMode('rack')"><span aria-hidden="true">▥</span>Case rack</button>
+              <button type="button" :class="{ active:libraryMode === 'store' }" @click="setLibraryMode('store')"><span aria-hidden="true">⌂</span>Showroom</button>
+            </div>
+            <p class="media-library-menu-label media-library-detail-label">Focused title</p>
+            <div class="media-library-mode" role="group" aria-label="Focused title display mode">
+              <button type="button" :class="{ active:detailMode === 'classic' }" @click="setDetailMode('classic')"><span aria-hidden="true">▤</span>Classic</button>
+              <button type="button" :class="{ active:detailMode === 'movie-store' }" @click="setDetailMode('movie-store')"><span aria-hidden="true">◉</span>Movie store</button>
             </div>
             <div class="media-library-source-heading"><p class="media-library-menu-label">Media sources</p><small>{{ sources.length }}</small></div>
             <ul v-if="sources.length" class="media-library-sources">
@@ -712,7 +1107,7 @@ onBeforeUnmount(() => {
             <p v-if="artworkProgress" class="media-library-scan-note">Preparing artwork {{ artworkProgress.completed }}/{{ artworkProgress.total }}…</p>
             <p v-if="tmdbArtworkProgress" class="media-library-scan-note">Importing TMDB artwork {{ tmdbArtworkProgress.completed }}/{{ tmdbArtworkProgress.total }}…</p>
             <button class="media-library-add-source" type="button" :disabled="!sdk?.ui" @click="addSource"><span aria-hidden="true">＋</span>Add media folder</button>
-            <button v-if="sources.length && sdk?.openListing" class="media-library-rescan" type="button" :disabled="scanState === 'scanning'" @click="scanSources"><span aria-hidden="true">↻</span>{{ scanState === 'scanning' ? 'Scanning…' : 'Scan again' }}</button>
+            <button v-if="sources.length && sdk?.openListing" class="media-library-rescan" type="button" :disabled="scanState === 'scanning'" @click="scanSources(true)"><span aria-hidden="true">↻</span>{{ scanState === 'scanning' ? 'Scanning…' : 'Scan again' }}</button>
             <div class="media-library-source-heading media-library-tmdb-heading"><p class="media-library-menu-label">TMDB metadata</p><small>{{ tmdbState === 'ready' ? '✓' : tmdbState === 'matching' ? '…' : 'β' }}</small></div>
             <div class="media-library-tmdb-secret" :class="{ connected:tmdbSecret.set }">
               <span>{{ tmdbSecret.set ? `Token saved ${tmdbSecret.hint ?? ''}` : 'No API token saved' }}</span>
@@ -733,10 +1128,22 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <main ref="browse" class="media-library-browse">
+    <main ref="browse" class="media-library-browse" @wheel.stop>
       <div v-if="scanState === 'scanning' && !libraryItems.length" class="media-library-empty media-library-scanning"><span>◌</span><strong>Stocking the shelves</strong><p>{{ scanProgress?.phase === 'metadata' ? 'Reading movie details' : `Searching ${sourceLabel(scanProgress?.current || '')}` }} · {{ scanProgress?.videos ?? 0 }} found</p></div>
-      <div v-else-if="!shelves.length" class="media-library-empty"><span>⌕</span><strong>{{ query ? 'No movie found' : scanState === 'error' ? 'Could not scan the library' : 'No videos found' }}</strong><p>{{ query ? 'Try a title, year, or genre.' : scanError || 'Add another folder or scan again.' }}</p><button v-if="query" type="button" @click="query = ''">Clear search</button><button v-else-if="sources.length" type="button" @click="scanSources">Scan again</button></div>
+      <div v-else-if="!shelves.length" class="media-library-empty"><span>⌕</span><strong>{{ query ? 'No movie found' : scanState === 'error' ? 'Could not scan the library' : 'No videos found' }}</strong><p>{{ query ? 'Try a title, year, or genre.' : scanError || 'Add another folder or scan again.' }}</p><button v-if="query" type="button" @click="query = ''">Clear search</button><button v-else-if="sources.length" type="button" @click="scanSources(true)">Scan again</button></div>
+      <StoreFloor
+        v-if="libraryMode === 'store'"
+        :shelves="genreShelves"
+        :items="libraryItems"
+        :active-shelf="storeFocusedShelf"
+        :selected-id="selectedId"
+        @select-shelf="focusStoreShelf"
+        @back="backFromStoreShelf"
+        @showroom="showStoreFloor"
+        @open="open"
+      />
       <MediaShelf
+        v-else
         v-for="shelf in shelves"
         :key="shelf.id"
         :shelf-id="shelf.id"
@@ -744,7 +1151,6 @@ onBeforeUnmount(() => {
         :note="shelf.note"
         :items="shelf.items"
         :selected-id="selectedId"
-        :display-mode="libraryMode"
         @open="open"
       />
     </main>
@@ -752,16 +1158,22 @@ onBeforeUnmount(() => {
     <LibraryDetail
       v-if="openItem"
       :item="openItem"
+      :detail-mode="detailMode"
       :flipped="flipped"
       :active-preview="activePreview"
       :preview-stream-url="previewStream?.itemId === openItem.id ? previewStream.url : null"
       :preview-image-srcs="openPreviewFrames?.images"
       :preview-frames-loading="openPreviewFrames?.loading"
       :preview-frames-message="openPreviewFrames?.message"
+      :can-show-in-folder="!!runAction"
       @close="closeDetail"
       @flip="flipped = !flipped"
       @preview="preview"
       @play="play(openItem)"
+      @show-in-folder="showMediaFile(openItem)"
+      @edit-artwork="manageArtwork(openItem)"
+      @update-synopsis="updateSynopsis"
+      @update-genres="updateGenres"
     />
 
     <section v-if="player || playerLoading" class="media-library-player" aria-label="Video player">
@@ -769,6 +1181,8 @@ onBeforeUnmount(() => {
         <button type="button" @click="closePlayer"><span aria-hidden="true">‹</span> Back to store</button>
         <strong>{{ player?.item.title || 'Preparing movie…' }}</strong>
         <div class="media-library-player-actions">
+          <button v-if="player?.item.path && sdk?.mediaVideoFramesCreate" type="button" :disabled="coverBusy" @click="captureCurrentFrame">Use current frame as cover</button>
+          <button v-if="player?.item.path && sdk?.mediaImageCreate" type="button" :disabled="coverBusy" @click="chooseCoverFile()">Choose image…</button>
           <button v-if="player?.item.path && runAction" type="button" @click="runAction({ type:'open', path:player.item.path })">Open externally</button>
         </div>
       </header>
@@ -798,7 +1212,7 @@ onBeforeUnmount(() => {
       <div v-if="playerCoverMenu && player" class="media-library-player-cover-menu" :style="{ left:`${playerCoverMenu.x}px`, top:`${playerCoverMenu.y}px` }">
         <p>Use artwork from a file or the exact frame currently on screen.</p>
         <button type="button" :disabled="coverBusy || !sdk?.mediaVideoFramesCreate" @click="captureCurrentFrame">{{ coverBusy ? 'Saving cover…' : 'Use current frame as cover' }}</button>
-        <button type="button" :disabled="coverBusy || !sdk?.mediaImageCreate" @click="chooseCoverFile">Choose an image file…</button>
+        <button type="button" :disabled="coverBusy || !sdk?.mediaImageCreate" @click="chooseCoverFile()">Choose an image file…</button>
         <span>Playback speed</span>
         <div><button v-for="rate in [.75,1,1.25,1.5,2]" :key="rate" type="button" @click="setPlaybackRate(rate)">{{ rate }}×</button></div>
       </div>

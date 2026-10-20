@@ -24,6 +24,8 @@ export type LibraryItem = {
   previews: LibraryPreviewCue[]
   progress?: number
   addedRank: number
+  /** Discovered in the most recent completed Media Library scan. */
+  newArrival?: boolean
   path?: string
   mimeType?: string
   resolution?: string
@@ -31,6 +33,12 @@ export type LibraryItem = {
   seriesTitle?: string
   seasonNumber?: number
   episodeNumber?: number
+  /** Local title candidates used when an optional metadata provider cannot match the display title. */
+  metadataSearchTitles?: string[]
+  /** The user replaced provider or inferred description/genre data on this device. */
+  localMetadataOverride?: boolean
+  /** A synthetic collection card navigates to this shelf instead of opening details. */
+  targetShelfId?: string
   metadataSource?: 'tmdb'
   tmdbId?: number
   tmdbType?: 'movie' | 'tv'

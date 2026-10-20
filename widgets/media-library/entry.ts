@@ -1,4 +1,5 @@
 import Widget from './Widget.vue'
+import bungeeLicense from './assets/Bungee-OFL.txt?raw'
 import tmdbLogo from './assets/tmdb-logo.png?inline'
 
 export default {
@@ -7,15 +8,15 @@ export default {
   version:'0.4.0',
   license:'PolyForm-Noncommercial-1.0.0',
   Component:Widget,
-  displayName:'Media Library',
-  description:'Browse movies on video-store shelves and open a case for details and scene previews.',
+  displayName:'GEM Video Club',
+  description:'Browse your media in a nostalgic video-club showroom and open a case for details and scene previews.',
   category:'media',
   icon:'film',
   contexts:{
     grid:{ minSize:{ cols:3, rows:3 }, defaultSize:{ cols:8, rows:6 } },
     sidebar:{ minHeight:260 },
   },
-  defaults:{ data:{ selectedId:'signal-north', sources:[] }, view:{ atmosphere:true, libraryMode:'shelf' } },
+  defaults:{ data:{ selectedId:'signal-north', sources:[] }, view:{ atmosphere:true, libraryMode:'shelf', detailMode:'movie-store' } },
   capabilities:[
     { cap:'Read', reason:'Lets you choose and scan one or more local media folders.' },
     { cap:'Media', reason:'Reads local video metadata, extracts scene stills, and streams videos for playback and motion previews.' },
@@ -28,6 +29,15 @@ export default {
       url:'https://www.themoviedb.org',
       logo:tmdbLogo,
       text:'This product uses the TMDB API but is not endorsed or certified by TMDB. When you choose **Match with TMDB**, titles, synopses, ratings, posters and episode stills come from [The Movie Database](https://www.themoviedb.org).',
+    },
+  ],
+  notices:[
+    {
+      name:'Bungee',
+      version:'2.000',
+      license:'OFL-1.1',
+      url:'https://github.com/google/fonts/tree/main/ofl/bungee',
+      text:bungeeLicense,
     },
   ],
 }

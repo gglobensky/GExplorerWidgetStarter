@@ -23,12 +23,16 @@
   border-radius: 14px;
   min-width: 0;
   height: 100%;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   container-type: inline-size;
   box-sizing: border-box;
   padding: 10px 12px;
   display: flex;
   flex-direction: column;
+}
+.weather.is-flipping {
+  overflow: hidden;
 }
 .weather * {
   box-sizing: border-box;

@@ -5,7 +5,7 @@ import Widget from '../Widget.vue'
 const width = ref(1080)
 const height = ref(720)
 const lastAction = ref('Open a case to explore the collection.')
-const config = ref({ data:{ selectedId:'signal-north', sources:['D:\\Media\\Movies','E:\\Archive\\Films'] }, view:{ atmosphere:true, libraryMode:'shelf' as const } })
+const config = ref({ data:{ selectedId:'signal-north', sources:['D:\\Media\\Movies','E:\\Archive\\Films'] }, view:{ atmosphere:true, libraryMode:'shelf' as const, detailMode:'movie-store' as const } })
 const context = computed(() => width.value < 410 ? 'sidebar' as const : 'grid' as const)
 let sampleSource = 0
 provide('widgetSdk', {
@@ -29,7 +29,7 @@ function event(value:{ type:string; payload:any }) {
     <section class="preview-stage" :style="{ width:`${width}px`, height:`${height}px` }">
       <Widget :config="config" :placement="{ context, size:{ width, height } }" @event="event" />
     </section>
-    <footer><span>{{ lastAction }}</span><span>Try the library menu · genre and A–Z jumps · rack mode · case flip</span></footer>
+    <footer><span>{{ lastAction }}</span><span>Try the library menu · genre and A–Z jumps · showroom · case flip</span></footer>
   </main>
 </template>
 
