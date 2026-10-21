@@ -65,7 +65,7 @@ declare module 'gexplorer/widgets' {
          */
         reveal?: (path: string, options?: { newTab?: boolean }) => Promise<{ ok: true } | { ok: false; reason: 'no-gesture' | 'not-found' | 'not-a-file' }>
         /**
-         * Where this widget sends the user (they replace the runAction prop). Each resolves to { ok: true } or
+         * Where this widget sends the user (the runAction prop they replaced is gone). Each resolves to { ok: true } or
          * { ok: false, reason: 'no-gesture' | 'not-on-screen' | 'bad-argument' }.
          *   navigate   a folder, a hub ("home:"), a sys: page: the focused GExplorer pane, else the whole tab
          *              (the GExplorer itself: its own pane / tab); in the file dialog, the dialog. newTab: a tab of
@@ -1577,20 +1577,11 @@ declare module 'gexplorer/widgets' {
     /** What sdk.navigate / openPath / openUrl / setView resolve to. */
     export type WidgetViewResult = { ok: true } | { ok: false; reason: 'no-gesture' | 'not-on-screen' | 'bad-argument' }
 
-    // ── Host actions (props.runAction) ────────────────────────────────────
-    // The host passes runAction to every widget. setView merges a patch into
-    // the widget's view config; the parent persists it like a layout change
-    // (per folder for Items widgets).
-    export type HostAction =
-        | { type: 'nav'; to: string; replace?: boolean }
-        | { type: 'open'; path: string }
-        // openUrl: GEM Shell always asks the user first (naming the widget and the site); web links only.
-        | { type: 'openUrl'; url: string; options?: { title?: string } }
-        | { type: 'setView'; patch: Record<string, unknown> }
-
     // ── The props every widget gets (WidgetHost) ──────────────────────────
     //   const props = defineProps<WidgetProps>()
-    //   props.runAction?.({ type: 'openUrl', url, options: { title: 'TMDB' } })
+    // Going somewhere, opening a file or a web link, saving a view setting: the SDK (sdk.navigate / openPath /
+    // openUrl / setView / reveal), not a prop. Menus and dialogs a widget teleports go into
+    // inject<Ref<HTMLElement | null>>('widgetOverlay') (the widget's own layer), not body.
     export type WidgetPlacement = {
         context: 'grid' | 'sidebar' | 'toolbar' | 'embedded' | 'dialog'
         /** The layout chosen in the Layout menu (or the widget's `variant`). */
@@ -1606,8 +1597,6 @@ declare module 'gexplorer/widgets' {
         /** The widget's settings (`data`, `view`), from its defaults and the user's changes. */
         config?: any
         theme?: Record<string, string>
-        /** Asks the host to act: navigate, open a file, open a web link (asked first), change the view. */
-        runAction?: (action: HostAction) => void
         placement: WidgetPlacement
         editMode?: boolean
         /** This placement's owner id: lifecycle, messaging, state are keyed on it. */
