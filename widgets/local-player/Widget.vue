@@ -26,7 +26,6 @@ const props = defineProps<{
     resizing: boolean
     resizePhase?: 'active' | 'idle'
   }
-  runAction?: (a: any) => void
   context?: 'sidebar' | 'grid'
   variant?: 'compact' | 'expanded' | 'collapsed'
   width?: number

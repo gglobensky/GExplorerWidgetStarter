@@ -19,7 +19,6 @@ const props = defineProps<{
   sourceId?: string;
   config?: WeatherConfig;
   theme?: Record<string, string>;
-  runAction?: (action: { type: "openUrl"; url: string }) => void;
   placement?: { context: "grid" | "sidebar" | "toolbar" | "embedded" };
 }>();
 const emit = defineEmits<{
@@ -27,6 +26,12 @@ const emit = defineEmits<{
 }>();
 const sdk = inject<WidgetSdk>("widgetSdk");
 const lifecycle = sdk?.lifecycle?.();
+// The source link has no href: with one, the WebView connects to the site as soon as it is pressed, before any
+// handler runs (NetGuard refuses it: "tried to reach open-meteo.com"). sdk.openUrl asks the user, naming this widget.
+const SOURCE_URL = "https://open-meteo.com/en/licence";
+function openSource() {
+  void sdk?.openUrl?.(SOURCE_URL, { title: "Open-Meteo" });
+}
 const report =
   lifecycle?.persistRef<WeatherReport | null>("weather.report.v1", null) ??
   ref<WeatherReport | null>(null);
@@ -509,15 +514,12 @@ onBeforeUnmount(() => {
         </div>
         <a
           class="source"
-          href="https://open-meteo.com/en/licence"
+          role="link"
+          tabindex="0"
           aria-label="Weather data by Open-Meteo — source and licence"
           v-gex-tooltip="sourceTip"
-          @click.prevent="
-            runAction?.({
-              type: 'openUrl',
-              url: 'https://open-meteo.com/en/licence',
-            })
-          "
+          @click="openSource"
+          @keydown.enter.prevent="openSource"
           >ⓘ</a
         >
         <div

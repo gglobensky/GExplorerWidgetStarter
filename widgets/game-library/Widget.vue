@@ -7,16 +7,11 @@ import type { WidgetSdk } from 'gexplorer/widgets'
 const sdk = inject<WidgetSdk>('widgetSdk')
 
 // --- props/emits (copying your Items contract) ---
-type HostAction =
-  | { type: 'nav'; to: string; replace?: boolean; sourceId?: string }
-  | { type: 'open'; path: string } // might be used for folders; external URIs likely need a helper
-
 const props = defineProps<{
   sourceId: string
   instanceId: string
   config?: { data?: any; view?: any }
   theme?: Record<string, string>
-  runAction?: (a: HostAction) => void
   placement?: {
     context: 'grid' | 'sidebar' | 'embedded'
     size: { cols?: number; rows?: number; width?: number; height?: number }
@@ -162,7 +157,8 @@ onMounted(() => {
     console.log('[gamelib] open store for', selected.value.key)
   })
   messaging.on('gamelib:openFolder', () => {
-    if (selected.value?.installDir) props.runAction?.({ type: 'open', path: selected.value.installDir })
+    // A menu item the user chose: the shell counts it as this widget's gesture
+    if (selected.value?.installDir) void sdk?.openPath?.(selected.value.installDir)
   })
   offMsg.value = messaging.cleanup
 })

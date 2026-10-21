@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { getDrives, iconFor, ensureIconsFor, startRename } from 'gexplorer/widgets'
-import type { DriveStats, FavoriteTreeNode, HostAction, WidgetMenuItemMessage, WidgetSdk } from 'gexplorer/widgets'
+import type { DriveStats, FavoriteTreeNode, WidgetMenuItemMessage, WidgetSdk } from 'gexplorer/widgets'
 import TreePanel from './TreePanel.vue'
 import TreeToolbar from './TreeToolbar.vue'
 import { key, label, newMemory, newState, within, type Root, type RootSource, type TreeMemory } from './tree'
 
 type Config = { data?: { folders?: { path: string; label: string }[] }; view?: Record<string, unknown> }
-const props = defineProps<{ config?: Config; sourceId?: string; runAction?: (action: HostAction) => void; placement?: { context: string } }>()
+const props = defineProps<{ config?: Config; sourceId?: string; placement?: { context: string } }>()
 const emit = defineEmits<{ (e: 'event', event: { type: 'update:config'; payload: Config }): void }>()
 const sdk = inject<WidgetSdk>('widgetSdk')
 const ui = sdk?.ui?.()
@@ -46,8 +46,8 @@ const source: RootSource = {
     return source
   },
   navigate(path) {
-    if (!props.runAction) { report('Navigation is not available in this host.'); throw new Error('Navigation unavailable') }
-    props.runAction({ type: 'nav', to: path })
+    if (!sdk?.navigate) { report('Navigation is not available in this host.'); throw new Error('Navigation unavailable') }
+    void sdk.navigate(path).then(r => { if (!r.ok && r.reason !== 'no-gesture') report(`Could not go to ${path} (${r.reason}).`) })
   },
   async linkTarget(path) {
     if (!sdk?.fsLinkTarget) return null
@@ -154,7 +154,7 @@ async function favorite(root: Root) {
     const result = await sdk.fsValidate(root.path)
     if (disposed) return
     if (!result.ok || !result.exists) throw new Error(result.error || 'This favorite is unavailable.')
-    if (!result.isDir) { props.runAction?.({ type: 'open', path: root.path }); return }
+    if (!result.isDir) { void sdk?.openPath?.(root.path); return }
     let owner = roots.value.filter(r => r.kind === 'folder' && within(root.path, r.path)).sort((a, b) => b.path.length - a.path.length)[0]
     if (!owner) {
       owner = { ...root, id: `focused:${key(root.path)}`, group: 'Files', kind: 'folder' }

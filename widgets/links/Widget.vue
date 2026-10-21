@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, inject } from 'vue'
+import type { WidgetSdk } from 'gexplorer/widgets'
 
 type LinkItem = {
   id: string
@@ -7,10 +8,6 @@ type LinkItem = {
   target: string
   type: 'web' | 'local'
 }
-
-type HostAction = 
-  | { type: 'nav'; to: string } 
-  | { type: 'openUrl'; url: string; options?: { askUser?: boolean; title?: string } }
 
 const props = defineProps<{
   config?: { 
@@ -23,8 +20,9 @@ const props = defineProps<{
     layout: string  // 'compact', 'expanded', etc.
     size: any
   }
-  runAction?: (a: HostAction) => void
 }>()
+
+const sdk = inject<WidgetSdk>('widgetSdk')
 
 const links = ref<LinkItem[]>(props.config?.links || [])
 
@@ -85,21 +83,10 @@ function getPreview(link: LinkItem): string {
   }
 }
 
+// Web links: the host asks the user first, naming this widget (sdk.openUrl); local: sdk.navigate.
 function handleClick(link: LinkItem) {
-  if (!props.runAction) return
-  
-  if (link.type === 'web') {
-    props.runAction({ 
-      type: 'openUrl', 
-      url: link.target,
-      options: {
-        askUser: true,
-        title: link.name
-      }
-    })
-  } else {
-    props.runAction({ type: 'nav', to: link.target })
-  }
+  if (link.type === 'web') void sdk?.openUrl?.(link.target, { title: link.name })
+  else void sdk?.navigate?.(link.target)
 }
 </script>
 

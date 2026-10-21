@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, inject, type Ref } from 'vue'
+import type { WidgetSdk } from 'gexplorer/widgets'
 import { 
   useScrollHints, 
   useSnapResize,
@@ -13,14 +14,18 @@ import { useFolderMenus } from './useFolderMenus'
 import { useFavoritesDialog } from './useFavoritesDialog'
 import { useFavoritesSortable } from './useFavoritesSortable'
 
-import { rowId, type HostAction } from "./favorites.model"
+import { rowId } from "./favorites.model"
+
+const sdk = inject<WidgetSdk>('widgetSdk')
+// The host's overlay layer for this widget: the folder menus and the add dialog teleport there (not body), so a
+// click in them is this widget's own (sdk.navigate's gesture rule).
+const overlay = inject<Ref<HTMLElement | null>>('widgetOverlay', ref(null))
 
 // Standard widget props shape (same pattern as Items)
 const props = defineProps<{
   sourceId: string
   config?: FavoritesConfig | { data?: any; view?: any }
   theme?: Record<string, string>
-  runAction?: (a: HostAction) => void
   placement?: {
     context: 'grid' | 'sidebar' | 'toolbar' | 'embedded'
     size?: { cols?: number; rows?: number; width?: number; height?: number }
@@ -106,11 +111,8 @@ function openFavorite(fav: { path: string; label?: string }, event?: MouseEvent)
   const path = fav.path?.trim()
   if (!path) return
 
-  if (props.runAction) {
-    props.runAction({ type: 'nav', to: path, sourceId: props.sourceId })
-  } else {
-    emit('event', { type: 'openPath', payload: path })
-  }
+  if (sdk?.navigate) void sdk.navigate(path)
+  else emit('event', { type: 'openPath', payload: path })
 }
 
 // --- Folder Menus (useFolderMenus) -------------------------------------------
@@ -525,7 +527,7 @@ function onSidebarHandleClick() {
 
 
     <!-- Add favorite / folder popup (global modal) -->
-    <teleport to="body">
+    <teleport :to="overlay || 'body'">
       <div
         v-if="showAddDialog"
         class="fav-dialog-backdrop"
@@ -619,7 +621,7 @@ function onSidebarHandleClick() {
     </teleport>
 
   <!-- Folders menu overlay (stacked menus) -->
-<teleport to="body">
+<teleport :to="overlay || 'body'">
   <div
     v-if="openMenus.length"
     class="fav-menu-backdrop"

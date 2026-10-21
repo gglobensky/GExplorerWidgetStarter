@@ -3,10 +3,6 @@ import type {
   FavoriteTreeNode,
 } from 'gexplorer/widgets'
 
-export type HostAction =
-  | { type: 'nav'; to: string; replace?: boolean; sourceId?: string }
-  | { type: 'open'; path: string }
-
 export type MenuRow = {
   id: string
   type: 'folder' | 'item'

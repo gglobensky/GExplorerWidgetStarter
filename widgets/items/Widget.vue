@@ -79,7 +79,6 @@ const props = defineProps<{
   instanceId: string
   config?: { data?: any; view?: any }
   theme?: Record<string, string>
-  runAction?: (a: HostAction) => void
   placement?: {
     context: 'grid' | 'sidebar' | 'embedded' | 'dialog'
     size: { cols?: number; rows?: number; width?: number; height?: number }
@@ -90,11 +89,6 @@ const props = defineProps<{
 /* -----------------------------------------------
    Types
 ------------------------------------------------ */
-type HostAction =
-  | { type: 'nav'; to: string; replace?: boolean; sourceId?: string }
-  | { type: 'open'; path: string; entry: string }
-  | { type: 'setView'; patch: Record<string, unknown> }
-
 type DetailWeights = { name: number; ext: number; size: number; mod: number }
 
 const emit = defineEmits<{
@@ -349,13 +343,14 @@ async function leaveGoneFolder(gone: string) {
         dedupe: 'replace',
       })
       pendingReveal = { path: dir, name: basename(child) }
-      if (props.runAction) props.runAction({ type: 'nav', to: dir, replace: true })
+      // The host moves this pane (its own view: no click needed); without a host, in place
+      if (sdk?.navigate) void sdk.navigate(dir, { replace: true })
       else void applyExternalCwd(dir)
       return
     }
 
     // Nothing left up to the drive root: the drive itself is gone.
-    if (merged.value.navigateMode !== 'tab' || !props.runAction) return   // dialogs / pane pages keep the message
+    if (merged.value.navigateMode !== 'tab' || !sdk?.navigate) return   // dialogs / pane pages keep the message
     const root = /^[A-Za-z]:/.test(gone) ? gone.slice(0, 2) + '\\' : gone
     console.log(`[items] '${gone}' no longer exists, nor any folder above it: back to the drives`)
     showSnack({
@@ -364,7 +359,7 @@ async function leaveGoneFolder(gone: string) {
       timeoutMs: 6000,
       dedupe: 'replace',
     })
-    props.runAction({ type: 'nav', to: 'home:', replace: true })
+    void sdk.navigate('home:', { replace: true })
   } finally {
     leaving = ''
   }
@@ -1099,14 +1094,13 @@ async function openEntry(e: ListingEntry) {
       // Inside a host file dialog (DialogHost sets navigateMode: 'dialog'):
       // opening a file means "choose this file". WidgetHost turns the action
       // into an 'activate' event the dialog accepts (B-003).
-      props.runAction?.({ type: 'open', path: FullPath, entry: FullPath })
+      void sdk?.openPath?.(FullPath)
     } else {
       await sdkOpenEntry?.(e)
     }
-  } catch (result: any) {
-    // openFolder signals nav via thrown sentinel
-    if (result?.__nav) props.runAction?.({ type: 'nav', to: result.to })
-    else console.error('[items] openEntry failed:', result)
+  } catch (err: any) {
+    // openFolder / openEntry navigate through the host themselves (no thrown { __nav } any more)
+    console.error('[items] openEntry failed:', err)
   }
 }
 
@@ -1418,7 +1412,7 @@ watch(
     }).then((res) => {
       if (res.type !== 'action' || cwd.value !== path) return
       const mode: ViewPaging['mode'] = res.actionId === 'paged' ? 'paged' : 'single'
-      props.runAction?.({ type: 'setView', patch: { paging: { mode, pageSize: pageSize.value } } })
+      void sdk?.setView?.({ paging: { mode, pageSize: pageSize.value } })
     })
   }
 )

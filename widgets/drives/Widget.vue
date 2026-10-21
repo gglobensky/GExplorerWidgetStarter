@@ -11,13 +11,10 @@ const {
   fsDriveStats
 } = sdk ?? {}
 
-type HostAction = { type: 'nav'; to: string }
-
 const props = defineProps<{
   sourceId?: string
   config?: { data?: any; view?: any }
   theme?: Record<string, string>
-  runAction?: (a: HostAction) => void
   placement?: {
     context: 'grid' | 'sidebar' | 'toolbar' | 'embedded'
     size: { cols?: number; rows?: number; width?: number; height?: number }
@@ -110,10 +107,9 @@ onMounted(() => { void refreshStats() })
 /** No disc / media: shown dimmed, nothing to open. */
 function isEmpty(drive: DriveSnapshot) { return drive.media === 'none' }
 
+// The host decides where (the focused GExplorer pane, else the tab): sdk.navigate, right after the user's click.
 function navTo(root: string) {
-  if (props.runAction && root) {
-    props.runAction({ type: 'nav', to: root })
-  }
+  if (root) void sdk?.navigate?.(root)
 }
 
 // Get usage color based on percentage

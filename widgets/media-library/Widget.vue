@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type { HostAction, MediaImage, WidgetSdk, WidgetSecrets } from 'gexplorer/widgets'
+import type { MediaImage, WidgetSdk, WidgetSecrets } from 'gexplorer/widgets'
 import { LibraryDetail, MediaShelf, type LibraryItem } from '../../shared/library-ui'
 import { posterAtlases, sampleMovies } from './fixtures'
 import { createScannedLibrary, preferredCoverSource, shelvesFor } from './media'
@@ -32,7 +32,6 @@ const props = defineProps<{
   sourceId?: string
   config?: MediaLibraryConfig
   placement?: { context: 'grid' | 'sidebar' | 'toolbar' | 'embedded'; size?: { width?: number; height?: number } }
-  runAction?: (action: HostAction) => void
 }>()
 const emit = defineEmits<{ (e:'event', value:{ type:string; payload:unknown }):void }>()
 const sdk = inject<WidgetSdk>('widgetSdk')
@@ -307,7 +306,7 @@ async function play(item: LibraryItem) {
     } finally {
       playerLoading.value = false
     }
-  } else if (item.path) props.runAction?.({ type:'open', path:item.path })
+  } else if (item.path) void sdk?.openPath?.(item.path)
   else void sdk?.ui?.().snack({ id:'media-library-sample', dedupe:'replace', text:`${item.title} is sample media in this design milestone.`, timeoutMs:3500 })
   emit('event', { type:'media-library:play', payload:{ id:item.id, title:item.title } })
 }
@@ -819,7 +818,7 @@ function playerError() {
   void sdk?.ui?.().snack({
     id:'media-library-codec', dedupe:'replace',
     text:'This video format or codec is not supported by the embedded player.', timeoutMs:6000,
-    actions:props.runAction ? [{ label:'Open with default app', onClick:() => props.runAction?.({ type:'open', path:item.path! }) }] : undefined,
+    actions:sdk?.openPath ? [{ label:'Open with default app', onClick:() => { void sdk.openPath!(item.path!) } }] : undefined,
   })
 }
 function closePlayer() {
@@ -1184,7 +1183,7 @@ onBeforeUnmount(() => {
         <div class="media-library-player-actions">
           <button v-if="player?.item.path && sdk?.mediaVideoFramesCreate" type="button" :disabled="coverBusy" @click="captureCurrentFrame">Use current frame as cover</button>
           <button v-if="player?.item.path && sdk?.mediaImageCreate" type="button" :disabled="coverBusy" @click="chooseCoverFile()">Choose image…</button>
-          <button v-if="player?.item.path && runAction" type="button" @click="runAction({ type:'open', path:player.item.path })">Open externally</button>
+          <button v-if="player?.item.path && sdk?.openPath" type="button" @click="sdk.openPath(player.item.path)">Open externally</button>
         </div>
       </header>
       <div v-if="playerLoading" class="media-library-player-loading"><span>◌</span>Preparing playback…</div>

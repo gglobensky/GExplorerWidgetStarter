@@ -64,6 +64,25 @@ declare module 'gexplorer/widgets' {
          * path shows that folder selected in its parent. 'not-found': nothing at that path.
          */
         reveal?: (path: string, options?: { newTab?: boolean }) => Promise<{ ok: true } | { ok: false; reason: 'no-gesture' | 'not-found' | 'not-a-file' }>
+        /**
+         * Where this widget sends the user (they replace the runAction prop). Each resolves to { ok: true } or
+         * { ok: false, reason: 'no-gesture' | 'not-on-screen' | 'bad-argument' }.
+         *   navigate   a folder, a hub ("home:"), a sys: page: the focused GExplorer pane, else the whole tab
+         *              (the GExplorer itself: its own pane / tab); in the file dialog, the dialog. newTab: a tab of
+         *              its own (a folder tab already on that folder is reused); replace: no new history entry.
+         *   openPath   opens a file or a program with the system (a program needs this widget's Exec grant); in the
+         *              file dialog, picks the file.
+         *   openUrl    a web link in the user's browser: the user is always asked first, naming this widget.
+         *   setView    saves a patch of this placement's view settings (a plain object, at most 8 KB of JSON).
+         * navigate, openPath and openUrl only right after the user's own click or key press in this widget
+         * (the GExplorer moving its own view excepted); otherwise refused and written to the security log.
+         * openFolder(entry) goes to the folder; openEntry(entry) opens a file (gesture rule) or goes to the
+         * folder a shortcut leads to.
+         */
+        navigate?: (to: string, options?: { newTab?: boolean; replace?: boolean }) => Promise<WidgetViewResult>
+        openPath?: (path: string) => Promise<WidgetViewResult>
+        openUrl?: (url: string, options?: { title?: string }) => Promise<WidgetViewResult>
+        setView?: (patch: Record<string, unknown>) => Promise<WidgetViewResult>
 
         // Read cap
         /**
@@ -1554,6 +1573,9 @@ declare module 'gexplorer/widgets' {
         credits?: WidgetCredit[]
         notices?: WidgetNotice[]
     }
+
+    /** What sdk.navigate / openPath / openUrl / setView resolve to. */
+    export type WidgetViewResult = { ok: true } | { ok: false; reason: 'no-gesture' | 'not-on-screen' | 'bad-argument' }
 
     // ── Host actions (props.runAction) ────────────────────────────────────
     // The host passes runAction to every widget. setView merges a patch into

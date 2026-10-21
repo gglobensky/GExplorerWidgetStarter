@@ -138,6 +138,7 @@ h2 {
 .source {
   color: var(--weather-muted);
   text-decoration: none;
+  cursor: pointer;
   font-size: 15px;
   padding: 3px;
   line-height: 1;
