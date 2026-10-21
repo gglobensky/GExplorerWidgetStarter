@@ -56,6 +56,14 @@ declare module 'gexplorer/widgets' {
 
         openEntry?: (entry: any) => Promise<void>
         openFolder?: (entry: any) => Promise<void>
+        /**
+         * Shows a file in a GExplorer pane: selected, scrolled into view, the keyboard on the list. Where: the
+         * focused GExplorer pane, else the tab goes to the file's folder (as navigation does); newTab: a folder
+         * tab of its own (one already showing that folder is reused). Only right after the user's own click or
+         * key press in this widget: otherwise refused ('no-gesture') and written to the security log. A folder
+         * path shows that folder selected in its parent. 'not-found': nothing at that path.
+         */
+        reveal?: (path: string, options?: { newTab?: boolean }) => Promise<{ ok: true } | { ok: false; reason: 'no-gesture' | 'not-found' | 'not-a-file' }>
 
         // Read cap
         /**

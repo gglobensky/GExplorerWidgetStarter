@@ -243,7 +243,7 @@ function openDir(path: string) {
   const r = pendingReveal
   if (r && normalizeDir(r.path) === normalizeDir(path)) {
     pendingReveal = null
-    void revealName(r.name)
+    void revealName(r.name).then(ok => { if (r.fromHost) revealedByHost(r.name, ok) })
   }
 }
 
@@ -316,7 +316,8 @@ sdk?.onHostChange?.('drives', () => {
    Back does not lead to it) and selects the one it came from when it is
    still there. Nothing left on the drive: back to the drives (home:).
 ------------------------------------------------ */
-let pendingReveal: { path: string; name: string } | null = null
+// fromHost: sdk.reveal (applyExternalCwd's select): the list then takes the keyboard, or says why nothing is selected
+let pendingReveal: { path: string; name: string; fromHost?: boolean } | null = null
 let leaving = ''
 
 /** The parent folder; a drive root's parent is ''. "F:\Test" -> "F:\", "/a" -> "/". */
@@ -1150,6 +1151,17 @@ async function revealName(name: string, opts: { reload?: boolean } = {}): Promis
   return true
 }
 
+/** After the host's reveal: the list takes the keyboard, or the user hears why nothing is selected. */
+function revealedByHost(name: string, ok: boolean) {
+  if (ok) { scrollEl.value?.focus({ preventScroll: true }); return }
+  showSnack({
+    id: 'items-reveal',
+    dedupe: 'replace',
+    timeoutMs: 6000,
+    text: `"${name}" isn't shown in this folder: it may be hidden, filtered out, or no longer there.`,
+  })
+}
+
 /* -----------------------------------------------
    Rename
 ------------------------------------------------ */
@@ -1310,9 +1322,12 @@ watch(
   (gone) => { if (gone) void leaveGoneFolder(gone) },
 )
 
-async function applyExternalCwd(path: string) {
+async function applyExternalCwd(path: string, opts?: { select?: string }) {
   if (!path) return
   cwd.value = path
+  // The host's reveal (sdk.reveal, claude/reveal-design.md): select that name once the folder is shown.
+  // The same folder: openDir keeps the listing and reveals at once.
+  if (opts?.select) pendingReveal = { path, name: opts.select, fromHost: true }
   openDir(path)
 }
 

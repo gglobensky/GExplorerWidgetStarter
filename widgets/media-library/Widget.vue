@@ -602,8 +602,9 @@ function directoryOf(path: string): string {
   return index > 0 ? path.slice(0,index) : path
 }
 
+// The file itself, selected in a GExplorer pane (sdk.reveal: a click here is the user's own gesture).
 function showMediaFile(item: LibraryItem) {
-  if (item.path) props.runAction?.({ type:'nav', to:directoryOf(item.path) })
+  if (item.path) void sdk?.reveal?.(item.path)
 }
 
 function updateSynopsis(value: string) {
@@ -1165,7 +1166,7 @@ onBeforeUnmount(() => {
       :preview-image-srcs="openPreviewFrames?.images"
       :preview-frames-loading="openPreviewFrames?.loading"
       :preview-frames-message="openPreviewFrames?.message"
-      :can-show-in-folder="!!runAction"
+      :can-show-in-folder="!!sdk?.reveal"
       @close="closeDetail"
       @flip="flipped = !flipped"
       @preview="preview"
