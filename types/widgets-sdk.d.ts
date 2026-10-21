@@ -1956,6 +1956,9 @@ declare module 'gexplorer/widgets' {
      * if (s.type === 'action') restore()
      * ui.snackOnce('hint.dragToQueue', { text: 'Tip: drag songs onto the queue to add them.' })
      */
+    /** One choice of ui.menu(). */
+    export type WidgetMenuItem = { id: string; label: string; disabled?: boolean; title?: string }
+
     export interface WidgetUi {
         /**
          * Opens this widget's right-click menu at the event: call it from a 'contextmenu'
@@ -1977,7 +1980,32 @@ declare module 'gexplorer/widgets' {
          *   defineExpose({ onMenuItem })
          */
         contextMenu(event: MouseEvent, opts?: WidgetContextMenuOptions): Promise<void>
-        /** Opens custom widget content in the host overlay, anchored to this instance's element. */
+        /**
+         * A small menu of choices (flat: no submenus), drawn by the shell and kept on screen: at the
+         * click (at: the MouseEvent, a 'contextmenu' one included) or under a button (at: an element of
+         * this widget). Resolves with the id chosen, or null (cancelled, or refused: only right after
+         * the user's own click or key press in the widget, only while it is on screen; it closes if
+         * the widget leaves the screen). Labels are plain text (80 characters), at most 30 items.
+         * The choice counts as the widget's own gesture: sdk.navigate / reveal / openPath may follow.
+         *
+         *   const id = await ui.menu(ev.currentTarget as HTMLElement, [
+         *       { id: 'rename', label: 'Rename…' },
+         *       { id: 'delete', label: 'Delete', title: 'Moves it to the Recycle Bin' },
+         *   ])
+         *   if (id === 'rename') startRename()
+         */
+        menu(at: MouseEvent | HTMLElement, items: WidgetMenuItem[], opts?: { preferred?: string; label?: string }): Promise<string | null>
+        /**
+         * The widget's own component in the host's overlay, next to opts.anchor (an element of this
+         * widget): never clipped by the widget's place, kept on screen. Same rules as menu() (the
+         * user's own click or key press, on screen); null when refused. One per instance (a new one
+         * closes the last); clicking the anchor again closes it, so do a click elsewhere, Esc, and the
+         * anchor leaving the page. The component gets props.close() besides opts.props, and
+         * inject('widgetSdk') gives it this instance's SDK; a click in it counts as the widget's own
+         * gesture. Widgets never teleport elements themselves: this is the way out of a clipping place.
+         *
+         *   ui.openPopover({ anchor: ev.currentTarget as HTMLElement, component: ColorPicker, props: { value } })
+         */
         openPopover(opts: {
             anchor: HTMLElement
             component: Component
@@ -1986,7 +2014,7 @@ declare module 'gexplorer/widgets' {
             maxWidth?: number
             maxHeight?: number
             onClose?: () => void
-        }): { close(): void; update(props: Record<string, unknown>): void }
+        }): { close(): void; update(props: Record<string, unknown>): void } | null
         alert(message: string, opts?: { title?: string; detail?: string; variant?: MbVariant; okLabel?: string }): Promise<void>
         /** true: OK. */
         confirm(message: string, opts?: { title?: string; detail?: string; okLabel?: string; cancelLabel?: string; danger?: boolean }): Promise<boolean>
