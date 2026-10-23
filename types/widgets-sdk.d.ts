@@ -2044,20 +2044,20 @@ declare module 'gexplorer/widgets' {
          * those files only, while GEM Shell runs: what the user picks is the grant, no other
          * prompt (a folder needing administrator rights: the consent dialog asks once).
          */
-        openFiles(opts?: { title?: string; startIn?: string; filters?: WidgetFileFilter[]; multiple?: boolean; access?: 'read' | 'write'; acceptLabel?: string }): Promise<string[] | null>
+        openFiles(opts?: { title?: string; startIn?: string; filters?: WidgetFileFilter[]; multiple?: boolean; access?: 'read' | 'write'; acceptLabel?: string; signal?: AbortSignal }): Promise<string[] | null>
         /**
          * The host's save dialog: the full path chosen, null when cancelled. An existing file
          * was confirmed by the user ("Replace it?") and the widget may write THAT FILE (only),
          * while GEM Shell runs, with no other prompt: fsWriteText(path, text, { overwrite: true }).
          */
-        saveFile(opts?: { title?: string; startIn?: string; filters?: WidgetFileFilter[]; suggestedName?: string }): Promise<string | null>
+        saveFile(opts?: { title?: string; startIn?: string; filters?: WidgetFileFilter[]; suggestedName?: string; signal?: AbortSignal }): Promise<string | null>
         /**
          * The host's folder dialog: the folder chosen, null when cancelled. The folder highlighted,
          * or with none highlighted the folder shown (button "Select this folder"). acceptLabel:
          * the button's text instead ("Add to library"). access 'write': the widget may write in
          * it (and its subfolders: an export destination), while GEM Shell runs.
          */
-        pickFolder(opts?: { title?: string; startIn?: string; access?: 'read' | 'write'; acceptLabel?: string }): Promise<string | null>
+        pickFolder(opts?: { title?: string; startIn?: string; access?: 'read' | 'write'; acceptLabel?: string; signal?: AbortSignal }): Promise<string | null>
         /**
          * Immersive playback: dismisses the host's hover tooltips and shows none until the
          * returned release() is called, or this instance leaves the screen. Fullscreen (a

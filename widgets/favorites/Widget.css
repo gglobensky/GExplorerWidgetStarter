@@ -559,7 +559,7 @@
   border: 1px solid var(--fav-border);
   padding: 8px 10px;
   min-width: 260px;
-  max-width: 340px;
+  max-width: 420px;
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
 }
 
@@ -620,6 +620,35 @@
 .fav-dialog .fav-input:focus {
   outline: none;
   border-color: rgba(255, 255, 255, 0.4);
+}
+
+/* A favorite's folders (2026-10-22): one row each, up to 4 side by side */
+.fav-location-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 3px;
+}
+
+.fav-location-row .fav-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.btn.btn-small {
+  padding: 2px 6px;
+  font-size: 11px;
+  flex: none;
+}
+
+.fav-location-add {
+  align-self: flex-start;
+}
+
+.fav-dialog-error {
+  font-size: 11px;
+  color: var(--danger, #ff8a80);
+  margin-bottom: 6px;
 }
 
 .fav-dialog-buttons {

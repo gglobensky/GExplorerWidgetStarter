@@ -77,6 +77,13 @@ export default {
       accepts: { contexts: ['tab'] },
       contextMenu: { label: 'Add to favorites', icon: '★', submenuLabel: 'Favorites' },
     },
+    {
+      id: 'configure',
+      label: 'Add to favorites…',
+      // The add dialog on the folders (or the folder shown, or a tab's place): name, place, folders
+      accepts: { contexts: ['folder', 'multi', 'background', 'tab'], kinds: 'folders' },
+      contextMenu: { label: 'Add to favorites…', icon: '✎', submenuLabel: 'Favorites' },
+    },
   ],
 
   capabilities: [

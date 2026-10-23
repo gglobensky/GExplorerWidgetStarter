@@ -163,14 +163,22 @@ async function refreshWithMenuSync() {
 const {
   showAddDialog,
   saving,
-  newPath,
+  error: dialogError,
+  newLocations,
   newLabel,
   addMode,
   newParentId,
   folderOptions,
   addDialogTitle,
   addButtonLabel,
+  labelPlaceholder,
+  canAddLocation,
+  filledLocations,
   openAddDialog,
+  openAddDialogWith,
+  addLocationRow,
+  removeLocationRow,
+  browseLocation,
   closeAddDialog,
   confirmAddFavorite,
   handleRemoveFolder,
@@ -269,6 +277,8 @@ function onSidebarHandleClick() {
 //   add          the selected folders, one favorite each (nothing selected: the folder shown)
 //   addTogether  2-4 selected folders as one favorite (they open side by side)
 //   addTab       the place a tab shows (a page, a folder, or a split's folders) as one favorite
+//   configure    "Add to favorites…": the add dialog on those folders (or the folder shown, or the
+//                tab's place) to name it, place it and edit its folders before adding
 function placeName(locations: string[]): string {
   return locations.map(guessLabelFromPath).join(' + ')
 }
@@ -292,6 +302,12 @@ async function onWidgetAction(msg: any) {
       const already = list.length - added
       if (list.length === 1) say(added ? `Added "${placeName(list)}" to favorites.${leftOut}` : `"${placeName(list)}" is already a favorite.`)
       else say(`Added ${added} folder${added === 1 ? '' : 's'} to favorites${already ? ` (${already} already were)` : ''}.${leftOut}`)
+      return
+    }
+    if (actionId === 'configure') {
+      const list = paths.length ? paths : (typeof tokens?.dir === 'string' && tokens.dir ? [tokens.dir] : [])
+      openAddDialogWith(list)
+      if (skipped) say(`${skipped} file${skipped === 1 ? ' was' : 's were'} left out (a favorite opens folders).`)
       return
     }
     if (actionId === 'addTogether' || actionId === 'addTab') {
@@ -609,18 +625,51 @@ defineExpose({ onWidgetAction })
             </select>
           </label>
 
-          <label
+          <!-- What it opens: one location, or 2-4 folders side by side (2026-10-22) -->
+          <div
             v-if="addMode === 'item'"
             class="fav-dialog-field"
           >
-            <span class="field-label">Path</span>
-            <input
-              v-model="newPath"
-              type="text"
-              class="fav-input"
-              placeholder="C:\\Users\\you\\Downloads or home:/games"
-            />
-          </label>
+            <span class="field-label">{{ newLocations.length > 1 ? 'Opens side by side' : 'Opens' }}</span>
+            <div
+              v-for="(_, i) in newLocations"
+              :key="i"
+              class="fav-location-row"
+            >
+              <input
+                v-model="newLocations[i]"
+                type="text"
+                class="fav-input"
+                :placeholder="i === 0 ? 'C:\\Users\\you\\Downloads, home:, sys:settings' : 'Another folder'"
+              />
+              <button
+                type="button"
+                class="btn btn-small"
+                title="Choose a folder"
+                @click="browseLocation(i)"
+              >
+                …
+              </button>
+              <button
+                v-if="newLocations.length > 1"
+                type="button"
+                class="btn btn-small"
+                title="Remove this folder"
+                @click="removeLocationRow(i)"
+              >
+                ✕
+              </button>
+            </div>
+            <button
+              v-if="canAddLocation"
+              type="button"
+              class="btn btn-small fav-location-add"
+              title="A favorite opens up to 4 folders side by side"
+              @click="addLocationRow"
+            >
+              + Folder side by side
+            </button>
+          </div>
 
           <label class="fav-dialog-field">
             <span class="field-label">Label</span>
@@ -628,9 +677,11 @@ defineExpose({ onWidgetAction })
               v-model="newLabel"
               type="text"
               class="fav-input"
-              :placeholder="addMode === 'folder' ? 'New folder' : 'Downloads'"
+              :placeholder="labelPlaceholder"
             />
           </label>
+
+          <div v-if="dialogError" class="fav-dialog-error">{{ dialogError }}</div>
 
           <div class="fav-dialog-buttons">
             <button
@@ -646,7 +697,7 @@ defineExpose({ onWidgetAction })
               :disabled="
                 saving ||
                 (addMode === 'item'
-                  ? !newPath.trim()
+                  ? !filledLocations.length
                   : !newLabel.trim())
               "
               @click="confirmAddFavorite"

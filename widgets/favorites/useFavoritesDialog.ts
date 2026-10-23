@@ -28,8 +28,8 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
   const saving = ref(false)
   const error = ref<string | null>(null)
 
-  // Form fields
-  const newPath = ref('')
+  // Form fields. A favorite opens a place (2026-10-22): one location, or 2-4 folders side by side.
+  const newLocations = ref<string[]>([''])
   const newLabel = ref('')
   const addMode = ref<'item' | 'folder'>('item')
   const newParentId = ref<string>('') // '' = root, otherwise a folder id
@@ -45,6 +45,52 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
   const addButtonLabel = computed(() =>
     addMode.value === 'folder' ? 'Create' : 'Add'
   )
+
+  /** The most folders a favorite opens side by side (the most panes a tab has). */
+  const MAX_LOCATIONS = 4
+
+  /** The locations typed, trimmed, empty rows left out. */
+  const filledLocations = computed(() => newLocations.value.map(l => l.trim()).filter(Boolean))
+
+  /** The name a favorite gets when no label is typed (the service's default too). */
+  const labelPlaceholder = computed(() => {
+    if (addMode.value === 'folder') return 'New folder'
+    const names = filledLocations.value.map(guessLabelFromPath).filter(Boolean)
+    return names.length ? names.join(' + ') : 'Downloads'
+  })
+
+  const canAddLocation = computed(() => newLocations.value.length < MAX_LOCATIONS)
+
+  function addLocationRow() {
+    if (canAddLocation.value) newLocations.value = [...newLocations.value, '']
+  }
+
+  function removeLocationRow(index: number) {
+    const next = newLocations.value.filter((_, i) => i !== index)
+    newLocations.value = next.length ? next : ['']
+  }
+
+  // The folder dialog this popup opened, while it is shown: closing the popup closes it too (2026-10-23)
+  let picking: AbortController | null = null
+
+  /** Row <index> gets a folder chosen in the host's folder dialog. */
+  async function browseLocation(index: number) {
+    const ui = sdk?.ui?.()
+    if (!ui?.pickFolder || picking) return
+    const current = newLocations.value[index]?.trim()
+    const ctrl = new AbortController()
+    picking = ctrl
+    let chosen: string | null = null
+    try {
+      chosen = await ui.pickFolder({ title: 'Folder for this favorite', startIn: current || undefined, acceptLabel: 'Use this folder', signal: ctrl.signal })
+    } finally {
+      if (picking === ctrl) picking = null
+    }
+    if (!chosen || ctrl.signal.aborted || !showAddDialog.value) return
+    const next = newLocations.value.slice()
+    next[index] = chosen
+    newLocations.value = next
+  }
 
   /**
    * Build folder options for the parent dropdown
@@ -78,10 +124,22 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
   function openAddDialog() {
     // The folder you're browsing ('Location' cap in entry.ts)
     const base = (sdk?.getCurrentPath?.() ?? '').trim()
+    openAddDialogWith(base ? [base] : [])
+  }
+
+  /**
+   * Open the add dialog on a place (the menus' "Add to favorites…": the folders chosen, or the place a
+   * tab shows). More than 4: the first 4, and the user is told.
+   */
+  function openAddDialogWith(locations: string[]) {
+    const list = locations.map(l => l.trim()).filter(Boolean)
     addMode.value = 'item'
-    newPath.value = base
-    newLabel.value = guessLabelFromPath(base)
+    newLocations.value = list.length ? list.slice(0, MAX_LOCATIONS) : ['']
+    newLabel.value = ''
     newParentId.value = '' // root by default
+    error.value = list.length > MAX_LOCATIONS
+      ? `A favorite opens up to ${MAX_LOCATIONS} folders side by side: the first ${MAX_LOCATIONS} are here.`
+      : null
 
     void refreshFolderOptions()
     showAddDialog.value = true
@@ -92,13 +150,16 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
    */
   function closeAddDialog() {
     showAddDialog.value = false
+    error.value = null
+    picking?.abort()
+    picking = null
   }
 
   /**
    * Confirm and execute add favorite/folder
    */
   async function confirmAddFavorite() {
-    const path = newPath.value.trim()
+    const locations = filledLocations.value
     const label = newLabel.value.trim()
     const parentId = newParentId.value || null
 
@@ -111,10 +172,10 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
         await need('addFolder')(label, parentId)
         await refreshFolderOptions()
       } else {
-        if (!path) return
-        // One folder here (a favorite opening several side by side: Configure, coming next)
-        const r = await need('addFavorite')([path], label || undefined, parentId)
-        if (!r.added) void sdk?.ui?.().snack({ text: `${label || path} is already a favorite.` })
+        if (!locations.length) return
+        // Not a place (a page among folders, more than 4): the service says why, shown in the dialog
+        const r = await need('addFavorite')(locations, label || undefined, parentId)
+        if (!r.added) void sdk?.ui?.().snack({ text: `${label || labelPlaceholder.value} is already a favorite.` })
       }
 
       await refresh()
@@ -170,7 +231,7 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
     error,
 
     // Form fields
-    newPath,
+    newLocations,
     newLabel,
     addMode,
     newParentId,
@@ -181,9 +242,16 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
     // Computed
     addDialogTitle,
     addButtonLabel,
+    labelPlaceholder,
+    canAddLocation,
+    filledLocations,
 
     // Methods
     openAddDialog,
+    openAddDialogWith,
+    addLocationRow,
+    removeLocationRow,
+    browseLocation,
     closeAddDialog,
     confirmAddFavorite,
     handleRemoveFolder,
