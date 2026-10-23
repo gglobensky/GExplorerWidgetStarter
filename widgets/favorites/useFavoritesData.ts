@@ -1,93 +1,41 @@
 // /src/widgets/favorites/useFavoritesData.ts
-import { ref, watch, onMounted, inject } from 'vue'
-import {
-  FavoriteEntry,
-  FavoriteTreeNode,
-  type WidgetSdk,
-} from 'gexplorer/widgets'
-import {
-  buildRootRows,
-  type RootRow,
-} from './favorites.model'
+//
+// The favorites tree (the shell's, through the SDK: 'Favorites' cap in entry.ts) and its top-level rows.
+// CHANGED 2026-10-22: one source, the tree (the flat list and the config "entries" fallback are gone), and
+// one refresh.
+import { ref, onMounted, inject } from 'vue'
+import type { FavoriteTreeNode, WidgetSdk } from 'gexplorer/widgets'
+import { buildRootRows, type RootRow } from './favorites.model'
 
-export type UseFavoritesDataOptions = {
-  sourceId: string
-  configData: () => any
-  groupValue: () => string
-}
-
-export function useFavoritesData(opts: UseFavoritesDataOptions) {
-  const { sourceId, configData, groupValue } = opts
-
-  // The user's favorites come through the widget's SDK ('Favorites' cap in entry.ts).
+export function useFavoritesData() {
   const sdk = inject<WidgetSdk>('widgetSdk')
-  const getFavorites = sdk?.getFavorites
   const getGlobalFavorites = sdk?.getGlobalFavorites
-  if (!getFavorites || !getGlobalFavorites)
+  if (!getGlobalFavorites)
     console.error("[favorites] the SDK has no favorites: declare the 'Favorites' capability in entry.ts")
 
-  // Core state
   const loading = ref(false)
   const error = ref<string | null>(null)
-  
-  // Flat favorites (items); service is the source of truth for item order
-  const favorites = ref<FavoriteEntry[]>([])
-  
-  // Tree for folders + nested items
+
+  // The whole tree (folders and favorites), and its top level as rows, in the user's order
   const fullTree = ref<FavoriteTreeNode[]>([])
-  
-  // Mixed root rows: folders + root-level items, in tree order
   const rootRows = ref<RootRow[]>([])
 
-  /**
-   * Load flat favorites list from service
-   */
-  async function refreshFavorites() {
+  /** Reads the tree again. */
+  async function refresh() {
     loading.value = true
     error.value = null
-
-    try {
-      if (!getFavorites) throw new Error("no 'Favorites' capability")
-      const svc = await getFavorites(sourceId)
-      if (Array.isArray(svc)) {
-        favorites.value = svc
-      } else {
-        const fromCfg = configData()?.entries
-        favorites.value = Array.isArray(fromCfg) ? fromCfg : []
-      }
-
-      // Rebuild rootRows if we already have a tree
-      if (fullTree.value.length) {
-        rootRows.value = buildRootRows(fullTree.value, favorites.value)
-      }
-    } catch (e: any) {
-      console.error('[favorites] getFavorites failed:', e)
-      error.value = String(e?.message ?? e ?? 'Error')
-
-      const fromCfg = configData()?.entries
-      favorites.value = Array.isArray(fromCfg) ? fromCfg : []
-
-      if (fullTree.value.length) {
-        rootRows.value = buildRootRows(fullTree.value, favorites.value)
-      }
-    } finally {
-      loading.value = false
-    }
-  }
-
-  /**
-   * Load tree structure and build rootRows from it
-   */
-  async function refreshRootFolders() {
     try {
       if (!getGlobalFavorites) throw new Error("no 'Favorites' capability")
       const tree = await getGlobalFavorites()
       fullTree.value = tree
-      rootRows.value = buildRootRows(tree, favorites.value)
-    } catch (e) {
-      console.error('[favorites] refreshRootFolders failed', e)
+      rootRows.value = buildRootRows(tree)
+    } catch (e: any) {
+      console.error('[favorites] reading the favorites failed:', e)
+      error.value = String(e?.message ?? e ?? 'Error')
       fullTree.value = []
       rootRows.value = []
+    } finally {
+      loading.value = false
     }
   }
 
@@ -127,33 +75,16 @@ export function useFavoritesData(opts: UseFavoritesDataOptions) {
 
   // Any change, from this widget, another widget or the shell: the host tells us
   // (the 'favorites' host topic; released by the host when the widget unmounts).
-  sdk?.onHostChange?.('favorites', () => {
-    void refreshFavorites()
-    void refreshRootFolders()
-  })
+  sdk?.onHostChange?.('favorites', () => { void refresh() })
 
-  onMounted(async () => {
-    await refreshFavorites()
-    await refreshRootFolders()
-  })
-
-  // Watch for config group changes
-  watch(groupValue, () => {
-    void refreshFavorites()
-    void refreshRootFolders()
-  })
+  onMounted(() => { void refresh() })
 
   return {
-    // State
     loading,
     error,
-    favorites,
     fullTree,
     rootRows,
-
-    // Methods
-    refreshFavorites,
-    refreshRootFolders,
+    refresh,
     findFolderNodeById,
     isRootFolder,
   }

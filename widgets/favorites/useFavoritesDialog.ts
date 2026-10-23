@@ -7,8 +7,8 @@ import {
 import { guessLabelFromPath } from './favorites.model'
 
 export type UseFavoritesDialogOptions = {
-  refreshFavorites: () => Promise<void>
-  refreshRootFolders: () => Promise<void>
+  /** Reads the favorites again (and keeps open folder menus in step). */
+  refresh: () => Promise<void>
 }
 
 export type FolderOption = { id: string; label: string; depth: number }
@@ -21,10 +21,7 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
     if (!f) throw new Error(`the SDK has no ${String(k)}: declare the 'Favorites' capability in entry.ts`)
     return f as NonNullable<WidgetSdk[K]>
   }
-  const {
-    refreshFavorites,
-    refreshRootFolders,
-  } = opts
+  const { refresh } = opts
 
   // Dialog state
   const showAddDialog = ref(false)
@@ -113,14 +110,14 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
         if (!label) return
         await need('addFolder')(label, parentId)
         await refreshFolderOptions()
-        await refreshRootFolders()
       } else {
         if (!path) return
-        await need('addFavorite')(path, label || undefined, parentId)
-        await refreshRootFolders()
+        // One folder here (a favorite opening several side by side: Configure, coming next)
+        const r = await need('addFavorite')([path], label || undefined, parentId)
+        if (!r.added) void sdk?.ui?.().snack({ text: `${label || path} is already a favorite.` })
       }
 
-      await refreshFavorites()
+      await refresh()
 
       closeAddDialog()
     } catch (e: any) {
@@ -145,10 +142,7 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
     error.value = null
     try {
       await need('removeFolder')(folderId)
-
-      // Reload tree + flat favorites so UI is fully in sync
-      await refreshRootFolders()
-      await refreshFavorites()
+      await refresh()
     } catch (e: any) {
       console.error('[favorites] removeFolder failed:', e)
       error.value = String(e?.message ?? e ?? 'Error')
@@ -156,16 +150,13 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
   }
 
   /**
-   * Remove a favorite item
+   * Remove a favorite (by its id)
    */
-  async function handleRemoveFavorite(path: string) {
+  async function handleRemoveFavorite(id: string) {
     error.value = null
     try {
-      await need('removeFavorite')(path)
-
-      // Reload tree + flat favorites so UI is fully in sync
-      await refreshRootFolders()
-      await refreshFavorites()
+      await need('removeFavorite')(id)
+      await refresh()
     } catch (e: any) {
       console.error('[favorites] removeFavorite failed:', e)
       error.value = String(e?.message ?? e ?? 'Error')

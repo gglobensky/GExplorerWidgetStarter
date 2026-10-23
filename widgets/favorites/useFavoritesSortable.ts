@@ -23,8 +23,8 @@ export type UseFavoritesSortableOptions = {
     openMenus: Ref<OpenMenu[]>
     rowEls: Map<RootRowId, HTMLElement>
     menuContainers: Map<string, HTMLElement>
-    refreshFavorites: () => Promise<void>
-    refreshRootFolders: () => Promise<void>
+    /** Reads the favorites again (and keeps open folder menus in step). */
+    refresh: () => Promise<void>
     setupGhostForRow: (id: RootRowId, ev: { clientX: number; clientY: number }) => void
     updateGhostPosition: (ev: PointerEvent) => void
     updateInsertBar: (intent: DropIntent | null, blocked: boolean) => void
@@ -48,8 +48,7 @@ export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
         rootRows,
         rowEls,
         menuContainers,
-        refreshFavorites,
-        refreshRootFolders,
+        refresh,
         setupGhostForRow,
         updateGhostPosition,
         updateInsertBar,
@@ -135,8 +134,7 @@ export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
         dragJustEnded = true
         try {
             await need('applyFavoritesMove')({ movedKind, movedKey, targetKind, targetKey, placement })
-            await refreshRootFolders()
-            await refreshFavorites()
+            await refresh()
         } catch (err) {
             console.error('[favorites] applyFavoritesMove failed', err)
         }

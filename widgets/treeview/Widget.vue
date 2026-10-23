@@ -83,7 +83,9 @@ async function refreshFavorites() {
     const result: Root[] = []
     const visit = (nodes: FavoriteTreeNode[], group = 'Favorites') => {
       for (const node of nodes) {
-        if (node.kind === 'item') result.push({ id: `favorite:${node.id}`, label: node.label || label(node.path), path: node.path, group, kind: 'favorite' })
+        // A tree grows from one folder (2026-10-22): favorites opening folders side by side, a page (home:,
+        // sys:) or a widget location (media://) aren't roots. A drive letter (C:) is one letter: a folder.
+        if (node.kind === 'item') { if (node.locations.length === 1 && !/^[a-z][a-z0-9-]+:/i.test(node.locations[0])) result.push({ id: `favorite:${node.id}`, label: node.label || label(node.locations[0]), path: node.locations[0], group, kind: 'favorite' }) }
         else if (node.children.length) visit(node.children, group === 'Favorites' ? `Favorites · ${node.label}` : `${group} / ${node.label}`)
       }
     }

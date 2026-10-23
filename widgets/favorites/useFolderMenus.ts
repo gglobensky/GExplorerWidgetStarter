@@ -1,9 +1,6 @@
 // /src/widgets/favorites/useFolderMenus.ts
 import { ref, computed } from 'vue'
-import type { 
-  FavoriteTreeNode, 
-  FavoriteEntry 
-} from 'gexplorer/widgets'
+import type { FavoriteTreeNode } from 'gexplorer/widgets'
 import type { OpenMenu, MenuRow } from './favorites.model'
 import { buildMenuRows, menuRowId } from './favorites.model'
 
@@ -11,7 +8,7 @@ export type UseFolderMenusOptions = {
   isSidebar: () => boolean
   findFolderNodeById: (id: string | null) => FavoriteTreeNode | null
   isRootFolder: (folderId: string) => boolean
-  openFavorite: (fav: FavoriteEntry, event?: MouseEvent) => void
+  openFavorite: (fav: { locations: string[]; label?: string }, event?: MouseEvent) => void
   rowEls: Map<string, HTMLElement>
 }
 
@@ -196,8 +193,8 @@ export function useFolderMenus(opts: UseFolderMenusOptions) {
     }
 
     // Leaf item
-    if (!row.path) return
-    openFavorite({ path: row.path, label: row.label }, event)
+    if (!row.locations?.length) return
+    openFavorite({ locations: row.locations, label: row.label }, event)
     closeFolderMenu()
   }
 

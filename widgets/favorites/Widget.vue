@@ -14,7 +14,7 @@ import { useFolderMenus } from './useFolderMenus'
 import { useFavoritesDialog } from './useFavoritesDialog'
 import { useFavoritesSortable } from './useFavoritesSortable'
 
-import { rowId } from "./favorites.model"
+import { rowId, placeTooltip } from "./favorites.model"
 
 const sdk = inject<WidgetSdk>('widgetSdk')
 // The host's overlay layer for this widget: the folder menus and the add dialog teleport there (not body), so a
@@ -76,21 +76,15 @@ const rowEls = new Map<string, HTMLElement>()
 const {
   loading,
   error,
-  favorites,
   fullTree,
   rootRows,
-  refreshFavorites,
-  refreshRootFolders,
+  refresh,
   findFolderNodeById,
   isRootFolder,
-} = useFavoritesData({
-  sourceId: props.sourceId,
-  configData: () => cfg.value.data,
-  groupValue: () => group.value,
-})
+} = useFavoritesData()
 
 // Used only for the "empty" message gate in the template
-const visibleFavorites = computed(() => favorites.value)
+const visibleFavorites = computed(() => rootRows.value)
 
 // Base root rows helper (for sortable)
 function baseRootRows() {
@@ -100,7 +94,9 @@ function baseRootRows() {
 const displayRootRows = computed(() => baseRootRows())
 
 // --- Navigation --------------------------------------------------------------
-function openFavorite(fav: { path: string; label?: string }, event?: MouseEvent) {
+// A favorite opens a place (CHANGED 2026-10-22): one location, or 2-4 folders side by side; the host
+// decides where (sdk.navigate's rules: a pane, or asked: this whole tab / its tab).
+function openFavorite(fav: { locations: string[]; label?: string }, event?: MouseEvent) {
   // If a drag just ended, swallow this click
   if (sortable.isDragJustEnded()) {
     sortable.resetDragJustEnded()
@@ -108,11 +104,11 @@ function openFavorite(fav: { path: string; label?: string }, event?: MouseEvent)
     return
   }
 
-  const path = fav.path?.trim()
-  if (!path) return
+  const locations = (fav.locations ?? []).map(l => l.trim()).filter(Boolean)
+  if (!locations.length) return
 
-  if (sdk?.navigate) void sdk.navigate(path)
-  else emit('event', { type: 'openPath', payload: path })
+  if (sdk?.navigate) void sdk.navigate(locations.length === 1 ? locations[0] : locations)
+  else if (locations.length === 1) emit('event', { type: 'openPath', payload: locations[0] })
 }
 
 // --- Folder Menus (useFolderMenus) -------------------------------------------
@@ -157,9 +153,9 @@ function handleMenuBackdropClick() {
   closeFolderMenu()
 }
 
-// Keep menus in sync when root folders refresh
-async function refreshRootFoldersWithMenuSync() {
-  await refreshRootFolders()
+// Keep open folder menus in step when the favorites are read again
+async function refreshWithMenuSync() {
+  await refresh()
   refreshOpenMenusFromTree()
 }
 
@@ -180,8 +176,7 @@ const {
   handleRemoveFolder,
   handleRemoveFavorite,
 } = useFavoritesDialog({
-  refreshFavorites,
-  refreshRootFolders: refreshRootFoldersWithMenuSync,
+  refresh: refreshWithMenuSync,
 })
 
 // --- Drag Visuals (useDragVisuals) -------------------------------------------
@@ -203,8 +198,7 @@ const sortable = useFavoritesSortable({
   rowEls,
   menuContainers,
   lastDropIntent: dragVisuals.lastDropIntent,
-  refreshFavorites,
-  refreshRootFolders: refreshRootFoldersWithMenuSync,
+  refresh: refreshWithMenuSync,
   setupGhostForRow: dragVisuals.setupGhostForRow,
   updateGhostPosition: dragVisuals.updateGhostPosition,
   updateInsertBar: dragVisuals.updateInsertBar,
@@ -334,7 +328,7 @@ function onSidebarHandleClick() {
           <ul class="favorites-list" :class="{ dense }" ref="listEl">
             <li
               v-for="row in displayRootRows"
-              :key="row.kind === 'folder' ? row.node.id : row.entry.path"
+              :key="row.kind === 'folder' ? row.node.id : row.entry.id"
               class="fav-row"
               :data-fav-row-id="rowId(row)"
               :ref="el => sortable.setRowRef(row, el as HTMLElement | null)"
@@ -359,11 +353,11 @@ function onSidebarHandleClick() {
                 class="fav-btn"
                 @pointerdown.stop="sortable.startRowDrag(row, $event)"
                 @click="openFavorite(row.entry, $event)"
-                :title="row.entry.label || row.entry.path"
+                :title="placeTooltip(row.entry.label, row.entry.locations)"
               >
                 <span v-if="showIcons" class="fav-icon">★</span>
                 <span v-if="showLabels" class="fav-label">
-                  {{ row.entry.label || row.entry.path }}
+                  {{ row.entry.label || row.entry.locations.join(' + ') }}
                 </span>
               </button>
 
@@ -384,7 +378,7 @@ function onSidebarHandleClick() {
                   type="button"
                   class="icon-btn danger"
                   @pointerdown.stop
-                  @click.stop="handleRemoveFavorite(row.entry.path)"
+                  @click.stop="handleRemoveFavorite(row.entry.id)"
                   title="Remove"
                 >
                   ✕
@@ -440,7 +434,7 @@ function onSidebarHandleClick() {
           >
             <template
               v-for="row in displayRootRows"
-              :key="row.kind === 'folder' ? row.node.id : row.entry.path"
+              :key="row.kind === 'folder' ? row.node.id : row.entry.id"
             >
               <!-- Folder pill with dropdown -->
               <div
@@ -486,11 +480,11 @@ function onSidebarHandleClick() {
                   type="button"
                   class="fav-pill"
                   @click="openFavorite(row.entry, $event)"
-                  :title="row.entry.label || row.entry.path"
+                  :title="placeTooltip(row.entry.label, row.entry.locations)"
                 >
                   <span v-if="showIcons" class="fav-icon">★</span>
                   <span v-if="showLabels" class="fav-label">
-                    {{ row.entry.label || row.entry.path }}
+                    {{ row.entry.label || row.entry.locations.join(' + ') }}
                   </span>
                 </button>
 
@@ -499,7 +493,7 @@ function onSidebarHandleClick() {
                   type="button"
                   class="icon-btn danger toolbar-delete-btn"
                   @pointerdown.stop
-                  @click.stop="handleRemoveFavorite(row.entry.path)"
+                  @click.stop="handleRemoveFavorite(row.entry.id)"
                   title="Remove"
                 >
                   ✕
@@ -668,6 +662,7 @@ function onSidebarHandleClick() {
             class="fav-menu-btn"
             @pointerdown.stop="sortable.startMenuRowDrag(row, menu.folderId ?? '', $event as PointerEvent)"
             @click="handleFolderMenuClick(row, $event, level)"
+            :title="row.type === 'item' ? placeTooltip(row.label, row.locations) : row.label"
           >
             <span class="fav-menu-label">
               <span
@@ -704,7 +699,7 @@ function onSidebarHandleClick() {
               type="button"
               class="icon-btn danger fav-menu-delete-btn"
               @pointerdown.stop
-              @click.stop="row.path && handleRemoveFavorite(row.path)"
+              @click.stop="handleRemoveFavorite(row.id)"
               title="Remove favorite"
             >
               ✕

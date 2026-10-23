@@ -356,11 +356,13 @@ declare module 'gexplorer/widgets' {
         ) => Promise<unknown>
 
         // ── Favorites cap: the user's favorites (the host's shared format) ──
-        getFavorites?: (sourceId: string) => Promise<FavoriteEntry[]>
+        // A favorite opens a place: one location, or 2-4 folders side by side (sdk.navigate takes the same).
         getGlobalFavorites?: () => Promise<FavoriteTreeNode[]>
-        addFavorite?: (path: string, label?: string, parentFolderId?: string) => Promise<void>
+        /** { added: false }: that place already is a favorite (its id); throws when <locations> is not a place. */
+        addFavorite?: (locations: string[], label?: string, parentFolderId?: string) => Promise<{ added: boolean; id: string }>
         addFolder?: (label: string, parentFolderId?: string) => Promise<void>
-        removeFavorite?: (path: string) => Promise<void>
+        /** By the favorite's id. */
+        removeFavorite?: (id: string) => Promise<void>
         removeFolder?: (folderId: string) => Promise<void>
         reorderGlobalRootNodes?: (nodeIds: string[]) => Promise<void>
         applyFavoritesMove?: (spec: FavoritesMoveSpec) => Promise<void>
@@ -888,20 +890,15 @@ declare module 'gexplorer/widgets' {
 
     // ── Favorites ──────────────────────────────────────────────────────────
 
-    /** A favorite in the flat list (getFavorites). */
-    export type FavoriteEntry = {
-        path: string
-        label?: string
-        kind?: 'folder' | 'file' | 'virtual' | 'url'
-        iconKey?: string
-    }
-
-    /** The favorites tree (getGlobalFavorites): items and folders, in the user's order. */
+    /**
+     * The favorites tree (getGlobalFavorites): items and folders, in the user's order. An item opens a place
+     * (locations: one, or 2-4 folders side by side) and is known by its id.
+     */
     export type FavoriteTreeItem = {
         id: string
         kind: 'item'
         label: string
-        path: string
+        locations: string[]
     }
     export type FavoriteTreeFolder = {
         id: string
@@ -912,7 +909,6 @@ declare module 'gexplorer/widgets' {
     export type FavoriteTreeNode = FavoriteTreeItem | FavoriteTreeFolder
 
     export type FavoritesConfig = {
-        data?: { entries?: FavoriteEntry[] }
         view?: { dense?: boolean; showIcons?: boolean }
     }
 
@@ -1383,13 +1379,13 @@ declare module 'gexplorer/widgets' {
     /** The drives to show (free). Changes: sdk.onHostChange('drives', () => ...). */
     export function getDrives(): DriveSnapshot[]
 
-    // Favorites: through the SDK (getFavorites, addFavorite...: 'Favorites' cap).
+    // Favorites: through the SDK (getGlobalFavorites, addFavorite...: 'Favorites' cap).
     export type FavoritesMovePlacement = 'before' | 'after' | 'inside'
     export type FavoritesMoveSpec = {
         movedKind: 'folder' | 'item'
-        movedKey: string        // folder.id or item.path
+        movedKey: string        // the node's id
         targetKind: 'folder' | 'item'
-        targetKey: string       // folder.id or item.path
+        targetKey: string       // the node's id
         placement: FavoritesMovePlacement
     }
 

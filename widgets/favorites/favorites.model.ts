@@ -1,5 +1,5 @@
 import type {
-  FavoriteEntry,
+  FavoriteTreeItem,
   FavoriteTreeNode,
 } from 'gexplorer/widgets'
 
@@ -8,7 +8,8 @@ export type MenuRow = {
   type: 'folder' | 'item'
   label: string
   depth: number
-  path?: string
+  /** An item: the place it opens (one location, or 2-4 folders side by side). */
+  locations?: string[]
 }
 
 export type OpenMenu = {
@@ -22,7 +23,7 @@ export type OpenMenu = {
 // A "root row" in the sidebar list: either a folder node or a root-level item favorite
 export type RootRow =
   | { kind: 'folder'; node: FavoriteTreeNode }
-  | { kind: 'item'; entry: FavoriteEntry }
+  | { kind: 'item'; entry: FavoriteTreeItem }
 
 export type RootRowId = string
 export type FavoritesNodeKind = 'folder' | 'item'
@@ -30,18 +31,18 @@ export type FavoritesNodeKind = 'folder' | 'item'
 export function rowId(row: RootRow): RootRowId {
   return row.kind === 'folder'
     ? `folder:${row.node.id}`
-    : `item:${row.entry.path}`
+    : `item:${row.entry.id}`
 }
 
 export function menuRowId(row: MenuRow): RootRowId {
   if (row.type === 'folder') return `folder:${row.id}`
-  return `item:${row.path ?? ''}`
+  return `item:${row.id}`
 }
 
 export function parseRootRowId(id: RootRowId): { kind: FavoritesNodeKind; key: string } {
   if (id.startsWith('folder:')) return { kind: 'folder', key: id.slice('folder:'.length) }
   if (id.startsWith('item:')) return { kind: 'item', key: id.slice('item:'.length) }
-  // Fallback: treat as item path
+  // Fallback: treat as an item id
   return { kind: 'item', key: id }
 }
 
@@ -61,37 +62,24 @@ export function buildMenuRows(nodes: FavoriteTreeNode[]): MenuRow[] {
         type: 'item',
         label: n.label,
         depth: 0,
-        path: (n as any).path,
+        locations: n.locations,
       })
     }
   }
   return rows
 }
 
-export function buildRootRows(
-  tree: FavoriteTreeNode[],
-  flatItems: FavoriteEntry[],
-): RootRow[] {
-  const byPath = new Map<string, FavoriteEntry>()
-  for (const f of flatItems) {
-    if (f.path) byPath.set(f.path, f)
-  }
+/** The top level of the tree as rows: folders and favorites, in the user's order. */
+export function buildRootRows(tree: FavoriteTreeNode[]): RootRow[] {
+  return tree.map(n => n.kind === 'folder'
+    ? { kind: 'folder' as const, node: n }
+    : { kind: 'item' as const, entry: n })
+}
 
-  const rows: RootRow[] = []
-  for (const n of tree) {
-    if (n.kind === 'folder') {
-      rows.push({ kind: 'folder', node: n })
-    } else if (n.kind === 'item') {
-      const path = (n as any).path as string | undefined
-      if (!path) continue
-      const entry = byPath.get(path) ?? ({
-        path,
-        label: (n as any).label,
-      } as FavoriteEntry)
-      rows.push({ kind: 'item', entry })
-    }
-  }
-  return rows
+/** A favorite's tooltip: its name, then every folder it opens (side by side: all of them). */
+export function placeTooltip(label: string | undefined, locations: string[] | undefined): string {
+  const where = (locations ?? []).join('\n')
+  return label ? (where ? `${label}\n${where}` : label) : where
 }
 
 export function guessLabelFromPath(path: string): string {
