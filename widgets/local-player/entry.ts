@@ -102,6 +102,10 @@ export default {
                 { id: 'expanded', icon: '▦', tooltip: 'Full Player' },
             ],
             minHeight: 120,
+            // The player scrolls its own list (2026-10-23): the controls stay, the rows scroll in
+            // a <gex-scroll-area> that keeps two of them, and the player is as tall as its queue
+            // up to the sidebar's maximum.
+            scroll: 'self',
         },
     },
 

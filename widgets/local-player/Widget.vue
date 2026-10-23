@@ -816,3 +816,13 @@ onBeforeUnmount(() => {
     />
   </div>
 </template>
+
+<style scoped>
+/* A column the layout fills (grid), or follows (sidebar: as tall as the queue, up to its maximum) */
+.widget-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+</style>

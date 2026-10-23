@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
-import { createDragTrigger, useScrollHints, useSnapResize } from 'gexplorer/widgets'
-import type { TooltipOptions } from 'gexplorer/widgets'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import type { GexScrollAreaRef, TooltipOptions } from 'gexplorer/widgets'
 import type { Track } from './usePlayerState'
 import { reasonText } from './usePlaylist'
 
@@ -83,46 +82,13 @@ const emit = defineEmits<{
   (e: 'row-menu', track: Track, event: MouseEvent): void
 }>()
 
-// Measure row height from DOM (used for snap resize step)
-const rowStepPx = ref(32)     // default, will be measured (snap increment)
-const headerPx = ref(34)      // default fallback, will be measured
-
-function measureQueueMetrics() {
-  const q = queueEl.value
-  if (!q) return
-
-  // Header row inside the scroll container (sticky)
-  const header = q.querySelector('.row.header') as HTMLElement | null
-  if (header) {
-    headerPx.value = Math.max(0, Math.ceil(header.getBoundingClientRect().height))
-  }
-
-  // Prefer measuring the *step* between two consecutive rows
-  const items = q.querySelectorAll('.row.item') as NodeListOf<HTMLElement>
-  if (items.length >= 2) {
-    const a = items[0].getBoundingClientRect()
-    const b = items[1].getBoundingClientRect()
-    const delta = b.top - a.top
-    rowStepPx.value = Math.max(28, Math.round(delta * 100) / 100)
-
-  } else if (items.length === 1) {
-    rowStepPx.value = Math.max(28, Math.ceil(items[0].getBoundingClientRect().height))
-  }
-}
-
-function measureAfterPaint() {
-  // nextTick ensures the queue is rendered; rAF ensures layout has settled
-  nextTick(() => requestAnimationFrame(measureQueueMetrics))
-}
-
-// ===== LIST-KIT: SNAP RESIZE =====
-const snapStepPx = computed(() => rowStepPx.value)
-const snapPadPx  = computed(() => headerPx.value || 0)
-
 const renameOverlayPos = ref<{ left: number; top: number; width: number } | null>(null)
 
 const controlsEl = ref<HTMLElement | null>(null)
-const queueEl = ref<HTMLElement | null>(null)
+// The list scrolls in the shell's scroll area (2026-10-23): its strips, its minimum (two rows),
+// the place keeps the player tall enough for it. queueEl: its scrolling element (drag reorder).
+const queueArea = ref<GexScrollAreaRef | null>(null)
+const queueEl = computed(() => queueArea.value?.el ?? null)
 const nameInput = ref<HTMLInputElement | null>(null)
 const volBtnEl = ref<HTMLElement | null>(null)
 
@@ -130,83 +96,8 @@ const showVolPop = ref(false)
 const volPopStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' })
 const isPressing = ref(false)
 
-// ===== LIST-KIT: SCROLL HINTS =====
-const {
-  hasOverflow,
-  atStart: atTop,
-  atEnd: atBottom,
-  scrollByPage,
-} = useScrollHints({
-  scrollEl: queueEl,
-  axis: 'y',
-  deps: () => props.displayQueue.length,
-  eps: 2,
-  minPageStep: 60,
-})
-
-// ===== LIST-KIT: SNAP RESIZE =====
-const { style: queueStyle, onResizeDown: onQueueResizeDown, heightPx } = useSnapResize({
-  targetEl: queueEl,
-  itemCount: computed(() => props.displayQueue.length),
-  stepPx: () => rowStepPx.value,
-  minSteps: 3,
-  maxSteps: 20,
-  paddingPx: () => headerPx.value,
-})
-
 // Narrow classes: two fixed control rows (transport, then the rest) instead of clipping.
 const compact = computed(() => ['narrow', 'ultra', 'micro'].includes(props.layoutClass))
-
-// The queue's height: the user's chosen height (dragged) at most, its content at least
-// (no empty rows under a short queue, 2026-10-09). It may also shrink to the room the
-// player has (CSS flex: 0 1 auto), so the bottom handle never spills over its outline.
-const queueStyleEff = computed(() => {
-  const base = queueStyle.value as Record<string, string>
-  if (!base.height) return base
-  const chosen = parseFloat(base.height)
-  const content = (headerPx.value || 0) + props.displayQueue.length * (rowStepPx.value || 32)
-  const px = Math.max(0, Math.min(chosen, content))
-  return { ...base, height: px + 'px', maxHeight: px + 'px', flex: '0 1 auto' }
-})
-
-// Set initial height (8 rows by default)
-watch([snapStepPx, snapPadPx, () => props.showQueue], ([step, pad, visible]) => {
-  if (visible && step > 0 && heightPx.value === null) {
-    heightPx.value = 8 * step + pad // 8 rows + header
-  }
-}, { immediate: true })
-
-
-// Drag trigger: discriminate between drag-to-resize and click-to-scroll
-const onQueueHandlePointerDown = createDragTrigger(
-  (e) => {
-    measureQueueMetrics()
-    onQueueResizeDown(e)
-  },
-  {
-    thresholdPx: 4,
-    gate: { includeDefaultInteractive: false },
-    suppressClickAfterDrag: true,
-  },
-)
-
-function onQueueHandleClick() {
-  // Click -> scroll down (only when it makes sense)
-  if (hasOverflow.value && !atBottom.value) {
-    scrollByPage(1)
-  }
-}
-
-// Watch for queue visibility changes to measure row height
-watch(() => props.showQueue, v => {
-  if (v) measureAfterPaint()
-})
-
-// Also re-measure when content/layout changes (can affect row metrics)
-watch(
-  [() => props.displayQueue.length, () => props.layoutClass, () => props.showQueue],
-  ([, , show]) => { if (show) measureAfterPaint() }
-)
 
 const playTooltip = computed((): TooltipOptions => {
   const head = props.isPlaying ? 'Pause' : 'Play'
@@ -285,7 +176,7 @@ function onKeydown(e: KeyboardEvent) {
 function onPointerDown(e: PointerEvent) {
   if (e.button !== 0) return
   const t = e.target as HTMLElement
-  if (t.closest('.queue')) isPressing.value = true
+  if (t.closest('.queue-area')) isPressing.value = true
 }
 
 function onPointerUp() {
@@ -310,7 +201,6 @@ onMounted(() => {
   window.addEventListener('blur', onPointerUp)
   document.addEventListener('click', onDocClick, true)
 
-  measureAfterPaint()
 })
 
 onBeforeUnmount(() => {
@@ -490,24 +380,10 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
       </div>
     </div>
 
-    <!-- Under the head: 🗑 on the left, ➕ 💾 on the right; in the middle, "scroll up" when the
-         list is scrolled down (not in micro: no room). -->
+    <!-- Under the head: 🗑 on the left, ➕ 💾 on the right -->
     <div v-if="queue.length" class="queue-tools">
       <div class="qt-side qt-left">
         <button class="icon-btn" type="button" v-gex-tooltip="'Clear the queue'" @click="emit('clear-queue')">🗑</button>
-      </div>
-      <div class="qt-mid">
-        <button
-          v-if="showQueue && hasOverflow && !atTop && layoutClass !== 'micro'"
-          class="queue-top-hint clickable"
-          type="button"
-          @click="scrollByPage(-1)"
-          v-gex-tooltip="'Scroll up'"
-        >
-          <svg width="24" height="10" viewBox="0 0 24 10">
-            <path d="M3,8 L12,2 L21,8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          </svg>
-        </button>
       </div>
       <div class="qt-side qt-right">
         <button class="icon-btn" type="button" v-gex-tooltip="{ content: 'Add to the queue', detail: 'Audio files and playlists' }" @click.stop.prevent="emit('click-pick')">➕</button>
@@ -515,16 +391,18 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
       </div>
     </div>
 
-    <!-- Queue List -->
-    <div
+    <!-- Queue List: the column header stays put, the rows scroll (at least two shown) -->
+    <gex-scroll-area
     v-if="queue.length && showQueue"
-    class="queue"
-    ref="queueEl"
-    :style="queueStyleEff"
+    ref="queueArea"
+    class="queue-area"
+    :min-rows="2"
     >
-    <div class="row header">
-        <span>#</span><span>Title</span><span class="dur">Length</span><span class="act"></span>
-    </div>
+    <template #head>
+        <div class="row header">
+            <span>#</span><span>Title</span><span class="dur">Length</span><span class="act"></span>
+        </div>
+    </template>
 
     <div
         v-for="(t, i) in displayQueue"
@@ -595,22 +473,7 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
         </button>
         </span>
     </div>
-    </div>
-
-    <!-- Bottom resize handle (with scroll hint) -->
-    <div
-    v-if="queue.length && showQueue"
-    class="queue-resize-handle"
-    @pointerdown="onQueueHandlePointerDown"
-    @click.stop="onQueueHandleClick"
-    v-gex-tooltip="hasOverflow && !atBottom ? { content: 'Scroll down', detail: 'Drag to resize the list height' } : 'Drag to resize list height'"
-    >
-    <!-- down chevron when more below; line when at end -->
-    <svg v-if="hasOverflow && !atBottom" width="24" height="10" viewBox="0 0 24 10">
-        <path d="M3,2 L12,8 L21,2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-    </svg>
-    <div v-else class="handle-line"></div>
-    </div>
+    </gex-scroll-area>
     <!-- Empty State -->
     <div v-if="queue.length === 0" class="empty">
       <p>Drop audio files here or</p>
@@ -633,7 +496,8 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
 .player-root {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
   background: var(--surface-2, #222);
   color: var(--fg, #eee);
   border: 1px solid var(--border, #555);
@@ -771,57 +635,17 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
 }
 .icon-btn:hover { background: var(--surface-3, #333); border-color: var(--accent, #4ea1ff); }
 
-/* ====================== QUEUE TOOLS + TOP HINT ====================== */
-/* 🗑 | scroll up | ➕ 💾 under the head; the sides take equal room so the middle stays centred. */
+/* ====================== QUEUE TOOLS ====================== */
+/* 🗑 | ➕ 💾 under the head */
 .queue-tools {
-  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+  display: flex; justify-content: space-between; align-items: center;
   margin: 4px 0 6px; min-width: 0;
 }
 .qt-side { display: flex; gap: 6px; min-width: 0; }
-.qt-left { justify-content: flex-start; }
-.qt-right { justify-content: flex-end; }
-.qt-mid { display: flex; justify-content: center; min-width: 0; }
-
-.queue-top-hint { 
-  width: 24px; height: 12px; display: grid; place-items: center; 
-  border: none;
-  background: transparent;
-  padding: 0;
-}
-
-.queue-top-hint.clickable {
-  cursor: pointer;
-  pointer-events: auto;
-  opacity: 1;
-  transition: opacity 0.12s ease;
-}
-.queue-top-hint.clickable:hover { opacity: 0.7; }
-
-/* Top hint bar (when at top, not clickable) */
-.queue-top-hint .handle-line {
-  width: 24px; height: 2px; border-radius: 2px; background: rgba(255,255,255,0.28);
-}
-
-/* White arrows for clickable top hints */
-.queue-top-hint.clickable svg {
-  display: block;
-  opacity: 1;
-  color: rgba(255, 255, 255, 0.9);
-}
-.queue-top-hint.clickable:hover svg {
-  color: rgba(255, 255, 255, 1);
-}
 
 /* ====================== QUEUE LIST ====================== */
-.queue {
-  min-height: 0;
-  overflow-y: auto; 
-  overflow-x: hidden; 
-  contain: layout paint;
-  scrollbar-width: none;
-  overflow-anchor: none;
-}
-.queue::-webkit-scrollbar { width: 0; height: 0; }
+.queue-area { flex: 0 1 auto; }
+.queue-area :deep(.gsa-view) { contain: layout paint; overflow-anchor: none; }
 
 .row {
   display: grid;
@@ -835,8 +659,8 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
   transition: border-color 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease;
 }
 .row.header {
-  position: sticky; top: 0; background: var(--surface-2, #222);
-  font-weight: 600; border-top: none; box-shadow: none; z-index: 5;
+  background: var(--surface-2, #222);
+  font-weight: 600; border-top: none; box-shadow: none;
 }
 .row.item { cursor: grab; position: relative; }
 
@@ -877,22 +701,22 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
 .skip-tag { opacity: 0.75; font-style: normal; }
 
 /* Narrowest list: only Title */
-.player-root.ultra .queue .row,
-.player-root.micro .queue .row { grid-template-columns: 1fr; }
-.player-root.ultra .queue .idx,
-.player-root.ultra .queue .dur,
-.player-root.ultra .queue .act,
-.player-root.micro .queue .idx,
-.player-root.micro .queue .dur,
-.player-root.micro .queue .act { display: none; }
-.player-root.ultra .queue .row.header,
-.player-root.micro .queue .row.header { grid-template-columns: 1fr; }
-.player-root.ultra .queue .row.header > :first-child,
-.player-root.micro .queue .row.header > :first-child { display: none; }
-.player-root.ultra .queue .row.header .dur,
-.player-root.ultra .queue .row.header .act,
-.player-root.micro .queue .row.header .dur,
-.player-root.micro .queue .row.header .act { display: none; }
+.player-root.ultra .queue-area .row,
+.player-root.micro .queue-area .row { grid-template-columns: 1fr; }
+.player-root.ultra .queue-area .idx,
+.player-root.ultra .queue-area .dur,
+.player-root.ultra .queue-area .act,
+.player-root.micro .queue-area .idx,
+.player-root.micro .queue-area .dur,
+.player-root.micro .queue-area .act { display: none; }
+.player-root.ultra .queue-area .row.header,
+.player-root.micro .queue-area .row.header { grid-template-columns: 1fr; }
+.player-root.ultra .queue-area .row.header > :first-child,
+.player-root.micro .queue-area .row.header > :first-child { display: none; }
+.player-root.ultra .queue-area .row.header .dur,
+.player-root.ultra .queue-area .row.header .act,
+.player-root.micro .queue-area .row.header .dur,
+.player-root.micro .queue-area .row.header .act { display: none; }
 
 /* Allow timeline to be narrower so nothing overflows */
 .player-root.ultra .timeline .seek,
@@ -927,16 +751,5 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
 }
 .rename-overlay .qh-input.big { width: 100%; height: 28px; }
 .rename-overlay .ro-actions { display: flex; gap: 6px; }
-
-/* ====================== BOTTOM HANDLE ====================== */
-.queue-resize-handle {
-  height: 18px; margin-top: 6px; cursor: ns-resize;
-  background: linear-gradient(to bottom, transparent, rgba(255,255,255,0.10), transparent);
-  border-radius: 6px; display: grid; place-items: center;
-}
-.queue-resize-handle svg { opacity: .7; }
-.queue-resize-handle .handle-line {
-  width: 36px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.28);
-}
 
 </style>
