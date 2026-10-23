@@ -67,19 +67,22 @@ declare module 'gexplorer/widgets' {
         /**
          * Where this widget sends the user (the runAction prop they replaced is gone). Each resolves to { ok: true } or
          * { ok: false, reason: 'no-gesture' | 'not-on-screen' | 'bad-argument' }.
-         *   navigate   a folder, a hub ("home:"), a sys: page: the focused GExplorer pane, else the whole tab
-         *              (the GExplorer itself: its own pane / tab); in the file dialog, the dialog. newTab: a tab of
-         *              its own (a folder tab already on that folder is reused); replace: no new history entry.
+         *   navigate   a place: one location (a folder, a hub "home:", a sys: page) or 2-4 folders side by side
+         *              (an array). One folder: the focused GExplorer pane, else the whole tab (the GExplorer
+         *              itself: its own pane). A page or folders side by side a pane would have taken: the user
+         *              is asked (this whole tab, or its tab); a split tab with no pane focused: asked too (a pane,
+         *              the whole tab, its tab). In the file dialog: the dialog (one folder only). newTab: its tab
+         *              (one already showing that place is reused); replace: no new history entry.
          *   openPath   opens a file or a program with the system (a program needs this widget's Exec grant); in the
          *              file dialog, picks the file.
          *   openUrl    a web link in the user's browser: the user is always asked first, naming this widget.
          *   setView    saves a patch of this placement's view settings (a plain object, at most 8 KB of JSON).
          * navigate, openPath and openUrl only right after the user's own click or key press in this widget
-         * (the GExplorer moving its own view excepted); otherwise refused and written to the security log.
+         * (the GExplorer moving its own view to a folder excepted); otherwise refused and written to the security log.
          * openFolder(entry) goes to the folder; openEntry(entry) opens a file (gesture rule) or goes to the
          * folder a shortcut leads to.
          */
-        navigate?: (to: string, options?: { newTab?: boolean; replace?: boolean }) => Promise<WidgetViewResult>
+        navigate?: (to: string | string[], options?: { newTab?: boolean; replace?: boolean }) => Promise<WidgetViewResult>
         openPath?: (path: string) => Promise<WidgetViewResult>
         openUrl?: (url: string, options?: { title?: string }) => Promise<WidgetViewResult>
         setView?: (patch: Record<string, unknown>) => Promise<WidgetViewResult>
