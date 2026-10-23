@@ -49,8 +49,10 @@ const cfg = computed(() => {
 const editMode = computed(() => !!props.editMode)
 const group = computed(() => String((cfg.value.view as any)?.group ?? (cfg.value.data as any)?.group ?? 'main'))
 const isSidebar = computed(() => props.placement?.context === 'sidebar')
+// Each place has its own layouts (entry.ts); only the grid offers a choice
 const layout = computed(() => {
   if (isSidebar.value) return 'list'
+  if (props.placement?.context === 'toolbar') return 'toolbar'
   return (cfg.value.view?.layout as 'list' | 'toolbar' | undefined) ?? 'toolbar'
 })
 const dense = computed(() => !!cfg.value.view?.dense)
@@ -326,11 +328,11 @@ async function onWidgetAction(msg: any) {
 
 // --- Right-click on a favorite / a folder (entry.ts menuContexts + menus.items, 2026-10-23) ------
 function onFavoriteMenu(id: string, e: MouseEvent) {
-  void sdk?.ui?.().contextMenu(e, { context: 'favorites.item', ref: id })
+  void sdk?.ui?.().contextMenu(e, { context: 'favorites.item', ref: id, widgetConfig: props.config })
 }
 
 function onFolderNodeMenu(id: string, e: MouseEvent) {
-  void sdk?.ui?.().contextMenu(e, { context: 'favorites.folder', ref: id })
+  void sdk?.ui?.().contextMenu(e, { context: 'favorites.folder', ref: id, widgetConfig: props.config })
 }
 
 /** One of this widget's menu items was chosen (the host calls it). */

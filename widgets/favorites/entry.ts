@@ -37,6 +37,7 @@ export default {
       minSize:     { cols: 4,  rows: 1 },
       maxSize:     { cols: 24, rows: 1 },
       defaultSize: { cols: 12, rows: 1 },
+      layouts: [{ id: 'toolbar', icon: '★', tooltip: 'Toolbar pills' }],
     },
 
     // Optional: allow dropping favorites in the main grid as a big widget
@@ -44,18 +45,19 @@ export default {
       minSize:     { cols: 2, rows: 1 },
       maxSize:     { cols: 12, rows: 8 },
       defaultSize: { cols: 4, rows: 2 },
+      layouts: [
+        { id: 'toolbar', icon: '★', tooltip: 'Toolbar pills' },
+        { id: 'list',    icon: '☰', tooltip: 'Vertical list' },
+      ],
     },
 
     // Optional: also usable in sidebar
     sidebar: {
       minHeight: 120,
+      layouts: [{ id: 'list', icon: '☰', tooltip: 'Vertical list' }],
     },
 
-    // Widget-local layout modes (up to you & Widget.vue)
-    layouts: [
-      { id: 'toolbar', icon: '★', tooltip: 'Toolbar pills' },
-      { id: 'list',    icon: '☰', tooltip: 'Vertical list' },
-    ],
+    // Layouts are per place (only the grid offers a choice): the Layout menu offers the place's own
   },
 
   // Default config that will be passed as props.config
