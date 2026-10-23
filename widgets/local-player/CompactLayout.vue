@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from 'vue'
 import type { TooltipOptions } from 'gexplorer/widgets'
+import { useVolumePopover } from './useVolumePopover'
 
 const props = defineProps<{
   current: any
@@ -17,60 +17,15 @@ const emit = defineEmits<{
   (e: 'toggle-play'): void
   (e: 'click-pick'): void
   (e: 'vol-input', value: number): void
+  (e: 'toggle-mute'): void
 }>()
 
-const volBtnEl = ref<HTMLElement | null>(null)
-const showVolPop = ref(false)
-const volPopStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' })
-
-function toggleVolPop() {
-  if (showVolPop.value) {
-    showVolPop.value = false
-    return
-  }
-  const btn = volBtnEl.value
-  if (!btn) return
-  const r = btn.getBoundingClientRect()
-  volPopStyle.value = {
-    left: `${Math.round(r.left + r.width / 2)}px`,
-    top: `${Math.round(r.bottom + 8)}px`
-  }
-  showVolPop.value = true
-}
-
-function closeVolPop() {
-  showVolPop.value = false
-}
-
-function onDocClick(e: MouseEvent) {
-  if (!showVolPop.value) return
-  const t = e.target as HTMLElement
-  if (!t.closest('.vol-pop') && !volBtnEl.value?.contains(t)) {
-    closeVolPop()
-  }
-}
-
-function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') closeVolPop()
-}
-
-function volInput(e: Event) {
-  emit('vol-input', parseFloat((e.target as HTMLInputElement).value))
-}
-
-onMounted(() => {
-  // Capture phase so clicks inside nested portals don’t slip through
-  document.addEventListener('click', onDocClick, true)
-  document.addEventListener('keydown', onKeydown)
+// 🔊: the slider in the shell's popover (useVolumePopover.ts), as in the expanded layout
+const volPop = useVolumePopover({
+  volume: () => props.volume,
+  onInput: (v) => emit('vol-input', v),
+  onMute: () => emit('toggle-mute'),
 })
-
-onBeforeUnmount(() => {
-  document.removeEventListener('click', onDocClick, true)
-  document.removeEventListener('keydown', onKeydown)
-})
-
-// Expose for parent (optional, matches Expanded)
-defineExpose({ onDocClick, onKeydown })
 </script>
 
 <template>
@@ -82,28 +37,14 @@ defineExpose({ onDocClick, onKeydown })
     <div class="compact-title" v-gex-tooltip="playTooltip">
       <span class="title-text">{{ current?.name || 'No track' }}</span>
       <button
-        ref="volBtnEl"
         class="btn vol-in-title"
-        :class="{ active: volume === 0 }"
+        :class="{ active: volume === 0 || volPop.open.value }"
         v-gex-tooltip="{ content: `Volume: ${Math.round(volume * 100)}%`, detail: 'Click to open volume slider' }"
-        :aria-expanded="showVolPop ? 'true' : 'false'"
-        @click.stop="toggleVolPop"
+        :aria-expanded="volPop.open.value ? 'true' : 'false'"
+        @click.stop="volPop.toggle"
       >
         {{ volumeIcon }}
       </button>
-    </div>
-
-    <!-- Fixed overlay popover -->
-    <div v-if="showVolPop" class="vol-pop fixed" :style="volPopStyle" @click.stop>
-      <input
-        class="vol-vertical"
-        type="range"
-        min="0"
-        max="1"
-        step="0.01"
-        :value="volume"
-        @input="volInput"
-      />
     </div>
 
     <!-- Single-row controls -->
@@ -179,22 +120,5 @@ defineExpose({ onDocClick, onKeydown })
 .btn.active {
   border-color: var(--accent, #4ea1ff);
   box-shadow: 0 0 0 1px var(--accent, #4ea1ff) inset;
-}
-
-.vol-pop.fixed {
-  position: fixed;
-  transform: translateX(-50%);
-  padding: 8px;
-  background: var(--surface-1, #1a1a1a);
-  border: 1px solid var(--border, #555);
-  border-radius: var(--radius-sm, 6px);
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.3);
-  z-index: 9999;
-}
-
-.vol-vertical {
-  writing-mode: vertical-rl;
-  direction: ltr;
-  height: 120px;
 }
 </style>

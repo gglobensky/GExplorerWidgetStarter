@@ -752,6 +752,7 @@ onBeforeUnmount(() => {
       @toggle-play="togglePlay"
       @click-pick="clickPick"
       @vol-input="volInput"
+      @toggle-mute="toggleMute"
     />
 
     <!-- Expanded Layout -->

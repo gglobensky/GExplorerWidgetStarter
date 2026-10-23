@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import type { GexScrollAreaRef, TooltipOptions } from 'gexplorer/widgets'
 import type { Track } from './usePlayerState'
 import { reasonText } from './usePlaylist'
+import { useVolumePopover } from './useVolumePopover'
 
 /**
  * A track's tooltip: its name, then its length (the playing one: the element's); a greyed
@@ -90,10 +91,13 @@ const controlsEl = ref<HTMLElement | null>(null)
 const queueArea = ref<GexScrollAreaRef | null>(null)
 const queueEl = computed(() => queueArea.value?.el ?? null)
 const nameInput = ref<HTMLInputElement | null>(null)
-const volBtnEl = ref<HTMLElement | null>(null)
+// 🔊: the slider in the shell's popover (useVolumePopover.ts)
+const volPop = useVolumePopover({
+  volume: () => props.volume,
+  onInput: (v) => emit('vol-input', v),
+  onMute: () => emit('toggle-mute'),
+})
 
-const showVolPop = ref(false)
-const volPopStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' })
 const isPressing = ref(false)
 
 // Narrow classes: two fixed control rows (transport, then the rest) instead of clipping.
@@ -142,37 +146,6 @@ function fmtTime(sec: number) {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
-function toggleVolPop() {
-  if (showVolPop.value) {
-    showVolPop.value = false
-    return
-  }
-  const btn = volBtnEl.value
-  if (!btn) return
-  const r = btn.getBoundingClientRect()
-  volPopStyle.value = {
-    left: `${Math.round(r.left + r.width / 2)}px`,
-    top: `${Math.round(r.bottom + 8)}px`
-  }
-  showVolPop.value = true
-}
-
-function closeVolPop() {
-  showVolPop.value = false
-}
-
-function onDocClick(e: MouseEvent) {
-  if (!showVolPop.value) return
-  const t = e.target as HTMLElement
-  if (!t.closest('.vol-pop') && !volBtnEl.value?.contains(t)) {
-    closeVolPop()
-  }
-}
-
-function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') closeVolPop()
-}
-
 function onPointerDown(e: PointerEvent) {
   if (e.button !== 0) return
   const t = e.target as HTMLElement
@@ -181,10 +154,6 @@ function onPointerDown(e: PointerEvent) {
 
 function onPointerUp() {
   isPressing.value = false
-}
-
-function volInput(e: Event) {
-  emit('vol-input', parseFloat((e.target as HTMLInputElement).value))
 }
 
 const onRowClick = (index: number, event: MouseEvent) => {
@@ -199,18 +168,15 @@ onMounted(() => {
   document.addEventListener('pointerup', onPointerUp)
   document.addEventListener('pointercancel', onPointerUp)
   window.addEventListener('blur', onPointerUp)
-  document.addEventListener('click', onDocClick, true)
-
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('pointerup', onPointerUp)
   document.removeEventListener('pointercancel', onPointerUp)
   window.removeEventListener('blur', onPointerUp)
-  document.removeEventListener('click', onDocClick, true)
 })
 
-defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
+defineExpose({ controlsEl, queueEl, nameInput })
 </script>
 
 <template>
@@ -295,11 +261,12 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
 
         <!-- Volume (with popover) -->
         <button
-          ref="volBtnEl"
           class="btn vol-btn narrow"
+          :class="{ active: volPop.open.value }"
           type="button"
+          :aria-expanded="volPop.open.value ? 'true' : 'false'"
           v-gex-tooltip="{ content: `Volume: ${Math.round(volume * 100)}%`, detail: 'Click to open volume slider' }"
-          @click="toggleVolPop"
+          @click="volPop.toggle"
         >
           {{ volumeIcon }}
         </button>
@@ -326,19 +293,6 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
         
         <span v-if="layoutClass === 'wide'" class="mono time-label">-{{ fmtTime(Math.max(0, (duration || 0) - currentTime)) }}</span>
       </div>
-    </div>
-
-    <!-- Volume popover -->
-    <div v-if="showVolPop" class="vol-pop fixed" :style="volPopStyle" @click.stop>
-      <input
-        class="vol-vertical"
-        type="range"
-        min="0"
-        max="1"
-        step="0.01"
-        :value="volume"
-        @input="volInput"
-      />
     </div>
 
     <!-- Queue head (2026-10-09): the shared fold header — double-click folds / unfolds the
@@ -608,14 +562,6 @@ defineExpose({ controlsEl, queueEl, nameInput, onDocClick, onKeydown })
 .player-root.micro .vol-btn {
   min-width: 26px; width: 26px; padding: 0; text-align: center;
 }
-
-/* ====================== VOLUME POPOVER ====================== */
-.vol-pop.fixed {
-  position: fixed; transform: translateX(-50%); padding: 8px;
-  background: var(--surface-1, #1a1a1a); border: 1px solid var(--border, #555);
-  border-radius: var(--radius-sm, 6px); box-shadow: 0 8px 18px rgba(0, 0, 0, 0.3); z-index: 9999;
-}
-.vol-vertical { writing-mode: vertical-rl; direction: ltr; height: 120px; }
 
 /* ====================== QUEUE HEAD (gex-fold-header, restyled) ====================== */
 .queue-head { margin-top: 8px; min-width: 0; }
