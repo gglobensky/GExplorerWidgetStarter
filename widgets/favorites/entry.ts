@@ -8,6 +8,27 @@ export default {
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
 
+  // One owner for the whole shell (claude/job-recovery-design.md J4a, 2026-10-23): the favorites are the
+  // shell's, shared by every place this widget is shown, so a menu action reaches one of them (no
+  // "which one?" submenu) and they stay in step.
+  instance: 'global',
+
+  // Right-click on a favorite or a favorites folder (Widget.vue: sdk.ui().contextMenu, onMenuItem)
+  menuContexts: [
+    { id: 'favorites.item',   label: 'Favorite',         icon: '★' },
+    { id: 'favorites.folder', label: 'Favorites folder', icon: '📁' },
+  ],
+  menus: {
+    items: [
+      { id: 'edit',      label: 'Edit…',   icon: '✎', contexts: ['favorites.item'] },
+      { id: 'item.sep',  type: 'separator',          contexts: ['favorites.item'] },
+      { id: 'remove',    label: 'Remove',  icon: '✕', contexts: ['favorites.item'] },
+      { id: 'rename',    label: 'Rename…', icon: '✎', contexts: ['favorites.folder'] },
+      { id: 'folder.sep', type: 'separator',         contexts: ['favorites.folder'] },
+      { id: 'delete',    label: 'Delete…', icon: '✕', contexts: ['favorites.folder'] },
+    ],
+  },
+
   // Where this widget can live
   contexts: {
     // Toolbar strip (main intended place)

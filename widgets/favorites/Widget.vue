@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, inject, type Ref } from 'vue'
-import type { WidgetSdk } from 'gexplorer/widgets'
+import type { WidgetSdk, WidgetMenuItemMessage } from 'gexplorer/widgets'
 import { 
   useScrollHints, 
   useSnapResize,
@@ -176,6 +176,8 @@ const {
   filledLocations,
   openAddDialog,
   openAddDialogWith,
+  openEditDialog,
+  editingId,
   addLocationRow,
   removeLocationRow,
   browseLocation,
@@ -322,7 +324,38 @@ async function onWidgetAction(msg: any) {
   }
 }
 
-defineExpose({ onWidgetAction })
+// --- Right-click on a favorite / a folder (entry.ts menuContexts + menus.items, 2026-10-23) ------
+function onFavoriteMenu(id: string, e: MouseEvent) {
+  void sdk?.ui?.().contextMenu(e, { context: 'favorites.item', ref: id })
+}
+
+function onFolderNodeMenu(id: string, e: MouseEvent) {
+  void sdk?.ui?.().contextMenu(e, { context: 'favorites.folder', ref: id })
+}
+
+/** One of this widget's menu items was chosen (the host calls it). */
+async function onMenuItem(m: WidgetMenuItemMessage) {
+  const id = m.ref
+  if (!id) return
+  switch (m.itemId) {
+    case 'edit':   await openEditDialog(id); break
+    case 'remove': await handleRemoveFavorite(id); break
+    case 'delete': await handleRemoveFolder(id); break
+    case 'rename': {
+      const ui = sdk?.ui?.()
+      const current = findFolderNodeById(id)
+      if (!ui || !current) return
+      const name = await ui.prompt('Name of the folder:', { value: current.label, validate: (v: string) => v.trim() ? null : 'A name is needed.' })
+      if (name === null) return
+      try { await sdk?.renameFolder?.(id, name) }
+      catch (err: any) { void ui.snack({ text: `Not renamed: ${err?.message ?? err}` }) }
+      break
+    }
+    default: console.warn('[favorites] unknown menu item', m.itemId)
+  }
+}
+
+defineExpose({ onWidgetAction, onMenuItem })
 
 </script>
 
@@ -401,6 +434,7 @@ defineExpose({ onWidgetAction })
                 :class="{ 'menu-open': isFolderMenuOpen(row.node.id) }"
                 @pointerdown.stop="sortable.startRowDrag(row, $event)"
                 @click="openFolderDropdown(row.node, $event)"
+                @contextmenu.prevent.stop="onFolderNodeMenu(row.node.id, $event)"
               >
                 <span v-if="showIcons" class="fav-icon">📁</span>
                 <span v-if="showLabels" class="fav-label">{{ row.node.label }}</span>
@@ -413,6 +447,7 @@ defineExpose({ onWidgetAction })
                 class="fav-btn"
                 @pointerdown.stop="sortable.startRowDrag(row, $event)"
                 @click="openFavorite(row.entry, $event)"
+                @contextmenu.prevent.stop="onFavoriteMenu(row.entry.id, $event)"
                 :title="placeTooltip(row.entry.label, row.entry.locations)"
               >
                 <span v-if="showIcons" class="fav-icon">★</span>
@@ -509,6 +544,7 @@ defineExpose({ onWidgetAction })
                   class="fav-pill folder-pill"
                   :class="{ 'menu-open': isFolderMenuOpen(row.node.id) }"
                   @click="openFolderDropdown(row.node, $event)"
+                  @contextmenu.prevent.stop="onFolderNodeMenu(row.node.id, $event)"
                   :title="row.node.label"
                 >
                   <span class="fav-icon">📁</span>
@@ -540,6 +576,7 @@ defineExpose({ onWidgetAction })
                   type="button"
                   class="fav-pill"
                   @click="openFavorite(row.entry, $event)"
+                  @contextmenu.prevent.stop="onFavoriteMenu(row.entry.id, $event)"
                   :title="placeTooltip(row.entry.label, row.entry.locations)"
                 >
                   <span v-if="showIcons" class="fav-icon">★</span>
@@ -589,7 +626,7 @@ defineExpose({ onWidgetAction })
         <div class="fav-dialog">
           <div class="fav-dialog-title">{{ addDialogTitle }}</div>
 
-          <div class="fav-type-toggle">
+          <div v-if="!editingId" class="fav-type-toggle">
             <button
               type="button"
               class="btn-toggle"
@@ -757,6 +794,7 @@ defineExpose({ onWidgetAction })
             class="fav-menu-btn"
             @pointerdown.stop="sortable.startMenuRowDrag(row, menu.folderId ?? '', $event as PointerEvent)"
             @click="handleFolderMenuClick(row, $event, level)"
+            @contextmenu.prevent.stop="row.type === 'item' ? onFavoriteMenu(row.id, $event) : onFolderNodeMenu(row.id, $event)"
             :title="row.type === 'item' ? placeTooltip(row.label, row.locations) : row.label"
           >
             <span class="fav-menu-label">

@@ -363,6 +363,12 @@ declare module 'gexplorer/widgets' {
         addFolder?: (label: string, parentFolderId?: string) => Promise<void>
         /** By the favorite's id. */
         removeFavorite?: (id: string) => Promise<void>
+        /**
+         * Changes a favorite: its name (empty: the default name), the place it opens, the folder it is in
+         * (null: the top level; moved to the end). Throws when another favorite already opens that place.
+         */
+        updateFavorite?: (id: string, patch: { label?: string; locations?: string[]; parentFolderId?: string | null }) => Promise<void>
+        renameFolder?: (folderId: string, label: string) => Promise<void>
         removeFolder?: (folderId: string) => Promise<void>
         reorderGlobalRootNodes?: (nodeIds: string[]) => Promise<void>
         applyFavoritesMove?: (spec: FavoritesMoveSpec) => Promise<void>

@@ -38,12 +38,15 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
   const folderOptions = ref<FolderOption[]>([])
 
   // Computed labels
+  /** The favorite being edited (Edit…, 2026-10-23); null: adding. */
+  const editingId = ref<string | null>(null)
+
   const addDialogTitle = computed(() =>
-    addMode.value === 'folder' ? 'Add folder' : 'Add favorite'
+    editingId.value ? 'Edit favorite' : addMode.value === 'folder' ? 'Add folder' : 'Add favorite'
   )
 
   const addButtonLabel = computed(() =>
-    addMode.value === 'folder' ? 'Create' : 'Add'
+    editingId.value ? 'Save' : addMode.value === 'folder' ? 'Create' : 'Add'
   )
 
   /** The most folders a favorite opens side by side (the most panes a tab has). */
@@ -133,6 +136,7 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
    */
   function openAddDialogWith(locations: string[]) {
     const list = locations.map(l => l.trim()).filter(Boolean)
+    editingId.value = null
     addMode.value = 'item'
     newLocations.value = list.length ? list.slice(0, MAX_LOCATIONS) : ['']
     newLabel.value = ''
@@ -146,11 +150,39 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
   }
 
   /**
+   * The dialog on favorite <id> (its menu's Edit…): its folders, name and the folder it is in.
+   */
+  async function openEditDialog(id: string) {
+    const tree = await need('getGlobalFavorites')()
+    let found: { label: string; locations: string[] } | null = null
+    let parentId = ''
+    const walk = (nodes: FavoriteTreeNode[], parent: string): boolean => {
+      for (const n of nodes) {
+        if (n.kind === 'item' && n.id === id) { found = n; parentId = parent; return true }
+        if (n.kind === 'folder' && walk(n.children, n.id)) return true
+      }
+      return false
+    }
+    walk(tree, '')
+    if (!found) { void sdk?.ui?.().snack({ text: 'This favorite no longer exists.' }); return }
+    const item = found as { label: string; locations: string[] }
+    editingId.value = id
+    addMode.value = 'item'
+    newLocations.value = item.locations.length ? [...item.locations] : ['']
+    newLabel.value = item.label
+    newParentId.value = parentId
+    error.value = null
+    void refreshFolderOptions()
+    showAddDialog.value = true
+  }
+
+  /**
    * Close the add dialog
    */
   function closeAddDialog() {
     showAddDialog.value = false
     error.value = null
+    editingId.value = null
     picking?.abort()
     picking = null
   }
@@ -167,7 +199,11 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
     error.value = null
 
     try {
-      if (addMode.value === 'folder') {
+      if (editingId.value) {
+        if (!locations.length) return
+        // An empty name: the default one (the folders' names)
+        await need('updateFavorite')(editingId.value, { label, locations, parentFolderId: parentId })
+      } else if (addMode.value === 'folder') {
         if (!label) return
         await need('addFolder')(label, parentId)
         await refreshFolderOptions()
@@ -231,6 +267,7 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
     error,
 
     // Form fields
+    editingId,
     newLocations,
     newLabel,
     addMode,
@@ -249,6 +286,7 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
     // Methods
     openAddDialog,
     openAddDialogWith,
+    openEditDialog,
     addLocationRow,
     removeLocationRow,
     browseLocation,
