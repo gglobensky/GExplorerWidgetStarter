@@ -54,6 +54,31 @@ export default {
     },
   },
 
+  // Other widgets' menus (claude/places-navigation-design.md, 2026-10-22): a file menu's
+  // Favorites ▸ submenu, and a tab's right-click menu ('tab': the place the tab shows).
+  actions: [
+    {
+      id: 'add',
+      label: 'Add to favorites',
+      // The folders selected (files skipped), or the folder shown when nothing is
+      accepts: { contexts: ['folder', 'multi', 'background'], kinds: 'folders' },
+      contextMenu: { label: 'Add to favorites', icon: '★', submenuLabel: 'Favorites' },
+    },
+    {
+      id: 'addTogether',
+      label: 'Add as one (side by side)',
+      // 2 to 4 folders, one favorite that opens them side by side
+      accepts: { contexts: ['multi'], kinds: 'folders', count: { min: 2, max: 4 } },
+      contextMenu: { label: 'Add as one (side by side)', icon: '⊞', submenuLabel: 'Favorites' },
+    },
+    {
+      id: 'addTab',
+      label: 'Add this tab to favorites',
+      accepts: { contexts: ['tab'] },
+      contextMenu: { label: 'Add to favorites', icon: '★', submenuLabel: 'Favorites' },
+    },
+  ],
+
   capabilities: [
 		{ cap: 'Read',  reason: 'Reads favorite paths to display them' },
 		{ cap: 'Write', reason: 'Adds and removes favorites' },

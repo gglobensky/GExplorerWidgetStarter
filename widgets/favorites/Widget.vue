@@ -14,7 +14,7 @@ import { useFolderMenus } from './useFolderMenus'
 import { useFavoritesDialog } from './useFavoritesDialog'
 import { useFavoritesSortable } from './useFavoritesSortable'
 
-import { rowId, placeTooltip } from "./favorites.model"
+import { rowId, placeTooltip, guessLabelFromPath } from "./favorites.model"
 
 const sdk = inject<WidgetSdk>('widgetSdk')
 // The host's overlay layer for this widget: the folder menus and the add dialog teleport there (not body), so a
@@ -263,6 +263,50 @@ function onSidebarHandleClick() {
     listScrollByPage(1)
   }
 }
+
+// --- Menu actions (entry.ts actions: other widgets' file menus, a tab's menu) -------------------
+// 2026-10-22 (claude/places-navigation-design.md):
+//   add          the selected folders, one favorite each (nothing selected: the folder shown)
+//   addTogether  2-4 selected folders as one favorite (they open side by side)
+//   addTab       the place a tab shows (a page, a folder, or a split's folders) as one favorite
+function placeName(locations: string[]): string {
+  return locations.map(guessLabelFromPath).join(' + ')
+}
+
+async function onWidgetAction(msg: any) {
+  const { actionId, args, tokens } = msg?.payload ?? {}
+  const paths: string[] = (Array.isArray(args?.paths) ? args.paths : []).filter((p: unknown) => typeof p === 'string' && p)
+  const skipped = Number(args?.skipped) || 0
+  const ui = sdk?.ui?.()
+  const say = (text: string) => { void ui?.snack({ text }) }
+  const add = sdk?.addFavorite
+  if (!add) { console.error("[favorites] the SDK has no addFavorite: declare the 'Favorites' capability in entry.ts"); return }
+  const leftOut = skipped ? ` ${skipped} file${skipped === 1 ? ' was' : 's were'} left out.` : ''
+
+  try {
+    if (actionId === 'add') {
+      const list = paths.length ? paths : (typeof tokens?.dir === 'string' && tokens.dir ? [tokens.dir] : [])
+      if (!list.length) return
+      let added = 0
+      for (const p of list) if ((await add([p])).added) added++
+      const already = list.length - added
+      if (list.length === 1) say(added ? `Added "${placeName(list)}" to favorites.${leftOut}` : `"${placeName(list)}" is already a favorite.`)
+      else say(`Added ${added} folder${added === 1 ? '' : 's'} to favorites${already ? ` (${already} already were)` : ''}.${leftOut}`)
+      return
+    }
+    if (actionId === 'addTogether' || actionId === 'addTab') {
+      if (!paths.length) return
+      const r = await add(paths)
+      say(r.added ? `Added "${placeName(paths)}" to favorites.${leftOut}` : `"${placeName(paths)}" is already a favorite.`)
+      return
+    }
+    console.warn('[favorites] unknown action', actionId)
+  } catch (e: any) {
+    say(`Not added to favorites: ${e?.message ?? e}`)
+  }
+}
+
+defineExpose({ onWidgetAction })
 
 </script>
 
