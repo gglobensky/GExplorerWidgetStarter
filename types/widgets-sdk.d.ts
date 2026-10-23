@@ -2146,6 +2146,18 @@ declare module 'gexplorer/widgets' {
         when?: Record<string, unknown>
     }
 
+    /** <gex-scroll-area>'s ref (the template ref of the component; see Shared UI components below). */
+    export interface GexScrollAreaRef {
+        /** The scrolling element (its children are the default slot's rows). */
+        readonly el: HTMLElement | null
+        scrollByPage(dir: -1 | 1): void
+        readonly hasOverflow: boolean
+        readonly atStart: boolean
+        readonly atEnd: boolean
+        /** Measure again (the hints and the minimum follow sizes and added rows by themselves). */
+        update(): void
+    }
+
     /** What the widget's exposed onMenuItem receives when one of its items is chosen. */
     export type WidgetMenuItemMessage = {
         /** The short id from menus.items. */
@@ -2172,6 +2184,24 @@ declare module 'gexplorer/widgets' {
 //     says so (`hint` replaces it). Hide what it heads when folded. Actions on the
 //     right don't fold. The same strip heads every widget in the sidebar.
 //     Style it through .gex-fold-header (height: --gex-fold-header-h, 18px).
+//
+//   <gex-scroll-area ref="area" :min-rows="2">
+//     <template #head><div class="col-header">…</div></template>
+//     <div v-for="row in rows" class="row">…</div>
+//     <template #foot><div class="tools">…</div></template>
+//   </gex-scroll-area>
+//     What scrolls, with no scrollbar: a thin strip at the top and the bottom while it
+//     overflows (an arrow when that way can scroll, a click scrolls a page; a line at the
+//     end). head / foot stay put, outside the strips. As tall as its content, shrinking when
+//     its place is short (put it in a flex column, the rest flex: 0 0 auto); `fill` takes the
+//     room left instead; `max-height` (px) stops it. `min-rows` / `min-height` (px): never
+//     smaller than that (or its content, when shorter); the widget's place keeps the widget
+//     tall enough for it (the sidebar's minimum height). The ref (GexScrollAreaRef, from
+//     'gexplorer/widgets') gives the scrolling element (el) for sortables, measuring and
+//     scrollIntoView.
+//     In the sidebar, a widget that scrolls this way declares contexts.sidebar.scroll: 'self'
+//     (else the shell scrolls the whole widget): it is as tall as its content, up to the
+//     user's maximum, and only its scroll areas shrink.
 declare module 'vue' {
     export interface GlobalComponents {
         'gex-marquee': import('vue').DefineComponent<{
@@ -2179,6 +2209,9 @@ declare module 'vue' {
         }>
         'gex-fold-header': import('vue').DefineComponent<{
             label: string; status?: string | null; folded?: boolean; hint?: string; paused?: boolean
+        }>
+        'gex-scroll-area': import('vue').DefineComponent<{
+            enabled?: boolean; fill?: boolean; maxHeight?: number; minRows?: number; minHeight?: number
         }>
     }
 }
