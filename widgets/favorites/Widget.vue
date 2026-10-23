@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, inject, type Ref } from 'vue'
+import { ref, computed, nextTick, inject, watch, type Ref } from 'vue'
 import type { WidgetSdk, WidgetMenuItemMessage } from 'gexplorer/widgets'
 import { 
   useScrollHints, 
@@ -155,6 +155,10 @@ function handleMenuBackdropClick() {
   console.log('[DEBUG] Closing folder menu from backdrop click')
   closeFolderMenu()
 }
+
+// Open folder menus follow the tree whenever it's read again (2026-10-23: a sub-folder renamed in
+// its dropdown kept its old name until reopened: the host's change refresh skipped the menus)
+watch(fullTree, () => refreshOpenMenusFromTree())
 
 // Keep open folder menus in step when the favorites are read again
 async function refreshWithMenuSync() {
