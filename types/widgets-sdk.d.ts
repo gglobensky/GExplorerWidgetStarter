@@ -1783,9 +1783,22 @@ declare module 'gexplorer/widgets' {
         selectBasename?: boolean
         /** Widget instance id: scopes the element search to this widget. */
         widgetId?: string
+        /** The starting text (else the element's data-rename-value, else its text). */
+        value?: string
+        /** px: how wide the box may grow while typing (default: up to the window's edge). */
+        maxWidth?: number
     }
-    /** Inline rename over the element with data-rename-id === id (it must be rendered). */
-    export function startRename(id: string, options: RenameOptions): Promise<void>
+    /**
+     * Inline rename over an element: the element itself, or the one with data-rename-id === id (it
+     * must be rendered). Pass the element when the widget is shown in several places (its copies
+     * share ids). The box takes the element's width and font and grows with the text; its height
+     * is the element's row: its closest [data-rename-row] (or .row). Enter / a click away commits
+     * (after validate: the default checks a Windows file name), Esc cancels.
+     *
+     *   startRename(labelEl, { value: folder.label, validate: v => v.trim() ? null : 'A name is needed.',
+     *                          onCommit: name => sdk.renameFolder(folder.id, name) })
+     */
+    export function startRename(target: string | HTMLElement, options: RenameOptions): Promise<void>
 
     /** Style hints a VFS provider declares for an entry (ghost, fetching...); null for plain files. */
     export type VfsStateStyle = {

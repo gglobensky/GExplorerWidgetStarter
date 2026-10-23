@@ -5,7 +5,8 @@ import {
   useScrollHints, 
   useSnapResize,
   FavoritesConfig,
-  createDragTrigger 
+  createDragTrigger,
+  startRename,
 } from 'gexplorer/widgets'
 
 import { useFavoritesData } from './useFavoritesData'
@@ -331,8 +332,42 @@ function onFavoriteMenu(id: string, e: MouseEvent) {
   void sdk?.ui?.().contextMenu(e, { context: 'favorites.item', ref: id, widgetConfig: props.config })
 }
 
+// The folder button the menu was opened on: Rename… edits its label in place (2026-10-23). This
+// widget is shown in several places at once, so the element, not an id, says which copy.
+let menuFolder: { id: string; el: HTMLElement } | null = null
+
 function onFolderNodeMenu(id: string, e: MouseEvent) {
+  menuFolder = e.currentTarget instanceof HTMLElement ? { id, el: e.currentTarget } : null
   void sdk?.ui?.().contextMenu(e, { context: 'favorites.folder', ref: id, widgetConfig: props.config })
+}
+
+/** The folder's button: the one its menu came from, else one in this view (its row or its dropdown). */
+function folderButton(id: string): HTMLElement | null {
+  if (menuFolder?.id === id && menuFolder.el.isConnected) return menuFolder.el
+  const sel = `[data-fav-folder="${CSS.escape(id)}"]`
+  return rootEl.value?.querySelector<HTMLElement>(sel) ?? overlay.value?.querySelector<HTMLElement>(sel) ?? null
+}
+
+/** Rename a folder in place: a box over its label (the shell's rename overlay). */
+async function renameFolderInPlace(id: string) {
+  const ui = sdk?.ui?.()
+  const current = findFolderNodeById(id)
+  if (!ui || !current) return
+  const save = async (name: string) => {
+    try { await sdk?.renameFolder?.(id, name) }
+    catch (err: any) { void ui.snack({ text: `Not renamed: ${err?.message ?? err}` }) }
+  }
+  const validate = (v: string) => v.trim() ? null : 'A name is needed.'
+  const btn = folderButton(id)
+  if (!btn) {
+    // Not on screen in this view (a closed dropdown): ask instead
+    const name = await ui.prompt('Name of the folder:', { value: current.label, validate })
+    if (name !== null) await save(name)
+    return
+  }
+  // Over the label (the icon when labels are hidden); the button is the row (its height)
+  const label = btn.querySelector<HTMLElement>('.fav-label, .fav-menu-text') ?? btn
+  await startRename(label, { value: current.label, validate, onCommit: save })
 }
 
 /** One of this widget's menu items was chosen (the host calls it). */
@@ -343,16 +378,7 @@ async function onMenuItem(m: WidgetMenuItemMessage) {
     case 'edit':   await openEditDialog(id); break
     case 'remove': await handleRemoveFavorite(id); break
     case 'delete': await handleRemoveFolder(id); break
-    case 'rename': {
-      const ui = sdk?.ui?.()
-      const current = findFolderNodeById(id)
-      if (!ui || !current) return
-      const name = await ui.prompt('Name of the folder:', { value: current.label, validate: (v: string) => v.trim() ? null : 'A name is needed.' })
-      if (name === null) return
-      try { await sdk?.renameFolder?.(id, name) }
-      catch (err: any) { void ui.snack({ text: `Not renamed: ${err?.message ?? err}` }) }
-      break
-    }
+    case 'rename': await renameFolderInPlace(id); break
     default: console.warn('[favorites] unknown menu item', m.itemId)
   }
 }
@@ -434,6 +460,8 @@ defineExpose({ onWidgetAction, onMenuItem })
                 type="button"
                 class="fav-btn folder-btn"
                 :class="{ 'menu-open': isFolderMenuOpen(row.node.id) }"
+                :data-fav-folder="row.node.id"
+                data-rename-row
                 @pointerdown.stop="sortable.startRowDrag(row, $event)"
                 @click="openFolderDropdown(row.node, $event)"
                 @contextmenu.prevent.stop="onFolderNodeMenu(row.node.id, $event)"
@@ -545,6 +573,8 @@ defineExpose({ onWidgetAction, onMenuItem })
                   type="button"
                   class="fav-pill folder-pill"
                   :class="{ 'menu-open': isFolderMenuOpen(row.node.id) }"
+                  :data-fav-folder="row.node.id"
+                  data-rename-row
                   @click="openFolderDropdown(row.node, $event)"
                   @contextmenu.prevent.stop="onFolderNodeMenu(row.node.id, $event)"
                   :title="row.node.label"
@@ -794,6 +824,8 @@ defineExpose({ onWidgetAction, onMenuItem })
           <button
             type="button"
             class="fav-menu-btn"
+            :data-fav-folder="row.type === 'folder' ? row.id : undefined"
+            data-rename-row
             @pointerdown.stop="sortable.startMenuRowDrag(row, menu.folderId ?? '', $event as PointerEvent)"
             @click="handleFolderMenuClick(row, $event, level)"
             @contextmenu.prevent.stop="row.type === 'item' ? onFavoriteMenu(row.id, $event) : onFolderNodeMenu(row.id, $event)"
