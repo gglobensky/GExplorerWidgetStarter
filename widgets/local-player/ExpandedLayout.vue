@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { startRename } from 'gexplorer/widgets'
 import type { GexScrollAreaRef, TooltipOptions } from 'gexplorer/widgets'
 import type { Track } from './usePlayerState'
 import { reasonText } from './usePlaylist'
@@ -44,8 +45,6 @@ const props = defineProps<{
   // UI
   layoutClass: string
   showQueue: boolean
-  renaming: boolean
-  draftQueueName: string
   isDropActive: boolean
   
   // Marquee
@@ -70,10 +69,7 @@ const emit = defineEmits<{
   (e: 'toggle-mute'): void
   (e: 'vol-input', value: number): void
   (e: 'toggle-queue'): void
-  (e: 'begin-rename'): void
-  (e: 'cancel-rename'): void
-  (e: 'commit-rename'): void
-  (e: 'update:draft-queue-name', value: string): void
+  (e: 'rename-queue', name: string): void
   (e: 'save-playlist'): void
   (e: 'clear-queue'): void
   (e: 'row-dblclick', track: Track): void
@@ -83,14 +79,12 @@ const emit = defineEmits<{
   (e: 'row-menu', track: Track, event: MouseEvent): void
 }>()
 
-const renameOverlayPos = ref<{ left: number; top: number; width: number } | null>(null)
 
 const controlsEl = ref<HTMLElement | null>(null)
 // The list scrolls in the shell's scroll area (2026-10-23): its strips, its minimum (two rows),
 // the place keeps the player tall enough for it. queueEl: its scrolling element (drag reorder).
 const queueArea = ref<GexScrollAreaRef | null>(null)
 const queueEl = computed(() => queueArea.value?.el ?? null)
-const nameInput = ref<HTMLInputElement | null>(null)
 // 🔊: the slider in the shell's popover (useVolumePopover.ts)
 const volPop = useVolumePopover({
   volume: () => props.volume,
@@ -116,27 +110,18 @@ const seekTooltip = computed((): TooltipOptions => ({
   content: fmtTime(props.currentTime) + ' / ' + fmtTime(props.duration || 0),
 }))
 
-// ✎: the rename box over the queue's head, as wide as the player allows.
+// ✎: the shell's rename box over the queue's head (2026-10-23: was this layout's own overlay):
+// the head's width and font, growing with the name; Enter / a click away keeps it, Esc doesn't.
 const queueHeadEl = ref<HTMLElement | null>(null)
 
 function onBeginRename() {
-  const el = queueHeadEl.value
-  if (!el) return
-  const r = el.getBoundingClientRect()
-
-  // measure the widget container
-  const container = (el.closest('.player-root') as HTMLElement)?.getBoundingClientRect()
-  const containerLeft = container?.left ?? 0
-  const containerWidth = container?.width ?? Math.min(420, window.innerWidth)
-
-  // desired width = the head's width, at least 220, clamped to the container
-  const desired = Math.max(220, Math.min(r.width, containerWidth - 24))
-
-  // keep overlay within container bounds
-  const left = Math.max(containerLeft + 4, Math.min(r.left, containerLeft + containerWidth - desired - 12))
-
-  renameOverlayPos.value = { left, top: r.top, width: desired }
-  emit('begin-rename')
+  const head = queueHeadEl.value?.querySelector<HTMLElement>('.gex-fold-header') ?? queueHeadEl.value
+  if (!head) return
+  void startRename(head, {
+    value: props.queueName,
+    validate: (v) => v.trim() ? null : 'A name is needed.',
+    onCommit: (name) => emit('rename-queue', name),
+  })
 }
 
 function fmtTime(sec: number) {
@@ -176,7 +161,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('blur', onPointerUp)
 })
 
-defineExpose({ controlsEl, queueEl, nameInput })
+defineExpose({ controlsEl, queueEl })
 </script>
 
 <template>
@@ -297,7 +282,7 @@ defineExpose({ controlsEl, queueEl, nameInput })
 
     <!-- Queue head (2026-10-09): the shared fold header — double-click folds / unfolds the
          list, ✎ renames; a long name scrolls instead of pushing anything out. -->
-    <div v-if="queue.length" ref="queueHeadEl" class="queue-head">
+    <div v-if="queue.length" ref="queueHeadEl" class="queue-head" data-rename-row>
       <gex-fold-header
         :label="queueName"
         :status="String(queue.length)"
@@ -309,29 +294,6 @@ defineExpose({ controlsEl, queueEl, nameInput })
           <button class="icon-btn qh-edit" type="button" v-gex-tooltip="'Rename the playlist'" @click.stop="onBeginRename">✎</button>
         </template>
       </gex-fold-header>
-      <div
-        v-if="renaming && renameOverlayPos"
-        class="rename-overlay"
-        :style="{
-            left: renameOverlayPos.left + 'px',
-            top: renameOverlayPos.top + 'px',
-            width: renameOverlayPos.width + 'px'
-        }"
-      >
-        <input
-            ref="nameInput"
-            class="qh-input big"
-            :value="draftQueueName"
-            @input="emit('update:draft-queue-name', ($event.target as HTMLInputElement).value)"
-            @keydown.enter.prevent="emit('commit-rename')"
-            @keydown.esc.prevent="emit('cancel-rename')"
-            @blur="emit('commit-rename')"
-        />
-        <div class="ro-actions">
-            <button class="icon-btn" v-gex-tooltip="'Save name'" @mousedown.prevent @click="emit('commit-rename')">✓</button>
-            <button class="icon-btn" v-gex-tooltip="'Cancel rename'" @mousedown.prevent @click="emit('cancel-rename')">✕</button>
-        </div>
-      </div>
     </div>
 
     <!-- Under the head: 🗑 on the left, ➕ 💾 on the right -->
@@ -572,9 +534,6 @@ defineExpose({ controlsEl, queueEl, nameInput })
 }
 .queue-head .gex-fold-header.folded { border-bottom-color: var(--border, #555); }
 .queue-head .gex-fold-header:hover { background: var(--surface-3, #333); }
-.qh-input { height: 24px; padding: 0 6px; border-radius: 4px; border: 1px solid var(--border, #555);
-  background: var(--surface-2, #222); color: var(--fg, #eee);
-}
 .icon-btn { width: 22px; height: 22px; border-radius: 4px; border: 1px solid var(--border, #555);
   display: grid; place-items: center; background: var(--surface-2, #222); color: var(--fg, #eee);
   cursor: pointer; transition: all 0.12s ease;
@@ -688,14 +647,5 @@ defineExpose({ controlsEl, queueEl, nameInput })
 .marquee.suspend .marquee-track { animation: none !important; transform: translate3d(0,0,0) !important; }
 .marquee.run .marquee-track { animation-play-state: running !important; }
 
-/* ====================== RENAME OVERLAY ====================== */
-.rename-overlay {
-  max-width: 92vw; position: fixed; z-index: 10000;
-  background: var(--surface-1, #1a1a1a); border: 1px solid var(--accent, #4ea1ff);
-  border-radius: 8px; padding: 8px; box-shadow: 0 10px 28px rgba(0,0,0,0.35);
-  display: flex; align-items: center; gap: 8px;
-}
-.rename-overlay .qh-input.big { width: 100%; height: 28px; }
-.rename-overlay .ro-actions { display: flex; gap: 6px; }
 
 </style>

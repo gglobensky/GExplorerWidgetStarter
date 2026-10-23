@@ -471,27 +471,10 @@ function toggleQueue() {
 }
 
 // ===== QUEUE RENAME =====
-const renaming = ref(false)
-const draftQueueName = ref('')
-const nameInput = ref<HTMLInputElement | null>(null)
-
-function beginRename() {
-  draftQueueName.value = state.queueName.value
-  renaming.value = true
-  nextTick(() => {
-    nameInput.value?.focus()
-    nameInput.value?.select()
-  })
-}
-
-function cancelRename() {
-  renaming.value = false
-}
-
-function commitRename() {
-  const v = draftQueueName.value.trim()
+// The layout's ✎ opens the shell's rename box over the queue's head; the name arrives here.
+function renameQueue(name: string) {
+  const v = name.trim()
   if (v) state.queueName.value = v
-  renaming.value = false
 }
 
 // ===== ROW INTERACTIONS =====
@@ -782,8 +765,6 @@ onBeforeUnmount(() => {
       :sortable-state="dnd.sortableState.value"
       :layout-class="layoutClass"
       :show-queue="showQueue"
-      :renaming="renaming"
-      :draft-queue-name="draftQueueName"
       :marquee-on="marquee.marqueeOn.value"
       :marquee-dir="marquee.marqueeDir.value"
       :resize-phase="props.placement?.resizePhase"
@@ -800,10 +781,7 @@ onBeforeUnmount(() => {
       @toggle-mute="toggleMute"
       @vol-input="volInput"
       @toggle-queue="toggleQueue"
-      @begin-rename="beginRename"
-      @cancel-rename="cancelRename"
-      @commit-rename="commitRename"
-      @update:draft-queue-name="(v) => draftQueueName = v"
+      @rename-queue="renameQueue"
       @save-playlist="playlist.savePlaylist"
       @clear-queue="playlist.confirmClearQueue"
       @row-dblclick="onRowDblClick"
