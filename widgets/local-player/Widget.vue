@@ -254,6 +254,7 @@ const showQueue = state.life.cell<boolean>('ui.showQueue', true)
 const dnd = useDnD(
   state.queue,
   state.currentIndex,
+  state.selectedIndex,
   showQueue,
   () => expandedLayoutRef.value?.queueEl || null,
   state.toPlaylistItems,
