@@ -1060,6 +1060,9 @@ function runItemsAction(action: ItemsAction): void {
 function onKeyDown(ev: KeyboardEvent) {
   const action = KEYMAP[keyCombo(ev)]
   if (!action) return
+  // CHANGED (2026-10-23): Escape with nothing selected is left alone: the shell then leaves the
+  // focused pane (Escape backs out one level: the selection first, then the pane).
+  if (action === 'select.clear' && selection.count() === 0) return
   ev.preventDefault()
   ev.stopPropagation()
   runItemsAction(action)

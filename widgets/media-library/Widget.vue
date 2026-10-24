@@ -1049,6 +1049,7 @@ function keydown(event: KeyboardEvent) {
   else if (player.value) closePlayer()
   else if (openId.value) closeDetail()
   else if (libraryMode.value === 'store' && storeShelfId.value) void backFromStoreShelf()
+  else return   // CHANGED (2026-10-23): nothing to close here: Escape goes on to the shell
   event.stopPropagation()
 }
 onMounted(async () => {

@@ -42,7 +42,9 @@ export function useKeyboardNav(
         // The next track takes the selection (Delete again removes it).
         selectedIndex.value = queue.value.length ? Math.min(i, queue.value.length - 1) : -1
       })
-    } else if (e.key === 'Escape') {
+    } else if (e.key === 'Escape' && selectedIndex.value >= 0) {
+      // CHANGED (2026-10-23): only while a row is selected. This listens on the whole document:
+      // taking every Escape kept the shell from using it (leaving the focused pane).
       e.preventDefault()
       selectedIndex.value = -1
     }
