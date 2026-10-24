@@ -989,6 +989,11 @@ declare module 'gexplorer/widgets' {
         IconKey: string
         Hidden: boolean
         /**
+         * The System attribute (Windows; false elsewhere). Folder listings set it; absent = false.
+         * Hidden + System is what the OS keeps out of sight ($Recycle.Bin, System Volume Information).
+         */
+        System?: boolean
+        /**
          * Links only: 'dir' (a junction / directory symlink: opens as a folder) or 'file' (a file
          * symlink, a .lnk shortcut). Whether the target still exists: fsLinkTarget(path).
          */
