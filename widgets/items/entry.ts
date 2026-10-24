@@ -2,51 +2,8 @@
 
 import Widget from './Widget.vue'
 
-// ============================================================================
-// Menu contributions
-// ============================================================================
-
-const menuConfig = {
-    contributions: [
-        {
-            scope: 'background',
-            items: [
-                {
-                    id:       'items.refresh-menu-item',
-                    type:     'command',
-                    actionId: 'items.refresh',
-                    section:  '@core.view',
-                    order:    10,
-                },
-            ],
-        },
-        {
-            // Rename only makes sense for a single item
-            scope: 'file',
-            items: [
-                {
-                    id:       'items.rename-menu-item',
-                    type:     'command',
-                    actionId: 'fs.rename',
-                    section:  '@core.edit',
-                    order:    10,
-                },
-            ],
-        },
-        {
-            scope: 'folder',
-            items: [
-                {
-                    id:       'items.rename-menu-item',
-                    type:     'command',
-                    actionId: 'fs.rename',
-                    section:  '@core.edit',
-                    order:    10,
-                },
-            ],
-        },
-    ],
-}
+// Menu: contributed by the host (contextmenu/actions/core.ts registerItemsContributions), Refresh
+// included (2026-10-24: a widget's own contributions may only run its own actions).
 
 // ============================================================================
 // Widget definition
@@ -64,7 +21,6 @@ export default {
     drop: {
         effect: 'move',
     },
-	menus: menuConfig,
 
     // ── Context declarations ────────────────────────────────────────────────
     // Static metadata consumed by:
