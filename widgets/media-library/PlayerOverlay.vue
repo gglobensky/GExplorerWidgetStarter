@@ -7,8 +7,11 @@
 // stream changes (a removed <video> otherwise decodes until garbage collection).
 // Reports where playback is (every 5 s, and on pause / end / close) for Resume and Continue
 // watching; starts at `startAt`; at the end of an episode, offers the next one.
+// With `videoHandle` (GEM Shell's video rack, useParkedPlayback.ts) the <video> is the shell's,
+// shown through <gex-video-surface>: never released here (the widget closes it, or the shell
+// parks it while the widget is off screen), only its listeners come and go.
 import { inject, onBeforeUnmount, ref, watch } from 'vue'
-import type { WidgetSdk } from 'gexplorer/widgets'
+import type { VideoHandle, WidgetSdk } from 'gexplorer/widgets'
 import type { LibraryItem } from '../../shared/library-ui'
 import { trace } from './context'
 
@@ -25,6 +28,8 @@ const props = defineProps<{
   nextTitle?: string | null
   /** Starts playing at once (default); false: opens paused at startAt (it was paused when the library left the screen). */
   autoplay?: boolean
+  /** The shell's video for this title (sdk.video()); none: a <video> of this component. */
+  videoHandle?: VideoHandle | null
 }>()
 const emit = defineEmits<{
   (e:'close'):void
@@ -46,6 +51,10 @@ const upNext = ref<number | null>(null)   // seconds left before the next episod
 const UP_NEXT_SECONDS = 10
 const REPORT_EVERY_MS = 5000
 let video: HTMLVideoElement | null = null
+/** The bound <video> is this component's (released with it), not the shell's. */
+let ownsVideo = false
+/** Removes the listeners put on the bound <video>. */
+let unlisten: (() => void) | null = null
 /** The item the bound <video> plays (the props may already name the next one when it is released). */
 let videoItem: LibraryItem | null = null
 let lastReport = 0
@@ -109,25 +118,68 @@ function releaseVideo(target: HTMLVideoElement) {
   }
 }
 
-function bindVideo(element: unknown) {
+function listen(target: HTMLVideoElement): () => void {
+  const pairs: Array<[string, (event: Event) => void]> = [
+    ['error', () => { trace('player: error', { code:target.error?.code, message:target.error?.message }); playbackError() }],
+    ['loadedmetadata', metadataLoaded],
+    ['timeupdate', timeUpdate],
+    ['pause', paused],
+    ['ended', ended],
+  ]
+  for (const name of ['loadstart','loadedmetadata','canplay','playing','waiting','stalled','suspend','emptied']) {
+    pairs.push([name, () => trace(`player: ${name}`, name === 'loadedmetadata' ? { width:target.videoWidth, height:target.videoHeight, duration:target.duration } : undefined)])
+  }
+  for (const [name, fn] of pairs) target.addEventListener(name, fn)
+  return () => { for (const [name, fn] of pairs) target.removeEventListener(name, fn) }
+}
+
+/** Binds the <video> playing now (null: none). `owned`: this component's, released when it goes. */
+function bindVideo(element: unknown, owned = true) {
   const next = element instanceof HTMLVideoElement ? element : null
   if (next === video) return
   if (video) {
     report(true)
-    releaseVideo(video)
+    unlisten?.()
+    unlisten = null
+    if (ownsVideo) releaseVideo(video)
   }
   video = next
+  ownsVideo = owned
   if (next) {
-    trace('player: video element created')
-    for (const name of ['loadstart','loadedmetadata','canplay','playing','waiting','stalled','suspend','emptied']) {
-      next.addEventListener(name, () => trace(`player: ${name}`, name === 'loadedmetadata' ? { width:next.videoWidth, height:next.videoHeight, duration:next.duration } : undefined))
-    }
-    next.addEventListener('error', () => trace('player: error', { code:next.error?.code, message:next.error?.message }))
+    trace(owned ? 'player: video element created' : 'player: showing GEM Shell\'s video')
+    unlisten = listen(next)
   }
   videoItem = next ? props.item : null
   lastReport = Date.now()
   if (next) cancelUpNext()
   emit('video', next)
+}
+
+/** The shell's video for `url`: its attributes, its listeners, and the stream when it is a new one. */
+function bindHandle() {
+  const handle = props.videoHandle
+  if (!handle) { if (video && !ownsVideo) bindVideo(null, false); return }
+  if (!handle.alive || !props.url || props.loading) { bindVideo(null, false); return }
+  const el = handle.element
+  el.controls = true
+  el.setAttribute('controlslist', 'nodownload')
+  el.setAttribute('disablepictureinpicture', '')
+  if (props.item?.title) el.setAttribute('aria-label', props.item.title)
+  const fresh = el.getAttribute('src') !== props.url
+  if (fresh && video === el) bindVideo(null, false)   // a new title on the same element: report the old one first
+  bindVideo(el, false)
+  if (fresh) {
+    el.crossOrigin = 'anonymous'
+    el.autoplay = props.autoplay !== false
+    el.src = props.url
+  }
+}
+
+watch(() => [props.videoHandle, props.url, props.loading] as const, bindHandle, { immediate:true })
+
+/** The template's own <video> (a stable function: an inline one would rebind on every render). */
+function bindOwnVideo(element: unknown) {
+  bindVideo(element, true)
 }
 
 watch(() => props.focusImage, image => {
@@ -226,7 +278,9 @@ onBeforeUnmount(() => {
   cancelUpNext()
   if (video) {
     report(true)
-    releaseVideo(video)
+    unlisten?.()
+    unlisten = null
+    if (ownsVideo) releaseVideo(video)
   }
   video = null
 })
@@ -244,10 +298,11 @@ onBeforeUnmount(() => {
       </div>
     </header>
     <div v-if="loading || !url" class="media-library-player-loading"><span>◌</span>Preparing playback…</div>
+    <gex-video-surface v-else-if="videoHandle" class="media-library-player-surface" :video="videoHandle" @contextmenu="openCoverMenu" />
     <video
       v-else
       :key="url"
-      :ref="bindVideo"
+      :ref="bindOwnVideo"
       crossorigin="anonymous"
       :src="url"
       :aria-label="item?.title"
@@ -256,11 +311,6 @@ onBeforeUnmount(() => {
       controlslist="nodownload"
       disablepictureinpicture
       @contextmenu="openCoverMenu"
-      @error="playbackError"
-      @loadedmetadata="metadataLoaded"
-      @timeupdate="timeUpdate"
-      @pause="paused"
-      @ended="ended"
     ></video>
     <div v-if="upNext !== null && nextTitle" class="media-library-up-next" role="status" aria-live="polite">
       <small>Up next</small>

@@ -6,7 +6,7 @@ import tmdbLogo from './assets/tmdb-logo.png?inline'
 export default {
   api:'1.0',
   id:'media-library',
-  version:'0.5.0',
+  version:'0.6.0',
   license:'PolyForm-Noncommercial-1.0.0',
   Component:Widget,
   displayName:'GEM Video Club',

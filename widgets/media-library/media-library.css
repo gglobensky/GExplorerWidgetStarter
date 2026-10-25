@@ -143,7 +143,8 @@
 .media-library-player header .glu-back-icon span { margin:0; vertical-align:0; }
 .media-library-player-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; justify-self:end; gap:6px; }
 .media-library-player-actions button { border:1px solid #ffffff1c!important; border-radius:5px!important; }
-.media-library-player video { width:100%; height:calc(100% - 52px); min-height:0; object-fit:contain; background:#000; }
+.media-library-player > video, .media-library-player > .media-library-player-surface { flex:1 1 0; width:100%; height:auto; min-height:0; background:#000; }
+.media-library-player > video { object-fit:contain; }
 .media-library-player-cover-menu { position:absolute; z-index:3; display:grid; width:184px; overflow:hidden; padding:4px; border:1px solid #ffffff24; border-radius:7px; background:#151e26f5; box-shadow:0 14px 36px #000b; backdrop-filter:blur(12px); }
 .media-library-player-cover-menu button { padding:8px 9px; border:0; border-radius:4px; color:var(--glu-fg); background:transparent; cursor:pointer; font-size:10px; text-align:left; }
 .media-library-player-cover-menu button:hover,.media-library-player-cover-menu button:focus-visible { background:#ffffff12; }

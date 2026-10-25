@@ -2,6 +2,11 @@
 
 GEM Video Club establishes the shared GEM Library UI and video-store shelf experience without requiring Shell changes. With no source folder selected it shows an empty shelf of DVD cases, the middle one asking for a media folder. Once folders are selected, it scans real local video files through the public widget SDK.
 
+## What's new in 0.6.0 (2026-10-25)
+
+- **Playback through GEM Shell's video rack** (`sdk.video()`, new in the shell the same day): the movie plays in a `<video>` the shell owns, shown in the player with `<gex-video-surface>`. With *Keep playing when hidden* on, the background job holds it: leaving the screen, the shell parks the very same element and it plays on (sound only: the shell stops decoding its picture while parked, when the WebView allows it); back on screen, the same element is shown again. No muted twin, no hand-over, no drift, and one decoder instead of two. The tray card controls the parked video. With the setting off, the shell releases the video with the widget and the player reopens paused where it was. `useParkedPlayback.ts`; on shells without `sdk.video()`, the 0.5.0 muted twin (`useBackgroundPlayback.ts`) still does the job.
+- **Checks a video before playing it** (`sdk.mediaProbe`, GEM Shell phase 2): when GEM Shell says the picture or the sound can't be decoded on this computer (10-bit HEVC without a hardware decoder for it, a format that crashed GEM Shell here before, AC-3 / DTS sound, an AVI...), a box says why and offers the default video player (the default button) or *Play here anyway* (not asked again for that file this session). Without `mediaProbe` (older shells) it just plays.
+
 ## What's new in 0.5.0 (2026-10-25)
 
 - **One look setting:** *Video Club* (showroom aisle and the movie-store case) or *Classic* (shelves and a details page). Older placements are mapped over: Shelves + Classic details become Classic, anything else becomes Video Club. The showroom now opens with featured racks: Continue watching, New arrivals and Collections.

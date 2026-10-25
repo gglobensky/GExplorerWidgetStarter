@@ -7,7 +7,7 @@
 // user's edits), useTmdbMatching (optional TMDB metadata), usePreviewMedia (scene stills and the
 // preview stream), useWatchProgress (Resume, Continue watching, watched marks).
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type { MediaImage, WidgetMenuItemMessage, WidgetSdk } from 'gexplorer/widgets'
+import type { MediaImage, VideoHandle, WidgetMenuItemMessage, WidgetSdk } from 'gexplorer/widgets'
 import { LibraryDetail, MediaShelf, type LibraryItem } from '../../shared/library-ui'
 import { createLibraryContext, errorText, trace, type DetailMode, type DisplayMode, type LibraryMode } from './context'
 import { flattenLibraryExtras, nextEpisode, shelvesFor, SORT_MODES, type SortMode } from './media'
@@ -24,6 +24,7 @@ import { usePreviewMedia } from './usePreviewMedia'
 import { useTmdbMatching } from './useTmdbMatching'
 import { useWatchProgress } from './useWatchProgress'
 import { useBackgroundPlayback } from './useBackgroundPlayback'
+import { useParkedPlayback } from './useParkedPlayback'
 
 type MediaLibraryConfig = {
   data?: { selectedId?: string; sources?: string[]; customCovers?: Record<string,CoverPreference> }
@@ -45,7 +46,8 @@ const tmdb = useTmdbMatching(ctx, covers, edits)
 const previews = usePreviewMedia(ctx)
 const scan = useLibraryScan(ctx, covers, edits, tmdb)
 const watchProgress = useWatchProgress(ctx)
-const background = useBackgroundPlayback(ctx, (item, positionMs, durationMs, final) => watchProgress.note(item, positionMs, durationMs, final))
+const notePosition = (item: LibraryItem, positionMs: number, durationMs: number, final: boolean) => watchProgress.note(item, positionMs, durationMs, final)
+const background = useBackgroundPlayback(ctx, notePosition)
 const { items:scannedMovies, sources, life } = ctx
 
 /** Preparing playback longer than this is abandoned (the overlay never traps the user). */
@@ -80,10 +82,15 @@ const openId = ref<string | null>(null)
 const flipped = ref(false)
 const activePreview = ref<number | null>(null)
 const browse = ref<HTMLElement | null>(null)
-const player = ref<{ item:LibraryItem; url:string; mimeType?:string; startAt:number; autoplay:boolean } | null>(null)
+const player = ref<{ item:LibraryItem; url:string; mimeType?:string; startAt:number; autoplay:boolean; handle?:VideoHandle | null } | null>(null)
 const playerView = ref<InstanceType<typeof PlayerOverlay> | null>(null)
 /** The sound goes on while the library is off screen (default on). */
 const keepPlaying = computed(() => props.config?.view?.backgroundSound !== false)
+/**
+ * GEM Shell's video rack (sdk.video()): the movie plays in a <video> the shell owns, parked (still
+ * playing) while the library is off screen. Older shells: `background`'s muted twin.
+ */
+const parked = useParkedPlayback(ctx, notePosition, () => keepPlaying.value)
 /** The player's <video> now (the background sound follows it). */
 let playerVideo: HTMLVideoElement | null = null
 const playerLoading = ref(false)
@@ -315,12 +322,54 @@ async function manageArtwork(item: LibraryItem) {
 // ── Player ──────────────────────────────────────────────────────────────────
 
 let releasePlayerQuiet: (() => void) | null = null
+/** Files the user chose to play anyway after a warning (this session). */
+const playAnyway = new Set<string>()
+/** The probe is a hint: past this, playback starts without it. */
+const PROBE_TIMEOUT_MS = 8000
+
+/**
+ * Asks GEM Shell how the file can play here (sdk.mediaProbe): when its picture or sound can't be
+ * decoded on this machine, offers the system's player instead. True: go on with the embedded player.
+ */
+async function checkPlayable(item: LibraryItem): Promise<boolean> {
+  const path = item.path
+  if (!path || !sdk?.mediaProbe || playAnyway.has(path)) return true
+  let timer: number | undefined
+  const probe = await Promise.race([
+    sdk.mediaProbe(path).catch(error => { trace('play: probe failed', errorText(error)); return null }),
+    new Promise<null>(resolve => { timer = window.setTimeout(() => resolve(null), PROBE_TIMEOUT_MS) }),
+  ])
+  window.clearTimeout(timer)
+  if (!probe) return true
+  trace('play: probe', { verdict:probe.verdict, decode:probe.decode, container:probe.container, video:probe.video?.codec, audio:probe.audio[0]?.codec })
+  if (probe.verdict === 'direct') return true
+  const ui = sdk.ui?.()
+  if (!ui) return true
+  const pictureLost = probe.verdict === 'video' || probe.verdict === 'none'
+  const result = await ui.messageBox({
+    title:pictureLost ? `${item.title} can't play here` : `${item.title} may not play fully here`,
+    message:probe.reasons.join(' ') || 'The embedded player can\'t decode this file.',
+    detail:pictureLost
+      ? 'Your default video player (PotPlayer, VLC...) can play it. GEM Shell will soon convert such videos itself.'
+      : probe.verdict === 'audio'
+        ? 'The picture plays without its sound here. Your default video player can play both.'
+        : 'Your default video player can play it.',
+    buttons:[
+      { label:'Cancel', cancel:true },
+      { label:'Play here anyway', id:'anyway' },
+      ...(sdk.openPath ? [{ label:'Open in default app', id:'external', default:true }] : []),
+    ],
+  })
+  if (result.button === 'external') { void sdk.openPath?.(path); return false }
+  if (result.button === 'anyway') { playAnyway.add(path); return true }
+  return false
+}
 
 /**
  * Plays a title, from where the user stopped unless `fromStart`. `startAt` (seconds) and `paused`:
  * the movie the library was playing when it left the screen.
  */
-async function play(item: LibraryItem, options: { fromStart?: boolean; startAt?: number; paused?: boolean } = {}) {
+async function play(item: LibraryItem, options: { fromStart?: boolean; startAt?: number; paused?: boolean; checked?: boolean } = {}) {
   emit('event', { type:'media-library:play', payload:{ id:item.id, title:item.title } })
   if (!item.path) {
     ctx.snack('sample', `${item.title} is sample media in this design milestone.`, 3500)
@@ -330,8 +379,13 @@ async function play(item: LibraryItem, options: { fromStart?: boolean; startAt?:
     void sdk?.openPath?.(item.path)
     return
   }
+  if (!options.checked) {
+    const revisionBefore = ++playRevision
+    if (!await checkPlayable(item) || revisionBefore !== playRevision) return
+  }
   const revision = ++playRevision
   trace('play: asking GEM Shell for a stream', { title:item.title, path:item.path, startAt:options.startAt })
+  player.value?.handle?.element.pause()
   player.value = null
   playerLoading.value = true
   if (!releasePlayerQuiet) releasePlayerQuiet = sdk.ui?.().quietMode?.() ?? null
@@ -344,10 +398,12 @@ async function play(item: LibraryItem, options: { fromStart?: boolean; startAt?:
     if (revision !== playRevision) return   // closed (or another title started) meanwhile
     trace('play: stream ready', { mimeType:stream.mimeType })
     const startAt = options.startAt ?? (options.fromStart ? 0 : item.resumeSeconds ?? 0)
-    player.value = { item, url:stream.url, mimeType:stream.mimeType, startAt, autoplay:!options.paused }
+    const handle = parked.available ? parked.start(item, stream.url) : null
+    player.value = { item, url:stream.url, mimeType:stream.mimeType, startAt, autoplay:!options.paused, handle }
   } catch (error) {
     if (revision !== playRevision) return
-    background.release()
+    if (parked.available) parked.release()
+    else background.release()
     releasePlayerQuiet?.()
     releasePlayerQuiet = null
     ctx.snack('play', `Could not play ${item.title}: ${errorText(error)}`, 5000)
@@ -359,7 +415,10 @@ async function play(item: LibraryItem, options: { fromStart?: boolean; startAt?:
 
 /** Closes the player. `keepSound`: the widget is leaving the screen (handOff decided about the sound). */
 function closePlayer(keepSound = false) {
-  if (!keepSound) background.release()
+  if (!keepSound) {
+    if (parked.available) parked.release()
+    else background.release()
+  }
   playerVideo = null
   void watchProgress.flush()
   playRevision += 1
@@ -409,10 +468,12 @@ function cancelCoverFocus() {
 
 function playerVideoChanged(element: HTMLVideoElement | null) {
   playerVideo = element
+  if (parked.available) return   // the shell's video needs no twin
   if (element && player.value) background.follow(element, player.value.item, player.value.url, keepPlaying.value)
 }
 
 watch(keepPlaying, on => {
+  if (parked.available) { parked.syncJob(); return }
   if (!playerVideo || !player.value) return
   if (on) background.follow(playerVideo, player.value.item, player.value.url, true)
   else background.release()
@@ -524,18 +585,40 @@ onMounted(async () => {
     scan.loadSources(), scan.loadHistory(), covers.load(props.config?.data?.customCovers),
     tmdb.load(), edits.load(), tmdb.refreshSecret(), watchProgress.load(),
   ])
-  // The movie playing when the library left the screen (its sound may have gone on meanwhile).
-  // Live: its sound is still going; the video starts where the sound is and takes it back.
+  reopenPlayer()
+  void scan.scan()
+})
+/** The movie playing when the library left the screen. */
+function reopenPlayer() {
+  if (parked.available) {
+    // Live: the shell's same video (still playing if it was held): shown again as it is
+    const back = parked.takeBack()
+    if (back?.live) {
+      if (!releasePlayerQuiet) releasePlayerQuiet = sdk?.ui?.().quietMode?.() ?? null
+      player.value = { item:back.item, url:back.url, startAt:0, autoplay:true, handle:back.handle }
+    } else if (back?.item.path) {
+      void play(back.item, { startAt:Math.max(0, back.positionMs / 1000 - 2), paused:true, checked:true })
+    }
+    return
+  }
+  // Older shells: its sound may have gone on meanwhile (live): the video starts where the sound is and takes it back.
   const back = background.takeBack()
   if (back?.item.path) void play(back.item, {
     startAt:back.live ? back.positionMs / 1000 + .3 : Math.max(0, back.positionMs / 1000 - 2),
     paused:!back.playing,
+    checked:true,
   })
-  void scan.scan()
-})
+}
+
 onBeforeUnmount(() => {
   ctx.nextRevision()
   const playing = player.value
+  if (parked.available) {
+    // Held: the shell parks the same video (its surface unmounts) and it plays on
+    if (playing) parked.leave()
+    closePlayer(!!playing)
+    return
+  }
   const snapshot = playerView.value?.snapshot() ?? null
   if (playing && snapshot) background.handOff(playing.item, playing.url, snapshot, keepPlaying.value)
   closePlayer(!!(playing && snapshot))
@@ -664,6 +747,7 @@ onBeforeUnmount(() => {
       :focus-image="coverFocusDraft?.image.url ?? null"
       :start-at="player?.startAt"
       :autoplay="player?.autoplay ?? true"
+      :video-handle="player?.handle ?? null"
       :next-title="playerNext ? (playerNext.seriesTitle ? `${playerNext.seriesTitle} · ${playerNext.title}` : playerNext.title) : null"
       @close="closePlayer"
       @capture="captureFrame"

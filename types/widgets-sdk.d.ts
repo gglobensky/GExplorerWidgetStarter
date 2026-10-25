@@ -172,6 +172,15 @@ declare module 'gexplorer/widgets' {
          */
         audio?: () => WidgetAudio
         /**
+         * This instance's videos (the host's video rack, 2026-10-25): <video> elements GEM Shell
+         * owns, shown in the widget with <gex-video-surface :video="handle">. A video held by a
+         * background job (jobs().ensure(...).hold(handle)) keeps playing, parked in the shell, while
+         * the widget is unmounted, and the remounted widget gets the same element back with
+         * find(key), still playing. Unheld videos are released when the instance unmounts.
+         * At most 2 videos live at once across all widgets. Same object on every call.
+         */
+        video?: () => WidgetVideo
+        /**
          * This instance's background jobs: kinds declared in entry.ts `jobs`. A job outlives
          * the instance unmounting (its card shows in the operations tray meanwhile) and ends
          * with the instance's removal, the card's Stop, end(), or GEM Shell closing.
@@ -292,6 +301,14 @@ declare module 'gexplorer/widgets' {
          * E_BAD_REQUEST. storage 'cache' (default): the same file, time and options are decoded once.
          */
         mediaVideoFramesCreate?: (source: { path: string; timesMs: number[] }, options?: MediaImageOptions) => Promise<{ frames: MediaVideoFrame[] }>
+        /**
+         * Media cap (2026-10-25). What a video holds (container, codecs, profile, bit depth, audio and
+         * subtitle tracks) and how it can play in GEM Shell on THIS machine, decided with what its
+         * graphics hardware decodes and what crashed it before. Read by ffprobe in its own process; cached
+         * per file. Rejects { code }: E_NOT_FOUND, E_UNAVAILABLE (folder needing administrator rights),
+         * E_UNSUPPORTED (no ffmpeg), E_TIMEOUT, E_CODEC.
+         */
+        mediaProbe?: (path: string) => Promise<MediaProbe>
 
         /** A stream URL for a file, for this widget. Rejects E_NOT_FOUND when the file is not there. */
         mintStreamHttp?: (path: string, mimeHint?: string) => Promise<{ url: string; mimeType?: string; expiresAt?: string }>
@@ -1516,6 +1533,31 @@ declare module 'gexplorer/widgets' {
         storage: 'cache' | 'persistent'
     }
 
+    /**
+     * sdk.mediaProbe(): 'direct' plays as it is; 'remux' only the container is foreign (AVI, TS...);
+     * 'audio' its sound can't be decoded (AC-3, DTS, TrueHD...); 'video' its picture can't be decoded
+     * here (HEVC without a hardware decoder for its profile, 10-bit H.264, MPEG-2, DivX...); 'none'
+     * nothing playable. Until GEM Shell converts (coming), anything but 'direct' won't play fully.
+     */
+    export type MediaVerdict = 'direct' | 'remux' | 'audio' | 'video' | 'none'
+    export type MediaProbe = {
+        /** ffmpeg's container names ("matroska,webm", "mov,mp4,m4a,3gp,3g2,mj2", "avi"...). */
+        container: string
+        durationMs: number | null
+        bitRate: number | null
+        video: { codec: string; profile: string | null; bitDepth: number; pixelFormat: string | null; width: number; height: number; fps: number | null } | null
+        audio: { codec: string; profile: string | null; channels: number | null; language: string | null; title: string | null; default: boolean }[]
+        /** image: bitmap subtitles (PGS, VobSub) the WebView can't show. */
+        subtitles: { codec: string; language: string | null; title: string | null; default: boolean; image: boolean }[]
+        /**
+         * The picture's decoder profile ('hevc-main10', 'h264'...), whether this machine's graphics decode
+         * it, whether the WebView can without them, and whether it stopped GEM Shell here before (unsafe).
+         */
+        decode: { profile: string; hardware: 'yes' | 'no' | 'unknown'; software: boolean; unsafe: boolean } | null
+        verdict: MediaVerdict
+        /** One short sentence per problem, for the user. */
+        reasons: string[]
+    }
     export type MediaVideoFrame = {
         requestedMs: number
         /** The time of the frame decoded (seeks are exact). */
@@ -1711,6 +1753,48 @@ declare module 'gexplorer/widgets' {
         }
     }
 
+    // ── Video (sdk.video()) ─────────────────────────────────────────────
+    /** Why a video was released: release(), made room for a newer one (2 at most), its widget unmounted unheld, its widget removed. */
+    export type VideoReleaseReason = 'released' | 'evicted' | 'unmounted' | 'destroyed'
+    export interface VideoHandle {
+        readonly id: string
+        readonly ownerId: string
+        /** The name given to acquire(). */
+        readonly key: string
+        /**
+         * The shell's <video>: set src / controls / attributes, listen to its events, call play().
+         * Show it with <gex-video-surface :video="handle">; don't move it in the DOM yourself.
+         */
+        readonly element: HTMLVideoElement
+        /** No surface shows it (the widget is unmounted, or no surface is mounted). */
+        readonly parked: boolean
+        /** False once released. */
+        readonly alive: boolean
+        /**
+         * Keep decoding the picture while parked. Default false: while parked only the sound is
+         * decoded (when the WebView supports it: WidgetVideo.canPauseDecoding()); the picture comes
+         * back from the previous keyframe when a surface shows it again (a short hitch).
+         */
+        decodeWhileParked: boolean
+        /** The picture is not being decoded right now. */
+        readonly pictureSuspended: boolean
+        /** Called once when it is released. Returns the unsubscribe. */
+        onRelease(fn: (reason: VideoReleaseReason) => void): () => void
+        release(): void
+    }
+    export interface WidgetVideo {
+        /** This instance's video <key>: the living one (same element, maybe still playing), or a new one (the least recently used video is released past 2). */
+        acquire(opts: { key: string; decodeWhileParked?: boolean }): VideoHandle
+        /** This instance's living video <key>, or null. */
+        find(key: string): VideoHandle | null
+        release(handle: VideoHandle): void
+        list(): VideoHandle[]
+        /** Parked videos can stop decoding their picture in this WebView (Blink AudioVideoTracks). */
+        canPauseDecoding(): boolean
+        /** How many videos may live at once across all widgets (2). */
+        readonly maxVideos: number
+    }
+
     // ── Background jobs (sdk.jobs(), entry.ts `jobs`) ─────────────────────
     /** entry.ts: `jobs: { <kind>: { card: Component } }`. */
     export type WidgetJobDeclaration = {
@@ -1736,8 +1820,11 @@ declare module 'gexplorer/widgets' {
         readonly kind: string
         /** The title in the card's frame. */
         update(patch: { title?: string }): void
-        /** Keeps a handle from this instance's sdk.audio() alive until the job ends, then releases it. */
-        hold(handle: AudioHandle): void
+        /**
+         * Keeps a handle from this instance's sdk.audio() or sdk.video() alive until the job ends,
+         * then releases it (a held video keeps playing, parked, while the widget is unmounted).
+         */
+        hold(handle: AudioHandle | VideoHandle): void
         /**
          * The job needs the user (true) or no longer does (false): its card is marked and the
          * operations tray's flap wiggles until the tray is opened. A widget that is not on
@@ -2239,6 +2326,12 @@ declare module 'gexplorer/widgets' {
 //     In the sidebar, a widget that scrolls this way declares contexts.sidebar.scroll: 'self'
 //     (else the shell scrolls the whole widget): it is as tall as its content, up to the
 //     user's maximum, and only its scroll areas shrink.
+//
+//   <gex-video-surface :video="handle" />
+//     Shows a video of sdk.video() (2026-10-25): fills its place, the video contained and
+//     letterboxed in black. Mounting moves the shell's <video> in; unmounting moves it back
+//     into the shell's keeper in the same task, so a held video keeps playing. Style the
+//     element through `.gex-video-surface > video` (the defaults have no weight).
 declare module 'vue' {
     export interface GlobalComponents {
         'gex-marquee': import('vue').DefineComponent<{
@@ -2249,6 +2342,9 @@ declare module 'vue' {
         }>
         'gex-scroll-area': import('vue').DefineComponent<{
             enabled?: boolean; fill?: boolean; maxHeight?: number; minRows?: number; minHeight?: number
+        }>
+        'gex-video-surface': import('vue').DefineComponent<{
+            video: import('gexplorer/widgets').VideoHandle | null | undefined
         }>
     }
 }

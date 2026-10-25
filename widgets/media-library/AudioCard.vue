@@ -2,18 +2,25 @@
   The movie's card in the operations tray (entry.ts `jobs.background`), shown while the sound
   goes on and no Video Club is on screen. The host frames it (title, Open, Stop) and gives it
   this widget's SDK, bound to the same instance: the same lifecycle cells (what plays) and the
-  same audio element (acquireElement with the same key returns the one the job holds).
+  same media element: GEM Shell's parked video (sdk.video().find, useParkedPlayback.ts) or, on
+  older shells, the audio element the job holds (acquireElement with the same key).
 -->
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { WidgetSdk } from 'gexplorer/widgets'
 import { BACKGROUND_AUDIO_KEY, SESSION_CELL, type PlaybackSession } from './useBackgroundPlayback'
+import { MOVIE_VIDEO_KEY, PARKED_CELL, type ParkedSession } from './useParkedPlayback'
 
 const sdk = inject<WidgetSdk>('widgetSdk')
-if (!sdk?.audio || !sdk.lifecycle) throw new Error('[media-library] card: widgetSdk is not available')
+if (!sdk?.lifecycle || (!sdk.video && !sdk.audio)) throw new Error('[media-library] card: widgetSdk is not available')
 
-const session = sdk.lifecycle().persistRef<PlaybackSession | null>(SESSION_CELL, null)
-const sound = sdk.audio().acquireElement({ key:BACKGROUND_AUDIO_KEY, category:'custom', suspendPolicy:'continue' })
+const parkedVideo = sdk.video?.().find(MOVIE_VIDEO_KEY) ?? null
+const session = parkedVideo
+  ? sdk.lifecycle().persistRef<ParkedSession | null>(PARKED_CELL, null)
+  : sdk.lifecycle().persistRef<PlaybackSession | null>(SESSION_CELL, null)
+/** What sounds: the shell's parked video, or (older shells) the job's audio element. */
+const sound: { paused:boolean; currentTime:number; duration:number; play():Promise<void>; pause():void; addEventListener:HTMLMediaElement['addEventListener']; removeEventListener:HTMLMediaElement['removeEventListener'] } =
+  parkedVideo?.element ?? sdk.audio!().acquireElement({ key:BACKGROUND_AUDIO_KEY, category:'custom', suspendPolicy:'continue' })
 
 const playing = ref(!sound.paused)
 const time = ref(sound.currentTime || 0)

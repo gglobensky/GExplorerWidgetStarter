@@ -211,6 +211,8 @@ export function continueWatching(items: LibraryItem[], max = 20): LibraryItem[] 
 export type ShowroomRackRow = {
   id: string
   label?: string
+  /** What the label's count counts (default 'episode': a series' row). */
+  unit?: 'episode' | 'movie'
   total: number
   items: LibraryItem[]
 }

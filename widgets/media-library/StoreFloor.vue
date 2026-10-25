@@ -51,7 +51,7 @@ const sections = computed(() => {
 function featuredRows(shelf: LibraryShelf): ShowroomRackRow[] {
   // Sets (Collections): one row each, never two sets on a row.
   if (shelf.groups?.length) return shelf.groups.slice(0, FEATURED_ROWS).map(group => ({
-    id:group.id, label:group.title, total:group.items.length, items:group.items.slice(0, RACK_CAPACITY),
+    id:group.id, label:group.title, unit:'movie' as const, total:group.items.length, items:group.items.slice(0, RACK_CAPACITY),
   }))
   const rows: ShowroomRackRow[] = []
   for (let index = 0; index < shelf.items.length && rows.length < FEATURED_ROWS; index += RACK_CAPACITY) {
@@ -136,7 +136,7 @@ onBeforeUnmount(() => observer?.disconnect())
             <span class="media-store-rack-sign"><strong>{{ shelf.title }}</strong><small>{{ showroomCounts.get(shelf.id) ?? 0 }} {{ showroomCounts.get(shelf.id) === 1 ? 'title' : 'titles' }}</small></span>
             <span class="media-store-rack-shelves">
               <span v-for="row in showroomRows.get(shelf.id) ?? []" :key="row.id" class="media-store-rack-shelf">
-                <span v-if="row.label" class="media-store-rack-row-label"><b>{{ row.label }}</b><small>{{ row.total }} {{ row.total === 1 ? 'episode' : 'episodes' }}</small></span>
+                <span v-if="row.label" class="media-store-rack-row-label"><b>{{ row.label }}</b><small>{{ row.total }} {{ row.unit === 'movie' ? (row.total === 1 ? 'movie' : 'movies') : (row.total === 1 ? 'episode' : 'episodes') }}</small></span>
                 <span class="media-store-rack-bay">
                   <span v-for="item in row.items" :key="item.id" class="media-store-mini-case">
                     <ArtworkFrame :artwork="item.artwork" :alt="`${item.title} artwork`" />
