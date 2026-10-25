@@ -9,13 +9,13 @@
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { MediaImage, WidgetMenuItemMessage, WidgetSdk } from 'gexplorer/widgets'
 import { LibraryDetail, MediaShelf, type LibraryItem } from '../../shared/library-ui'
-import { createLibraryContext, errorText, type DetailMode, type DisplayMode, type LibraryMode } from './context'
-import { sampleMovies } from './fixtures'
+import { createLibraryContext, errorText, trace, type DetailMode, type DisplayMode, type LibraryMode } from './context'
 import { flattenLibraryExtras, nextEpisode, shelvesFor, SORT_MODES, type SortMode } from './media'
 import PlayerOverlay from './PlayerOverlay.vue'
 import { videoMime } from './scanner'
 import SettingsMenu from './SettingsMenu.vue'
 import StoreFloor from './StoreFloor.vue'
+import EmptyClub from './EmptyClub.vue'
 import { TMDB_SECRET_HOSTS, tmdbReviewsUrl } from './tmdb'
 import { useCovers, type CoverPreference } from './useCovers'
 import { sourceLabel, useLibraryScan } from './useLibraryScan'
@@ -64,7 +64,7 @@ function sortModeOf(view: MediaLibraryConfig['view']): SortMode {
 }
 
 const query = ref('')
-const selectedId = ref(props.config?.data?.selectedId || sampleMovies[0].id)
+const selectedId = ref(props.config?.data?.selectedId || '')
 const displayMode = life?.persistRef<DisplayMode>('media-library.display-mode', displayModeOf(props.config?.view))
   ?? ref<DisplayMode>(displayModeOf(props.config?.view))
 const sortMode = life?.persistRef<SortMode>('media-library.sort-mode', sortModeOf(props.config?.view))
@@ -91,7 +91,7 @@ const coverFocusDraft = ref<{ item:LibraryItem; image:MediaImage } | null>(null)
 let playRevision = 0
 
 const scansRealFolders = computed(() => sources.value.length > 0 && !!sdk?.openListing)
-const libraryItems = computed(() => scansRealFolders.value ? scannedMovies.value.map(watchProgress.apply) : sampleMovies)
+const libraryItems = computed(() => scansRealFolders.value ? scannedMovies.value.map(watchProgress.apply) : [])
 const shelves = computed(() => shelvesFor(libraryItems.value, query.value, sortMode.value))
 const genres = computed(() => Array.from(new Set(libraryItems.value.map(item => item.primaryGenre))).sort())
 const completeShelves = computed(() => shelvesFor(libraryItems.value, '', sortMode.value))
@@ -331,6 +331,7 @@ async function play(item: LibraryItem, options: { fromStart?: boolean; startAt?:
     return
   }
   const revision = ++playRevision
+  trace('play: asking GEM Shell for a stream', { title:item.title, path:item.path, startAt:options.startAt })
   player.value = null
   playerLoading.value = true
   if (!releasePlayerQuiet) releasePlayerQuiet = sdk.ui?.().quietMode?.() ?? null
@@ -341,6 +342,7 @@ async function play(item: LibraryItem, options: { fromStart?: boolean; startAt?:
       new Promise<never>((_, reject) => { timer = window.setTimeout(() => reject(new Error('GEM Shell did not prepare the stream in time.')), PLAY_START_TIMEOUT_MS) }),
     ])
     if (revision !== playRevision) return   // closed (or another title started) meanwhile
+    trace('play: stream ready', { mimeType:stream.mimeType })
     const startAt = options.startAt ?? (options.fromStart ? 0 : item.resumeSeconds ?? 0)
     player.value = { item, url:stream.url, mimeType:stream.mimeType, startAt, autoplay:!options.paused }
   } catch (error) {
@@ -594,10 +596,11 @@ onBeforeUnmount(() => {
     </header>
 
     <main ref="browse" class="media-library-browse" @wheel.stop @contextmenu="onLibraryMenu">
-      <div v-if="scan.state.value === 'scanning' && !libraryItems.length" class="media-library-empty media-library-scanning"><span>◌</span><strong>Stocking the shelves</strong><p>{{ scan.progress.value?.phase === 'metadata' ? 'Reading movie details' : `Searching ${sourceLabel(scan.progress.value?.current || '')}` }} · {{ scan.progress.value?.videos ?? 0 }} found</p></div>
+      <EmptyClub v-if="!sources.length" :can-add="!!sdk?.ui" @add-source="addSource" />
+      <div v-else-if="scan.state.value === 'scanning' && !libraryItems.length" class="media-library-empty media-library-scanning"><span>◌</span><strong>Stocking the shelves</strong><p>{{ scan.progress.value?.phase === 'metadata' ? 'Reading movie details' : `Searching ${sourceLabel(scan.progress.value?.current || '')}` }} · {{ scan.progress.value?.videos ?? 0 }} found</p></div>
       <div v-else-if="!shelves.length" class="media-library-empty"><span>⌕</span><strong>{{ query ? 'No movie found' : scan.state.value === 'error' ? 'Could not scan the library' : 'No videos found' }}</strong><p>{{ query ? 'Try a title, year, or genre.' : scan.error.value || 'Add another folder or scan again.' }}</p><button v-if="query" type="button" @click="query = ''">Clear search</button><button v-else-if="sources.length" type="button" @click="scanAndMatch">Scan again</button></div>
       <StoreFloor
-        v-if="libraryMode === 'store'"
+        v-else-if="libraryMode === 'store'"
         :shelves="genreShelves"
         :featured="featuredShelves"
         :sort="sortMode"

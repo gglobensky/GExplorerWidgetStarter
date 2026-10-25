@@ -69,6 +69,8 @@ export type LibraryShelf = {
   title: string
   note: string
   items: LibraryItem[]
+  /** The shelf's sets, each on its own shelf where the view can (Collections in the showroom). */
+  groups?: Array<{ id:string; title:string; items:LibraryItem[] }>
 }
 
 export function formatRuntime(minutes: number): string {

@@ -37,13 +37,22 @@ const visibleActiveItems = computed(() => itemsForSeason(props.activeShelf?.item
 const activeShelfNote = computed(() => season.value === 'all'
   ? props.activeShelf?.note
   : `${seasonLabel(season.value)} · ${visibleActiveItems.value.length} ${visibleActiveItems.value.length === 1 ? 'episode' : 'episodes'}`)
-const rows = computed(() => {
-  const items = visibleActiveItems.value
+function chunk(items: LibraryItem[]): LibraryItem[][] {
   const result: LibraryItem[][] = []
   for (let index = 0; index < items.length; index += columns.value) result.push(items.slice(index,index + columns.value))
   return result
+}
+/** The department's shelves: one per set where the shelf has sets (Collections), else its items in rows. */
+const sections = computed(() => {
+  const shelf = props.activeShelf
+  if (shelf?.groups?.length) return shelf.groups.map(group => ({ id:group.id, label:group.title, count:group.items.length, rows:chunk(group.items) }))
+  return [{ id:shelf?.id ?? 'shelf', label:'', count:0, rows:chunk(visibleActiveItems.value) }]
 })
 function featuredRows(shelf: LibraryShelf): ShowroomRackRow[] {
+  // Sets (Collections): one row each, never two sets on a row.
+  if (shelf.groups?.length) return shelf.groups.slice(0, FEATURED_ROWS).map(group => ({
+    id:group.id, label:group.title, total:group.items.length, items:group.items.slice(0, RACK_CAPACITY),
+  }))
   const rows: ShowroomRackRow[] = []
   for (let index = 0; index < shelf.items.length && rows.length < FEATURED_ROWS; index += RACK_CAPACITY) {
     const items = shelf.items.slice(index, index + RACK_CAPACITY)
@@ -163,7 +172,9 @@ onBeforeUnmount(() => observer?.disconnect())
         </label>
       </header>
       <div class="media-store-focus-rows">
-        <div v-for="(row,index) in rows" :key="`${activeShelf.id}-${index}`" class="media-store-focus-row">
+        <template v-for="section in sections" :key="section.id">
+        <h3 v-if="section.label" class="media-store-focus-set"><b>{{ section.label }}</b><small>{{ section.count }} {{ section.count === 1 ? 'movie' : 'movies' }}</small></h3>
+        <div v-for="(row,index) in section.rows" :key="`${section.id}-${index}`" class="media-store-focus-row">
           <div class="media-store-focus-cases">
             <LibraryCase
               v-for="item in row"
@@ -176,6 +187,7 @@ onBeforeUnmount(() => observer?.disconnect())
           </div>
           <div class="media-store-focus-edge" aria-hidden="true"></div>
         </div>
+        </template>
       </div>
     </template>
   </section>

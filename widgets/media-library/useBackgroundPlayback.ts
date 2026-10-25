@@ -10,7 +10,6 @@
 //   - Back on screen (takeBack, then follow with the new <video>): the video starts muted at the
 //     element's time, catches up, and takes the sound back (the element is muted again).
 // With "Keep playing when hidden" off, nothing follows: the player reopens paused where it was.
-import type { Ref } from 'vue'
 import type { AudioHandle } from 'gexplorer/widgets'
 import type { LibraryItem } from '../../shared/library-ui'
 import type { LibraryContext } from './context'
@@ -29,6 +28,11 @@ const REJOIN_DRIFT = 0.12
 const REJOIN_TRIES = 3
 /** Taking the sound back: the crossfade from the shell element to the video (ms). */
 const CROSSFADE_MS = 350
+/**
+ * The muted element joins this long after the video started playing: two decoders of the same
+ * (often heavy) file starting at once is what old GPUs and their drivers handle worst.
+ */
+const ARM_DELAY_MS = 3000
 
 /** The next animation frame (a timer where there is none: tests). */
 const nextFrame = (fn: () => void) => typeof requestAnimationFrame === 'function' ? requestAnimationFrame(fn) : setTimeout(fn, 16)
@@ -48,6 +52,11 @@ export type PlayerSnapshot = { positionMs:number; durationMs:number; paused:bool
 
 type Detachable = AudioHandle & { __mlDetach?: () => void }
 
+/** context.ts's trace, kept here so this module has no runtime import (its tests run in plain Node). */
+function trace(step: string, detail?: unknown) {
+  console.info(`[Media Library] ${new Date().toISOString().slice(11, 23)} ${step}`, ...(detail === undefined ? [] : [detail]))
+}
+
 /** Minimal copy of an item for the cell (no extras: they could be many). */
 function sessionItem(item: LibraryItem): LibraryItem {
   const { extras: _extras, ...rest } = item
@@ -61,10 +70,12 @@ function seekTo(media: { currentTime:number }, seconds: number) {
 export function useBackgroundPlayback(
   ctx: LibraryContext,
   onPosition: (item: LibraryItem, positionMs: number, durationMs: number, final: boolean) => void,
+  options: { armDelayMs?: number } = {},
 ) {
+  const armDelay = options.armDelayMs ?? ARM_DELAY_MS
   const { sdk, life } = ctx
   // Without a lifecycle (the preview) a plain holder: nothing outlives the component there anyway.
-  const session: Ref<PlaybackSession | null> = life?.persistRef<PlaybackSession | null>(SESSION_CELL, null) ?? { value:null }
+  const session: { value:PlaybackSession | null } = life?.persistRef<PlaybackSession | null>(SESSION_CELL, null) ?? { value:null }
   /** The element following the video now, and how to stop following. */
   let following: { element:AudioHandle; video:HTMLVideoElement; stop:() => void } | null = null
   /** takeBack left the sound playing: the next followed video takes it back. */
@@ -105,16 +116,33 @@ export function useBackgroundPlayback(
     const job = sdk.jobs().ensure(BACKGROUND_JOB, { title:`${item.title} · sound only`, params:{ path:item.path } })
     job.hold(element)
     ;(element as Detachable).__mlDetach?.()
-    if (element.src !== url) element.src = url
 
     let rejoin = rejoining && !element.paused
     rejoining = false
     let tries = 0
+    // Back from the background the element is already playing; otherwise it loads the stream only
+    // once the video has played for ARM_DELAY_MS (arm).
+    let armed = rejoin
+    let armTimer: ReturnType<typeof setTimeout> | undefined
     if (rejoin) video.muted = true
-    else element.muted = true
+    else {
+      element.muted = true
+      if (element.src && element.src !== url) element.pause()   // the previous title's sound, until armed
+    }
+    const arm = () => {
+      armTimer = undefined
+      if (armed || following?.video !== video) return
+      armed = true
+      trace('background: muted sound joins the video')
+      if (element.src !== url) element.src = url
+      element.muted = true
+      seekTo(element, video.currentTime)
+      sync()
+    }
+    const armSoon = () => { if (!armed && !armTimer) armTimer = setTimeout(arm, armDelay) }
 
     const sync = () => {
-      if (rejoin) return
+      if (rejoin || !armed) return
       if (video.paused !== element.paused) {
         if (video.paused) element.pause()
         else void element.play().catch(() => {})
@@ -164,6 +192,7 @@ export function useBackgroundPlayback(
           element.volume = target
           rejoin = false
           handing = false
+          trace('background: the video has the sound back')
           sync()
         }
         nextFrame(step)
@@ -177,7 +206,10 @@ export function useBackgroundPlayback(
       seekTo(element, video.currentTime)
       sync()
     }
-    const playing = () => { if (rejoin) catchUp(); else sync() }
+    const playing = () => {
+      if (rejoin) catchUp()
+      else { armSoon(); sync() }
+    }
     const volume = () => { if (!rejoin) element.volume = video.volume }
     const listeners: Array<[string, () => void]> = [
       ['play', sync], ['pause', sync], ['playing', playing], ['waiting', () => { if (!rejoin) element.pause() }],
@@ -187,7 +219,10 @@ export function useBackgroundPlayback(
     following = {
       element,
       video,
-      stop:() => { for (const [name, fn] of listeners) video.removeEventListener(name, fn) },
+      stop:() => {
+        clearTimeout(armTimer)
+        for (const [name, fn] of listeners) video.removeEventListener(name, fn)
+      },
     }
   }
 
@@ -247,6 +282,7 @@ export function useBackgroundPlayback(
     const playing = !snapshot.paused
     const followed = following
     stopFollowing()
+    trace('background: leaving the screen', { playing:!snapshot.paused, keepPlaying, positionMs:Math.round(snapshot.positionMs) })
     const background = keepPlaying && playing && !!item.path && !!sdk?.jobs && !!sdk.audio
     session.value = { item:sessionItem(item), url, positionMs:snapshot.positionMs, durationMs:snapshot.durationMs, playing, background }
     if (!background) {
@@ -256,21 +292,26 @@ export function useBackgroundPlayback(
     const element = followed?.element ?? acquire(url)
     if (!element) return
     if (!followed) {
-      // Nothing followed yet (the player had just opened): start the sound from where the video was.
       const job = sdk!.jobs!().ensure(BACKGROUND_JOB, { title:`${item.title} · sound only`, params:{ path:item.path } })
       job.hold(element)
-      if (element.src !== url) element.src = url
     }
+    // Not armed yet (the video had just started): the sound starts from where the video was.
+    const fresh = element.src !== url
+    if (fresh) element.src = url
     const position = snapshot.positionMs / 1000
-    if (Math.abs(element.currentTime - position) > HANDOFF_DRIFT) seekTo(element, position)
     element.playbackRate = followed?.video.playbackRate ?? 1
     if (snapshot.volume != null) element.volume = snapshot.volume
     // Muted only if the user muted the movie (mid-rejoin the element is the one sounding: kept).
-    element.muted = !!snapshot.muted && element.muted
-    if (element.paused) void element.play().catch(error => {
-      console.warn('[Media Library] The sound could not go on in the background:', error)
-      currentJob()?.end()
-    })
+    element.muted = fresh ? !!snapshot.muted : !!snapshot.muted && element.muted
+    const start = () => {
+      if (Math.abs(element.currentTime - position) > HANDOFF_DRIFT) seekTo(element, position)
+      if (element.paused) void element.play().catch(error => {
+        console.warn('[Media Library] The sound could not go on in the background:', error)
+        currentJob()?.end()
+      })
+    }
+    if (element.readyState >= 1) start()
+    else element.addEventListener('loadedmetadata', start, { once:true })
     reportWhileHidden(element)
   }
 
@@ -281,6 +322,7 @@ export function useBackgroundPlayback(
   function takeBack(): { item:LibraryItem; positionMs:number; playing:boolean; live:boolean } | null {
     const current = session.value
     if (!current) return null
+    trace('background: back on screen', { background:current.background })
     session.value = null
     let { positionMs, playing } = current
     if (!current.background) return { item:current.item, positionMs, playing, live:false }

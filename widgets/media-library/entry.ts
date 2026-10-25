@@ -17,7 +17,7 @@ export default {
     grid:{ minSize:{ cols:3, rows:3 }, defaultSize:{ cols:8, rows:6 } },
     sidebar:{ minHeight:260 },
   },
-  defaults:{ data:{ selectedId:'signal-north', sources:[] }, view:{ atmosphere:true, displayMode:'video-club', sortMode:'title', backgroundSound:true } },
+  defaults:{ data:{ selectedId:'', sources:[] }, view:{ atmosphere:true, displayMode:'video-club', sortMode:'title', backgroundSound:true } },
   // The movie's sound going on while the library is off screen (useBackgroundPlayback.ts): its card
   // shows in the operations tray meanwhile; Stop there ends it.
   jobs:{

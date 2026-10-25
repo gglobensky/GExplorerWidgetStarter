@@ -35,6 +35,9 @@ test('a Collections shelf lists sets of two or more local movies', () => {
   const shelves = shelvesFor([prometheus, arrival, aliens, alien, blade])
   assert.deepEqual(shelves.find(shelf => shelf.id === 'collections')?.items.map(item => item.id), ['alien','aliens','prometheus'])
   assert.equal(shelvesFor([arrival, blade]).some(shelf => shelf.id === 'collections'), false)
+  const second = [movie('t1','The Terminator',1984,{ tmdbCollectionId:528, tmdbCollectionName:'The Terminator Collection' }), movie('t2','Terminator 2',1991,{ tmdbCollectionId:528, tmdbCollectionName:'The Terminator Collection' })]
+  const groups = shelvesFor([prometheus, aliens, alien, ...second]).find(shelf => shelf.id === 'collections')?.groups
+  assert.deepEqual(groups?.map(group => [group.title, group.items.map(item => item.id)]), [['Alien Collection',['alien','aliens','prometheus']],['The Terminator Collection',['t1','t2']]])
 })
 
 test('extras: convention folders, dash suffixes, and short unrecognized videos beside an identified movie', () => {

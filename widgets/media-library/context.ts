@@ -35,6 +35,11 @@ export type LibraryContext = {
   snack: (id: string, text: string, timeoutMs?: number) => void
 }
 
+/** Playback trace (2026-10-25: chasing a whole-app freeze on one laptop): the last line before a freeze says where it stopped. */
+export function trace(step: string, detail?: unknown) {
+  console.info(`[Media Library] ${new Date().toISOString().slice(11, 23)} ${step}`, ...(detail === undefined ? [] : [detail]))
+}
+
 export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }

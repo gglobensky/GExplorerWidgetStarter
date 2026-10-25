@@ -10,7 +10,6 @@ import { bundleMovieExtras, createScannedLibrary } from './media'
 import { loadScanHistory, mediaPathKey, mergeScanHistory, saveScanHistory } from './scan-history'
 import { scanVideoSources, type ScanProgress } from './scanner'
 import { loadMediaSources, saveMediaSources } from './sources'
-import { posterAtlases } from './fixtures'
 import type { Covers } from './useCovers'
 import type { MetadataEdits } from './useMetadataEdits'
 import type { TmdbMatching } from './useTmdbMatching'
@@ -101,7 +100,7 @@ export function useLibraryScan(ctx: LibraryContext, covers: Covers, edits: Metad
       )
       if (revision !== ctx.revision()) return false
       const discovered = new Set(result.videos.map(video => mediaPathKey(video.path)).filter(path => !knownPaths.has(path)))
-      const restored = restorePersistedTmdbMetadata(createScannedLibrary(result.videos, posterAtlases, new Map()), tmdb.records.value)
+      const restored = restorePersistedTmdbMetadata(createScannedLibrary(result.videos, ['',''], new Map()), tmdb.records.value)
       items.value = bundleMovieExtras(tmdb.markMisses(restored.items).map(item => {
         const decorated = decorate(item)
         return decorated.path ? { ...decorated, newArrival:discovered.has(mediaPathKey(decorated.path)) } : decorated

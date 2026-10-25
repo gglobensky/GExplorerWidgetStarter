@@ -1,6 +1,6 @@
 # GEM Video Club · Media Library milestone
 
-GEM Video Club establishes the shared GEM Library UI and video-store shelf experience without requiring Shell changes. With no source folder selected it uses fictional sample movies and generated artwork. Once folders are selected, it scans real local video files through the public widget SDK.
+GEM Video Club establishes the shared GEM Library UI and video-store shelf experience without requiring Shell changes. With no source folder selected it shows an empty shelf of DVD cases, the middle one asking for a media folder. Once folders are selected, it scans real local video files through the public widget SDK.
 
 ## What's new in 0.5.0 (2026-10-25)
 
@@ -14,6 +14,7 @@ GEM Video Club establishes the shared GEM Library UI and video-store shelf exper
 - **Extras beside the case** (Video Club): under the rating, each extra has its name above (the file name without the movie's title and year at its start or end; `-trailer`-style suffixes become words), then a chip whose face is a frame of the video (decoded by GEM Shell, a fifth of the way in). Square while there is room, then name and chip shrink to fit the column. Two see-through buttons cover the chip: play (top three quarters) and Find in GExplorer (bottom quarter). Picture-in-picture is turned off in the player and the previews: the `<video>` goes away with the widget on a tab switch, and the shell has no way back to a tab from it yet.
 - **Default app** next to Play opens the file in the system's default player. GEM Shell's own *Open with* (the ranked app list) isn't available to widgets yet: an SDK item for the shell.
 - **Playback survives leaving the screen, without a seam:** while a movie plays, a GEM Shell audio element (it outlives the widget) plays the same stream muted, following the video (play, pause, seeks, speed; drift corrected by nudging its speed). Leaving the screen (another tab, the sidebar folded) just unmutes it, and the operations tray shows its card (play/pause, −10 s / +30 s, Stop). Back on screen, the video starts muted where the sound is, catches up, and takes the sound back. *Keep playing when hidden* (on by default) turns this off: then the player reopens paused where it was. Sound the WebView can't decode (AC3 / DTS) can't play in either place.
+- **No more illustrated sample collection:** a new library shows an empty shelf of DVD cases with *Add a media folder* on the middle one. The bundle no longer carries the two poster atlases (about 900 KB). `fixtures.ts` and `assets/poster-atlas-*.jpg` are no longer used and can be deleted.
 - **Back is an arrow everywhere** (top bar, a title's details, the player).
 - **Steadier on modest hardware:** one scene-preview decoder at a time, released explicitly; a preview that is not playing within 6 s stops for that title; no blur effects inside the 3D case; the player's Back works while playback is still being prepared (abandoned after 15 s).
 - Code: `Widget.vue` keeps navigation, the opened title and the player. The library's work lives in composables over one shared context (`context.ts`): `useLibraryScan`, `useCovers`, `useMetadataEdits`, `useTmdbMatching`, `usePreviewMedia`, `useWatchProgress`, plus `PlayerOverlay.vue` and `SettingsMenu.vue`. Custom covers are no longer copied into the placement's settings (the `custom-covers` document holds them).
@@ -31,7 +32,7 @@ npm run preview -- media-library
 
 `build` writes `dist/runtime-widgets/media-library/index.js` and installs it in GEM Shell's `UserInterface/public/runtime-widgets/media-library/` (where GEM Shell is: the starter's README). Build GEM Shell in Release, start it, then add **GEM Video Club** from the grid or sidebar widget picker. `--no-install` builds without installing.
 
-`preview` starts the isolated sample-data preview: open the address it prints (`/widgets/media-library/preview/`). Use the width control to exercise the grid and narrow/sidebar presentations.
+`preview` starts the isolated preview: open the address it prints (`/widgets/media-library/preview/`). Without the Shell's listing API it shows the empty shelf (the starting point of a new library). Use the width control to exercise the grid and narrow/sidebar presentations.
 
 ## Included interaction
 
@@ -62,11 +63,11 @@ npm run preview -- media-library
 - Four scene cues are extracted at their exact timestamps by the Shell's bounded ffmpeg service and cached as ordinary image assets. Hover or keyboard focus plays an eight-second loop through one short-lived video decoder; its progress bar follows playback, and leaving restores the extracted still. The same playback behavior is available on the scattered Movie Store back-cover frames. Sample media uses artwork motion.
 - A pencil beside the enlarged case opens artwork choices: use/query TMDB, choose an image file, or open playback to capture an exact movie frame. Captured frames open a focal-point editor so the user chooses the portion kept visible on portrait cases.
 - Optional, manually triggered TMDB matching for movie and episode titles, synopsis, release dates, genres, runtime, rating, cached poster artwork, movie backdrops, and episode stills. Matched metadata is persisted by local media path and restored on later scans; cached artwork is rehydrated without repeating the metadata search. GEM Shell stores the API Read Access Token as an OS-protected secret and the widget refers to it only by name.
-- Neutral grey cases for scanned media without real artwork; the illustrated atlas is reserved for the fictional preview collection.
+- Titles without artwork look like empty DVD cases (the outline of the missing insert, the disc hub, "No cover").
 - Responsive narrow presentation and reduced-motion support.
 - One shared implementation under `shared/library-ui`, imported and bundled at build time.
 
-Sample scene cues use artwork-driven motion because the fictional collection has no backing video. Real local movies seek and play inside the cue on hover.
+Real local movies seek and play inside the cue on hover.
 
 ## TMDB metadata beta
 

@@ -29,21 +29,25 @@ function setup() {
   } as any
   const life = { persistRef:(key: string, initial: unknown) => cells.get(key) ?? (cells.set(key, { value:initial }), cells.get(key)!) } as any
   const reports: Array<[number, boolean]> = []
-  const make = () => useBackgroundPlayback({ sdk, life } as any, (_item, positionMs, _d, final) => reports.push([positionMs, final]))
+  const make = () => useBackgroundPlayback({ sdk, life } as any, (_item, positionMs, _d, final) => reports.push([positionMs, final]), { armDelayMs:0 })
   return { element, jobs, reports, make }
 }
 
 const movie = { id:'m', title:'Heat', path:'D:\\Heat.mkv', year:1995, runtimeMinutes:170, rating:'', primaryGenre:'Crime', genres:['Crime'], synopsis:'', artwork:{ src:'', x:0, y:0 }, previews:[], addedRank:0 } as LibraryItem
 const URL = 'http://127.0.0.1:1/fs/t'
+const tick = () => new Promise(resolve => setTimeout(resolve, 5))
+/** The video starts playing; the muted element joins once it has (armDelayMs). */
+async function startPlaying(video: FakeMedia) { await video.play(); video.fire('playing'); await tick() }
 
 test('while the player shows the movie, a muted shell element follows it', async () => {
   const { element, jobs, make } = setup()
   const video = new FakeMedia()
   make().follow(video as any, movie, URL, true)
+  assert.equal(element.src, '')                                  // nothing loads with the video's own start
+  assert.equal(jobs[0].held, element)
+  await startPlaying(video)
   assert.equal(element.src, URL)
   assert.equal(element.muted, true)
-  assert.equal(jobs[0].held, element)
-  await video.play()
   assert.equal(element.paused, false)
   video.currentTime = 100; video.fire('seeked')
   assert.equal(element.currentTime, 100)
@@ -59,7 +63,7 @@ test('leaving the screen unmutes the element already in place; coming back, the 
   const video = new FakeMedia()
   const first = make()
   first.follow(video as any, movie, URL, true)
-  await video.play()
+  await startPlaying(video)
   video.currentTime = 600; element.currentTime = 600.03
   first.handOff(movie, URL, { positionMs:600_000, durationMs:6_000_000, paused:false, volume:.7, muted:false }, true)
   assert.equal(element.muted, false)
@@ -99,6 +103,19 @@ test('paused, or keep-playing off: no sound; the player reopens paused at the sa
   make().follow(video as any, movie, URL, false)
   assert.equal(jobs.filter(job => !job.ended).length, 0)
   assert.equal(element.paused, true)
+})
+
+test('leaving before the element joined: the sound starts from where the video was', async () => {
+  const { element, make } = setup()
+  const video = new FakeMedia()
+  const first = make()
+  first.follow(video as any, movie, URL, true)
+  await video.play()                                             // not 'playing' yet: not joined
+  first.handOff(movie, URL, { positionMs:42_000, durationMs:9_000_000, paused:false }, true)
+  assert.equal(element.src, URL)
+  assert.equal(element.currentTime, 42)
+  assert.equal(element.muted, false)
+  assert.equal(element.paused, false)
 })
 
 test('stopped from the operations tray: nothing to bring back', async () => {

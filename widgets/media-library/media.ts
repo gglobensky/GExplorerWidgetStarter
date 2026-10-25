@@ -104,7 +104,7 @@ export function sortItems(items: LibraryItem[], mode: SortMode = 'title'): Libra
 }
 
 /** Movies of the collections the library holds two or more of, each collection together in release order. */
-export function collectionItems(items: LibraryItem[]): { items:LibraryItem[]; collections:number } {
+export function collectionItems(items: LibraryItem[]): { items:LibraryItem[]; collections:number; groups:Array<{ id:string; title:string; items:LibraryItem[] }> } {
   const groups = new Map<number,LibraryItem[]>()
   for (const item of items) {
     if (item.tmdbCollectionId == null || item.mediaKind === 'episode') continue
@@ -115,7 +115,8 @@ export function collectionItems(items: LibraryItem[]): { items:LibraryItem[]; co
   const sets = [...groups.values()].filter(group => group.length >= 2)
     .map(group => group.slice().sort(byRelease))
     .sort((a,b) => sortableTitle(a[0].tmdbCollectionName ?? a[0].title).localeCompare(sortableTitle(b[0].tmdbCollectionName ?? b[0].title), undefined, { numeric:true }))
-  return { items:sets.flat(), collections:sets.length }
+  const named = sets.map(set => ({ id:`collection-${set[0].tmdbCollectionId}`, title:set[0].tmdbCollectionName || sortableTitle(set[0].title), items:set }))
+  return { items:sets.flat(), collections:sets.length, groups:named }
 }
 
 export function shelvesFor(items: LibraryItem[], query = '', sort: SortMode = 'title'): LibraryShelf[] {
@@ -132,7 +133,7 @@ export function shelvesFor(items: LibraryItem[], query = '', sort: SortMode = 't
     ...(arrivals.length ? [{ id:'recent', title:'New arrivals', note:'Added since the last scan', items:arrivals }] : []),
   ]
   const collections = collectionItems(items)
-  if (collections.collections) shelves.push({ id:'collections', title:'Collections', note:`${collections.collections} ${collections.collections === 1 ? 'set' : 'sets'} · sequels side by side`, items:collections.items })
+  if (collections.collections) shelves.push({ id:'collections', title:'Collections', note:`${collections.collections} ${collections.collections === 1 ? 'set' : 'sets'} · sequels side by side`, items:collections.items, groups:collections.groups })
   const series = Array.from(new Set(items.flatMap(item => item.seriesTitle ? [item.seriesTitle] : []))).sort((a,b) => a.localeCompare(b, undefined, { numeric:true }))
   for (const title of series) {
     const matches = items

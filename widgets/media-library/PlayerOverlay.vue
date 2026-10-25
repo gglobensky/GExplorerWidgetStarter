@@ -10,6 +10,7 @@
 import { inject, onBeforeUnmount, ref, watch } from 'vue'
 import type { WidgetSdk } from 'gexplorer/widgets'
 import type { LibraryItem } from '../../shared/library-ui'
+import { trace } from './context'
 
 const props = defineProps<{
   item: LibraryItem | null
@@ -116,6 +117,13 @@ function bindVideo(element: unknown) {
     releaseVideo(video)
   }
   video = next
+  if (next) {
+    trace('player: video element created')
+    for (const name of ['loadstart','loadedmetadata','canplay','playing','waiting','stalled','suspend','emptied']) {
+      next.addEventListener(name, () => trace(`player: ${name}`, name === 'loadedmetadata' ? { width:next.videoWidth, height:next.videoHeight, duration:next.duration } : undefined))
+    }
+    next.addEventListener('error', () => trace('player: error', { code:next.error?.code, message:next.error?.message }))
+  }
   videoItem = next ? props.item : null
   lastReport = Date.now()
   if (next) cancelUpNext()
