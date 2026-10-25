@@ -56,11 +56,16 @@
 .glu-case-copy small { color:var(--glu-muted); font-size:8px; font-weight:650; line-height:1.15; }
 .glu-case-progress { position:absolute; z-index:4; right:5px; bottom:5px; left:5px; height:3px; overflow:hidden; border-radius:2px; background:#071017b8; }
 .glu-case-progress span { display:block; height:100%; background:var(--glu-accent); }
+.glu-case-watched { position:absolute; z-index:4; top:5px; right:5px; display:grid; width:18px; height:18px; border:1px solid #ffffff55; border-radius:50%; color:#071116; background:var(--glu-accent); box-shadow:0 2px 6px #000a; font-size:10px; font-weight:800; line-height:1; place-items:center; }
 .glu-detail { position:absolute; z-index:10; inset:0; overflow:auto; background:radial-gradient(circle at 22% 35%, color-mix(in srgb,var(--glu-accent) 13%,transparent), transparent 32%), linear-gradient(125deg,#0c1319 0%,var(--glu-bg) 55%,#10161c 100%); animation:glu-detail-in 220ms ease-out both; scrollbar-width:none; }
 .glu-detail::-webkit-scrollbar { display:none; }
 .glu-detail-header { position:sticky; z-index:5; top:0; display:grid; grid-template-columns:1fr auto 1fr; align-items:center; padding:14px 8px 14px 4px; color:var(--glu-muted); border-bottom:1px solid #ffffff12; background:color-mix(in srgb,var(--glu-bg) 88%,transparent); backdrop-filter:blur(16px); font-size:11px; letter-spacing:.08em; text-transform:uppercase; }
 .glu-back { justify-self:start; width:auto; margin-left:0; padding:5px 8px 5px 0; border:0; color:var(--glu-fg)!important; background:transparent; cursor:pointer; letter-spacing:0; text-align:left; text-transform:none; }
 .glu-back span { display:inline-block; margin-right:5px; font-size:20px; line-height:10px; vertical-align:-2px; }
+/* The back button everywhere in the library (top bar, a title's details, the player): an arrow. */
+.glu-back-icon { display:grid; justify-self:start; width:31px; height:31px; padding:0; border:1px solid #ffffff16; border-radius:6px; color:var(--glu-fg)!important; background:#0b1117a8; cursor:pointer; place-items:center; }
+.glu-back-icon:hover,.glu-back-icon:focus-visible { border-color:color-mix(in srgb,var(--glu-accent) 55%,#ffffff16); color:var(--glu-accent)!important; background:#ffffff0b; outline:0; }
+.glu-back-icon span { font-size:17px; line-height:1; }
 .glu-detail-close { justify-self:end; width:28px; height:28px; padding:0; border:1px solid #ffffff18; border-radius:50%; color:var(--glu-muted)!important; background:#0b1117; cursor:pointer; font-size:17px!important; line-height:1; }
 .glu-detail-body { display:grid; grid-template-columns:minmax(190px,300px) minmax(310px,1fr); gap:clamp(28px,5vw,72px); align-items:center; width:min(1040px,100%); min-height:calc(100% - 55px); margin:auto; padding:30px clamp(22px,5vw,68px) 45px; }
 .glu-detail-case-wrap { position:relative; justify-self:center; width:min(100%,270px); text-align:center; perspective:1400px; }
@@ -82,7 +87,7 @@
 .glu-detail:not(.movie-store) .glu-detail-back>small { margin-top:auto; padding-top:18px; font-size:9px; font-weight:600; }
 .glu-detail:not(.movie-store) .glu-detail-back>i { width:68%; height:19px; margin:13px auto 0; opacity:.5; background:repeating-linear-gradient(90deg,#101820 0 2px,transparent 2px 4px); }
 .glu-turn { margin-top:17px; padding:6px 10px; border:1px solid #ffffff25; border-radius:999px; color:var(--glu-muted)!important; background:#0b1117; cursor:pointer; font-size:11px!important; }
-.glu-artwork-edit { position:absolute; z-index:4; top:-12px; right:-12px; width:34px; height:34px; padding:0; border:1px solid #ffffff35; border-radius:50%; color:var(--glu-fg)!important; background:#101820e8; box-shadow:0 5px 16px #0009; cursor:pointer; font-size:17px!important; backdrop-filter:blur(8px); }
+.glu-artwork-edit { position:absolute; z-index:4; top:-12px; right:-12px; width:34px; height:34px; padding:0; border:1px solid #ffffff35; border-radius:50%; color:var(--glu-fg)!important; background:#101820f5; box-shadow:0 5px 16px #0009; cursor:pointer; font-size:17px!important; }
 .glu-artwork-edit:hover { color:var(--glu-accent)!important; border-color:var(--glu-accent); }
 .glu-detail-copy { min-width:0; }
 .glu-eyebrow { margin:0 0 9px; color:var(--glu-accent); font-size:10px; font-weight:650; letter-spacing:.14em; text-transform:uppercase; }
@@ -157,15 +162,15 @@
 .glu-store-preview-player video.ready { opacity:1; }
 .glu-store-preview-player>small { position:absolute; z-index:2; right:3px; bottom:3px; padding:2px 4px; color:#fff; background:#050708b8; font-size:clamp(5px,.6cqw,8px); line-height:1; text-shadow:0 1px 2px #000; }
 .glu-store-preview-player>i { position:absolute; z-index:3; right:0; bottom:0; left:0; height:2px; background:var(--store-accent); transform-origin:left; transition:transform 180ms linear; }
-.glu-store-back-copy { position:absolute!important; z-index:3; right:7%; bottom:6%; left:7%; display:flex; min-height:35%; flex-direction:column; align-items:flex-start; padding:clamp(10px,1.7cqw,18px); border:1px solid color-mix(in srgb,var(--store-text) 30%,transparent); border-radius:2px; color:var(--store-text); background:color-mix(in srgb,var(--store-base) 86%,transparent); box-shadow:0 9px 24px #000a; text-align:left; backdrop-filter:blur(10px); }
+.glu-store-back-copy { position:absolute!important; z-index:3; right:7%; bottom:6%; left:7%; display:flex; min-height:35%; flex-direction:column; align-items:flex-start; padding:clamp(10px,1.7cqw,18px); border:1px solid color-mix(in srgb,var(--store-text) 30%,transparent); border-radius:2px; color:var(--store-text); max-height:42%; overflow:hidden; background:color-mix(in srgb,var(--store-base) 94%,#050607); box-shadow:0 9px 24px #000a; text-align:left; }
 .glu-store-back-copy>small { margin:0 0 7px; color:color-mix(in srgb,var(--store-text) 76%,var(--store-accent)); font-size:clamp(6px,.75cqw,9px); font-weight:750; letter-spacing:.13em; text-transform:uppercase; }
-.glu-store-back-copy>strong { margin:0 0 8px; font:700 clamp(16px,2.25cqw,27px)/.94 Georgia,serif; }
-.glu-store-back-copy>span { display:-webkit-box; overflow:hidden; font:clamp(8px,1.05cqw,12px)/1.45 Georgia,serif; -webkit-box-orient:vertical; -webkit-line-clamp:5; }
+.glu-store-back-copy>strong { display:-webkit-box; flex:0 0 auto; margin:0 0 8px; overflow:hidden; font:700 clamp(16px,2.25cqw,27px)/.94 Georgia,serif; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
+.glu-store-back-copy>span { display:-webkit-box; min-height:0; flex:0 1 auto; overflow:hidden; font:clamp(8px,1.05cqw,12px)/1.45 Georgia,serif; -webkit-box-orient:vertical; -webkit-line-clamp:4; }
 .glu-store-back-copy>b { margin-top:auto; padding-top:8px; font-size:clamp(7px,.8cqw,10px); font-weight:650; }
 .glu-store-edit-tools { position:absolute; z-index:9; top:14px; right:14px; display:flex; gap:6px; }
-.glu-store-edit-tools button { width:31px; height:31px; padding:0; border:1px solid color-mix(in srgb,var(--store-text) 36%,transparent); border-radius:50%; color:var(--store-text); background:color-mix(in srgb,var(--store-base) 84%,#050607); box-shadow:0 5px 15px #000a; cursor:pointer; font-size:11px; font-weight:800; backdrop-filter:blur(9px); }
+.glu-store-edit-tools button { width:31px; height:31px; padding:0; border:1px solid color-mix(in srgb,var(--store-text) 36%,transparent); border-radius:50%; color:var(--store-text); background:color-mix(in srgb,var(--store-base) 92%,#050607); box-shadow:0 5px 15px #000a; cursor:pointer; font-size:11px; font-weight:800; }
 .glu-store-edit-tools button:hover { color:#0b0d0f; border-color:var(--store-accent); background:var(--store-accent); }
-.glu-store-editor { position:absolute; z-index:10; right:7%; bottom:6%; left:7%; display:grid; gap:8px; padding:14px; border:1px solid color-mix(in srgb,var(--store-text) 35%,transparent); border-radius:5px; color:var(--store-text); background:color-mix(in srgb,var(--store-base) 94%,#050607); box-shadow:0 14px 32px #000d; text-align:left; backdrop-filter:blur(12px); }
+.glu-store-editor { position:absolute; z-index:10; right:7%; bottom:6%; left:7%; display:grid; gap:8px; padding:14px; border:1px solid color-mix(in srgb,var(--store-text) 35%,transparent); border-radius:5px; color:var(--store-text); background:color-mix(in srgb,var(--store-base) 97%,#050607); box-shadow:0 14px 32px #000d; text-align:left; }
 .glu-store-editor label { font-size:9px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
 .glu-store-editor input,.glu-store-editor textarea { width:100%; min-width:0; padding:8px 9px; border:1px solid color-mix(in srgb,var(--store-text) 30%,transparent); border-radius:4px; color:var(--store-text); background:#06090ba8; font-size:11px; resize:vertical; }
 .glu-store-editor>div { display:flex; gap:7px; justify-content:flex-end; }
@@ -179,28 +184,45 @@
 .glu-store-controls>button.primary { color:#100d09; background:linear-gradient(145deg,color-mix(in srgb,var(--store-accent) 82%,#fff),var(--store-accent)); }
 .glu-store-controls>button span { font-size:22px; line-height:1; }
 .glu-store-controls>button b { font-size:9px; font-weight:700; line-height:1.2; letter-spacing:.04em; }
-.glu-store-extras { display:flex; min-height:0; max-height:min(245px,36cqh); padding-top:9px; border-top:1px solid #ffffff18; flex-direction:column; }
-.glu-store-extras>header { display:flex; align-items:center; justify-content:space-between; padding:0 2px 6px; color:var(--glu-muted); font-size:7px; font-weight:750; letter-spacing:.12em; text-transform:uppercase; }
-.glu-store-extras>header small { display:grid; width:15px; height:15px; border-radius:50%; background:#ffffff0d; font-size:7px; place-items:center; }
-.glu-store-extra-list { display:grid; min-height:0; gap:5px; overflow:auto; scrollbar-width:thin; }
-.glu-store-extra { display:grid; grid-template-columns:minmax(0,1fr) 24px; gap:3px; }
-.glu-store-extra>button:first-child { display:grid; min-width:0; min-height:52px; grid-template-columns:15px minmax(0,1fr); gap:2px 4px; align-items:center; padding:6px; border:1px solid #ffffff1c; border-radius:5px; color:var(--glu-fg); background:#0b1117b8; cursor:pointer; text-align:left; }
-.glu-store-extra>button:first-child:hover,.glu-store-extra-reveal:hover { border-color:var(--store-accent); }
-.glu-store-extra>button:first-child span { grid-row:1/3; color:var(--store-accent); font-size:10px; }
-.glu-store-extra>button:first-child b,.glu-store-extra>button:first-child small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.glu-store-extra>button:first-child b { align-self:end; font-size:7px; }
-.glu-store-extra>button:first-child small { align-self:start; color:var(--glu-muted); font-size:6px; }
-.glu-store-extra-reveal { padding:0; border:1px solid #ffffff1c; border-radius:5px; color:var(--glu-muted); background:#0b1117b8; cursor:pointer; font-size:11px; }
-.glu-store-rating { order:3; align-self:center; min-width:0; text-align:center; }
-.glu-store-rating button,.glu-store-rating-static { display:flex; width:100%; min-height:178px; flex-direction:column; align-items:center; justify-content:center; gap:7px; padding:18px 12px; border:1px solid color-mix(in srgb,var(--store-accent) 42%,#ffffff20); border-radius:12px; color:var(--store-text); background:radial-gradient(circle at 50% 10%,color-mix(in srgb,var(--store-accent) 18%,transparent),transparent 55%),#080c0f8c; box-shadow:0 14px 32px #0008,inset 0 1px #ffffff12; backdrop-filter:blur(12px); }
-.glu-store-rating button { cursor:pointer; }
-.glu-store-rating button:hover { border-color:var(--store-accent); background:radial-gradient(circle at 50% 10%,color-mix(in srgb,var(--store-accent) 28%,transparent),transparent 58%),#0b1115b8; transform:translateY(-2px); }
+.glu-store-rating { order:3; display:flex; align-self:center; min-width:0; max-height:100%; min-height:0; flex-direction:column; gap:14px; text-align:center; }
+/* Extras under the rating: a picture per extra, play on the picture, ⌖ shows the file in GExplorer. */
+.glu-store-extras-panel { display:flex; min-height:0; flex:0 1 auto; flex-direction:column; text-align:left; }
+.glu-store-extras-panel>header { display:flex; align-items:center; justify-content:space-between; padding:0 2px 7px; color:color-mix(in srgb,var(--store-text) 70%,transparent); font-size:8px; font-weight:750; letter-spacing:.13em; text-transform:uppercase; }
+.glu-store-extras-panel>header small { display:grid; min-width:16px; height:16px; padding:0 4px; border-radius:8px; background:#ffffff12; font-size:8px; place-items:center; }
+/* Square chips while there is room; then each gets shorter (down to 64 px) to fit the column; scrolling only below that. */
+.glu-store-extra-tiles { display:flex; min-height:0; flex:0 1 auto; flex-direction:column; gap:12px; overflow:auto; padding:2px; scrollbar-width:thin; }
+/* An extra: its name above, then a chip like the rating box whose face is a picture of the video,
+   left as it is. Square while the column has room; name and chip shrink together to fit it. Two
+   see-through buttons cover the chip: play (top three quarters) and Find in GExplorer (bottom
+   quarter). Only their icon and text are painted; hovering one lightens it a little. */
+.glu-store-extra { display:flex; min-height:0; flex:0 1 auto; flex-direction:column; gap:5px; }
+.glu-store-extra-caption { flex:0 0 auto; overflow:hidden; padding:0 2px; color:var(--store-text); font-size:10px; font-weight:700; line-height:1.25; text-overflow:ellipsis; white-space:nowrap; }
+.glu-store-extra-chip { position:relative; display:grid; flex:0 1 auto; grid-template-rows:3fr 1fr; width:100%; aspect-ratio:1; min-height:56px; overflow:hidden; border:1px solid color-mix(in srgb,var(--store-accent) 42%,#ffffff20); border-radius:12px; color:#fff; background:#080c0f center/cover no-repeat; box-shadow:0 14px 32px #0008; container:glu-extra / size; }
+.glu-store-extra-chip.bare { background-image:radial-gradient(circle at 50% 35%,color-mix(in srgb,var(--store-accent) 26%,transparent),transparent 62%); }
+.glu-store-extra-chip:hover,.glu-store-extra-chip:focus-within { border-color:var(--store-accent); }
+.glu-store-extra-chip .glu-store-extra-play,.glu-store-extra-chip .glu-store-extra-find { position:relative; display:grid; min-width:0; min-height:0; margin:0; padding:0; border:0; border-radius:0; color:#fff; background:transparent; box-shadow:none; cursor:pointer; text-shadow:0 1px 2px #000,0 0 8px #000c; transform:none; transition:background-color 140ms ease; }
+.glu-store-extra-chip .glu-store-extra-play:hover,.glu-store-extra-chip .glu-store-extra-find:hover,.glu-store-extra-chip .glu-store-extra-play:focus-visible,.glu-store-extra-chip .glu-store-extra-find:focus-visible { background:#ffffff26; outline:0; }
+.glu-store-extra-chip .glu-store-extra-play { place-items:center; }
+.glu-store-extra-chip .glu-store-extra-icon { display:grid; width:clamp(22px,30cqh,40px); height:clamp(22px,30cqh,40px); border-radius:50%; color:#100d09; background:color-mix(in srgb,var(--store-accent) 90%,#fff); box-shadow:0 3px 12px #000a; font-size:clamp(9px,11cqh,15px); text-shadow:none; place-items:center; transition:transform 150ms ease; }
+.glu-store-extra-chip .glu-store-extra-play:hover .glu-store-extra-icon,.glu-store-extra-chip .glu-store-extra-play:focus-visible .glu-store-extra-icon { transform:scale(1.08); }
+.glu-store-extra-chip .glu-store-extra-play small { position:absolute; right:8px; bottom:4px; color:#fffd; font-size:8px; font-weight:650; }
+.glu-store-extra-chip .glu-store-extra-find { grid-auto-flow:column; align-items:center; justify-content:center; gap:5px; font-size:9px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+.glu-store-extra-chip .glu-store-extra-find span { font-size:13px; letter-spacing:0; }
+@container glu-extra (max-height:150px) {
+  .glu-store-extra-chip .glu-store-extra-play small { display:none; }
+}
+@container glu-extra (max-height:110px) {
+  .glu-store-extra-chip .glu-store-extra-find b { display:none; }
+}
+.glu-store-rating > button,.glu-store-rating-static { display:flex; width:100%; aspect-ratio:1; flex:0 0 auto; min-height:0; flex-direction:column; align-items:center; justify-content:center; gap:7px; padding:18px 12px; border:1px solid color-mix(in srgb,var(--store-accent) 42%,#ffffff20); border-radius:12px; color:var(--store-text); background:radial-gradient(circle at 50% 10%,color-mix(in srgb,var(--store-accent) 18%,transparent),transparent 55%),#080c0fe0; box-shadow:0 14px 32px #0008,inset 0 1px #ffffff12; }
+.glu-store-rating > button { cursor:pointer; }
+.glu-store-rating > button:hover { border-color:var(--store-accent); background:radial-gradient(circle at 50% 10%,color-mix(in srgb,var(--store-accent) 28%,transparent),transparent 58%),#0b1115b8; transform:translateY(-2px); }
 .glu-rating-stars { position:relative; display:block; overflow:hidden; color:#ffffff2a; font-size:clamp(15px,1.5vw,21px); letter-spacing:2px; line-height:1; white-space:nowrap; }
 .glu-rating-stars i { position:absolute; top:0; left:0; overflow:hidden; color:#f4c74e; font-style:normal; text-shadow:0 0 12px #e0a81c80; white-space:nowrap; }
-.glu-store-rating strong { font:700 clamp(30px,3.2vw,44px)/1 Georgia,serif; }
-.glu-store-rating strong small { margin-left:2px; color:color-mix(in srgb,var(--store-text) 55%,transparent); font:500 11px/1 "Segoe UI",sans-serif; }
-.glu-store-rating button>span:not(.glu-rating-stars) { color:color-mix(in srgb,var(--store-text) 68%,transparent); font-size:9px; font-weight:750; letter-spacing:.13em; text-transform:uppercase; }
-.glu-store-rating em { color:var(--store-accent); font-size:10px; font-style:normal; font-weight:700; }
+.glu-store-rating > * > strong { font:700 clamp(30px,3.2vw,44px)/1 Georgia,serif; }
+.glu-store-rating > * > strong small { margin-left:2px; color:color-mix(in srgb,var(--store-text) 55%,transparent); font:500 11px/1 "Segoe UI",sans-serif; }
+.glu-store-rating > button>span:not(.glu-rating-stars) { color:color-mix(in srgb,var(--store-text) 68%,transparent); font-size:9px; font-weight:750; letter-spacing:.13em; text-transform:uppercase; }
+.glu-store-rating > button em { color:var(--store-accent); font-size:10px; font-style:normal; font-weight:700; }
 .glu-store-rating-static strong { font-size:18px; }
 .glu-store-rating-static small { color:color-mix(in srgb,var(--store-text) 58%,transparent); font-size:9px; line-height:1.35; }
 .glu-dvd-disc { position:absolute; z-index:1; top:50%; left:47%; display:block; width:78%; aspect-ratio:1; border:1px solid #ffffff85; border-radius:50%; opacity:.28; background:conic-gradient(from 16deg,#d5e8ec,#8f77bd 11%,#dfeae8 22%,#9ad2bd 34%,#eff3ee 48%,#d2939b 62%,#dbecf0 75%,#9f87c9 88%,#d5e8ec); box-shadow:0 18px 32px #000c,inset 0 0 0 4px #ffffff28,inset 0 0 20px #fff; transform:translate(-47%,-50%) rotate(0); }
@@ -223,10 +245,11 @@
   .movie-store .glu-detail-case-wrap { width:min(100%,330px,calc((100cqh - 112px) * .6667)); }
   .glu-store-controls>button { min-height:70px; padding:7px 5px; }
   .glu-store-rating { align-self:center; }
-  .glu-store-rating button,.glu-store-rating-static { min-height:104px; padding:10px 5px; border-radius:8px; }
-  .glu-store-rating strong { font-size:24px; }
+  .glu-store-extra-caption,.glu-store-extra-chip .glu-store-extra-play small,.glu-store-extra-chip .glu-store-extra-find b { display:none; }
+  .glu-store-rating > button,.glu-store-rating-static { min-height:104px; padding:10px 5px; border-radius:8px; }
+  .glu-store-rating > * > strong { font-size:24px; }
   .glu-rating-stars { font-size:11px; letter-spacing:0; }
-  .glu-store-rating em,.glu-store-rating button>span:not(.glu-rating-stars),.glu-store-rating-static small { font-size:7px; }
+  .glu-store-rating > button em,.glu-store-rating > button>span:not(.glu-rating-stars),.glu-store-rating-static small { font-size:7px; }
 }
 @container (max-width:470px) {
   .glu-shelf-stage { --glu-shelf-skew:11px; }
@@ -251,10 +274,9 @@
   .glu-store-controls>button { min-height:59px; }
   .glu-store-controls>button span { font-size:17px; }
   .glu-store-controls>button b { font-size:7px; }
-  .glu-store-extras { max-height:145px; }
-  .glu-store-rating button,.glu-store-rating-static { min-height:84px; padding:7px 3px; }
-  .glu-store-rating strong { font-size:19px; }
-  .glu-store-rating em { display:none; }
+  .glu-store-rating > button,.glu-store-rating-static { min-height:84px; padding:7px 3px; }
+  .glu-store-rating > * > strong { font-size:19px; }
+  .glu-store-rating > button em { display:none; }
   .glu-store-edit-tools { top:9px; right:9px; gap:4px; }
   .glu-store-edit-tools button { width:25px; height:25px; font-size:9px; }
   .glu-store-editor { right:5%; bottom:5%; left:5%; padding:9px; }

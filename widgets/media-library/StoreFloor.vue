@@ -5,18 +5,25 @@ import {
   ArtworkFrame, itemsForSeason, LibraryCase, seasonLabel, seasonsFor,
   type LibraryItem, type LibraryShelf, type SeasonFilter,
 } from '../../shared/library-ui'
-import { showroomRowsFor, showroomTitleCount } from './media'
+import { showroomRowsFor, showroomTitleCount, type ShowroomRackRow, type SortMode } from './media'
 
 const props = defineProps<{
+  /** Genre racks. */
   shelves: LibraryShelf[]
+  /** Racks at the head of the aisle (Continue watching, New arrivals, Collections): their own items, in their order. */
+  featured?: LibraryShelf[]
   items: LibraryItem[]
   activeShelf?: LibraryShelf | null
   selectedId?: string
+  sort?: SortMode
 }>()
 const emit = defineEmits<{
   (e:'select-shelf', shelfId:string):void
   (e:'open', item:LibraryItem):void
+  (e:'menu', item:LibraryItem, event:MouseEvent):void
 }>()
+const FEATURED_ROWS = 3
+const RACK_CAPACITY = 6
 
 const root = ref<HTMLElement | null>(null)
 const rackScroller = ref<HTMLElement | null>(null)
@@ -36,11 +43,28 @@ const rows = computed(() => {
   for (let index = 0; index < items.length; index += columns.value) result.push(items.slice(index,index + columns.value))
   return result
 })
-const showroomRows = computed(() => new Map(props.shelves.map(shelf => [shelf.id,showroomRowsFor(props.items,shelf.title)])))
-const showroomCounts = computed(() => new Map(props.shelves.map(shelf => [
-  shelf.id,
-  showroomTitleCount(props.items,shelf.title),
-])))
+function featuredRows(shelf: LibraryShelf): ShowroomRackRow[] {
+  const rows: ShowroomRackRow[] = []
+  for (let index = 0; index < shelf.items.length && rows.length < FEATURED_ROWS; index += RACK_CAPACITY) {
+    const items = shelf.items.slice(index, index + RACK_CAPACITY)
+    const last = rows.length === FEATURED_ROWS - 1
+    rows.push({ id:`${shelf.id}-${rows.length}`, total:last ? shelf.items.length - index : items.length, items })
+  }
+  return rows
+}
+const featuredShelves = computed(() => props.featured ?? [])
+const racks = computed(() => [
+  ...featuredShelves.value.map(shelf => ({ shelf, featured:true })),
+  ...props.shelves.map(shelf => ({ shelf, featured:false })),
+])
+const showroomRows = computed(() => new Map([
+  ...featuredShelves.value.map(shelf => [shelf.id,featuredRows(shelf)] as const),
+  ...props.shelves.map(shelf => [shelf.id,showroomRowsFor(props.items,shelf.title,RACK_CAPACITY,props.sort)] as const),
+]))
+const showroomCounts = computed(() => new Map([
+  ...featuredShelves.value.map(shelf => [shelf.id,shelf.items.length] as const),
+  ...props.shelves.map(shelf => [shelf.id,showroomTitleCount(props.items,shelf.title)] as const),
+]))
 watch(() => props.activeShelf?.id, () => { season.value = 'all' })
 watch(seasonOptions, options => {
   if (season.value !== 'all' && !options.includes(season.value)) season.value = 'all'
@@ -92,10 +116,11 @@ onBeforeUnmount(() => observer?.disconnect())
         >‹</button>
         <div ref="rackScroller" class="media-store-rack-grid">
           <button
-            v-for="shelf in shelves"
+            v-for="{ shelf, featured } in racks"
             :key="shelf.id"
             type="button"
             class="media-store-rack"
+            :class="{ featured }"
             :aria-label="`Browse ${shelf.title}, ${showroomCounts.get(shelf.id) ?? 0} media files`"
             @click="emit('select-shelf',shelf.id)"
           >
@@ -112,7 +137,7 @@ onBeforeUnmount(() => observer?.disconnect())
                 <span class="media-store-rack-edge" aria-hidden="true"></span>
               </span>
             </span>
-            <span class="media-store-rack-action">Enter department <b aria-hidden="true">›</b></span>
+            <span class="media-store-rack-action">{{ featured ? 'Browse' : 'Enter department' }} <b aria-hidden="true">›</b></span>
           </button>
         </div>
         <button
@@ -146,6 +171,7 @@ onBeforeUnmount(() => observer?.disconnect())
               :item="item"
               :selected="selectedId === item.id"
               @open="emit('open',$event)"
+              @menu="(item, event) => emit('menu', item, event)"
             />
           </div>
           <div class="media-store-focus-edge" aria-hidden="true"></div>

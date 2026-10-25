@@ -17,6 +17,7 @@ type SearchResult = {
 }
 
 type SearchResponse = { results?: SearchResult[] }
+type MovieDetails = { runtime?: number | null; belongs_to_collection?: { id:number; name?:string } | null }
 type GenreResponse = { genres?: Array<{ id:number; name:string }> }
 type SeasonResponse = {
   poster_path?: string | null
@@ -41,7 +42,7 @@ export type TmdbDiagnosticAttempt = {
 }
 export type PersistedTmdbMetadata = Pick<LibraryItem,
   'title'|'year'|'runtimeMinutes'|'rating'|'primaryGenre'|'genres'|'synopsis'|'metadataSource'|
-  'tmdbId'|'tmdbType'|'tmdbPosterPath'|'tmdbStillPath'|'tmdbRating'
+  'tmdbId'|'tmdbType'|'tmdbPosterPath'|'tmdbStillPath'|'tmdbRating'|'tmdbCollectionId'|'tmdbCollectionName'
 >
 
 const API = 'https://api.themoviedb.org/3'
@@ -78,11 +79,12 @@ export function persistedTmdbMetadata(item: LibraryItem): PersistedTmdbMetadata 
   if (item.metadataSource !== 'tmdb' || item.tmdbId == null) return undefined
   const {
     title,year,runtimeMinutes,rating,primaryGenre,genres,synopsis,metadataSource,
-    tmdbId,tmdbType,tmdbPosterPath,tmdbStillPath,tmdbRating,
+    tmdbId,tmdbType,tmdbPosterPath,tmdbStillPath,tmdbRating,tmdbCollectionId,tmdbCollectionName,
   } = item
   return {
     title,year,runtimeMinutes,rating,primaryGenre,genres:[...genres],synopsis,metadataSource,
     tmdbId,tmdbType,tmdbPosterPath,tmdbStillPath,tmdbRating,
+    ...(tmdbCollectionId != null ? { tmdbCollectionId, tmdbCollectionName } : {}),
   }
 }
 
@@ -214,6 +216,17 @@ async function genres(sdk: WidgetSdk, type: 'movie'|'tv'): Promise<Map<number,st
   }
 }
 
+/** Runtime and collection (sequels) of a matched movie: optional, a failure only leaves them out. */
+async function movieDetails(sdk: WidgetSdk, id: number): Promise<MovieDetails | undefined> {
+  try {
+    const details = await json<MovieDetails>(sdk,`/movie/${id}`)
+    return details && typeof details === 'object' ? details : undefined
+  } catch (error) {
+    if (error instanceof Error && /token/i.test(error.message)) throw error
+    return undefined
+  }
+}
+
 function applyCommon(item: LibraryItem, result: SearchResult, genreMap: Map<number,string>): LibraryItem {
   const foundGenres = (result.genre_ids ?? []).flatMap(id => genreMap.get(id) ? [genreMap.get(id)!] : [])
   const resultYear = yearOf(result.release_date || result.first_air_date)
@@ -286,7 +299,14 @@ export async function enrichWithTmdb(
         const movie = await search(sdk,'movie',searchTitles(item,item.title),item.year)
         if (!movie) { enriched.push({ ...item, tmdbMatchAttempted:true }); continue }
         const common = applyCommon(item,movie,movieGenres)
-        enriched.push({ ...common, title:movie.title?.trim() || common.title })
+        const details = await movieDetails(sdk,movie.id)
+        const collection = details?.belongs_to_collection
+        enriched.push({
+          ...common,
+          title:movie.title?.trim() || common.title,
+          runtimeMinutes:common.runtimeMinutes || details?.runtime || 0,
+          ...(collection?.id ? { tmdbCollectionId:collection.id, tmdbCollectionName:collection.name?.trim() || undefined } : {}),
+        })
         matched += 1
       }
     } catch (error) {

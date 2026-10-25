@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { startRename } from 'gexplorer/widgets'
 import ArtworkFrame from './ArtworkFrame.vue'
-import { formatCue, formatRuntime, formatYear, type LibraryItem } from './types'
+import { extraDisplayName, formatCue, formatRuntime, formatYear, type LibraryItem } from './types'
 
 const props = defineProps<{
   item: LibraryItem
@@ -14,13 +14,20 @@ const props = defineProps<{
   previewFramesLoading?: boolean
   previewFramesMessage?: string
   canShowInFolder?: boolean
+  /** Thumbnails of the extras, by media path. */
+  extraThumbs?: Record<string, string>
+  /** The file can be opened with the system's default app. */
+  canOpenExternally?: boolean
 }>()
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'flip'): void
   (e: 'play'): void
+  (e: 'play-from-start'): void
   (e: 'play-extra', item: LibraryItem): void
   (e: 'show-in-folder'): void
+  /** Open the file with the system's default app (another player). */
+  (e: 'open-external'): void
   (e: 'show-extra-in-folder', item: LibraryItem): void
   (e: 'edit-artwork'): void
   (e: 'open-tmdb'): void
@@ -45,9 +52,56 @@ let previewStart = 0
 let previewEnd = 0
 let previewTimer: number | undefined
 let ejectTimer: number | undefined
+let stallTimer: number | undefined
 let paletteRevision = 0
 const PREVIEW_SECONDS = 8
+/** Hover must rest this long before a decoder is started (sweeping across tiles starts none). */
+const PREVIEW_HOVER_MS = 220
+/** A preview not playing by then is abandoned for this title: slow seeks or heavy codecs stop retrying. */
+const PREVIEW_STALL_MS = 6000
 
+// One live preview decoder at a time, released explicitly. A <video> removed from the page keeps
+// decoding and holding its stream connection until garbage collection; rapid hovers on a heavy
+// file used to pile them up (GPU and the stream server's connections) and freeze the UI.
+let liveVideo: HTMLVideoElement | null = null
+
+function releaseVideo(video: HTMLVideoElement) {
+  try {
+    video.pause()
+    video.removeAttribute('src')
+    video.load()
+  } catch {
+    // Already torn down.
+  }
+}
+
+function bindPreviewVideo(element: unknown) {
+  const video = element instanceof HTMLVideoElement ? element : null
+  if (video === liveVideo) return   // function refs run again on every re-render
+  if (liveVideo) releaseVideo(liveVideo)
+  liveVideo = video
+  window.clearTimeout(stallTimer)
+  if (video) stallTimer = window.setTimeout(previewStalled, PREVIEW_STALL_MS)
+}
+
+function previewStalled() {
+  if (previewReady.value || !liveVideo) return
+  previewError.value = 'Motion preview is too slow for this file'
+  console.warn(`[Media Library] ${previewError.value}: ${props.item.title}`)
+  stopAllPreview()
+}
+
+function stopAllPreview() {
+  window.clearTimeout(previewTimer)
+  window.clearTimeout(stallTimer)
+  pendingPreview.value = null
+  if (liveVideo) releaseVideo(liveVideo)
+  previewReady.value = false
+  previewProgress.value = 0
+  emit('preview', null)
+}
+
+const resumeLabel = computed(() => props.item.resumeSeconds ? `Resume at ${formatPosition(props.item.resumeSeconds)}` : '')
 const backdropSource = computed(() => props.previewImageSrcs?.find(Boolean) || props.item.previewImageSrc || '')
 const tmdbRatingPercent = computed(() => `${Math.max(0,Math.min(100,(props.item.tmdbRating ?? 0) * 10))}%`)
 const hasTmdbPage = computed(() => Number.isInteger(props.item.tmdbId) && Number(props.item.tmdbId) > 0 && !!props.item.tmdbType)
@@ -65,6 +119,18 @@ const storeStyle = computed(() => ({
 const storeBackdropStyle = computed(() => backdropSource.value
   ? { backgroundImage:`linear-gradient(180deg,#06080a3d,#06080a9e), url(${JSON.stringify(backdropSource.value)})` }
   : undefined)
+
+/** An extra's file name, without its folder and extension. */
+function fileName(extra: LibraryItem) {
+  return (extra.path?.split(/[\\/]/).pop() ?? extra.title).replace(/\.[^.]+$/, '')
+}
+
+function formatPosition(seconds: number) {
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  const rest = String(seconds % 60).padStart(2, '0')
+  return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${rest}` : `${minutes}:${rest}`
+}
 
 function stableHash(value: string) {
   let hash = 2166136261
@@ -134,11 +200,13 @@ function loadArtworkPalette() {
 }
 
 function storePreviewStyle(index: number) {
+  // Scene tiles stay in the top half: the description box (bottom 6%, at most 42% high) starts
+  // at 52% at the highest. Tile height = width × 10/16 × 2/3 of the case height.
   const layouts = [
-    { left:5, top:8, width:39 },
-    { left:57, top:7, width:36 },
-    { left:9, top:34, width:31 },
-    { left:64, top:35, width:29 },
+    { left:5, top:6, width:38 },
+    { left:57, top:5, width:35 },
+    { left:9, top:28, width:30 },
+    { left:63, top:29, width:29 },
   ]
   const layout = layouts[index % layouts.length]
   const hash = stableHash(`${props.item.path || props.item.id}:${index}`)
@@ -211,11 +279,13 @@ function queuePreview(index: number) {
       if (!props.item.path) previewReady.value = true
       emit('preview', index)
     }
-  }, 140)
+  }, PREVIEW_HOVER_MS)
 }
 
 function previewSeeked(event: Event, index: number) {
   const video = event.currentTarget as HTMLVideoElement
+  if (video !== liveVideo) return
+  window.clearTimeout(stallTimer)
   previewReady.value = true
   void video.play().catch(() => { /* hover playback depends on codec support */ })
 }
@@ -232,14 +302,8 @@ function updatePreviewProgress(event: Event, index: number) {
   previewProgress.value = Math.max(0,Math.min(1,(video.currentTime-previewStart)/span))
 }
 
-function stopPreview(event: Event) {
-  window.clearTimeout(previewTimer)
-  pendingPreview.value = null
-  const video = (event.currentTarget as HTMLElement).querySelector('video')
-  video?.pause()
-  previewReady.value = false
-  previewProgress.value = 0
-  emit('preview', null)
+function stopPreview() {
+  stopAllPreview()
 }
 
 function beginSynopsisEdit() {
@@ -293,16 +357,14 @@ function previewFailed(event: Event) {
     : code === MediaError.MEDIA_ERR_NETWORK
       ? 'Preview stream could not be read'
       : 'Preview could not be loaded'
-  window.clearTimeout(previewTimer)
-  pendingPreview.value = null
-  previewReady.value = false
-  previewProgress.value = 0
-  emit('preview', null)
+  stopAllPreview()
   console.warn(`[Media Library] ${previewError.value}: ${props.item.title} (media error ${code ?? 'unknown'})`)
 }
 
 watch(() => [props.item.id, props.previewStreamUrl] as const, () => {
   window.clearTimeout(previewTimer)
+  window.clearTimeout(stallTimer)
+  if (liveVideo) releaseVideo(liveVideo)
   previewReady.value = false
   previewProgress.value = 0
   previewError.value = ''
@@ -317,6 +379,9 @@ watch(() => [props.item.id, props.previewStreamUrl] as const, () => {
 onBeforeUnmount(() => {
   window.clearTimeout(previewTimer)
   window.clearTimeout(ejectTimer)
+  window.clearTimeout(stallTimer)
+  if (liveVideo) releaseVideo(liveVideo)
+  liveVideo = null
   paletteRevision += 1
 })
 </script>
@@ -324,23 +389,16 @@ onBeforeUnmount(() => {
 <template>
   <article class="glu-detail" :class="{ 'movie-store':detailMode === 'movie-store', ejecting }" :style="storeStyle" :aria-label="`${item.title} details`">
     <header class="glu-detail-header">
-      <button type="button" class="glu-back" @click="emit('close')"><span aria-hidden="true">‹</span> Back to shelves</button>
+      <button type="button" class="glu-back-icon" aria-label="Back" title="Back" @click="emit('close')"><span aria-hidden="true">←</span></button>
       <span>From {{ item.primaryGenre }}</span>
-      <button type="button" class="glu-detail-close" aria-label="Return to shelves" @click="emit('close')">×</button>
+      <span aria-hidden="true"></span>
     </header>
     <div class="glu-detail-body">
       <aside v-if="detailMode === 'movie-store'" class="glu-store-controls" aria-label="Media controls">
-        <button type="button" class="primary" :disabled="ejecting" @click="playMedia"><span aria-hidden="true">▶</span><b>{{ item.progress ? 'Resume' : 'Play' }}</b></button>
+        <button type="button" class="primary" :disabled="ejecting" :title="resumeLabel || undefined" @click="playMedia"><span aria-hidden="true">▶</span><b>{{ item.resumeSeconds ? 'Resume' : item.watched ? 'Watch again' : 'Play' }}</b></button>
+        <button v-if="item.resumeSeconds" type="button" @click="emit('play-from-start')"><span aria-hidden="true">⏮</span><b>Start over</b></button>
+        <button v-if="item.path && canOpenExternally" type="button" title="Open with your default video app" @click="emit('open-external')"><span aria-hidden="true">⧉</span><b>Default app</b></button>
         <button v-if="item.path && canShowInFolder" type="button" @click="emit('show-in-folder')"><span aria-hidden="true">⌖</span><b>Show media file</b></button>
-        <section v-if="item.extras?.length" class="glu-store-extras" aria-label="Movie extras">
-          <header><span>Extras</span><small>{{ item.extras.length }}</small></header>
-          <div class="glu-store-extra-list">
-            <div v-for="extra in item.extras" :key="extra.id" class="glu-store-extra">
-              <button type="button" :title="`Play ${extra.title}`" @click="emit('play-extra',extra)"><span aria-hidden="true">▶</span><b>{{ extra.title }}</b><small>{{ formatRuntime(extra.runtimeMinutes) }}</small></button>
-              <button v-if="extra.path && canShowInFolder" type="button" class="glu-store-extra-reveal" :aria-label="`Show ${extra.title} in folder`" @click="emit('show-extra-in-folder',extra)">⌖</button>
-            </div>
-          </div>
-        </section>
       </aside>
       <div class="glu-detail-case-wrap">
         <span v-if="detailMode === 'movie-store'" class="glu-dvd-disc" aria-hidden="true"><i></i></span>
@@ -368,7 +426,7 @@ onBeforeUnmount(() => {
                   role="img"
                   :aria-label="`${cue.label} preview at ${formatCue(cue.seconds)}`"
                   @pointerenter.stop="queuePreview(index)"
-                  @pointerleave.stop="stopPreview($event)"
+                  @pointerleave.stop="stopPreview()"
                   @click.stop
                 >
                   <small>{{ activePreview === index ? (previewReady ? 'Playing' : 'Loading…') : cue.label }}</small>
@@ -398,6 +456,7 @@ onBeforeUnmount(() => {
             aria-hidden="true"
           >
             <video
+              :ref="bindPreviewVideo"
               crossorigin="anonymous"
               :src="previewStreamUrl"
               :class="{ ready:previewReady }"
@@ -405,6 +464,7 @@ onBeforeUnmount(() => {
               playsinline
               preload="metadata"
               controlslist="nodownload"
+              disablepictureinpicture
               @loadedmetadata="preparePreview($event, activeStorePreview.cue.seconds, activeStorePreview.index)"
               @seeked="previewSeeked($event, activeStorePreview.index)"
               @timeupdate="updatePreviewProgress($event,activeStorePreview.index)"
@@ -446,12 +506,31 @@ onBeforeUnmount(() => {
           <strong>Not rated</strong>
           <small>Match this title with TMDB to see its rating.</small>
         </div>
+        <section v-if="item.extras?.length" class="glu-store-extras-panel" aria-label="Extras">
+          <header><span>Extras</span><small>{{ item.extras.length }}</small></header>
+          <div class="glu-store-extra-tiles">
+            <div v-for="extra in item.extras" :key="extra.id" class="glu-store-extra">
+              <span class="glu-store-extra-caption" :title="fileName(extra)">{{ extraDisplayName(extra, item.title) }}</span>
+              <div
+                class="glu-store-extra-chip"
+                :class="{ bare:!extraThumbs?.[extra.path ?? ''] }"
+                :style="extraThumbs?.[extra.path ?? ''] ? { backgroundImage:`url(${JSON.stringify(extraThumbs[extra.path ?? ''])})` } : undefined"
+              >
+                <button type="button" class="glu-store-extra-play" :aria-label="`Play ${extraDisplayName(extra, item.title)}`" :title="`Play ${fileName(extra)}`" @click="emit('play-extra', extra)">
+                  <span class="glu-store-extra-icon" aria-hidden="true">▶</span>
+                  <small>{{ formatRuntime(extra.runtimeMinutes) }}</small>
+                </button>
+                <button v-if="extra.path && canShowInFolder" type="button" class="glu-store-extra-find" :aria-label="`Show ${extraDisplayName(extra, item.title)} in GExplorer`" title="Show in GExplorer" @click="emit('show-extra-in-folder', extra)"><span aria-hidden="true">⌖</span><b>Find</b></button>
+              </div>
+            </div>
+          </div>
+        </section>
       </aside>
 
       <div v-if="detailMode !== 'movie-store'" class="glu-detail-copy">
         <p class="glu-eyebrow">{{ item.seriesTitle ? `${item.seriesTitle} · Season ${item.seasonNumber}` : item.primaryGenre }} · {{ formatYear(item.year) }}</p>
         <h1>{{ item.title }}</h1>
-        <p class="glu-meta">{{ formatRuntime(item.runtimeMinutes) }} <span>•</span> {{ item.rating }} <template v-if="item.tmdbRating"><span>•</span> ★ {{ item.tmdbRating.toFixed(1) }}</template> <span v-if="item.resolution">•</span> {{ item.resolution }} <span>•</span> {{ item.genres.join(', ') }} <button v-if="item.path" type="button" class="glu-edit-icon" title="Edit genres locally" aria-label="Edit genres locally" @click="beginGenresEdit">✎</button></p>
+        <p class="glu-meta">{{ formatRuntime(item.runtimeMinutes) }} <span>•</span> {{ item.rating }} <template v-if="item.tmdbRating"><span>•</span> ★ {{ item.tmdbRating.toFixed(1) }}</template> <template v-if="item.watched"><span>•</span> ✓ Watched</template> <span v-if="item.resolution">•</span> {{ item.resolution }} <span>•</span> {{ item.genres.join(', ') }} <button v-if="item.path" type="button" class="glu-edit-icon" title="Edit genres locally" aria-label="Edit genres locally" @click="beginGenresEdit">✎</button></p>
         <div v-if="editingGenres" class="glu-local-editor glu-genre-editor">
           <input v-model="genresDraft" aria-label="Genres separated by commas" @keydown.enter.prevent="saveGenres" @keydown.escape.prevent="editingGenres = false" />
           <button type="button" class="primary" @click="saveGenres">Save</button><button type="button" @click="editingGenres = false">Cancel</button>
@@ -466,7 +545,9 @@ onBeforeUnmount(() => {
         </div>
         <p v-if="item.metadataSource === 'tmdb'" class="glu-metadata-credit">{{ item.localMetadataOverride ? 'Base metadata supplied by TMDB · local edits applied.' : 'Metadata supplied by TMDB.' }}</p>
         <div class="glu-actions">
-          <button type="button" class="primary" @click="playMedia">{{ item.progress ? '▶ Resume' : item.mediaKind === 'episode' ? '▶ Play episode' : '▶ Play movie' }}</button>
+          <button type="button" class="primary" :title="resumeLabel || undefined" @click="playMedia">{{ item.resumeSeconds ? `▶ ${resumeLabel}` : item.mediaKind === 'episode' ? '▶ Play episode' : '▶ Play movie' }}</button>
+          <button v-if="item.resumeSeconds" type="button" @click="emit('play-from-start')">⏮ Start over</button>
+          <button v-if="item.path && canOpenExternally" type="button" title="Open with your default video app" @click="emit('open-external')">⧉ Open in default app</button>
           <button v-if="item.path && canShowInFolder" type="button" @click="emit('show-in-folder')">Show media file</button>
         </div>
 
@@ -492,9 +573,9 @@ onBeforeUnmount(() => {
               :style="previewStyle(cue.tone,index)"
               :aria-label="`Preview ${cue.label} at ${formatCue(cue.seconds)}`"
               @pointerenter="queuePreview(index)"
-              @pointerleave="stopPreview($event)"
+              @pointerleave="stopPreview()"
               @focus="queuePreview(index)"
-              @blur="stopPreview($event)"
+              @blur="stopPreview()"
             >
               <ArtworkFrame v-if="!item.path" :artwork="item.artwork" :alt="`${item.title}, ${cue.label}`" wide />
               <span
@@ -508,6 +589,7 @@ onBeforeUnmount(() => {
               <video
                 v-if="item.path && previewStreamUrl && activePreview === index && !previewError"
                 :key="`${item.id}:${index}`"
+                :ref="bindPreviewVideo"
                 crossorigin="anonymous"
                 :src="previewStreamUrl"
                 :class="{ ready:previewReady }"
@@ -515,6 +597,7 @@ onBeforeUnmount(() => {
                 playsinline
                 preload="metadata"
                 controlslist="nodownload"
+                disablepictureinpicture
                 @loadedmetadata="preparePreview($event, cue.seconds, index)"
                 @seeked="previewSeeked($event, index)"
                 @timeupdate="updatePreviewProgress($event,index)"

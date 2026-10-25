@@ -22,6 +22,28 @@ export default {
         effect: 'move',
     },
 
+    // ── Commands (the key mapper, 2026-10-24) ────────────────────────────────
+    // Run while this list has your focus (you clicked in it, or Tabbed into it): Widget.vue's
+    // onCommand gets the id. The keys are defaults: the user changes them in Keyboard shortcuts.
+    commands: [
+        { id: 'rename', name: 'Rename', keys: ['F2'],
+          description: 'Renames the selected file or folder in place: its name becomes editable in the list. Enter keeps the new name, Escape cancels.' },
+        { id: 'delete', name: 'Delete', keys: ['Delete'],
+          description: 'Moves the selected files and folders to the Recycle Bin (they can be restored from there).' },
+        { id: 'delete-permanent', name: 'Delete permanently', keys: ['Shift+Delete'],
+          description: 'Deletes the selected files and folders for good, without the Recycle Bin. Always asks first.' },
+        { id: 'select-all', name: 'Select all', keys: ['Ctrl+A'],
+          description: 'Selects every file and folder in the folder shown (all pages, when the list is paged).' },
+        { id: 'refresh', name: 'Refresh', keys: ['F5'],
+          description: 'Lists the folder again, for changes the list didn\'t show yet. A folder you were refused asks for access again.' },
+        { id: 'page-next', name: 'Next page', keys: ['Alt+PageDown'],
+          description: 'In a paged list (Layout ▸ Paged): shows the next page.' },
+        { id: 'page-prev', name: 'Previous page', keys: ['Alt+PageUp'],
+          description: 'In a paged list (Layout ▸ Paged): shows the previous page.' },
+        { id: 'page-goto', name: 'Go to page', keys: ['Ctrl+G'],
+          description: 'In a paged list (Layout ▸ Paged): opens the pager\'s page number box, to type the page to show.' },
+    ],
+
     // ── Context declarations ────────────────────────────────────────────────
     // Static metadata consumed by:
     //   - ContextMenuEditor (left-panel tabs)

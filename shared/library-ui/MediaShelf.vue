@@ -12,7 +12,7 @@ const props = defineProps<{
   items: LibraryItem[]
   selectedId?: string
 }>()
-const emit = defineEmits<{ (e: 'open', item: LibraryItem): void }>()
+const emit = defineEmits<{ (e: 'open', item: LibraryItem): void; (e: 'menu', item: LibraryItem, event: MouseEvent): void }>()
 const rail = ref<HTMLElement | null>(null)
 const letter = ref('')
 const season = ref<SeasonFilter>('all')
@@ -98,6 +98,7 @@ function jumpToLetter() {
           :selected="selectedId === item.id"
           :data-title-initial="titleInitial(item)"
           @open="emit('open', $event)"
+          @menu="(item, event) => emit('menu', item, event)"
         />
       </div>
       <div class="glu-shelf-edge" aria-hidden="true"></div>

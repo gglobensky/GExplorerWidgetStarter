@@ -61,6 +61,15 @@ export default {
         playback: { card: PlayerCard, recovery: 'resume', requiresRestore: true },
     },
 
+    // ── Commands (the key mapper, 2026-10-24) ────────────────────────────────
+    // Run while the player has your focus (the last place you pressed in): Widget.vue's onCommand.
+    commands: [
+        { id: 'play-pause', name: 'Play / pause', keys: ['Space'],
+          description: 'Plays the current track, or pauses it while it plays.' },
+        { id: 'remove-track', name: 'Remove the selected track', keys: ['Delete'],
+          description: 'Takes the selected track out of the queue (the file stays where it is). The next track becomes the selected one.' },
+    ],
+
     // ── Context menus (claude/widget-context-menus-design.md) ─────────────────
     // The contexts this widget opens its menu for (Widget.vue: sdk.ui().contextMenu), as the
     // menu editor shows them. subject 'files': the click is about files (a track's file):

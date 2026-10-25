@@ -2,6 +2,22 @@
 
 GEM Video Club establishes the shared GEM Library UI and video-store shelf experience without requiring Shell changes. With no source folder selected it uses fictional sample movies and generated artwork. Once folders are selected, it scans real local video files through the public widget SDK.
 
+## What's new in 0.5.0 (2026-10-25)
+
+- **One look setting:** *Video Club* (showroom aisle and the movie-store case) or *Classic* (shelves and a details page). Older placements are mapped over: Shelves + Classic details become Classic, anything else becomes Video Club. The showroom now opens with featured racks: Continue watching, New arrivals and Collections.
+- **Watch progress** (`watch-progress` document, by media path): Resume and Start over, a watched mark on cases, Continue watching for real libraries (the next episode after a finished one), and *Up next* with a 10 s countdown at the end of an episode.
+- **Sorting** (top bar): Title (ignoring "The / A / An"), Release date, Recently added, Sequels together.
+- **Collections:** matching a movie also reads its TMDB collection and runtime (one more request per matched movie). A Collections shelf shows each set of two or more local movies in release order. TMDB has no in-universe chronology. *Refresh matches* fills in collections for movies matched before 0.5.0.
+- **Extras:** videos in an extras folder (`Extras`, `Featurettes`, `Behind The Scenes`, `Deleted Scenes`, `Interviews`, `Trailers`, ...), videos named `<movie>-trailer`, `- featurette` ..., and unrecognized videos shorter than 60 minutes beside a TMDB-identified movie go under that movie. A second full-length movie stays a movie. Without TMDB, a folder's only video not named as an extra owns its extras folder. TMDB misses are remembered, so a rescan does not query them again or lose their grouping.
+- **Scan again** also matches the new titles with TMDB when it is connected.
+- **Right-click menus** on cases (Play, Play from the start, Open the case, watched / unwatched, Show media file, Change artwork, Match with TMDB) and on the library (Scan again, Refresh TMDB matches, Add media folder). **Keyboard commands:** Ctrl+F find, Ctrl+Enter play, F turn the case over, W watched, F5 scan again.
+- **Extras beside the case** (Video Club): under the rating, each extra has its name above (the file name without the movie's title and year at its start or end; `-trailer`-style suffixes become words), then a chip whose face is a frame of the video (decoded by GEM Shell, a fifth of the way in). Square while there is room, then name and chip shrink to fit the column. Two see-through buttons cover the chip: play (top three quarters) and Find in GExplorer (bottom quarter). Picture-in-picture is turned off in the player and the previews: the `<video>` goes away with the widget on a tab switch, and the shell has no way back to a tab from it yet.
+- **Default app** next to Play opens the file in the system's default player. GEM Shell's own *Open with* (the ranked app list) isn't available to widgets yet: an SDK item for the shell.
+- **Playback survives leaving the screen, without a seam:** while a movie plays, a GEM Shell audio element (it outlives the widget) plays the same stream muted, following the video (play, pause, seeks, speed; drift corrected by nudging its speed). Leaving the screen (another tab, the sidebar folded) just unmutes it, and the operations tray shows its card (play/pause, −10 s / +30 s, Stop). Back on screen, the video starts muted where the sound is, catches up, and takes the sound back. *Keep playing when hidden* (on by default) turns this off: then the player reopens paused where it was. Sound the WebView can't decode (AC3 / DTS) can't play in either place.
+- **Back is an arrow everywhere** (top bar, a title's details, the player).
+- **Steadier on modest hardware:** one scene-preview decoder at a time, released explicitly; a preview that is not playing within 6 s stops for that title; no blur effects inside the 3D case; the player's Back works while playback is still being prepared (abandoned after 15 s).
+- Code: `Widget.vue` keeps navigation, the opened title and the player. The library's work lives in composables over one shared context (`context.ts`): `useLibraryScan`, `useCovers`, `useMetadataEdits`, `useTmdbMatching`, `usePreviewMedia`, `useWatchProgress`, plus `PlayerOverlay.vue` and `SettingsMenu.vue`. Custom covers are no longer copied into the placement's settings (the `custom-covers` document holds them).
+
 ## Run
 
 From the starter folder:

@@ -2164,6 +2164,25 @@ declare module 'gexplorer/widgets' {
         when?: Record<string, unknown>
     }
 
+    /**
+     * One of the manifest's commands (key mapper, 2026-10-24): entry.ts
+     * `commands: [{ id: 'play-pause', name: 'Play / pause', description: '...', keys: ['Space'] }]`.
+     * Named '<widgetType>.<id>' by the host and run while the widget has the user's focus: the host
+     * calls the widget's exposed `onCommand(id)` (defineExpose({ onCommand })).
+     *   id: letters, digits, . _ - ; name and description: required (the description is what the
+     *   user reads in the Keyboard shortcuts page: what the command does, plainly).
+     *   keys: at most 2 defaults, as written: 'Ctrl+Shift+K', 'Alt+Left', 'F2', 'Space', 'Delete'.
+     *   Ctrl / Alt / Shift; no Win / Meta. A key the shell's own commands use is refused as a default.
+     *   whileTyping: also while the focus is in a text field (default: no).
+     */
+    export type WidgetCommandDecl = {
+        id: string
+        name: string
+        description: string
+        keys?: string[]
+        whileTyping?: boolean
+    }
+
     /** <gex-scroll-area>'s ref (the template ref of the component; see Shared UI components below). */
     export interface GexScrollAreaRef {
         /** The scrolling element (its children are the default slot's rows). */

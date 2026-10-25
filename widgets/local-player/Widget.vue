@@ -272,7 +272,8 @@ const keyboard = useKeyboardNav(
   state.selectedIndex,
   state.hasTracks,
   play,
-  playlist.removeAt
+  playlist.removeAt,
+  widgetRootEl
 )
 
 // ===== MARQUEE =====
@@ -711,7 +712,13 @@ onBeforeUnmount(() => {
   if (!jobs.current('playback')) state.playlists.unbind(state.sel)
   cleanup() 
 })
-  defineExpose({ onWidgetAction, onMenuItem })
+  /** One of entry.ts's commands, by its key (the host calls it while the player has the user's focus). */
+  function onCommand(id: string) {
+    if (id === 'play-pause') togglePlay()
+    else if (id === 'remove-track') keyboard.removeSelected()
+  }
+
+  defineExpose({ onWidgetAction, onMenuItem, onCommand })
 </script>
 
 <template>

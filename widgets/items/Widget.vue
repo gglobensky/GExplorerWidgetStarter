@@ -1003,16 +1003,31 @@ const KEYMAP: Record<string, ItemsAction> = {
     [`Shift+${key}`, `extend.${a}`],  // range from the anchor
     [`Ctrl+${key}`, `move.${a}`],     // move the focus only
   ])),
-  'Ctrl+A': 'select.all',
+  // The list's own keys (arrows, Home / End, Page Up / Down, Enter, Escape, Ctrl+Space): how the
+  // list is driven, not actions. Actions are commands (entry.ts commands, onCommand below: the user
+  // sees and rebinds them in the key mapper). CHANGED 2026-10-24: F2, Delete, Shift+Delete, Ctrl+A,
+  // Alt+Page Up / Down, Ctrl+G moved there.
   'Ctrl+Space': 'select.toggleFocused',
   'Escape': 'select.clear',
   'Enter': 'open.focused',
-  'F2': 'rename.focused',
-  'Alt+PageDown': 'page.next',
-  'Alt+PageUp': 'page.prev',
-  'Ctrl+G': 'page.goto',
-  'Delete': 'delete.trash',                     // to the Trash
-  'Shift+Delete': 'delete.permanent',           // permanently (asks first)
+}
+
+/** The commands of entry.ts (the host runs them while the list has the user's focus): their actions. */
+const COMMAND_ACTIONS: Record<string, ItemsAction> = {
+  'rename': 'rename.focused',
+  'delete': 'delete.trash',
+  'delete-permanent': 'delete.permanent',
+  'select-all': 'select.all',
+  'page-next': 'page.next',
+  'page-prev': 'page.prev',
+  'page-goto': 'page.goto',
+}
+
+/** One of entry.ts's commands, by its key (the host calls it: defineExpose below). */
+function onCommand(id: string) {
+  if (id === 'refresh') { refresh({ user: true }); return }
+  const action = COMMAND_ACTIONS[id]
+  if (action) runItemsAction(action)
 }
 
 function keyCombo(ev: KeyboardEvent): string {
@@ -1564,7 +1579,7 @@ onBeforeUnmount(() => {
   // released); in the dialog useListing closes it.
 })
 
-defineExpose({ applyExternalCwd, getNavState, onWidgetAction })
+defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand })
 </script>
 
 <template>

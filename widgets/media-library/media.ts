@@ -55,19 +55,84 @@ export function createMovieLibrary(atlases: [string, string]): LibraryItem[] {
   })
 }
 
-export function shelvesFor(items: LibraryItem[], query = ''): LibraryShelf[] {
+export type SortMode = 'title' | 'release' | 'added' | 'collection'
+export const SORT_MODES: Array<{ id:SortMode; label:string }> = [
+  { id:'title', label:'Title' },
+  { id:'release', label:'Release date' },
+  { id:'added', label:'Recently added' },
+  { id:'collection', label:'Sequels together' },
+]
+
+export function sortableTitle(title: string): string {
+  return title.replace(/^(?:the|a|an)\s+/i, '')
+}
+
+function byTitle(a: LibraryItem, b: LibraryItem): number {
+  return sortableTitle(a.title).localeCompare(sortableTitle(b.title), undefined, { numeric:true, sensitivity:'base' })
+}
+
+function byRelease(a: LibraryItem, b: LibraryItem): number {
+  const ay = a.year > 1800 ? a.year : Number.MAX_SAFE_INTEGER
+  const by = b.year > 1800 ? b.year : Number.MAX_SAFE_INTEGER
+  return ay - by || byTitle(a,b)
+}
+
+/**
+ * Orders titles. 'collection': by title, but the movies of one TMDB collection stay together, in
+ * release order, where the first of them (by title) would be.
+ */
+export function sortItems(items: LibraryItem[], mode: SortMode = 'title'): LibraryItem[] {
+  if (mode === 'release') return items.slice().sort(byRelease)
+  if (mode === 'added') return items.slice().sort((a,b) => b.addedRank - a.addedRank || byTitle(a,b))
+  const titled = items.slice().sort(byTitle)
+  if (mode !== 'collection') return titled
+  const groups = new Map<number,LibraryItem[]>()
+  for (const item of titled) {
+    if (item.tmdbCollectionId == null) continue
+    const group = groups.get(item.tmdbCollectionId) ?? []
+    group.push(item)
+    groups.set(item.tmdbCollectionId,group)
+  }
+  const placed = new Set<number>()
+  return titled.flatMap(item => {
+    const id = item.tmdbCollectionId
+    if (id == null || (groups.get(id)?.length ?? 0) < 2) return [item]
+    if (placed.has(id)) return []
+    placed.add(id)
+    return groups.get(id)!.slice().sort(byRelease)
+  })
+}
+
+/** Movies of the collections the library holds two or more of, each collection together in release order. */
+export function collectionItems(items: LibraryItem[]): { items:LibraryItem[]; collections:number } {
+  const groups = new Map<number,LibraryItem[]>()
+  for (const item of items) {
+    if (item.tmdbCollectionId == null || item.mediaKind === 'episode') continue
+    const group = groups.get(item.tmdbCollectionId) ?? []
+    group.push(item)
+    groups.set(item.tmdbCollectionId,group)
+  }
+  const sets = [...groups.values()].filter(group => group.length >= 2)
+    .map(group => group.slice().sort(byRelease))
+    .sort((a,b) => sortableTitle(a[0].tmdbCollectionName ?? a[0].title).localeCompare(sortableTitle(b[0].tmdbCollectionName ?? b[0].title), undefined, { numeric:true }))
+  return { items:sets.flat(), collections:sets.length }
+}
+
+export function shelvesFor(items: LibraryItem[], query = '', sort: SortMode = 'title'): LibraryShelf[] {
   const term = query.trim().toLocaleLowerCase()
   if (term) {
-    const found = items.filter(item => [item.title, item.seriesTitle, item.year, ...item.genres].join(' ').toLocaleLowerCase().includes(term))
+    const found = sortItems(items.filter(item => [item.title, item.seriesTitle, item.tmdbCollectionName, item.year, ...item.genres].join(' ').toLocaleLowerCase().includes(term)), sort)
     return found.length ? [{ id:'search', title:'Search results', note:`${found.length} found`, items:found }] : []
   }
   const localCollection = items.some(item => !!item.path)
   const arrivals = (localCollection ? items.filter(item => item.newArrival) : items)
     .slice().sort((a,b) => b.addedRank-a.addedRank).slice(0,12)
   const shelves: LibraryShelf[] = [
-    { id:'continue', title:'Continue watching', note:'Your place is waiting', items:items.filter(item => item.progress && item.progress < .95) },
+    { id:'continue', title:'Continue watching', note:'Your place is waiting', items:continueWatching(items) },
     ...(arrivals.length ? [{ id:'recent', title:'New arrivals', note:'Added since the last scan', items:arrivals }] : []),
   ]
+  const collections = collectionItems(items)
+  if (collections.collections) shelves.push({ id:'collections', title:'Collections', note:`${collections.collections} ${collections.collections === 1 ? 'set' : 'sets'} · sequels side by side`, items:collections.items })
   const series = Array.from(new Set(items.flatMap(item => item.seriesTitle ? [item.seriesTitle] : []))).sort((a,b) => a.localeCompare(b, undefined, { numeric:true }))
   for (const title of series) {
     const matches = items
@@ -90,9 +155,56 @@ export function shelvesFor(items: LibraryItem[], query = ''): LibraryShelf[] {
       seenSeries.add(key)
       return [seriesGenreCard(matches.filter(candidate => candidate.seriesTitle?.toLocaleLowerCase() === key),item.seriesTitle,genre)]
     })
-    if (genreItems.length) shelves.push({ id:slug(genre), title:genre, note:`${genreItems.length} ${genreItems.length === 1 ? 'title' : 'titles'}`, items:genreItems })
+    if (genreItems.length) shelves.push({ id:slug(genre), title:genre, note:`${genreItems.length} ${genreItems.length === 1 ? 'title' : 'titles'}`, items:sortItems(genreItems, sort) })
   }
   return shelves.filter(shelf => shelf.items.length)
+}
+
+/** A series' episodes in season, then episode order. */
+export function seriesEpisodes(items: LibraryItem[], seriesTitle: string): LibraryItem[] {
+  const key = seriesTitle.toLocaleLowerCase()
+  return items
+    .filter(item => item.seriesTitle?.toLocaleLowerCase() === key)
+    .sort((a,b) => episodeOrder(a).season - episodeOrder(b).season
+      || episodeOrder(a).episode - episodeOrder(b).episode
+      || a.title.localeCompare(b.title, undefined, { numeric:true }))
+}
+
+/** The episode after this one in its series, if the library has it. */
+export function nextEpisode(items: LibraryItem[], item: LibraryItem): LibraryItem | undefined {
+  if (!item.seriesTitle) return undefined
+  const episodes = seriesEpisodes(items, item.seriesTitle)
+  const index = episodes.findIndex(candidate => candidate.id === item.id)
+  return index >= 0 ? episodes[index + 1] : undefined
+}
+
+/**
+ * Continue watching, most recent first: titles stopped part way, and for a series whose latest
+ * played episode was finished, its next episode. One entry per series.
+ */
+export function continueWatching(items: LibraryItem[], max = 20): LibraryItem[] {
+  const result: LibraryItem[] = []
+  const added = new Set<string>()
+  const seriesSeen = new Set<string>()
+  const add = (item: LibraryItem) => {
+    if (added.has(item.id)) return
+    added.add(item.id)
+    result.push(item)
+  }
+  const played = items.filter(item => item.lastWatchedAt).sort((a,b) => (b.lastWatchedAt ?? 0) - (a.lastWatchedAt ?? 0))
+  for (const item of played) {
+    const series = item.seriesTitle?.toLocaleLowerCase()
+    if (series && seriesSeen.has(series)) continue
+    if (series) seriesSeen.add(series)
+    if (item.progress && !item.watched) add(item)
+    else if (item.watched && series) {
+      const next = nextEpisode(items, item)
+      if (next && !next.watched) add(next)
+    }
+  }
+  // Progress without a play date: the sample collection.
+  for (const item of items) if (item.progress && item.progress < .95 && !item.lastWatchedAt && !item.watched) add(item)
+  return result.slice(0, max)
 }
 
 export type ShowroomRackRow = {
@@ -106,12 +218,10 @@ export function showroomTitleCount(items: LibraryItem[], genre: string): number 
   return items.filter(item => item.primaryGenre === genre).length
 }
 
-export function showroomRowsFor(items: LibraryItem[], genre: string, capacity = 6): ShowroomRackRow[] {
+export function showroomRowsFor(items: LibraryItem[], genre: string, capacity = 6, sort: SortMode = 'title'): ShowroomRackRow[] {
   const rowCapacity = Math.max(1,Math.floor(capacity))
   const matching = items.filter(item => item.primaryGenre === genre)
-  const movies = matching
-    .filter(item => !item.seriesTitle)
-    .sort((a,b) => a.title.localeCompare(b.title,undefined,{ numeric:true }))
+  const movies = sortItems(matching.filter(item => !item.seriesTitle), sort)
   const series = new Map<string,LibraryItem[]>()
   for (const item of matching) {
     if (!item.seriesTitle) continue
@@ -325,8 +435,27 @@ function looksLikeMovieFolder(directory: string, movie: LibraryItem): boolean {
   return !!folder && !!title && (folder.includes(title) || title.includes(folder))
 }
 
-function looksLikeExtra(item: LibraryItem): boolean {
-  return /\b(?:extra|bonus|featurette|behind the scenes|deleted scenes?|interviews?|trailers?|making of|alternate ending|bloopers?|outtakes?)\b/i.test(item.title)
+/** Folders that hold a movie's extras (Plex / Jellyfin / Kodi conventions), inside the movie's folder. */
+const EXTRA_FOLDER = /^(?:extras?|featurettes?|behind[ ._-]?the[ ._-]?scenes|deleted[ ._-]?scenes|interviews?|scenes|shorts|trailers?|bonus(?:[ ._-]?(?:features|material))?|specials?|other|making[ ._-]?of|samples?)$/i
+/** File-name suffixes for extras beside the movie: "Heat-trailer.mkv", "Heat - featurette.mp4". */
+const EXTRA_SUFFIX = /\s*-\s*(?:behind[ ._]?the[ ._]?scenes|deleted(?:[ ._]?scenes?)?|featurette|interview|scene|short|trailer|teaser|other|extra|sample)$/i
+const EXTRA_WORDS = /\b(?:extras?|bonus|featurettes?|behind the scenes|deleted scenes?|interviews?|trailers?|teasers?|making of|alternate ending|bloopers?|outtakes?|gag reel|commentary|sample)\b/i
+/** An unrecognized video beside an identified movie, shorter than this, is one of its extras. */
+export const EXTRA_MAX_MINUTES = 60
+
+function fileStem(path: string): string {
+  return (path.split(/[\\/]/).pop() ?? '').replace(/\.[^.]+$/, '')
+}
+
+export function looksLikeExtra(item: LibraryItem): boolean {
+  return EXTRA_WORDS.test(item.title) || (!!item.path && EXTRA_SUFFIX.test(fileStem(item.path)))
+}
+
+/** "Heat - Behind the Scenes" names "Heat": the movie's whole title, as words, inside a longer name. */
+function namesMovie(item: LibraryItem, movie: LibraryItem): boolean {
+  const name = ` ${comparableName(item.path ? fileStem(item.path) : item.title)} `
+  const title = comparableName(movie.title)
+  return !!title && name.trim() !== title && name.includes(` ${title} `)
 }
 
 export function flattenLibraryExtras(items: LibraryItem[]): LibraryItem[] {
@@ -341,30 +470,47 @@ export function flattenLibraryExtras(items: LibraryItem[]): LibraryItem[] {
 }
 
 /**
- * Attach unmatched files to an identified movie inside a movie-named folder.
- * In broader folders, only explicit extra/bonus naming is grouped automatically.
+ * Gathers a movie's extras under it (they leave the shelves; the movie's details list them):
+ * - videos in an extras folder inside the movie's folder (Extras, Featurettes, Behind The Scenes...);
+ * - videos beside the movie named as extras ("Heat-trailer.mkv", "Deleted Scenes.mkv");
+ * - beside a movie TMDB identified, videos TMDB did not recognize that are shorter than
+ *   EXTRA_MAX_MINUTES (a second full-length movie stays a movie), or, length unknown, that name the
+ *   movie or sit in the movie's own folder.
+ * The movie of a folder: the one TMDB identified there, else its only video not named as an extra.
  */
 export function bundleMovieExtras(items: LibraryItem[]): LibraryItem[] {
   const flat = flattenLibraryExtras(items)
-  const folders = new Map<string,LibraryItem[]>()
+  type Member = { item:LibraryItem; inExtrasFolder:boolean }
+  const folders = new Map<string,Member[]>()
   for (const item of flat) {
     if (!item.path || item.mediaKind === 'episode') continue
-    const directory = parentDirectory(item.path)
-    const group = folders.get(directory) ?? []
-    group.push(item)
-    folders.set(directory,group)
+    const parent = parentDirectory(item.path)
+    const inExtrasFolder = EXTRA_FOLDER.test(parent.split('\\').pop() ?? '') && parent !== normalizedPath(item.sourceRoot ?? '')
+    const owner = inExtrasFolder ? parent.replace(/\\[^\\]+$/,'') : parent
+    const group = folders.get(owner) ?? []
+    group.push({ item, inExtrasFolder })
+    folders.set(owner,group)
   }
 
   const extrasByMovie = new Map<string,LibraryItem[]>()
   const bundledIds = new Set<string>()
   for (const [directory,group] of folders) {
-    const identified = group.filter(item => item.metadataSource === 'tmdb' && item.tmdbType === 'movie' && item.tmdbId)
-    if (identified.length !== 1) continue
-    const movie = identified[0]
-    const candidates = group
-      .filter(item => item.id !== movie.id && item.tmdbMatchAttempted && !item.tmdbId)
-    const extras = (looksLikeMovieFolder(directory,movie) ? candidates : candidates.filter(looksLikeExtra))
-      .sort((a,b) => a.title.localeCompare(b.title,undefined,{ numeric:true }))
+    const beside = group.filter(member => !member.inExtrasFolder).map(member => member.item)
+    const identified = beside.filter(item => item.metadataSource === 'tmdb' && item.tmdbType === 'movie' && item.tmdbId)
+    const unnamed = beside.filter(item => !looksLikeExtra(item) && !item.tmdbId)
+    const movie = identified.length === 1 ? identified[0]
+      : identified.length === 0 && unnamed.length === 1 ? unnamed[0]
+        : undefined
+    if (!movie) continue
+    const byTmdb = movie.metadataSource === 'tmdb'
+    const extras = group.filter(({ item, inExtrasFolder }) => {
+      if (item.id === movie.id || item.tmdbId) return false
+      if (inExtrasFolder || looksLikeExtra(item)) return true
+      if (!byTmdb || !item.tmdbMatchAttempted) return false
+      return item.runtimeMinutes > 0
+        ? item.runtimeMinutes < EXTRA_MAX_MINUTES
+        : namesMovie(item,movie) || looksLikeMovieFolder(directory,movie)
+    }).map(member => member.item).sort((a,b) => a.title.localeCompare(b.title,undefined,{ numeric:true }))
     if (!extras.length) continue
     extrasByMovie.set(movie.id,extras)
     for (const extra of extras) bundledIds.add(extra.id)
