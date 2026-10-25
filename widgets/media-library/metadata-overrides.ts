@@ -2,6 +2,7 @@ import type { WidgetSdk } from 'gexplorer/widgets'
 import type { LibraryItem } from '../../shared/library-ui'
 
 export type MediaMetadataOverride = {
+  title?: string
   synopsis?: string
   genres?: string[]
 }
@@ -34,6 +35,7 @@ export function applyMetadataOverride(item: LibraryItem, override: MediaMetadata
   const genres = override.genres?.map(genre => genre.trim()).filter(Boolean)
   return {
     ...item,
+    title:override.title?.trim() || item.title,
     synopsis:override.synopsis ?? item.synopsis,
     genres:genres?.length ? genres : item.genres,
     primaryGenre:genres?.[0] || item.primaryGenre,

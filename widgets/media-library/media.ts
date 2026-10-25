@@ -295,6 +295,7 @@ export function createScannedLibrary(
       })),
       addedRank:ranks.get(video.path) ?? 0,
       path:video.path,
+      sourceRoot:video.sourceRoot,
       mimeType:video.extension,
       resolution:video.probe?.width && video.probe?.height ? `${video.probe.width}×${video.probe.height}` : undefined,
       mediaKind:episode ? 'episode' as const : 'movie' as const,
@@ -304,4 +305,72 @@ export function createScannedLibrary(
       metadataSearchTitles:searchTitles,
     }
   }).sort((a,b) => a.title.localeCompare(b.title, undefined, { numeric:true }))
+}
+
+function normalizedPath(path: string): string {
+  return path.replace(/[\\/]+$/,'').replace(/\//g,'\\').toLocaleLowerCase()
+}
+
+function parentDirectory(path: string): string {
+  return normalizedPath(path).replace(/\\[^\\]+$/,'')
+}
+
+function comparableName(value: string): string {
+  return value.normalize('NFKD').replace(/\p{Diacritic}/gu,'').toLocaleLowerCase().replace(/[^a-z0-9]+/g,' ').trim()
+}
+
+function looksLikeMovieFolder(directory: string, movie: LibraryItem): boolean {
+  const folder = comparableName(directory.split('\\').pop() ?? '')
+  const title = comparableName(movie.title)
+  return !!folder && !!title && (folder.includes(title) || title.includes(folder))
+}
+
+function looksLikeExtra(item: LibraryItem): boolean {
+  return /\b(?:extra|bonus|featurette|behind the scenes|deleted scenes?|interviews?|trailers?|making of|alternate ending|bloopers?|outtakes?)\b/i.test(item.title)
+}
+
+export function flattenLibraryExtras(items: LibraryItem[]): LibraryItem[] {
+  const flattened:LibraryItem[] = []
+  const append = (item:LibraryItem) => {
+    const { extras, ...standalone } = item
+    flattened.push(standalone)
+    for (const extra of extras ?? []) append(extra)
+  }
+  for (const item of items) append(item)
+  return flattened
+}
+
+/**
+ * Attach unmatched files to an identified movie inside a movie-named folder.
+ * In broader folders, only explicit extra/bonus naming is grouped automatically.
+ */
+export function bundleMovieExtras(items: LibraryItem[]): LibraryItem[] {
+  const flat = flattenLibraryExtras(items)
+  const folders = new Map<string,LibraryItem[]>()
+  for (const item of flat) {
+    if (!item.path || item.mediaKind === 'episode') continue
+    const directory = parentDirectory(item.path)
+    const group = folders.get(directory) ?? []
+    group.push(item)
+    folders.set(directory,group)
+  }
+
+  const extrasByMovie = new Map<string,LibraryItem[]>()
+  const bundledIds = new Set<string>()
+  for (const [directory,group] of folders) {
+    const identified = group.filter(item => item.metadataSource === 'tmdb' && item.tmdbType === 'movie' && item.tmdbId)
+    if (identified.length !== 1) continue
+    const movie = identified[0]
+    const candidates = group
+      .filter(item => item.id !== movie.id && item.tmdbMatchAttempted && !item.tmdbId)
+    const extras = (looksLikeMovieFolder(directory,movie) ? candidates : candidates.filter(looksLikeExtra))
+      .sort((a,b) => a.title.localeCompare(b.title,undefined,{ numeric:true }))
+    if (!extras.length) continue
+    extrasByMovie.set(movie.id,extras)
+    for (const extra of extras) bundledIds.add(extra.id)
+  }
+
+  return flat
+    .filter(item => !bundledIds.has(item.id))
+    .map(item => extrasByMovie.has(item.id) ? { ...item, extras:extrasByMovie.get(item.id) } : item)
 }

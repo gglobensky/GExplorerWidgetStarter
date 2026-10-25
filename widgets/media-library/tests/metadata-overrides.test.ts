@@ -8,8 +8,9 @@ const item:LibraryItem = {
   synopsis:'TMDB description', artwork:{ src:'', x:0, y:0 }, previews:[], addedRank:1, path:'D:\\Movies\\Antz.mkv',
 }
 
-test('local synopsis and genres override provider metadata', () => {
-  const overridden = applyMetadataOverride(item,{ synopsis:'My description', genres:['Family','Comedy'] })
+test('local title, synopsis, and genres override provider metadata', () => {
+  const overridden = applyMetadataOverride(item,{ title:'My Antz', synopsis:'My description', genres:['Family','Comedy'] })
+  assert.equal(overridden.title,'My Antz')
   assert.equal(overridden.synopsis,'My description')
   assert.deepEqual(overridden.genres,['Family','Comedy'])
   assert.equal(overridden.primaryGenre,'Family')
@@ -22,6 +23,6 @@ test('persists local metadata overrides', async () => {
     configRead:async () => stored as any,
     configWrite:async (_name:string,value:unknown) => { stored = value },
   }
-  await saveMetadataOverrides(storage as any,{ [item.path!]:{ synopsis:'Mine', genres:['Comedy'] } })
-  assert.deepEqual(await loadMetadataOverrides(storage as any),{ [item.path!]:{ synopsis:'Mine', genres:['Comedy'] } })
+  await saveMetadataOverrides(storage as any,{ [item.path!]:{ title:'Mine', synopsis:'Mine', genres:['Comedy'] } })
+  assert.deepEqual(await loadMetadataOverrides(storage as any),{ [item.path!]:{ title:'Mine', synopsis:'Mine', genres:['Comedy'] } })
 })

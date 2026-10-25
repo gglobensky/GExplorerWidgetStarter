@@ -15,8 +15,6 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   (e:'select-shelf', shelfId:string):void
-  (e:'back'):void
-  (e:'showroom'):void
   (e:'open', item:LibraryItem):void
 }>()
 
@@ -130,11 +128,7 @@ onBeforeUnmount(() => observer?.disconnect())
 
     <template v-else>
       <header class="media-store-focus-heading">
-        <nav aria-label="Showroom navigation">
-          <button type="button" @click="emit('back')"><span aria-hidden="true">‹</span> Back</button>
-          <button type="button" @click="emit('showroom')"><span aria-hidden="true">⌂</span> Showroom</button>
-        </nav>
-        <div><p>{{ isActiveSeries ? 'Series' : 'Department' }}</p><h1>{{ activeShelf.title }}</h1><span>{{ activeShelfNote }}</span></div>
+        <div><h2>{{ activeShelf.title }}</h2><p>{{ activeShelfNote }}</p></div>
         <label v-if="isActiveSeries && seasonOptions.length" class="media-store-season-filter">
           <span>Season</span>
           <select v-model="season" :aria-label="`Filter ${activeShelf.title} by season`">

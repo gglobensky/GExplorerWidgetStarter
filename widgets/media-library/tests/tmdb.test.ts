@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { LibraryItem } from '../../../shared/library-ui/types.ts'
-import { applyPersistedTmdbMetadata, enrichWithTmdb, persistedTmdbMetadata, restorePersistedTmdbMetadata, tmdbImageUrl } from '../tmdb.ts'
+import { applyPersistedTmdbMetadata, enrichWithTmdb, persistedTmdbMetadata, restorePersistedTmdbMetadata, tmdbImageUrl, tmdbReviewsUrl } from '../tmdb.ts'
 
 function item(values: Partial<LibraryItem>): LibraryItem {
   return {
@@ -9,6 +9,12 @@ function item(values: Partial<LibraryItem>): LibraryItem {
     synopsis:'Local synopsis', artwork:{ src:'', x:0, y:0, mode:'placeholder' }, previews:[], addedRank:1, ...values,
   }
 }
+
+test('builds TMDB review links only for matched movies and shows', () => {
+  assert.equal(tmdbReviewsUrl({ tmdbId:545611, tmdbType:'movie' }),'https://www.themoviedb.org/movie/545611/reviews')
+  assert.equal(tmdbReviewsUrl({ tmdbId:1396, tmdbType:'tv' }),'https://www.themoviedb.org/tv/1396/reviews')
+  assert.equal(tmdbReviewsUrl({ tmdbId:undefined, tmdbType:undefined }),undefined)
+})
 
 test('enriches movies and episodes through TMDB search and season details', async () => {
   const requested:string[] = []
@@ -64,6 +70,7 @@ test('does not accept an unrelated result merely because its year matches', asyn
   assert.equal(result.matched,0)
   assert.equal(result.items[0].title,'Signal North')
   assert.equal(result.items[0].synopsis,'Local synopsis')
+  assert.equal(result.items[0].tmdbMatchAttempted,true)
 })
 
 test('retries distinct cleaned local titles only after the display title does not match', async () => {

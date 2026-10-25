@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createMovieLibrary, createScannedLibrary, inferGenre, movieSearchTitles, parseMovieFilename, parseSeriesEpisode, preferredCoverSource, shelvesFor, showroomRowsFor, showroomTitleCount } from '../media.ts'
+import { bundleMovieExtras, createMovieLibrary, createScannedLibrary, flattenLibraryExtras, inferGenre, movieSearchTitles, parseMovieFilename, parseSeriesEpisode, preferredCoverSource, shelvesFor, showroomRowsFor, showroomTitleCount } from '../media.ts'
 import { chooseCover, scanVideoSources, videoMime } from '../scanner.ts'
 import { inferredSeasonNumber, itemsForSeason, seasonLabel, seasonsFor } from '../../../shared/library-ui/seasons.ts'
 
@@ -100,6 +100,23 @@ test('shows only locally discovered items from the latest scan as new arrivals',
   ]
   assert.deepEqual(shelvesFor(local).find(shelf => shelf.id === 'recent')?.items.map(item => item.id), ['new'])
   assert.equal(shelvesFor(local.map(item => ({ ...item, newArrival:false }))).some(shelf => shelf.id === 'recent'), false)
+})
+
+test('bundles checked unmatched files beside one identified movie without hiding real movies or source-root files', () => {
+  const root = 'D:\\Movies'
+  const arrival = { ...movies[0], id:'arrival', title:'Arrival', path:`${root}\\Arrival (2016)\\Arrival.mkv`, sourceRoot:root, mediaKind:'movie' as const, metadataSource:'tmdb' as const, tmdbType:'movie' as const, tmdbId:329865, tmdbMatchAttempted:true }
+  const extras = [
+    { ...movies[1], id:'interview', title:'Cast Interview', path:`${root}\\Arrival (2016)\\Cast Interview.mkv`, sourceRoot:root, mediaKind:'movie' as const, tmdbMatchAttempted:true },
+    { ...movies[2], id:'behind-scenes', title:'Behind the Scenes', path:`${root}\\Arrival (2016)\\Behind the Scenes.mkv`, sourceRoot:root, mediaKind:'movie' as const, tmdbMatchAttempted:true },
+  ]
+  const anotherMovie = { ...movies[3], id:'short-film', title:'Short Film', path:`${root}\\Arrival (2016)\\Short Film.mkv`, sourceRoot:root, mediaKind:'movie' as const, metadataSource:'tmdb' as const, tmdbType:'movie' as const, tmdbId:100, tmdbMatchAttempted:true }
+  const rootVideo = { ...movies[4], id:'root-video', title:'Unsorted Clip', path:`${root}\\Unsorted Clip.mkv`, sourceRoot:root, mediaKind:'movie' as const, tmdbMatchAttempted:true }
+
+  const grouped = bundleMovieExtras([arrival,...extras,rootVideo])
+  assert.deepEqual(grouped.map(item => item.id),['arrival','root-video'])
+  assert.deepEqual(grouped[0].extras?.map(item => item.id),['behind-scenes','interview'])
+  assert.deepEqual(flattenLibraryExtras(grouped).map(item => item.id),['arrival','behind-scenes','interview','root-video'])
+  assert.equal(bundleMovieExtras([arrival,...extras,anotherMovie]).some(item => item.extras?.length),false)
 })
 
 test('prefers movie-matched sidecar artwork and maps stream MIME hints', () => {

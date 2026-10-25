@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { startRename } from 'gexplorer/widgets'
 import ArtworkFrame from './ArtworkFrame.vue'
 import { formatCue, formatRuntime, formatYear, type LibraryItem } from './types'
 
@@ -18,8 +19,12 @@ const emit = defineEmits<{
   (e: 'close'): void
   (e: 'flip'): void
   (e: 'play'): void
+  (e: 'play-extra', item: LibraryItem): void
   (e: 'show-in-folder'): void
+  (e: 'show-extra-in-folder', item: LibraryItem): void
   (e: 'edit-artwork'): void
+  (e: 'open-tmdb'): void
+  (e: 'update-title', value: string): void
   (e: 'update-synopsis', value: string): void
   (e: 'update-genres', value: string[]): void
   (e: 'preview', index: number | null): void
@@ -33,6 +38,7 @@ const editingSynopsis = ref(false)
 const synopsisDraft = ref('')
 const editingGenres = ref(false)
 const genresDraft = ref('')
+const storeTitle = ref<HTMLElement | null>(null)
 const ejecting = ref(false)
 const storePalette = ref({ base:'#29343a', accent:'#b97645', text:'#f8f1e6' })
 let previewStart = 0
@@ -43,6 +49,8 @@ let paletteRevision = 0
 const PREVIEW_SECONDS = 8
 
 const backdropSource = computed(() => props.previewImageSrcs?.find(Boolean) || props.item.previewImageSrc || '')
+const tmdbRatingPercent = computed(() => `${Math.max(0,Math.min(100,(props.item.tmdbRating ?? 0) * 10))}%`)
+const hasTmdbPage = computed(() => Number.isInteger(props.item.tmdbId) && Number(props.item.tmdbId) > 0 && !!props.item.tmdbType)
 const activeStorePreview = computed(() => {
   const index = props.activePreview
   if (index === null) return null
@@ -236,7 +244,28 @@ function stopPreview(event: Event) {
 
 function beginSynopsisEdit() {
   synopsisDraft.value = props.item.synopsis
+  editingGenres.value = false
   editingSynopsis.value = true
+}
+
+async function beginTitleRename() {
+  if (!props.item.path || !storeTitle.value) return
+  editingGenres.value = false
+  editingSynopsis.value = false
+  try {
+    await startRename(storeTitle.value, {
+      value:props.item.title,
+      selectAll:true,
+      maxWidth:280,
+      validate:value => value.trim() ? null : 'A title is needed.',
+      onCommit:value => {
+        const title = value.trim()
+        if (title && title !== props.item.title) emit('update-title',title)
+      },
+    })
+  } catch (error) {
+    console.warn('[Media Library] Could not start inline title editing:',error)
+  }
 }
 
 function saveSynopsis() {
@@ -246,6 +275,7 @@ function saveSynopsis() {
 
 function beginGenresEdit() {
   genresDraft.value = props.item.genres.join(', ')
+  editingSynopsis.value = false
   editingGenres.value = true
 }
 
@@ -302,6 +332,15 @@ onBeforeUnmount(() => {
       <aside v-if="detailMode === 'movie-store'" class="glu-store-controls" aria-label="Media controls">
         <button type="button" class="primary" :disabled="ejecting" @click="playMedia"><span aria-hidden="true">▶</span><b>{{ item.progress ? 'Resume' : 'Play' }}</b></button>
         <button v-if="item.path && canShowInFolder" type="button" @click="emit('show-in-folder')"><span aria-hidden="true">⌖</span><b>Show media file</b></button>
+        <section v-if="item.extras?.length" class="glu-store-extras" aria-label="Movie extras">
+          <header><span>Extras</span><small>{{ item.extras.length }}</small></header>
+          <div class="glu-store-extra-list">
+            <div v-for="extra in item.extras" :key="extra.id" class="glu-store-extra">
+              <button type="button" :title="`Play ${extra.title}`" @click="emit('play-extra',extra)"><span aria-hidden="true">▶</span><b>{{ extra.title }}</b><small>{{ formatRuntime(extra.runtimeMinutes) }}</small></button>
+              <button v-if="extra.path && canShowInFolder" type="button" class="glu-store-extra-reveal" :aria-label="`Show ${extra.title} in folder`" @click="emit('show-extra-in-folder',extra)">⌖</button>
+            </div>
+          </div>
+        </section>
       </aside>
       <div class="glu-detail-case-wrap">
         <span v-if="detailMode === 'movie-store'" class="glu-dvd-disc" aria-hidden="true"><i></i></span>
@@ -337,7 +376,7 @@ onBeforeUnmount(() => {
                 </span>
                 <span class="glu-store-back-copy">
                   <small>{{ item.genres.join(' · ') }}</small>
-                  <strong>{{ item.title }}</strong>
+                  <strong ref="storeTitle" data-rename-row>{{ item.title }}</strong>
                   <span>{{ item.synopsis }}</span>
                   <b>{{ formatYear(item.year) }} · {{ formatRuntime(item.runtimeMinutes) }} · {{ item.rating }}</b>
                 </span>
@@ -375,12 +414,41 @@ onBeforeUnmount(() => {
             <small>{{ previewReady ? 'Playing' : 'Loading…' }}</small>
             <i :style="{ transform:`scaleX(${activeProgress(activeStorePreview.index)})` }"></i>
           </span>
+          <div v-if="detailMode === 'movie-store' && flipped && item.path" class="glu-store-edit-tools" aria-label="Edit case details" @click.stop>
+            <button type="button" title="Rename title" aria-label="Rename title" @click="beginTitleRename">T</button>
+            <button type="button" title="Edit genres locally" aria-label="Edit genres locally" @click="beginGenresEdit">G</button>
+            <button type="button" title="Edit synopsis locally" aria-label="Edit synopsis locally" @click="beginSynopsisEdit">¶</button>
+          </div>
+          <form v-if="detailMode === 'movie-store' && flipped && editingGenres" class="glu-store-editor" aria-label="Edit genres" @click.stop @submit.prevent="saveGenres">
+            <label for="glu-store-genres">Genres</label>
+            <input id="glu-store-genres" v-model="genresDraft" autofocus aria-label="Genres separated by commas" @keydown.escape.prevent="editingGenres = false" />
+            <div><button type="submit" class="primary">Save</button><button type="button" @click="editingGenres = false">Cancel</button></div>
+          </form>
+          <form v-if="detailMode === 'movie-store' && flipped && editingSynopsis" class="glu-store-editor glu-store-synopsis-editor" aria-label="Edit synopsis" @click.stop @submit.prevent="saveSynopsis">
+            <label for="glu-store-synopsis">Synopsis</label>
+            <textarea id="glu-store-synopsis" v-model="synopsisDraft" rows="6" autofocus aria-label="Local media description" @keydown.escape.prevent="editingSynopsis = false"></textarea>
+            <div><button type="submit" class="primary">Save</button><button type="button" @click="editingSynopsis = false">Cancel</button></div>
+          </form>
         </div>
         <button v-if="item.path" type="button" class="glu-artwork-edit" title="Change artwork" aria-label="Change artwork" @click="emit('edit-artwork')">✎</button>
-        <button type="button" class="glu-turn" @click="emit('flip')">{{ flipped ? 'Show front' : 'Turn case over' }}</button>
+        <button v-if="detailMode !== 'movie-store'" type="button" class="glu-turn" @click="emit('flip')">{{ flipped ? 'Show front' : 'Turn case over' }}</button>
       </div>
 
-      <div class="glu-detail-copy">
+      <aside v-if="detailMode === 'movie-store'" class="glu-store-rating" aria-label="TMDB rating">
+        <button v-if="hasTmdbPage" type="button" title="Read reviews on TMDB" @click="emit('open-tmdb')">
+          <span class="glu-rating-stars" aria-hidden="true"><i :style="{ width:tmdbRatingPercent }">★★★★★</i>★★★★★</span>
+          <strong>{{ item.tmdbRating ? item.tmdbRating.toFixed(1) : '—' }}<small>/10</small></strong>
+          <span>TMDB rating</span>
+          <em>Read reviews ↗</em>
+        </button>
+        <div v-else class="glu-store-rating-static">
+          <span class="glu-rating-stars" aria-hidden="true">★★★★★</span>
+          <strong>Not rated</strong>
+          <small>Match this title with TMDB to see its rating.</small>
+        </div>
+      </aside>
+
+      <div v-if="detailMode !== 'movie-store'" class="glu-detail-copy">
         <p class="glu-eyebrow">{{ item.seriesTitle ? `${item.seriesTitle} · Season ${item.seasonNumber}` : item.primaryGenre }} · {{ formatYear(item.year) }}</p>
         <h1>{{ item.title }}</h1>
         <p class="glu-meta">{{ formatRuntime(item.runtimeMinutes) }} <span>•</span> {{ item.rating }} <template v-if="item.tmdbRating"><span>•</span> ★ {{ item.tmdbRating.toFixed(1) }}</template> <span v-if="item.resolution">•</span> {{ item.resolution }} <span>•</span> {{ item.genres.join(', ') }} <button v-if="item.path" type="button" class="glu-edit-icon" title="Edit genres locally" aria-label="Edit genres locally" @click="beginGenresEdit">✎</button></p>
@@ -402,7 +470,17 @@ onBeforeUnmount(() => {
           <button v-if="item.path && canShowInFolder" type="button" @click="emit('show-in-folder')">Show media file</button>
         </div>
 
-        <section v-if="detailMode !== 'movie-store'" class="glu-previews" aria-label="Scene previews">
+        <section v-if="item.extras?.length" class="glu-extras" aria-label="Movie extras">
+          <div class="glu-extras-heading"><h2>Extras</h2><span>{{ item.extras.length }} {{ item.extras.length === 1 ? 'video' : 'videos' }} found beside this movie</span></div>
+          <div class="glu-extra-list">
+            <article v-for="extra in item.extras" :key="extra.id" class="glu-extra">
+              <div><strong>{{ extra.title }}</strong><small>{{ formatRuntime(extra.runtimeMinutes) }}<template v-if="extra.resolution"> · {{ extra.resolution }}</template></small></div>
+              <div class="glu-extra-actions"><button type="button" class="primary" @click="emit('play-extra',extra)">▶ Play</button><button v-if="extra.path && canShowInFolder" type="button" @click="emit('show-extra-in-folder',extra)">Show file</button></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="glu-previews" aria-label="Scene previews">
           <div class="glu-preview-heading"><h2>Look inside</h2><span>{{ previewError || previewFramesMessage || (previewFramesLoading ? 'Preparing scene stills…' : item.path ? 'Hover or focus to play' : 'Artwork preview') }}</span></div>
           <div class="glu-preview-grid">
             <button

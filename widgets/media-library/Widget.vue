@@ -3,7 +3,7 @@ import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } fr
 import type { MediaImage, WidgetSdk, WidgetSecrets } from 'gexplorer/widgets'
 import { LibraryDetail, MediaShelf, type LibraryItem } from '../../shared/library-ui'
 import { posterAtlases, sampleMovies } from './fixtures'
-import { createScannedLibrary, preferredCoverSource, shelvesFor } from './media'
+import { bundleMovieExtras, createScannedLibrary, flattenLibraryExtras, preferredCoverSource, shelvesFor } from './media'
 import StoreFloor from './StoreFloor.vue'
 import { applyMetadataOverride, loadMetadataOverrides, saveMetadataOverrides, type MediaMetadataOverride } from './metadata-overrides'
 import { loadScanHistory, mediaPathKey, mergeScanHistory, saveScanHistory } from './scan-history'
@@ -11,7 +11,7 @@ import { scanVideoSources, videoMime, type ScannedVideo, type ScanProgress } fro
 import { loadMediaSources, saveMediaSources } from './sources'
 import {
   applyPersistedTmdbMetadata, diagnoseTmdbItem, enrichWithTmdb, persistedTmdbMetadata, restorePersistedTmdbMetadata,
-  TMDB_SECRET_HOSTS, TMDB_SECRET_NAME, tmdbImageUrl,
+  TMDB_SECRET_HOSTS, TMDB_SECRET_NAME, tmdbImageUrl, tmdbReviewsUrl,
   type PersistedTmdbMetadata, type TmdbProgress,
 } from './tmdb'
 
@@ -65,6 +65,7 @@ if (libraryMode.value !== 'shelf' && libraryMode.value !== 'store') libraryMode.
 const detailMode = life?.persistRef<DetailMode>('media-library.detail-mode',props.config?.view?.detailMode ?? 'movie-store')
   ?? ref<DetailMode>(props.config?.view?.detailMode ?? 'movie-store')
 const genreJump = ref('')
+const shelfFocusId = ref<string | null>(null)
 const storeShelfId = ref<string | null>(null)
 const storeShelfHistory = ref<string[]>([])
 const openId = ref<string | null>(null)
@@ -74,6 +75,7 @@ const previewStream = ref<{ itemId:string; url:string } | null>(null)
 const previewFrames = ref<Record<string,PreviewFrameState>>({})
 const browse = ref<HTMLElement | null>(null)
 const libraryMenu = ref<HTMLDetailsElement | null>(null)
+const libraryMenuTab = ref<'display'|'library'>('display')
 const player = ref<{ item:LibraryItem; url:string; mimeType?:string } | null>(null)
 const playerElement = ref<HTMLVideoElement | null>(null)
 const playerLoading = ref(false)
@@ -90,6 +92,8 @@ const genreShelves = computed(() => completeShelves.value.filter(shelf => genres
 const storeFocusedShelf = computed(() => query.value.trim()
   ? shelves.value[0] ?? null
   : completeShelves.value.find(shelf => shelf.id === storeShelfId.value) ?? null)
+const canNavigateBack = computed(() => !!query.value.trim()
+  || (libraryMode.value === 'store' ? !!storeShelfId.value : !!shelfFocusId.value))
 const openItem = computed(() => libraryItems.value.find(item => item.id === openId.value) ?? null)
 const openPreviewFrames = computed(() => openItem.value?.path ? previewFrames.value[openItem.value.path] : undefined)
 const collectionLabel = computed(() => scansRealFolders.value
@@ -125,7 +129,13 @@ function sourceKey() {
 }
 
 function copyItems(items: LibraryItem[]): LibraryItem[] {
-  return items.map(item => ({ ...item, genres:[...item.genres], previews:item.previews.map(cue => ({ ...cue })), artwork:{ ...item.artwork } }))
+  return items.map(item => ({
+    ...item,
+    genres:[...item.genres],
+    previews:item.previews.map(cue => ({ ...cue })),
+    artwork:{ ...item.artwork },
+    extras:item.extras ? copyItems(item.extras) : undefined,
+  }))
 }
 
 function syncScanShelfItems() {
@@ -244,6 +254,8 @@ function saveConfig(data: MediaLibraryConfig['data'], view: MediaLibraryConfig['
 
 async function revealShelf(shelfId: string) {
   query.value = ''
+  shelfFocusId.value = shelfId
+  genreJump.value = genreShelves.value.some(shelf => shelf.id === shelfId) ? shelfId : ''
   await nextTick()
   browse.value?.querySelector<HTMLElement>(`[data-shelf-id="${shelfId}"]`)?.scrollIntoView({ behavior:'smooth', block:'start' })
 }
@@ -312,11 +324,10 @@ async function play(item: LibraryItem) {
 }
 function setLibraryMode(mode: LibraryMode) {
   libraryMode.value = mode
-  if (mode === 'store') {
-    storeShelfId.value = null
-    storeShelfHistory.value = []
-    genreJump.value = ''
-  }
+  shelfFocusId.value = null
+  storeShelfId.value = null
+  storeShelfHistory.value = []
+  genreJump.value = ''
   saveConfig({ sources:sources.value }, { libraryMode:mode })
   libraryMenu.value?.removeAttribute('open')
 }
@@ -346,12 +357,31 @@ async function returnHome() {
   if (openId.value) closeDetail()
   query.value = ''
   genreJump.value = ''
+  shelfFocusId.value = null
   if (libraryMode.value === 'store') {
     await showStoreFloor()
     return
   }
   await nextTick()
   browse.value?.scrollTo({ top:0, behavior:'smooth' })
+}
+async function navigateBack() {
+  if (query.value.trim()) {
+    query.value = ''
+    await nextTick()
+    browse.value?.scrollTo({ top:0, behavior:'smooth' })
+    return
+  }
+  if (libraryMode.value === 'store' && storeShelfId.value) {
+    await backFromStoreShelf()
+    return
+  }
+  if (libraryMode.value === 'shelf' && shelfFocusId.value) {
+    shelfFocusId.value = null
+    genreJump.value = ''
+    await nextTick()
+    browse.value?.scrollTo({ top:0, behavior:'smooth' })
+  }
 }
 function setDetailMode(mode: DetailMode) {
   detailMode.value = mode
@@ -429,12 +459,12 @@ async function scanSources(force = false) {
       createScannedLibrary(result.videos, posterAtlases, coverUrls),
       tmdbMetadata.value,
     )
-    scannedMovies.value = restored.items.map(item => {
+    scannedMovies.value = bundleMovieExtras(restored.items.map(item => {
       const artwork = item.path ? savedCoverArtwork(customCovers.value[item.path]) : undefined
       const local = item.path ? applyMetadataOverride(item,metadataOverrides.value[item.path]) : item
       const withArrival = local.path ? { ...local, newArrival:discovered.has(mediaPathKey(local.path)) } : local
       return artwork ? { ...withArrival, artwork } : withArrival
-    })
+    }))
     if (restored.restored) {
       tmdbState.value = 'ready'
       tmdbMessage.value = `${restored.restored} TMDB ${restored.restored === 1 ? 'match' : 'matches'} restored from cache.`
@@ -608,6 +638,15 @@ function showMediaFile(item: LibraryItem) {
 
 function updateSynopsis(value: string) {
   if (openItem.value) void updateLocalMetadata(openItem.value,{ synopsis:value })
+}
+
+function updateTitle(value: string) {
+  if (openItem.value) void updateLocalMetadata(openItem.value,{ title:value })
+}
+
+function openTmdbReviews(item: LibraryItem) {
+  const url = tmdbReviewsUrl(item)
+  if (url) void sdk?.openUrl?.(url,{ title:`${item.title} reviews on TMDB` })
 }
 
 async function updateGenres(value: string[]) {
@@ -895,7 +934,7 @@ async function matchTmdb() {
   tmdbState.value = 'matching'
   tmdbMessage.value = ''
   try {
-    const matchItems = scannedMovies.value.map(item => {
+    const matchItems = flattenLibraryExtras(scannedMovies.value).map(item => {
       const withoutLocalFlag = item.localMetadataOverride ? { ...item, localMetadataOverride:false } : item
       return item.path ? applyPersistedTmdbMetadata(withoutLocalFlag,tmdbMetadata.value[item.path]) : withoutLocalFlag
     })
@@ -906,7 +945,7 @@ async function matchTmdb() {
       const metadata = persistedTmdbMetadata(item)
       if (item.path && metadata) records[item.path] = metadata
     }
-    scannedMovies.value = result.items.map(item => item.path ? applyMetadataOverride(item,metadataOverrides.value[item.path]) : item)
+    scannedMovies.value = bundleMovieExtras(result.items.map(item => item.path ? applyMetadataOverride(item,metadataOverrides.value[item.path]) : item))
     tmdbMetadata.value = records
     await persistTmdbMetadata()
     const artwork = await hydrateTmdbArtwork(result.items,revision)
@@ -1039,6 +1078,7 @@ async function jumpToGenre() {
     await focusStoreShelf(genreJump.value)
     return
   }
+  shelfFocusId.value = genreJump.value
   await nextTick()
   const target = browse.value?.querySelector<HTMLElement>(`[data-shelf-id="${genreJump.value}"]`)
   target?.scrollIntoView({ behavior:'smooth', block:'start' })
@@ -1048,7 +1088,7 @@ function keydown(event: KeyboardEvent) {
   if (coverFocusDraft.value) cancelCoverFocus()
   else if (player.value) closePlayer()
   else if (openId.value) closeDetail()
-  else if (libraryMode.value === 'store' && storeShelfId.value) void backFromStoreShelf()
+  else if (canNavigateBack.value) void navigateBack()
   else return   // CHANGED (2026-10-23): nothing to close here: Escape goes on to the shell
   event.stopPropagation()
 }
@@ -1072,10 +1112,11 @@ onBeforeUnmount(() => {
     @keydown="keydown"
   >
     <header class="media-library-topbar">
-      <button class="media-library-brand" type="button" aria-label="Return to GEM Video Club home" title="GEM Video Club home" @click="returnHome">
-        <span class="media-library-brand-logo" aria-hidden="true"><i>GEM</i><b>VIDEO CLUB</b></span>
-        <small>{{ collectionLabel }}</small>
-      </button>
+      <nav class="media-library-navigation" aria-label="Library navigation">
+        <button type="button" :disabled="!canNavigateBack" aria-label="Go back" title="Back" @click="navigateBack"><span aria-hidden="true">←</span></button>
+        <button type="button" aria-label="Go to library home" title="Home" @click="returnHome"><span aria-hidden="true">⌂</span></button>
+        <span class="media-library-brand-logo" aria-label="GEM Video Club"><i>GEM</i><b>VIDEO CLUB</b></span>
+      </nav>
       <div class="media-library-search" role="search"><span aria-hidden="true">⌕</span><input v-model="query" type="text" inputmode="search" enterkeyhint="search" autocomplete="off" :spellcheck="false" placeholder="Find a movie or genre" aria-label="Find a movie or genre" /><button v-if="query" type="button" aria-label="Clear search" @click="query = ''">×</button></div>
       <div class="media-library-tools">
         <label class="media-library-genres">
@@ -1086,44 +1127,52 @@ onBeforeUnmount(() => {
           </select>
         </label>
         <details ref="libraryMenu" class="media-library-menu">
-          <summary aria-label="Open library menu" title="Library menu"><span aria-hidden="true">☰</span></summary>
+          <summary aria-label="Open media library settings" title="Media library settings"><span aria-hidden="true">⚙</span></summary>
           <div class="media-library-menu-panel">
-            <p class="media-library-menu-label">Display</p>
-            <div class="media-library-mode media-library-display-mode" role="group" aria-label="Library display mode">
-              <button type="button" :class="{ active:libraryMode === 'shelf' }" @click="setLibraryMode('shelf')"><span aria-hidden="true">▰</span>Shelves</button>
-              <button type="button" :class="{ active:libraryMode === 'store' }" @click="setLibraryMode('store')"><span aria-hidden="true">⌂</span>Showroom</button>
+            <div class="media-library-menu-tabs" role="tablist" aria-label="Settings sections">
+              <button type="button" role="tab" :aria-selected="libraryMenuTab === 'display'" :class="{ active:libraryMenuTab === 'display' }" @click="libraryMenuTab = 'display'"><span aria-hidden="true">◫</span>Display</button>
+              <button type="button" role="tab" :aria-selected="libraryMenuTab === 'library'" :class="{ active:libraryMenuTab === 'library' }" @click="libraryMenuTab = 'library'"><span aria-hidden="true">▦</span>Library</button>
             </div>
-            <p class="media-library-menu-label media-library-detail-label">Focused title</p>
-            <div class="media-library-mode" role="group" aria-label="Focused title display mode">
-              <button type="button" :class="{ active:detailMode === 'classic' }" @click="setDetailMode('classic')"><span aria-hidden="true">▤</span>Classic</button>
-              <button type="button" :class="{ active:detailMode === 'movie-store' }" @click="setDetailMode('movie-store')"><span aria-hidden="true">◉</span>Movie store</button>
-            </div>
-            <div class="media-library-source-heading"><p class="media-library-menu-label">Media sources</p><small>{{ sources.length }}</small></div>
-            <ul v-if="sources.length" class="media-library-sources">
-              <li v-for="source in sources" :key="source" :title="source"><span><b>{{ sourceLabel(source) }}</b><small>{{ source }}</small></span><button type="button" :aria-label="`Remove ${sourceLabel(source)}`" @click="removeSource(source)">×</button></li>
-            </ul>
-            <p v-else class="media-library-no-sources">No folders selected yet.</p>
-            <p v-if="scanWarnings.length" class="media-library-scan-note" :title="scanWarnings.join('\n')">{{ scanWarnings.length }} folder {{ scanWarnings.length === 1 ? 'warning' : 'warnings' }}</p>
-            <p v-if="scanTruncated" class="media-library-scan-note">Scan limit reached; showing the first {{ scannedMovies.length }} videos.</p>
-            <p v-if="artworkProgress" class="media-library-scan-note">Preparing artwork {{ artworkProgress.completed }}/{{ artworkProgress.total }}…</p>
-            <p v-if="tmdbArtworkProgress" class="media-library-scan-note">Importing TMDB artwork {{ tmdbArtworkProgress.completed }}/{{ tmdbArtworkProgress.total }}…</p>
-            <button class="media-library-add-source" type="button" :disabled="!sdk?.ui" @click="addSource"><span aria-hidden="true">＋</span>Add media folder</button>
-            <button v-if="sources.length && sdk?.openListing" class="media-library-rescan" type="button" :disabled="scanState === 'scanning'" @click="scanSources(true)"><span aria-hidden="true">↻</span>{{ scanState === 'scanning' ? 'Scanning…' : 'Scan again' }}</button>
-            <div class="media-library-source-heading media-library-tmdb-heading"><p class="media-library-menu-label">TMDB metadata</p><small>{{ tmdbState === 'ready' ? '✓' : tmdbState === 'matching' ? '…' : 'β' }}</small></div>
-            <div class="media-library-tmdb-secret" :class="{ connected:tmdbSecret.set }">
-              <span>{{ tmdbSecret.set ? `Token saved ${tmdbSecret.hint ?? ''}` : 'No API token saved' }}</span>
-              <small>{{ tmdbSecret.set ? `Sent only to ${(tmdbSecret.hosts ?? [...TMDB_SECRET_HOSTS]).join(', ')}` : 'Enter it through GEM Shell’s protected field.' }}</small>
-            </div>
-            <p class="media-library-tmdb-privacy">Stored OS-protected by GEM Shell. This widget never receives the token.</p>
-            <div class="media-library-tmdb-actions">
-              <button type="button" :disabled="!sdk?.secrets || tmdbSecretBusy || tmdbState === 'matching'" @click="promptTmdbSecret">{{ tmdbSecretBusy ? 'Please wait…' : tmdbSecret.set ? 'Replace token' : 'Connect TMDB' }}</button>
-              <button v-if="tmdbSecret.set" type="button" :disabled="tmdbSecretBusy || tmdbState === 'matching'" @click="forgetTmdbToken">Forget token</button>
-              <button class="media-library-tmdb-match" type="button" :disabled="!sdk?.networkFetch || !tmdbSecret.set || !scannedMovies.length || tmdbState === 'matching'" @click="matchTmdb">
-                {{ tmdbState === 'matching' ? `Matching ${tmdbProgress?.completed ?? 0}/${tmdbProgress?.total ?? scannedMovies.length}…` : tmdbState === 'ready' ? 'Refresh matches' : 'Match with TMDB' }}
-              </button>
-            </div>
-            <p v-if="tmdbMessage" class="media-library-tmdb-status" :class="{ error:tmdbState === 'error' }">{{ tmdbMessage }}</p>
-            <p class="media-library-tmdb-credit"><b>TMDB</b> This product uses the TMDB API but is not endorsed or certified by TMDB. Posters and episode stills are cached by GEM Shell.</p>
+            <section v-if="libraryMenuTab === 'display'" class="media-library-menu-tab-panel" role="tabpanel" aria-label="Display settings">
+              <p class="media-library-menu-label">Library view</p>
+              <div class="media-library-mode media-library-display-mode" role="group" aria-label="Library display mode">
+                <button type="button" :class="{ active:libraryMode === 'shelf' }" @click="setLibraryMode('shelf')"><span aria-hidden="true">▰</span>Shelves</button>
+                <button type="button" :class="{ active:libraryMode === 'store' }" @click="setLibraryMode('store')"><span aria-hidden="true">⌂</span>Showroom</button>
+              </div>
+              <p class="media-library-menu-label media-library-detail-label">Focused title</p>
+              <div class="media-library-mode" role="group" aria-label="Focused title display mode">
+                <button type="button" :class="{ active:detailMode === 'classic' }" @click="setDetailMode('classic')"><span aria-hidden="true">▤</span>Classic</button>
+                <button type="button" :class="{ active:detailMode === 'movie-store' }" @click="setDetailMode('movie-store')"><span aria-hidden="true">◉</span>Movie store</button>
+              </div>
+            </section>
+            <section v-else class="media-library-menu-tab-panel" role="tabpanel" aria-label="Media library settings">
+              <div class="media-library-source-heading"><p class="media-library-menu-label">Media sources</p><small>{{ sources.length }}</small></div>
+              <ul v-if="sources.length" class="media-library-sources">
+                <li v-for="source in sources" :key="source" :title="source"><span><b>{{ sourceLabel(source) }}</b><small>{{ source }}</small></span><button type="button" :aria-label="`Remove ${sourceLabel(source)}`" @click="removeSource(source)">×</button></li>
+              </ul>
+              <p v-else class="media-library-no-sources">No folders selected yet.</p>
+              <p v-if="scanWarnings.length" class="media-library-scan-note" :title="scanWarnings.join('\n')">{{ scanWarnings.length }} folder {{ scanWarnings.length === 1 ? 'warning' : 'warnings' }}</p>
+              <p v-if="scanTruncated" class="media-library-scan-note">Scan limit reached; showing the first {{ scannedMovies.length }} videos.</p>
+              <p v-if="artworkProgress" class="media-library-scan-note">Preparing artwork {{ artworkProgress.completed }}/{{ artworkProgress.total }}…</p>
+              <p v-if="tmdbArtworkProgress" class="media-library-scan-note">Importing TMDB artwork {{ tmdbArtworkProgress.completed }}/{{ tmdbArtworkProgress.total }}…</p>
+              <button class="media-library-add-source" type="button" :disabled="!sdk?.ui" @click="addSource"><span aria-hidden="true">＋</span>Add media folder</button>
+              <button v-if="sources.length && sdk?.openListing" class="media-library-rescan" type="button" :disabled="scanState === 'scanning'" @click="scanSources(true)"><span aria-hidden="true">↻</span>{{ scanState === 'scanning' ? 'Scanning…' : 'Scan again' }}</button>
+              <div class="media-library-source-heading media-library-tmdb-heading"><p class="media-library-menu-label">TMDB metadata</p><small>{{ tmdbState === 'ready' ? '✓' : tmdbState === 'matching' ? '…' : 'β' }}</small></div>
+              <div class="media-library-tmdb-secret" :class="{ connected:tmdbSecret.set }">
+                <span>{{ tmdbSecret.set ? `Token saved ${tmdbSecret.hint ?? ''}` : 'No API token saved' }}</span>
+                <small>{{ tmdbSecret.set ? `Sent only to ${(tmdbSecret.hosts ?? [...TMDB_SECRET_HOSTS]).join(', ')}` : 'Enter it through GEM Shell’s protected field.' }}</small>
+              </div>
+              <p class="media-library-tmdb-privacy">Stored OS-protected by GEM Shell. This widget never receives the token.</p>
+              <div class="media-library-tmdb-actions">
+                <button type="button" :disabled="!sdk?.secrets || tmdbSecretBusy || tmdbState === 'matching'" @click="promptTmdbSecret">{{ tmdbSecretBusy ? 'Please wait…' : tmdbSecret.set ? 'Replace token' : 'Connect TMDB' }}</button>
+                <button v-if="tmdbSecret.set" type="button" :disabled="tmdbSecretBusy || tmdbState === 'matching'" @click="forgetTmdbToken">Forget token</button>
+                <button class="media-library-tmdb-match" type="button" :disabled="!sdk?.networkFetch || !tmdbSecret.set || !scannedMovies.length || tmdbState === 'matching'" @click="matchTmdb">
+                  {{ tmdbState === 'matching' ? `Matching ${tmdbProgress?.completed ?? 0}/${tmdbProgress?.total ?? scannedMovies.length}…` : tmdbState === 'ready' ? 'Refresh matches' : 'Match with TMDB' }}
+                </button>
+              </div>
+              <p v-if="tmdbMessage" class="media-library-tmdb-status" :class="{ error:tmdbState === 'error' }">{{ tmdbMessage }}</p>
+              <p class="media-library-tmdb-credit"><b>TMDB</b> This product uses the TMDB API but is not endorsed or certified by TMDB. Posters and episode stills are cached by GEM Shell.</p>
+            </section>
           </div>
         </details>
       </div>
@@ -1139,8 +1188,6 @@ onBeforeUnmount(() => {
         :active-shelf="storeFocusedShelf"
         :selected-id="selectedId"
         @select-shelf="focusStoreShelf"
-        @back="backFromStoreShelf"
-        @showroom="showStoreFloor"
         @open="open"
       />
       <MediaShelf
@@ -1171,8 +1218,12 @@ onBeforeUnmount(() => {
       @flip="flipped = !flipped"
       @preview="preview"
       @play="play(openItem)"
+      @play-extra="play"
       @show-in-folder="showMediaFile(openItem)"
+      @show-extra-in-folder="showMediaFile"
       @edit-artwork="manageArtwork(openItem)"
+      @open-tmdb="openTmdbReviews(openItem)"
+      @update-title="updateTitle"
       @update-synopsis="updateSynopsis"
       @update-genres="updateGenres"
     />

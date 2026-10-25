@@ -68,6 +68,12 @@ export function tmdbImageUrl(path: string | undefined, size: 'w500'|'w780' = 'w5
   return `${IMAGE_API}/${size}${clean}`
 }
 
+export function tmdbReviewsUrl(item: Pick<LibraryItem,'tmdbId'|'tmdbType'>): string | undefined {
+  if (!Number.isInteger(item.tmdbId) || Number(item.tmdbId) <= 0) return undefined
+  const type = item.tmdbType === 'tv' ? 'tv' : item.tmdbType === 'movie' ? 'movie' : undefined
+  return type ? `https://www.themoviedb.org/${type}/${item.tmdbId}/reviews` : undefined
+}
+
 export function persistedTmdbMetadata(item: LibraryItem): PersistedTmdbMetadata | undefined {
   if (item.metadataSource !== 'tmdb' || item.tmdbId == null) return undefined
   const {
@@ -81,7 +87,7 @@ export function persistedTmdbMetadata(item: LibraryItem): PersistedTmdbMetadata 
 }
 
 export function applyPersistedTmdbMetadata(item: LibraryItem, metadata: PersistedTmdbMetadata | undefined): LibraryItem {
-  return metadata ? { ...item, ...metadata, genres:[...metadata.genres] } : item
+  return metadata ? { ...item, ...metadata, genres:[...metadata.genres], tmdbMatchAttempted:true } : item
 }
 
 export function restorePersistedTmdbMetadata(
@@ -223,6 +229,7 @@ function applyCommon(item: LibraryItem, result: SearchResult, genreMap: Map<numb
     tmdbStillPath:result.backdrop_path || undefined,
     tmdbRating:result.vote_average,
     metadataSource:'tmdb',
+    tmdbMatchAttempted:true,
   }
 }
 
@@ -254,7 +261,7 @@ export async function enrichWithTmdb(
           seriesCache.set(seriesKey,seriesPromise)
         }
         const series = await seriesPromise
-        if (!series) { enriched.push(item); continue }
+        if (!series) { enriched.push({ ...item, tmdbMatchAttempted:true }); continue }
         const seasonKey = `${series.id}:${item.seasonNumber}`
         let seasonPromise = seasonCache.get(seasonKey)
         if (!seasonPromise) {
@@ -277,14 +284,14 @@ export async function enrichWithTmdb(
         matched += 1
       } else {
         const movie = await search(sdk,'movie',searchTitles(item,item.title),item.year)
-        if (!movie) { enriched.push(item); continue }
+        if (!movie) { enriched.push({ ...item, tmdbMatchAttempted:true }); continue }
         const common = applyCommon(item,movie,movieGenres)
         enriched.push({ ...common, title:movie.title?.trim() || common.title })
         matched += 1
       }
     } catch (error) {
       if (error instanceof Error && /token|secret|Network capability|TMDB request failed/i.test(error.message)) throw error
-      enriched.push(item)
+      enriched.push({ ...item, tmdbMatchAttempted:true })
     }
   }
   onProgress({ completed:items.length, total:items.length, title:'' })

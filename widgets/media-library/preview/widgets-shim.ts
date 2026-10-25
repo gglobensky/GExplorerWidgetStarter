@@ -2,6 +2,16 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 // Isolated-preview stand-in for the host's public composable. Production keeps
 // gexplorer/widgets external and receives the real implementation from GEM Shell.
+export async function startRename(_target: string | HTMLElement, options: {
+  value: string
+  validate?: (value: string) => string | null
+  onCommit?: (value: string) => void | Promise<void>
+}) {
+  const value = window.prompt('Rename',options.value)
+  if (value === null || options.validate?.(value)) return
+  await options.onCommit?.(value)
+}
+
 export function useScrollHints(options: {
   scrollEl: { value: HTMLElement | null }
   axis?: 'x' | 'y'

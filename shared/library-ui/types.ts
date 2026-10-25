@@ -27,6 +27,8 @@ export type LibraryItem = {
   /** Discovered in the most recent completed Media Library scan. */
   newArrival?: boolean
   path?: string
+  /** Scan root containing this file. Used to distinguish movie folders from broad source roots. */
+  sourceRoot?: string
   mimeType?: string
   resolution?: string
   mediaKind?: 'movie' | 'episode'
@@ -46,6 +48,10 @@ export type LibraryItem = {
   tmdbStillPath?: string
   previewImageSrc?: string
   tmdbRating?: number
+  /** TMDB was queried for this file, whether or not it produced an accepted title match. */
+  tmdbMatchAttempted?: boolean
+  /** Unmatched videos stored beside this identified movie. */
+  extras?: LibraryItem[]
 }
 
 export type LibraryShelf = {
