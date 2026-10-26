@@ -1553,7 +1553,7 @@ declare module 'gexplorer/widgets' {
          * The picture's decoder profile ('hevc-main10', 'h264'...), whether this machine's graphics decode
          * it, whether the WebView can without them, and whether it stopped GEM Shell here before (unsafe).
          */
-        decode: { profile: string; hardware: 'yes' | 'no' | 'unknown'; software: boolean; unsafe: boolean } | null
+        decode: { profile: string; hardware: 'yes' | 'no' | 'unknown'; software: boolean; unsafe: boolean; /** The adapter judged ("1: NVIDIA ... (why)"). */ adapter?: string | null } | null
         verdict: MediaVerdict
         /** One short sentence per problem, for the user. */
         reasons: string[]
