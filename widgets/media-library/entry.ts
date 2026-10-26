@@ -1,4 +1,5 @@
 import Widget from './Widget.vue'
+import { VIDEO_EXTENSIONS } from './scanner'
 import AudioCard from './AudioCard.vue'
 import bungeeLicense from './assets/Bungee-OFL.txt?raw'
 import tmdbLogo from './assets/tmdb-logo.png?inline'
@@ -6,7 +7,7 @@ import tmdbLogo from './assets/tmdb-logo.png?inline'
 export default {
   api:'1.0',
   id:'media-library',
-  version:'0.6.0',
+  version:'0.9.1',
   license:'PolyForm-Noncommercial-1.0.0',
   Component:Widget,
   displayName:'GEM Video Club',
@@ -15,7 +16,10 @@ export default {
   icon:'film',
   contexts:{
     grid:{ minSize:{ cols:3, rows:3 }, defaultSize:{ cols:8, rows:6 } },
-    sidebar:{ minHeight:260 },
+    // scroll 'self' (2026-10-26): the shell gives the row a maximum (half the sidebar, or the height the user
+    // drags) and the Video Club fills it, scrolling its own shelves. With the default ('host': as tall as the
+    // content) the library measured 0 px tall (its size containment, for its cqh units): a blank grey box.
+    sidebar:{ minHeight:260, scroll:'self' },
   },
   defaults:{ data:{ selectedId:'', sources:[] }, view:{ atmosphere:true, displayMode:'video-club', sortMode:'title', backgroundSound:true } },
   // The movie's sound going on while the library is off screen (useBackgroundPlayback.ts): its card
@@ -33,6 +37,16 @@ export default {
   ],
   // Right-click menus (Widget.vue: sdk.ui().contextMenu, onMenuItem). A title's file is its subject:
   // other widgets' actions and your own commands work on it.
+  // NEW (2026-10-26): "Play in GEM Video Club" on a video file in other widgets' menus (the GExplorer's...).
+  // GEM Shell shows it also while the Video Club is off screen but placed somewhere: it brings it back first.
+  actions:[
+    {
+      id:'play',
+      label:'Play',
+      accepts:{ contexts:['file'], extensions:VIDEO_EXTENSIONS.map(ext => `.${ext}`), count:{ max:1 } },
+      contextMenu:{ label:'Play in GEM Video Club', icon:'▶', submenuLabel:'GEM Video Club' },
+    },
+  ],
   menuContexts:[
     { id:'media.title', label:'Movie or episode', icon:'🎬', subject:'files' },
     { id:'media.library', label:'Video Club background', icon:'📼' },
@@ -46,7 +60,8 @@ export default {
       { id:'watched', label:'Mark as watched', icon:'✓', contexts:['media.title'] },
       { id:'unwatched', label:'Mark as unwatched', icon:'↺', contexts:['media.title'] },
       { id:'title.sep2', type:'separator', contexts:['media.title'] },
-      { id:'show-file', label:'Show media file', icon:'⌖', contexts:['media.title'] },
+      // 'show-file' (Show media file) removed 2026-10-26: GEM Shell adds Open / Open with / Show in folder /
+      // Copy path / Copy folder path after these items (media.title is a 'files' context).
       { id:'artwork', label:'Change artwork…', icon:'✎', contexts:['media.title'] },
       { id:'match', label:'Match with TMDB', icon:'ⓘ', contexts:['media.title'] },
 

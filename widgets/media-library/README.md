@@ -2,11 +2,34 @@
 
 GEM Video Club establishes the shared GEM Library UI and video-store shelf experience without requiring Shell changes. With no source folder selected it shows an empty shelf of DVD cases, the middle one asking for a media folder. Once folders are selected, it scans real local video files through the public widget SDK.
 
+## What's new in 0.9.1 (2026-10-26)
+
+- **Fixed: blank in the sidebar.** The library has CSS size containment (its layout uses container height units), so in the sidebar, where a widget is as tall as its content, it measured 0 px: a dark grey box. It now declares `contexts.sidebar.scroll: 'self'`: the shell gives its row a maximum (half the sidebar by default, or the height dragged in edit mode) and the Video Club fills it and scrolls its own shelves.
+
+## What's new in 0.9.0 (2026-10-26)
+
+- **Play in GEM Video Club** on a video file in the GExplorer's right-click menu (and any widget showing files): `entry.ts` `actions`. It shows even while the Video Club is off screen, as long as it is placed somewhere (a hub, the sidebar, the toolbar): GEM Shell brings it back (its hub in a tab, the sidebar opened), then the Video Club plays the file: its own title when the library holds it (artwork, resume point), else a bare title from the file name.
+
+## What's new in 0.8.0 (2026-10-26)
+
+- **Open with** (GEM Shell's `sdk.ui().openWith`): the details page's *Default app* button and the player's *Open externally* become **Open with…**, a list of the programs that open the movie (the default one first), then *Other program…* (the shell's picker). Older shells keep the default-app button.
+- **The shell's file items on a movie's right-click menu:** `media.title` is a `files` context, so GEM Shell adds Open, Open with ▸, Show in folder, Copy path and Copy folder path after the Video Club's own items. The Video Club's *Show media file* item is gone (the shell's *Show in folder* does it).
+
+## What's new in 0.7.0 (2026-10-25)
+
+- **Three choices for when the Video Club is hidden** (Settings → Display → Playback), replacing the *Keep playing when hidden* switch:
+  - *Keep playing audio when hidden* (the default, and 0.6's behaviour): the sound goes on, the picture stops decoding.
+  - *Keep playing when hidden*: the movie goes on in its card in the operations tray, picture and all. The card shows the shell's same `<video>` through a `<gex-video-surface>`, so the picture decodes only while the card is on screen (fold the tray and it's sound only again). Needs `sdk.video()`; greyed out on older shells.
+  - *Pause when hidden*: the movie stops and reopens paused where it was.
+  - Saved as `view.background` (`'sound' | 'picture' | 'off'`); `view.backgroundSound` is still written for older versions and read when `background` is missing.
+- **Picture-in-picture** (GEM Shell's rack videos allow it from 2026-10-25, `VideoHandle.pictureInPicture`): the player's own button (native controls) and a ⧉ button on the tray card. The window survives switching tabs, and while it is open the video is held whatever the setting. On older shells picture-in-picture stays disabled.
+
 ## What's new in 0.6.0 (2026-10-25)
 
 - **Playback through GEM Shell's video rack** (`sdk.video()`, new in the shell the same day): the movie plays in a `<video>` the shell owns, shown in the player with `<gex-video-surface>`. With *Keep playing when hidden* on, the background job holds it: leaving the screen, the shell parks the very same element and it plays on (sound only: the shell stops decoding its picture while parked, when the WebView allows it); back on screen, the same element is shown again. No muted twin, no hand-over, no drift, and one decoder instead of two. The tray card controls the parked video. With the setting off, the shell releases the video with the widget and the player reopens paused where it was. `useParkedPlayback.ts`; on shells without `sdk.video()`, the 0.5.0 muted twin (`useBackgroundPlayback.ts`) still does the job.
 - **Checks a video before playing it** (`sdk.mediaProbe`, GEM Shell phase 2): when GEM Shell says the picture or the sound can't be decoded on this computer (10-bit HEVC without a hardware decoder for it, a format that crashed GEM Shell here before, AC-3 / DTS sound, an AVI...), a box says why and offers the default video player (the default button) or *Play here anyway* (not asked again for that file this session). Without `mediaProbe` (older shells) it just plays.
 - **Converted playback** (GEM Shell phases 3-4): when the shell can convert the file while it plays (`probe.conversion`: an AVI or TS repackaged, AC-3 / DTS sound converted to AAC, a picture this computer can't decode re-encoded to H.264 by ffmpeg), the box is skipped. The player sets its stream URL as usual, and the shell's video plays it converted; the shell shows its own notice. The player and the background playback compare URLs through `element.src` (it keeps answering the URL set, whatever plays underneath).
+- **Audio and subtitle tracks** (GEM Shell's `VideoHandle.tracks`): two menus above the movie, each disabled when there is nothing to choose. Track names come from the file ("Commentary with Eli Craig… · English · Stereo AAC", "SDH · English"; `track-labels.ts`). The shell does the switching: another audio track natively when the WebView can, else by converting with that track; text subtitles as a WebVTT track; picture subtitles (PGS, VobSub) drawn into the picture by a conversion. The place and play / pause are kept. A **Converting…** note shows while GEM Shell prepares the next seconds (the start, a seek, a track switch). The resume position applies once per title (a track switch reloads the stream).
 
 ## What's new in 0.5.0 (2026-10-25)
 

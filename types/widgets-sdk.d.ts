@@ -1763,6 +1763,12 @@ declare module 'gexplorer/widgets' {
     // ── Video (sdk.video()) ─────────────────────────────────────────────
     /** Why a video was released: release(), made room for a newer one (2 at most), its widget unmounted unheld, its widget removed. */
     export type VideoReleaseReason = 'released' | 'evicted' | 'unmounted' | 'destroyed'
+    /** A file's tracks, as the shell's video rack knows them (VideoHandle.tracks). */
+    export type MediaTracks = {
+        audio: { index: number; codec: string; channels: number | null; language: string | null; title: string | null; default: boolean }[]
+        /** image: a picture subtitle (PGS, VobSub), drawn into the picture by a conversion; vtt: a text one, shown as a <track>. */
+        subtitles: { index: number; codec: string; language: string | null; title: string | null; default: boolean; image: boolean; vtt: string | null }[]
+    }
     export interface VideoHandle {
         readonly id: string
         readonly ownerId: string
@@ -1786,11 +1792,35 @@ declare module 'gexplorer/widgets' {
         /** The picture is not being decoded right now. */
         readonly pictureSuspended: boolean
         /**
+         * Shown in the system's picture-in-picture window right now (GEM Shell 2026-10-25 and later;
+         * undefined before, when rack videos had picture-in-picture disabled). Ask for it with
+         * `element.requestPictureInPicture()` from a user gesture. The window survives the widget
+         * leaving the screen (the element only moves into the shell's keeper), its picture keeps
+         * decoding even parked, and the 2-video cap releases it last. The rest is the widget's
+         * business: the video is released with the widget unless a job holds it, as for sound.
+         */
+        readonly pictureInPicture?: boolean
+        /**
          * GEM Shell converts its stream while it plays ('remux' | 'audio' | 'video': the file can't play as
          * it is here), or null. Set `element.src` to a loopback stream (sdk.mintStreamHttp) as usual: the
          * shell decides, and `src` / `currentSrc` keep answering that URL either way.
          */
         readonly conversion: 'remux' | 'audio' | 'video' | null
+        /** The file's audio and subtitle tracks, once known (a GEM Shell stream); null before, or for other sources. */
+        readonly tracks: MediaTracks | null
+        /** The audio track playing (index in tracks.audio), or null. */
+        readonly audioTrack: number | null
+        /** The subtitle track shown (index in tracks.subtitles), or null: none. */
+        readonly subtitleTrack: number | null
+        /**
+         * Plays another audio track: the WebView switches itself when it can, else GEM Shell converts with that
+         * track. The place and play / pause are kept.
+         */
+        selectAudioTrack(index: number): void
+        /** Shows a subtitle track (null: none): a text one as a <track>, a picture one drawn in by a conversion. */
+        selectSubtitleTrack(index: number | null): void
+        /** Called when the tracks become known or the choice changes. Returns the unsubscribe. */
+        onTracksChange(fn: () => void): () => void
         /** Called once when it is released. Returns the unsubscribe. */
         onRelease(fn: (reason: VideoReleaseReason) => void): () => void
         release(): void
@@ -2101,8 +2131,26 @@ declare module 'gexplorer/widgets' {
          *   <div class="row" @contextmenu="e => ui.contextMenu(e, { context: 'player.track', ref: t.id, selection: [t.path] })">
          *   function onMenuItem(m: WidgetMenuItemMessage) { if (m.itemId === 'remove') removeById(m.ref) }
          *   defineExpose({ onMenuItem })
+         *
+         * A context with `subject: 'files'` also gets GEM Shell's own file items after the widget's
+         * (2026-10-26): Open, Open with ▸, Show in folder, Copy path, Copy folder path. The shell picks
+         * them and their labels; they act FOR this widget on opts.selection, which the shell filters
+         * first: local file paths only, and no executables (.exe, .bat, .lnk, …) unless the widget
+         * declares the Exec capability. Files left out are dropped from the whole menu, silently.
          */
         contextMenu(event: MouseEvent, opts?: WidgetContextMenuOptions): Promise<void>
+        /**
+         * GEM Shell's Open with list for a file (2026-10-26; undefined on older shells): the programs
+         * that open it, ranked (the default marked), then "Other program…" (the shell's picker). At the
+         * click (at: the MouseEvent) or under a button (at: an element of this widget); same rules as
+         * menu(): only right after the user's own click in the widget, only while on screen. The program
+         * picked opens the file for this widget (checked as it: an executable needs the Exec capability
+         * and the user's permission). 'refused': no gesture, off screen, not a local file, or an
+         * executable without Exec.
+         *
+         *   <button @click="e => ui.openWith?.(movie.path, e.currentTarget as HTMLElement)">Open with…</button>
+         */
+        openWith?(path: string, at: MouseEvent | HTMLElement): Promise<'opened' | 'cancelled' | 'refused'>
         /**
          * A small menu of choices (flat: no submenus), drawn by the shell and kept on screen: at the
          * click (at: the MouseEvent, a 'contextmenu' one included) or under a button (at: an element of

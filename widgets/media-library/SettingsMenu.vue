@@ -10,10 +10,13 @@ import type { ScanState } from './useLibraryScan'
 import { sourceLabel } from './useLibraryScan'
 import type { TmdbState } from './useTmdbMatching'
 import type { TmdbProgress } from './tmdb'
+import type { BackgroundMode } from './useParkedPlayback'
 
 defineProps<{
   displayMode: DisplayMode
-  keepPlaying: boolean
+  backgroundMode: BackgroundMode
+  /** GEM Shell can show the movie in the tray card (sdk.video()). */
+  canShowPicture: boolean
   sources: string[]
   canAddSource: boolean
   canScan: boolean
@@ -37,7 +40,7 @@ defineProps<{
 }>()
 const emit = defineEmits<{
   (e:'display-mode', mode:DisplayMode):void
-  (e:'keep-playing', on:boolean):void
+  (e:'background-mode', mode:BackgroundMode):void
   (e:'add-source'):void
   (e:'remove-source', path:string):void
   (e:'scan'):void
@@ -45,6 +48,12 @@ const emit = defineEmits<{
   (e:'tmdb-forget'):void
   (e:'tmdb-match'):void
 }>()
+
+const BACKGROUND_CHOICES: ReadonlyArray<{ id:BackgroundMode; label:string; hint:string }> = [
+  { id:'sound', label:'Keep playing audio when hidden', hint:'Switching tabs or folding the sidebar keeps the sound going (light on the processor); the picture comes back where it is.' },
+  { id:'picture', label:'Keep playing when hidden', hint:'The movie goes on in its card in the operations tray, picture and all. Uses more of the graphics chip while the card shows.' },
+  { id:'off', label:'Pause when hidden', hint:'Leaving the Video Club stops the movie; it reopens paused where it was.' },
+]
 
 const menu = ref<HTMLDetailsElement | null>(null)
 const tab = ref<'display'|'library'>('display')
@@ -91,10 +100,12 @@ defineExpose({ close })
           </button>
         </div>
         <p class="media-library-menu-label media-library-detail-label">Playback</p>
-        <label class="media-library-toggle">
-          <input type="checkbox" :checked="keepPlaying" @change="emit('keep-playing', ($event.target as HTMLInputElement).checked)" />
-          <span><b>Keep playing when hidden</b><small>Switching tabs or folding the sidebar keeps the sound going; the picture comes back where it is.</small></span>
-        </label>
+        <div class="media-library-background-choices" role="radiogroup" aria-label="When the Video Club is hidden">
+          <label v-for="choice in BACKGROUND_CHOICES" :key="choice.id" class="media-library-toggle" :class="{ disabled:choice.id === 'picture' && !canShowPicture }">
+            <input type="radio" name="media-library-background" :value="choice.id" :checked="backgroundMode === choice.id" :disabled="choice.id === 'picture' && !canShowPicture" @change="emit('background-mode', choice.id)" />
+            <span><b>{{ choice.label }}</b><small>{{ choice.id === 'picture' && !canShowPicture ? 'Needs a newer GEM Shell.' : choice.hint }}</small></span>
+          </label>
+        </div>
       </section>
       <section v-else class="media-library-menu-tab-panel" role="tabpanel" aria-label="Media library settings">
         <div class="media-library-source-heading"><p class="media-library-menu-label">Media sources</p><small>{{ sources.length }}</small></div>

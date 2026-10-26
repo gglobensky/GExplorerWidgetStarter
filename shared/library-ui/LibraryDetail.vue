@@ -18,6 +18,8 @@ const props = defineProps<{
   extraThumbs?: Record<string, string>
   /** The file can be opened with the system's default app. */
   canOpenExternally?: boolean
+  /** NEW (2026-10-26): the host offers a choice of programs (sdk.ui().openWith): the button says "Open with…". */
+  openWithChoice?: boolean
 }>()
 const emit = defineEmits<{
   (e: 'close'): void
@@ -26,8 +28,8 @@ const emit = defineEmits<{
   (e: 'play-from-start'): void
   (e: 'play-extra', item: LibraryItem): void
   (e: 'show-in-folder'): void
-  /** Open the file with the system's default app (another player). */
-  (e: 'open-external'): void
+  /** Open the file in another app: the default one, or (openWithChoice) a list under <anchor>, the button. */
+  (e: 'open-external', anchor?: HTMLElement): void
   (e: 'show-extra-in-folder', item: LibraryItem): void
   (e: 'edit-artwork'): void
   (e: 'open-tmdb'): void
@@ -397,7 +399,7 @@ onBeforeUnmount(() => {
       <aside v-if="detailMode === 'movie-store'" class="glu-store-controls" aria-label="Media controls">
         <button type="button" class="primary" :disabled="ejecting" :title="resumeLabel || undefined" @click="playMedia"><span aria-hidden="true">▶</span><b>{{ item.resumeSeconds ? 'Resume' : item.watched ? 'Watch again' : 'Play' }}</b></button>
         <button v-if="item.resumeSeconds" type="button" @click="emit('play-from-start')"><span aria-hidden="true">⏮</span><b>Start over</b></button>
-        <button v-if="item.path && canOpenExternally" type="button" title="Open with your default video app" @click="emit('open-external')"><span aria-hidden="true">⧉</span><b>Default app</b></button>
+        <button v-if="item.path && canOpenExternally" type="button" :title="openWithChoice ? 'Open it in another app' : 'Open with your default video app'" @click="emit('open-external', $event.currentTarget as HTMLElement)"><span aria-hidden="true">⧉</span><b>{{ openWithChoice ? 'Open with…' : 'Default app' }}</b></button>
         <button v-if="item.path && canShowInFolder" type="button" @click="emit('show-in-folder')"><span aria-hidden="true">⌖</span><b>Show media file</b></button>
       </aside>
       <div class="glu-detail-case-wrap">
@@ -547,7 +549,7 @@ onBeforeUnmount(() => {
         <div class="glu-actions">
           <button type="button" class="primary" :title="resumeLabel || undefined" @click="playMedia">{{ item.resumeSeconds ? `▶ ${resumeLabel}` : item.mediaKind === 'episode' ? '▶ Play episode' : '▶ Play movie' }}</button>
           <button v-if="item.resumeSeconds" type="button" @click="emit('play-from-start')">⏮ Start over</button>
-          <button v-if="item.path && canOpenExternally" type="button" title="Open with your default video app" @click="emit('open-external')">⧉ Open in default app</button>
+          <button v-if="item.path && canOpenExternally" type="button" :title="openWithChoice ? 'Open it in another app' : 'Open with your default video app'" @click="emit('open-external', $event.currentTarget as HTMLElement)">⧉ {{ openWithChoice ? 'Open with…' : 'Open in default app' }}</button>
           <button v-if="item.path && canShowInFolder" type="button" @click="emit('show-in-folder')">Show media file</button>
         </div>
 

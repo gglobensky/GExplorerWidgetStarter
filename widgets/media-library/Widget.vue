@@ -24,12 +24,12 @@ import { usePreviewMedia } from './usePreviewMedia'
 import { useTmdbMatching } from './useTmdbMatching'
 import { useWatchProgress } from './useWatchProgress'
 import { useBackgroundPlayback } from './useBackgroundPlayback'
-import { useParkedPlayback } from './useParkedPlayback'
+import { useParkedPlayback, type BackgroundMode } from './useParkedPlayback'
 
 type MediaLibraryConfig = {
   data?: { selectedId?: string; sources?: string[]; customCovers?: Record<string,CoverPreference> }
   /** libraryMode / detailMode: before displayMode (2026-10-25), read once to pick it. */
-  view?: { atmosphere?: boolean; displayMode?: DisplayMode; sortMode?: SortMode; backgroundSound?: boolean; libraryMode?: string; detailMode?: string }
+  view?: { atmosphere?: boolean; displayMode?: DisplayMode; sortMode?: SortMode; backgroundSound?: boolean; background?: BackgroundMode; libraryMode?: string; detailMode?: string }
 }
 const props = defineProps<{
   sourceId?: string
@@ -84,13 +84,22 @@ const activePreview = ref<number | null>(null)
 const browse = ref<HTMLElement | null>(null)
 const player = ref<{ item:LibraryItem; url:string; mimeType?:string; startAt:number; autoplay:boolean; handle?:VideoHandle | null } | null>(null)
 const playerView = ref<InstanceType<typeof PlayerOverlay> | null>(null)
-/** The sound goes on while the library is off screen (default on). */
-const keepPlaying = computed(() => props.config?.view?.backgroundSound !== false)
+/**
+ * While the library is off screen: 'sound' (default), 'picture' (the tray card shows the video: GEM
+ * Shell's video rack only) or 'off'. Saved as `view.background`; 0.6 and older saved `backgroundSound`.
+ */
+const backgroundMode = computed<BackgroundMode>(() => {
+  const view = props.config?.view
+  const mode = view?.background ?? (view?.backgroundSound === false ? 'off' : 'sound')
+  return mode === 'picture' && !sdk?.video ? 'sound' : mode
+})
+/** The sound goes on while the library is off screen. */
+const keepPlaying = computed(() => backgroundMode.value !== 'off')
 /**
  * GEM Shell's video rack (sdk.video()): the movie plays in a <video> the shell owns, parked (still
  * playing) while the library is off screen. Older shells: `background`'s muted twin.
  */
-const parked = useParkedPlayback(ctx, notePosition, () => keepPlaying.value)
+const parked = useParkedPlayback(ctx, notePosition, () => backgroundMode.value)
 /** The player's <video> now (the background sound follows it). */
 let playerVideo: HTMLVideoElement | null = null
 const playerLoading = ref(false)
@@ -229,8 +238,8 @@ function setDisplayMode(mode: DisplayMode) {
   saveView({ displayMode:mode })
 }
 
-function setKeepPlaying(on: boolean) {
-  saveView({ backgroundSound:on })
+function setBackgroundMode(mode: BackgroundMode) {
+  saveView({ background:mode, backgroundSound:mode !== 'off' })   // backgroundSound: read by 0.6 and older
 }
 
 function setSortMode(mode: SortMode) {
@@ -273,6 +282,17 @@ function directoryOf(path: string): string {
 // The file itself, selected in a GExplorer pane (sdk.reveal: a click here is the user's own gesture).
 function showMediaFile(item: LibraryItem) {
   if (item.path) void sdk?.reveal?.(item.path)
+}
+
+/** GEM Shell lists the programs that open a file (sdk.ui().openWith, 2026-10-26): the button says "Open with…". */
+const uiOpenWith = typeof sdk?.ui?.().openWith === 'function'
+
+/** The file in another app: the shell's Open with list under the button, else (older shells) the default app. */
+function openElsewhere(item: LibraryItem, anchor?: HTMLElement) {
+  if (!item.path) return
+  const ui = sdk?.ui?.()
+  if (ui?.openWith && anchor) void ui.openWith(item.path, anchor)
+  else void sdk?.openPath?.(item.path)
 }
 
 function openTmdbReviews(item: LibraryItem) {
@@ -474,8 +494,9 @@ function playerVideoChanged(element: HTMLVideoElement | null) {
   if (element && player.value) background.follow(element, player.value.item, player.value.url, keepPlaying.value)
 }
 
+watch(backgroundMode, () => { if (parked.available) parked.syncJob() })
 watch(keepPlaying, on => {
-  if (parked.available) { parked.syncJob(); return }
+  if (parked.available) return
   if (!playerVideo || !player.value) return
   if (on) background.follow(playerVideo, player.value.item, player.value.url, true)
   else background.release()
@@ -570,7 +591,37 @@ function onCommand(id: string) {
   }
 }
 
-defineExpose({ onMenuItem, onCommand })
+// ── Other widgets' menus: "Play in GEM Video Club" (entry.ts actions, 2026-10-26) ─────────────
+// GEM Shell shows it on a video file in the GExplorer (and any widget showing files), also while the
+// Video Club is off screen but placed somewhere: the shell brings it back, then delivers this.
+
+const sameFile = (a: string, b: string) => a.replace(/\//g, '\\').toLowerCase() === b.replace(/\//g, '\\').toLowerCase()
+
+/** A file the library doesn't hold (another folder, or the scan isn't loaded yet): a bare title. */
+function itemForFile(path: string): LibraryItem {
+  const name = path.split(/[\\/]/).pop() || path
+  return {
+    id:`file:${path}`, title:name.replace(/\.[^.]+$/, '') || name, year:0, runtimeMinutes:0, rating:'', primaryGenre:'',
+    genres:[], synopsis:'', artwork:{ src:'', x:0, y:0, mode:'placeholder' }, previews:[], addedRank:0, path,
+  }
+}
+
+async function onWidgetAction(msg: { topic?: string; payload?: { actionId?: string; args?: { paths?: unknown[] } } }) {
+  if (msg?.payload?.actionId !== 'play') return
+  const path = (msg.payload.args?.paths ?? []).find((p): p is string => typeof p === 'string' && !!p.trim())
+  if (!path) return
+  trace('action: play from another widget', { path })
+  let item = libraryItems.value.find(i => i.path && sameFile(i.path, path))
+  if (!item && !libraryItems.value.length && sources.value.length) {
+    // Just brought back: the library may still be loading
+    await new Promise(resolve => setTimeout(resolve, 600))
+    item = libraryItems.value.find(i => i.path && sameFile(i.path, path))
+  }
+  if (openId.value) closeDetail()
+  await play(item ?? itemForFile(path))
+}
+
+defineExpose({ onMenuItem, onCommand, onWidgetAction })
 
 function keydown(event: KeyboardEvent) {
   if (event.key !== 'Escape') return
@@ -657,7 +708,8 @@ onBeforeUnmount(() => {
         </label>
         <SettingsMenu
           :display-mode="displayMode"
-          :keep-playing="keepPlaying"
+          :background-mode="backgroundMode"
+          :can-show-picture="parked.available"
           :sources="sources"
           :can-add-source="!!sdk?.ui"
           :can-scan="!!sdk?.openListing"
@@ -669,7 +721,7 @@ onBeforeUnmount(() => {
           :tmdb-artwork-progress="covers.tmdbArtworkProgress.value"
           :tmdb="tmdbPanel"
           @display-mode="setDisplayMode"
-          @keep-playing="setKeepPlaying"
+          @background-mode="setBackgroundMode"
           @add-source="addSource"
           @remove-source="removeSource"
           @scan="scanAndMatch"
@@ -722,7 +774,8 @@ onBeforeUnmount(() => {
       :preview-frames-message="openPreviewFrames?.message"
       :can-show-in-folder="!!sdk?.reveal"
       :extra-thumbs="previews.extraThumbs.value"
-      :can-open-externally="!!sdk?.openPath"
+      :can-open-externally="!!sdk?.openPath || !!uiOpenWith"
+      :open-with-choice="!!uiOpenWith"
       @close="closeDetail"
       @flip="flipped = !flipped"
       @preview="activePreview = $event"
@@ -730,7 +783,7 @@ onBeforeUnmount(() => {
       @play-from-start="play(openItem, { fromStart:true })"
       @play-extra="play"
       @show-in-folder="showMediaFile(openItem)"
-      @open-external="openItem?.path && sdk?.openPath?.(openItem.path)"
+      @open-external="anchor => openItem && openElsewhere(openItem, anchor)"
       @show-extra-in-folder="showMediaFile"
       @edit-artwork="manageArtwork(openItem)"
       @open-tmdb="openTmdbReviews(openItem)"

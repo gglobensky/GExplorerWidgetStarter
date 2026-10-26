@@ -4,6 +4,9 @@
   this widget's SDK, bound to the same instance: the same lifecycle cells (what plays) and the
   same media element: GEM Shell's parked video (sdk.video().find, useParkedPlayback.ts) or, on
   older shells, the audio element the job holds (acquireElement with the same key).
+  With "Keep playing when hidden" (session.picture) the card shows the movie itself: a
+  <gex-video-surface> takes the same element, so its picture decodes while the card is on screen
+  (and stops again when the tray folds: the shell parks it). ⧉ opens real picture-in-picture.
 -->
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, ref } from 'vue'
@@ -22,6 +25,12 @@ const session = parkedVideo
 const sound: { paused:boolean; currentTime:number; duration:number; play():Promise<void>; pause():void; addEventListener:HTMLMediaElement['addEventListener']; removeEventListener:HTMLMediaElement['removeEventListener'] } =
   parkedVideo?.element ?? sdk.audio!().acquireElement({ key:BACKGROUND_AUDIO_KEY, category:'custom', suspendPolicy:'continue' })
 
+/** The card shows the picture ("Keep playing when hidden"), unless it is in its picture-in-picture window. */
+const pip = ref(!!parkedVideo?.pictureInPicture)
+const showPicture = computed(() => !!parkedVideo && !!(session.value as ParkedSession | null)?.picture && !pip.value)
+/** GEM Shell lets its videos go picture-in-picture (2026-10-25 and later) and the WebView can. */
+const canPip = !!parkedVideo && 'pictureInPicture' in parkedVideo && typeof document !== 'undefined' && !!document.pictureInPictureEnabled
+
 const playing = ref(!sound.paused)
 const time = ref(sound.currentTime || 0)
 const duration = ref(Number.isFinite(sound.duration) ? sound.duration : 0)
@@ -36,6 +45,7 @@ function clock(seconds: number) {
 }
 
 function sync() {
+  pip.value = !!parkedVideo?.pictureInPicture
   playing.value = !sound.paused
   time.value = sound.currentTime || 0
   duration.value = Number.isFinite(sound.duration) ? sound.duration : 0
@@ -46,11 +56,21 @@ async function toggle() {
   else sound.pause()
 }
 
+async function togglePip() {
+  if (!parkedVideo) return
+  try {
+    if (parkedVideo.pictureInPicture) await document.exitPictureInPicture()
+    else await parkedVideo.element.requestPictureInPicture()
+  } catch (err) {
+    console.warn('[Media Library] picture-in-picture refused', err)
+  }
+}
+
 function skip(seconds: number) {
   if (Number.isFinite(sound.currentTime)) sound.currentTime = Math.max(0, sound.currentTime + seconds)
 }
 
-const EVENTS = ['play', 'pause', 'timeupdate', 'loadedmetadata', 'ended'] as const
+const EVENTS = ['play', 'pause', 'timeupdate', 'loadedmetadata', 'ended', 'enterpictureinpicture', 'leavepictureinpicture'] as const
 onMounted(() => {
   for (const ev of EVENTS) sound.addEventListener(ev, sync)
   sync()
@@ -63,14 +83,18 @@ onBeforeUnmount(() => {
 <template>
   <div class="mlc">
     <div class="mlc-title" :title="title">{{ title }}</div>
+    <div v-if="showPicture" class="mlc-picture" @click="toggle">
+      <gex-video-surface :video="parkedVideo" />
+    </div>
     <div class="mlc-row">
       <button class="mlc-btn" aria-label="Back 10 seconds" title="Back 10 s" @click="skip(-10)">↺</button>
       <button class="mlc-btn mlc-main" :aria-label="playing ? 'Pause' : 'Play'" :title="playing ? 'Pause' : 'Play'" @click="toggle">{{ playing ? '⏸' : '▶' }}</button>
       <button class="mlc-btn" aria-label="Forward 30 seconds" title="Forward 30 s" @click="skip(30)">↻</button>
+      <button v-if="canPip" class="mlc-btn" :class="{ active:pip }" :aria-label="pip ? 'Back from picture-in-picture' : 'Picture-in-picture'" :title="pip ? 'Back from picture-in-picture' : 'Picture-in-picture'" @click="togglePip">⧉</button>
       <span class="mlc-time">{{ clock(time) }}<template v-if="duration"> / {{ clock(duration) }}</template></span>
     </div>
     <div class="mlc-bar" aria-hidden="true"><div class="mlc-fill" :style="{ width:progress + '%' }"></div></div>
-    <small class="mlc-note">Sound only · open the Video Club to see the picture again</small>
+    <small class="mlc-note">{{ pip ? 'In picture-in-picture' : showPicture ? 'Open the Video Club for the full player' : 'Sound only · open the Video Club to see the picture again' }}</small>
   </div>
 </template>
 
@@ -81,6 +105,9 @@ onBeforeUnmount(() => {
 .mlc-btn { width:26px; height:22px; padding:0; border:1px solid var(--border, #555); border-radius:4px; color:var(--fg, #eee); background:transparent; cursor:pointer; font-size:11px; line-height:1; }
 .mlc-btn:hover, .mlc-btn:focus-visible { border-color:var(--accent, #4ea1ff); background:var(--surface-3, #333); }
 .mlc-main { width:32px; }
+.mlc-btn.active { border-color:var(--accent, #4ea1ff); color:var(--accent, #4ea1ff); }
+.mlc-picture { aspect-ratio:16 / 9; max-height:240px; overflow:hidden; border-radius:4px; background:#000; cursor:pointer; }
+.mlc-picture :deep(.gex-video-surface > video) { pointer-events:none; }
 .mlc-time { margin-left:auto; font-size:11px; font-variant-numeric:tabular-nums; opacity:.65; }
 .mlc-bar { height:3px; overflow:hidden; border-radius:2px; background:var(--gex-op-bar-bg, rgba(255,255,255,.12)); }
 .mlc-fill { height:100%; background:var(--accent, #4ea1ff); transition:width 200ms linear; }

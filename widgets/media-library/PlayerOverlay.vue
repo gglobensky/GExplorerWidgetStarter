@@ -11,7 +11,8 @@
 // shown through <gex-video-surface>: never released here (the widget closes it, or the shell
 // parks it while the widget is off screen), only its listeners come and go.
 import { inject, onBeforeUnmount, ref, watch } from 'vue'
-import type { VideoHandle, WidgetSdk } from 'gexplorer/widgets'
+import type { MediaTracks, VideoHandle, WidgetSdk } from 'gexplorer/widgets'
+import { audioTrackLabel, subtitleTrackLabel } from './track-labels'
 import type { LibraryItem } from '../../shared/library-ui'
 import { trace } from './context'
 
@@ -55,6 +56,15 @@ let video: HTMLVideoElement | null = null
 let ownsVideo = false
 /** Removes the listeners put on the bound <video>. */
 let unlisten: (() => void) | null = null
+/** The resume position was applied to this stream (a track switch reloads it: not again). */
+let startApplied = false
+/** The shell's tracks for this video (audio and subtitles), and the choice. */
+const tracks = ref<MediaTracks | null>(null)
+const audioTrack = ref<number | null>(null)
+const subtitleTrack = ref<number | null>(null)
+/** GEM Shell converts it and the next seconds aren't ready yet (the start, a seek, a track switch). */
+const converting = ref(false)
+let offTracks: (() => void) | null = null
 /** The item the bound <video> plays (the props may already name the next one when it is released). */
 let videoItem: LibraryItem | null = null
 let lastReport = 0
@@ -77,6 +87,8 @@ function timeUpdate() {
 }
 
 function metadataLoaded() {
+  if (startApplied) return
+  startApplied = true
   const start = props.startAt ?? 0
   if (video && start > 0 && Number.isFinite(video.duration) && start < video.duration - 5) {
     try { video.currentTime = start } catch { /* not seekable yet: plays from the start */ }
@@ -126,6 +138,7 @@ function listen(target: HTMLVideoElement): () => void {
     ['pause', paused],
     ['ended', ended],
   ]
+  for (const name of ['loadstart','loadedmetadata','canplay','canplaythrough','playing','waiting','seeking','seeked','emptied','pause']) pairs.push([name, updateConverting])
   for (const name of ['loadstart','loadedmetadata','canplay','playing','waiting','stalled','suspend','emptied']) {
     pairs.push([name, () => trace(`player: ${name}`, name === 'loadedmetadata' ? { width:target.videoWidth, height:target.videoHeight, duration:target.duration } : undefined)])
   }
@@ -150,6 +163,8 @@ function bindVideo(element: unknown, owned = true) {
     unlisten = listen(next)
   }
   videoItem = next ? props.item : null
+  startApplied = false
+  updateConverting()
   lastReport = Date.now()
   if (next) cancelUpNext()
   emit('video', next)
@@ -163,11 +178,14 @@ function bindHandle() {
   const el = handle.element
   el.controls = true
   el.setAttribute('controlslist', 'nodownload')
-  el.setAttribute('disablepictureinpicture', '')
+  // Picture-in-picture: GEM Shell's video can follow the user off the Video Club (it outlives our DOM)
+  if ('pictureInPicture' in handle) el.removeAttribute('disablepictureinpicture')
+  else el.setAttribute('disablepictureinpicture', '')
   if (props.item?.title) el.setAttribute('aria-label', props.item.title)
   const fresh = el.src !== props.url   // src: the URL set (GEM Shell may play it converted underneath)
   if (fresh && video === el) bindVideo(null, false)   // a new title on the same element: report the old one first
   bindVideo(el, false)
+  if (fresh) startApplied = false
   if (fresh) {
     el.crossOrigin = 'anonymous'
     el.autoplay = props.autoplay !== false
@@ -176,6 +194,35 @@ function bindHandle() {
 }
 
 watch(() => [props.videoHandle, props.url, props.loading] as const, bindHandle, { immediate:true })
+
+function syncTracks() {
+  const handle = props.videoHandle
+  tracks.value = handle?.tracks ?? null
+  audioTrack.value = handle?.audioTrack ?? null
+  subtitleTrack.value = handle?.subtitleTrack ?? null
+  updateConverting()
+}
+
+watch(() => props.videoHandle, handle => {
+  offTracks?.()
+  offTracks = handle?.onTracksChange?.(syncTracks) ?? null
+  syncTracks()
+}, { immediate:true })
+
+function updateConverting() {
+  const handle = props.videoHandle
+  converting.value = !!video && !!handle?.conversion && video === handle.element && video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA
+}
+
+function chooseAudio(event: Event) {
+  const index = Number((event.target as HTMLSelectElement).value)
+  if (Number.isInteger(index)) props.videoHandle?.selectAudioTrack?.(index)
+}
+
+function chooseSubtitle(event: Event) {
+  const index = Number((event.target as HTMLSelectElement).value)
+  props.videoHandle?.selectSubtitleTrack?.(Number.isInteger(index) && index >= 0 ? index : null)
+}
 
 /** The template's own <video> (a stable function: an inline one would rebind on every render). */
 function bindOwnVideo(element: unknown) {
@@ -188,6 +235,15 @@ watch(() => props.focusImage, image => {
   video?.pause()
   coverMenu.value = null
 })
+
+/** The file in another app: GEM Shell's Open with list under the button (2026-10-26), else the default app. */
+function openElsewhere(event: MouseEvent) {
+  const path = props.item?.path
+  if (!path) return
+  const ui = sdk?.ui?.()
+  if (ui?.openWith && event.currentTarget instanceof HTMLElement) void ui.openWith(path, event.currentTarget)
+  else void sdk?.openPath?.(path)
+}
 
 function capture() {
   if (!video || props.coverBusy) return
@@ -275,6 +331,8 @@ function snapshot(): { positionMs:number; durationMs:number; paused:boolean; vol
 defineExpose({ snapshot })
 
 onBeforeUnmount(() => {
+  offTracks?.()
+  offTracks = null
   cancelUpNext()
   if (video) {
     report(true)
@@ -292,9 +350,24 @@ onBeforeUnmount(() => {
       <button type="button" class="glu-back-icon" aria-label="Back" title="Back" @click="emit('close')"><span aria-hidden="true">←</span></button>
       <strong>{{ item?.title || 'Preparing movie…' }}</strong>
       <div class="media-library-player-actions">
+        <template v-if="tracks && url">
+          <label class="media-library-track" :class="{ off:tracks.audio.length < 2 }" :title="tracks.audio.length < 2 ? 'This movie has one audio track' : 'Audio track'">
+            <span aria-hidden="true">♪</span>
+            <select :disabled="tracks.audio.length < 2" :value="audioTrack ?? 0" aria-label="Audio track" @change="chooseAudio">
+              <option v-for="(track, index) in tracks.audio" :key="index" :value="index">{{ audioTrackLabel(track, index) }}</option>
+            </select>
+          </label>
+          <label class="media-library-track" :class="{ off:!tracks.subtitles.length }" :title="tracks.subtitles.length ? 'Subtitles' : 'This movie has no subtitles'">
+            <span aria-hidden="true">CC</span>
+            <select :disabled="!tracks.subtitles.length" :value="subtitleTrack ?? -1" aria-label="Subtitles" @change="chooseSubtitle">
+              <option :value="-1">Subtitles off</option>
+              <option v-for="(track, index) in tracks.subtitles" :key="index" :value="index" :disabled="!track.vtt && !track.image">{{ subtitleTrackLabel(track, index) }}</option>
+            </select>
+          </label>
+        </template>
         <button v-if="url && item?.path && sdk?.mediaVideoFramesCreate" type="button" :disabled="coverBusy" @click="capture">Use current frame as cover</button>
         <button v-if="url && item?.path && sdk?.mediaImageCreate" type="button" :disabled="coverBusy" @click="chooseImage">Choose image…</button>
-        <button v-if="item?.path && sdk?.openPath" type="button" @click="sdk.openPath(item.path)">Open externally</button>
+        <button v-if="item?.path && (sdk?.openPath || sdk?.ui?.().openWith)" type="button" @click="openElsewhere($event)">{{ sdk?.ui?.().openWith ? 'Open with…' : 'Open externally' }}</button>
       </div>
     </header>
     <div v-if="loading || !url" class="media-library-player-loading"><span>◌</span>Preparing playback…</div>
@@ -312,6 +385,8 @@ onBeforeUnmount(() => {
       disablepictureinpicture
       @contextmenu="openCoverMenu"
     ></video>
+    <!-- After the loading / surface / video chain (v-if / v-else-if / v-else must stay adjacent) -->
+    <div v-if="converting && url && !loading" class="media-library-converting" role="status" aria-live="polite"><span aria-hidden="true">◌</span><strong>Converting…</strong><small>GEM Shell is preparing this part of the video.</small></div>
     <div v-if="upNext !== null && nextTitle" class="media-library-up-next" role="status" aria-live="polite">
       <small>Up next</small>
       <strong>{{ nextTitle }}</strong>

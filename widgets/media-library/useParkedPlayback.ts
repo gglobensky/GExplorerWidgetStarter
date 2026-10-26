@@ -9,6 +9,11 @@
 // With the setting off nothing holds it: the shell releases it with the widget, and the player
 // reopens paused where it was (the position is kept as it plays).
 // Older shells (no sdk.video()): useBackgroundPlayback.ts's muted twin does the job instead.
+// "When hidden" has three choices (BackgroundMode): 'off', 'sound' (the card plays the sound, the
+// picture stops decoding) and 'picture' (the card shows the same element through a surface, so the
+// picture keeps decoding while the card is on screen: close to picture-in-picture, inside the shell).
+// Real picture-in-picture (the player's own button, or the card's ⧉) also holds the video while its
+// window is open, whatever the choice: it is the user asking to keep watching.
 // URLs are compared through element.src, not its attribute: when GEM Shell converts a stream while it
 // plays (phases 3-4), the element's real source is internal and `src` still answers the widget's URL.
 import type { VideoHandle, VideoReleaseReason } from 'gexplorer/widgets'
@@ -19,6 +24,9 @@ export const BACKGROUND_JOB = 'background'
 export const MOVIE_VIDEO_KEY = 'movie'
 export const PARKED_CELL = 'media-library.parked-session'
 
+/** What goes on while the library is off screen. */
+export type BackgroundMode = 'off' | 'sound' | 'picture'
+
 /** What plays (plain data: a lifecycle cell, read by the widget remounting and by the job's card). */
 export type ParkedSession = {
   item: LibraryItem
@@ -28,6 +36,8 @@ export type ParkedSession = {
   playing: boolean
   /** A background job holds the video: it plays on while the widget is off screen. */
   held: boolean
+  /** The job's card shows the picture (BackgroundMode 'picture'). */
+  picture?: boolean
 }
 
 /** What to reopen when the widget comes back. live: the same video, still alive (maybe playing). */
@@ -58,7 +68,7 @@ function titleOf(item: LibraryItem): string {
 export function useParkedPlayback(
   ctx: Pick<LibraryContext, 'sdk' | 'life'>,
   onPosition: (item: LibraryItem, positionMs: number, durationMs: number, final: boolean) => void,
-  keepPlaying: () => boolean,
+  background: () => BackgroundMode,
 ) {
   const { sdk, life } = ctx
   const video = sdk?.video?.() ?? null
@@ -98,14 +108,19 @@ export function useParkedPlayback(
   function watchShown(handle: VideoHandle) {
     current?.stop()
     const update = () => note(handle)
+    const pip = () => syncJob()   // picture-in-picture holds the video while its window is open
     handle.element.addEventListener('timeupdate', update)
     handle.element.addEventListener('pause', update)
+    handle.element.addEventListener('enterpictureinpicture', pip)
+    handle.element.addEventListener('leavepictureinpicture', pip)
     const offRelease = handle.onRelease(reason => released(handle, reason))
     current = {
       handle,
       stop:() => {
         handle.element.removeEventListener('timeupdate', update)
         handle.element.removeEventListener('pause', update)
+        handle.element.removeEventListener('enterpictureinpicture', pip)
+        handle.element.removeEventListener('leavepictureinpicture', pip)
         offRelease()
       },
     }
@@ -139,12 +154,14 @@ export function useParkedPlayback(
     })
   }
 
-  /** Holds the video in the background job while the setting is on; lets it go when off. */
+  /** Holds the video in the background job while the setting (or picture-in-picture) asks; lets it go otherwise. */
   function syncJob() {
     const s = session.value
     const handle = current?.handle
     if (!handle?.alive || !s || !sdk?.jobs) return
-    if (keepPlaying()) {
+    const mode = background()
+    s.picture = mode === 'picture'
+    if (mode !== 'off' || handle.pictureInPicture) {
       const job = sdk.jobs().ensure(BACKGROUND_JOB, { title:titleOf(s.item), params:{ path:s.item.path } })
       job.update({ title:titleOf(s.item) })
       job.hold(handle)

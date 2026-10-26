@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { LibraryItem } from '../../../shared/library-ui/types.ts'
-import { useParkedPlayback } from '../useParkedPlayback.ts'
+import { useParkedPlayback, type BackgroundMode } from '../useParkedPlayback.ts'
 
 class FakeVideo extends EventTarget {
   attrs = new Map<string, string>(); currentTime = 0; duration = 6000; readyState = 4; paused = true; ended = false
@@ -29,7 +29,7 @@ function setup() {
     const element = new FakeVideo()
     const listeners = new Set<(r: string) => void>()
     const handle = {
-      id:'vid_1', ownerId:'o', key:'movie', element, decodeWhileParked:false, pictureSuspended:false,
+      id:'vid_1', ownerId:'o', key:'movie', element, decodeWhileParked:false, pictureSuspended:false, pictureInPicture:false,
       get alive() { return live?.handle === handle },
       onRelease(fn: (r: string) => void) { listeners.add(fn); return () => listeners.delete(fn) },
       release() { release('released') },
@@ -61,11 +61,11 @@ function setup() {
   } as any
   const life = { persistRef:(key: string, initial: unknown) => cells.get(key) ?? (cells.set(key, { value:initial }), cells.get(key)!) } as any
   const reports: Array<[number, boolean]> = []
-  let keep = true
-  const instance = () => useParkedPlayback({ sdk, life }, (_item, positionMs, _d, final) => reports.push([positionMs, final]), () => keep)
+  let mode: BackgroundMode = 'sound'
+  const instance = () => useParkedPlayback({ sdk, life }, (_item, positionMs, _d, final) => reports.push([positionMs, final]), () => mode)
   /** The widget unmounting: the shell releases an unheld video before the widget's own unmount runs. */
   const unmount = (p: ReturnType<typeof instance>) => { if (live && !live.held) release('unmounted'); p.leave() }
-  return { jobs, reports, instance, unmount, setKeep:(on: boolean) => { keep = on }, live:() => live }
+  return { jobs, reports, instance, unmount, setKeep:(on: boolean) => { mode = on ? 'sound' : 'off' }, setMode:(m: BackgroundMode) => { mode = m }, cells, live:() => live }
 }
 
 const movie = { id:'m', title:'Heat', path:'D:\\Heat.mkv', year:1995, runtimeMinutes:170, rating:'', primaryGenre:'Crime', genres:['Crime'], synopsis:'', artwork:{ src:'', x:0, y:0 }, previews:[], addedRank:0 } as LibraryItem
@@ -142,4 +142,28 @@ test('turning keep playing off while playing lets the job go', () => {
   p.syncJob()
   assert.equal(jobs[0].ended, true)
   assert.equal(p.session.value?.held, false)
+})
+
+test('"Keep playing when hidden" tells the card to show the picture', () => {
+  const { instance, setMode, cells, jobs } = setup()
+  setMode('picture')
+  const p = instance()
+  p.start(movie, URL)
+  assert.equal((cells.get('media-library.parked-session')!.value as any).picture, true)
+  assert.ok(jobs[0].held)
+  setMode('sound'); p.syncJob()
+  assert.equal((cells.get('media-library.parked-session')!.value as any).picture, false)
+})
+
+test('picture-in-picture holds the video even with "Pause when hidden", and lets it go when it closes', () => {
+  const { instance, setKeep, jobs, live } = setup()
+  setKeep(false)
+  const p = instance()
+  const handle: any = p.start(movie, URL)!
+  assert.equal(jobs.filter(job => !job.ended).length, 0)
+  handle.pictureInPicture = true; handle.element.fire('enterpictureinpicture')
+  assert.equal(jobs.filter(job => !job.ended)[0]?.held, handle)
+  handle.pictureInPicture = false; handle.element.fire('leavepictureinpicture')
+  assert.equal(jobs.filter(job => !job.ended).length, 0)
+  assert.ok(live())
 })
