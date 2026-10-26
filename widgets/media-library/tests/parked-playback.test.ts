@@ -6,6 +6,7 @@ import { useParkedPlayback } from '../useParkedPlayback.ts'
 class FakeVideo extends EventTarget {
   attrs = new Map<string, string>(); currentTime = 0; duration = 6000; readyState = 4; paused = true; ended = false
   getAttribute(name: string) { return this.attrs.get(name) ?? null }
+  get src() { return this.attrs.get('src') ?? '' }
   set src(value: string) { this.attrs.set('src', value) }
   async play() { this.paused = false; this.dispatchEvent(new Event('play')) }
   pause() { this.paused = true; this.dispatchEvent(new Event('pause')) }

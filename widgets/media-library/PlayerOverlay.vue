@@ -165,7 +165,7 @@ function bindHandle() {
   el.setAttribute('controlslist', 'nodownload')
   el.setAttribute('disablepictureinpicture', '')
   if (props.item?.title) el.setAttribute('aria-label', props.item.title)
-  const fresh = el.getAttribute('src') !== props.url
+  const fresh = el.src !== props.url   // src: the URL set (GEM Shell may play it converted underneath)
   if (fresh && video === el) bindVideo(null, false)   // a new title on the same element: report the old one first
   bindVideo(el, false)
   if (fresh) {

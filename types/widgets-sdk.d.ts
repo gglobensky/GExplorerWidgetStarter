@@ -1557,6 +1557,13 @@ declare module 'gexplorer/widgets' {
         verdict: MediaVerdict
         /** One short sentence per problem, for the user. */
         reasons: string[]
+        /**
+         * Played through the shell's video rack (sdk.video()), GEM Shell converts it while it plays:
+         * 'remux' (container), 'audio' (sound to AAC), 'video' (picture decoded in software and re-encoded
+         * to H.264); null when it plays as it is or can't be converted. A <video> of the widget's own gets
+         * no conversion.
+         */
+        conversion?: 'remux' | 'audio' | 'video' | null
     }
     export type MediaVideoFrame = {
         requestedMs: number
@@ -1778,6 +1785,12 @@ declare module 'gexplorer/widgets' {
         decodeWhileParked: boolean
         /** The picture is not being decoded right now. */
         readonly pictureSuspended: boolean
+        /**
+         * GEM Shell converts its stream while it plays ('remux' | 'audio' | 'video': the file can't play as
+         * it is here), or null. Set `element.src` to a loopback stream (sdk.mintStreamHttp) as usual: the
+         * shell decides, and `src` / `currentSrc` keep answering that URL either way.
+         */
+        readonly conversion: 'remux' | 'audio' | 'video' | null
         /** Called once when it is released. Returns the unsubscribe. */
         onRelease(fn: (reason: VideoReleaseReason) => void): () => void
         release(): void

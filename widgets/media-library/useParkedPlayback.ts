@@ -9,6 +9,8 @@
 // With the setting off nothing holds it: the shell releases it with the widget, and the player
 // reopens paused where it was (the position is kept as it plays).
 // Older shells (no sdk.video()): useBackgroundPlayback.ts's muted twin does the job instead.
+// URLs are compared through element.src, not its attribute: when GEM Shell converts a stream while it
+// plays (phases 3-4), the element's real source is internal and `src` still answers the widget's URL.
 import type { VideoHandle, VideoReleaseReason } from 'gexplorer/widgets'
 import type { LibraryItem } from '../../shared/library-ui'
 import type { LibraryContext } from './context'
@@ -157,7 +159,7 @@ export function useParkedPlayback(
   function start(item: LibraryItem, url: string): VideoHandle | null {
     if (!video) return null
     const handle = video.acquire({ key:MOVIE_VIDEO_KEY, decodeWhileParked:false })
-    if (handle.element.getAttribute('src') !== url) handle.element.pause()   // the previous title, until the player sets the new one
+    if (handle.element.src !== url) handle.element.pause()   // the previous title, until the player sets the new one
     if (current?.handle !== handle) watchShown(handle)
     session.value = { item:sessionItem(item), url, positionMs:0, durationMs:0, playing:true, held:false }
     syncJob()
@@ -200,7 +202,7 @@ export function useParkedPlayback(
       hiddenWatchers.get(handle)?.()
       hiddenWatchers.delete(handle)
     }
-    if (handle?.alive && handle.element.getAttribute('src') === s.url) {
+    if (handle?.alive && handle.element.src === s.url) {
       note(handle)
       onPosition(s.item, s.positionMs, s.durationMs, !s.playing)
       watchShown(handle)

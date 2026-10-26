@@ -341,8 +341,10 @@ async function checkPlayable(item: LibraryItem): Promise<boolean> {
   ])
   window.clearTimeout(timer)
   if (!probe) return true
-  trace('play: probe', { verdict:probe.verdict, decode:probe.decode, container:probe.container, video:probe.video?.codec, audio:probe.audio[0]?.codec })
+  trace('play: probe', { verdict:probe.verdict, conversion:probe.conversion, decode:probe.decode, container:probe.container, video:probe.video?.codec, audio:probe.audio[0]?.codec })
   if (probe.verdict === 'direct') return true
+  // Played through GEM Shell's video rack, the shell converts it while it plays (and says so itself)
+  if (probe.conversion && parked.available) return true
   const ui = sdk.ui?.()
   if (!ui) return true
   const pictureLost = probe.verdict === 'video' || probe.verdict === 'none'
