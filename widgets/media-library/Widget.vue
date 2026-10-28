@@ -103,6 +103,8 @@ const parked = useParkedPlayback(ctx, notePosition, () => backgroundMode.value)
 /** The player's <video> now (the background sound follows it). */
 let playerVideo: HTMLVideoElement | null = null
 const playerLoading = ref(false)
+/** "Opening <title>…" while the file is checked, before the player opens (2026-10-26). */
+const preparingTitle = ref<string | null>(null)
 const coverFocusDraft = ref<{ item:LibraryItem; image:MediaImage } | null>(null)
 let playRevision = 0
 
@@ -132,6 +134,26 @@ const tmdbPanel = computed(() => ({
   message:tmdb.message.value,
   canMatch:tmdb.canMatch(),
 }))
+
+/**
+ * The one line that says what the library is doing (2026-10-26): reading the folders, reading
+ * movie details, matching with TMDB, importing artwork, one after the other, "n of total".
+ */
+const activity = computed<{ text:string; ratio:number | null } | null>(() => {
+  const count = (value: number) => value.toLocaleString()
+  const step = (label: string, done: number, total: number) => ({ text:`${label} ${count(done)} of ${count(total)}`, ratio:total ? Math.min(1, done / total) : null })
+  const scanning = scan.progress.value
+  if (scan.state.value === 'scanning' && scanning) {
+    return scanning.phase === 'metadata' && scanning.total
+      ? step('Reading movie details', scanning.videos, scanning.total)
+      : { text:`Searching ${sourceLabel(scanning.current)} · ${count(scanning.videos)} found`, ratio:null }
+  }
+  const matching = tmdb.progress.value
+  if (tmdb.state.value === 'matching') return matching ? step('Matching with TMDB', matching.completed, matching.total) : { text:'Matching with TMDB…', ratio:null }
+  const artwork = covers.tmdbArtworkProgress.value ?? covers.artworkProgress.value
+  if (artwork) return step(covers.tmdbArtworkProgress.value ? 'Importing TMDB artwork' : 'Preparing artwork', artwork.completed, artwork.total)
+  return null
+})
 
 watch(() => props.config?.data?.sources, value => {
   const next = [...(value ?? [])]
@@ -367,6 +389,7 @@ async function checkPlayable(item: LibraryItem): Promise<boolean> {
   if (probe.conversion && parked.available) return true
   const ui = sdk.ui?.()
   if (!ui) return true
+  preparingTitle.value = null   // the box asks now
   const pictureLost = probe.verdict === 'video' || probe.verdict === 'none'
   const result = await ui.messageBox({
     title:pictureLost ? `${item.title} can't play here` : `${item.title} may not play fully here`,
@@ -403,7 +426,13 @@ async function play(item: LibraryItem, options: { fromStart?: boolean; startAt?:
   }
   if (!options.checked) {
     const revisionBefore = ++playRevision
-    if (!await checkPlayable(item) || revisionBefore !== playRevision) return
+    // The check can take a few seconds (GEM Shell reads the file the first time): said, so nothing looks frozen
+    preparingTitle.value = item.title
+    try {
+      if (!await checkPlayable(item) || revisionBefore !== playRevision) return
+    } finally {
+      if (revisionBefore === playRevision || preparingTitle.value === item.title) preparingTitle.value = null
+    }
   }
   const revision = ++playRevision
   trace('play: asking GEM Shell for a stream', { title:item.title, path:item.path, startAt:options.startAt })
@@ -611,6 +640,7 @@ async function onWidgetAction(msg: { topic?: string; payload?: { actionId?: stri
   const path = (msg.payload.args?.paths ?? []).find((p): p is string => typeof p === 'string' && !!p.trim())
   if (!path) return
   trace('action: play from another widget', { path })
+  preparingTitle.value = path.split(/[\\/]/).pop() || 'your video'
   let item = libraryItems.value.find(i => i.path && sameFile(i.path, path))
   if (!item && !libraryItems.value.length && sources.value.length) {
     // Just brought back: the library may still be loading
@@ -618,7 +648,11 @@ async function onWidgetAction(msg: { topic?: string; payload?: { actionId?: stri
     item = libraryItems.value.find(i => i.path && sameFile(i.path, path))
   }
   if (openId.value) closeDetail()
-  await play(item ?? itemForFile(path))
+  try {
+    await play(item ?? itemForFile(path))
+  } finally {
+    preparingTitle.value = null
+  }
 }
 
 defineExpose({ onMenuItem, onCommand, onWidgetAction })
@@ -731,6 +765,10 @@ onBeforeUnmount(() => {
         />
       </div>
     </header>
+    <div v-if="activity && libraryItems.length" class="media-library-activity" role="status" aria-live="polite">
+      <span aria-hidden="true">◌</span><span>{{ activity.text }}</span>
+      <i v-if="activity.ratio != null" :style="{ width:`${activity.ratio * 100}%` }" aria-hidden="true"></i>
+    </div>
 
     <main ref="browse" class="media-library-browse" @wheel.stop @contextmenu="onLibraryMenu">
       <EmptyClub v-if="!sources.length" :can-add="!!sdk?.ui" @add-source="addSource" />
@@ -791,6 +829,10 @@ onBeforeUnmount(() => {
       @update-synopsis="updateSynopsis"
       @update-genres="updateGenres"
     />
+
+    <div v-if="preparingTitle && !playerLoading" class="media-library-preparing" role="status" aria-live="polite">
+      <span aria-hidden="true">◌</span><strong>Opening {{ preparingTitle }}…</strong><small>GEM Shell is checking the file.</small>
+    </div>
 
     <PlayerOverlay
       v-if="player || playerLoading"

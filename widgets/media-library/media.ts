@@ -252,8 +252,10 @@ function slug(value: string): string {
 
 function episodeOrder(item: LibraryItem): { season:number; episode:number } {
   const tagged = item.title.match(/\bS(\d{1,3})E(\d{1,4})\b/i)
+  const season = item.seasonNumber ?? (tagged ? Number(tagged[1]) : Number.MAX_SAFE_INTEGER)
   return {
-    season:item.seasonNumber ?? (tagged ? Number(tagged[1]) : Number.MAX_SAFE_INTEGER),
+    // Season 0 (specials, the show's extras) after the regular seasons.
+    season:season === 0 ? Number.MAX_SAFE_INTEGER - 1 : season,
     episode:item.episodeNumber ?? (tagged ? Number(tagged[2]) : Number.MAX_SAFE_INTEGER),
   }
 }
@@ -314,43 +316,238 @@ export function parseMovieFilename(filename: string): { title: string; year: num
 export function movieSearchTitles(filename: string, embeddedTitle = ''): string[] {
   const filenameTitle = parseMovieFilename(filename).title
   const embedded = embeddedTitle.trim() ? parsedMovieName(embeddedTitle,false).title : ''
-  const candidates = [filenameTitle,filenameTitle.replace(editionSuffix,''),embedded,embedded.replace(editionSuffix,'')]
+  // "Return of the Joker (The Original Uncut Version)" is "Return of the Joker" to TMDB.
+  const unbracketed = filenameTitle.replace(/\s*[([][^)\]]*[)\]]/g, ' ').replace(/\s+/g, ' ').trim()
+  const candidates = [filenameTitle,filenameTitle.replace(editionSuffix,''),unbracketed,embedded,embedded.replace(editionSuffix,'')]
   return candidates.map(title => title.trim()).filter((title,index,all) => !!title && all.findIndex(candidate => candidate.toLocaleLowerCase() === title.toLocaleLowerCase()) === index)
 }
 
-export type SeriesEpisode = { seriesTitle: string; seasonNumber: number; episodeNumber?: number; episodeTitle: string }
+// ── Series and episodes ─────────────────────────────────────────────────────
+//
+// Recognizes TV episodes from their file and folder names (2026-10-26, broadened for layouts like
+// "…\Batman Beyond (DC Comics Classic Collection) The Complete Series (1999) Xvid 2 ch AVI\
+//  Batman Beyond Season One (1999)\Season 1, Episode 01 - Rebirth (Part 1).avi").
+//
+// What counts as an episode, most specific first:
+//   S01E02 · s1e2 · S01 E02 · S01.E02 · S01E01E02 (first) · 1x02
+//   "Season 1, Episode 01" · "Season 1 Ep 3" · "Saison 2 Épisode 4"
+//   Ep 3 · Ep.03 · Ep_03 · Episode 12 · Épisode 4 · E05 · #05      (season: its folder, else 1)
+//   "Show - 03 - Title" · "03 - Title" · "[03] Title"              (only in a season folder, or
+//                                                                  among several numbered siblings)
+// Season folders: "Season 2", "Season 02", "S2", "Saison deux", "Series 1", "Temporada 3",
+// "Staffel 1", "<Show> Season One (1999)", "Specials" (season 0).
+// The show's name: what the file name gives before the episode tag, else the season folder's
+// words before "Season", else the folder holding the seasons (or the episodes), cleaned of
+// release words ("(DC Comics Classic Collection)", "The Complete Series", "Xvid 2 ch AVI"...).
 
-function cleanMediaWords(value: string): string {
-  return value.replace(/[._]+/g, ' ').replace(/\s+/g, ' ').replace(/^[\s-]+|[\s-]+$/g, '').trim()
+export type SeriesEpisode = { seriesTitle: string; seasonNumber: number; episodeNumber?: number; episodeTitle: string }
+export type SeriesContext = {
+  /** Show names to search TMDB with, best first (the first one is seriesTitle). */
+  names: string[]
+  /** A year the folders give (the show's first year, usually). */
+  year: number
+  /** The folder holding the show (its seasons, or its episodes), as in the path; '' at the source root. */
+  showFolder: string
+}
+export type ParseOptions = {
+  /** How many videos in the same folder start with a number ("01 - …"): 3+ makes bare numbers episodes. */
+  numberedSiblings?: number
 }
 
-export function parseSeriesEpisode(path: string, sourceRoot = ''): SeriesEpisode | null {
-  const parts = path.split(/[\\/]/).filter(Boolean)
-  const filename = (parts[parts.length - 1] ?? '').replace(/\.[^.]+$/, '')
-  const relativeParts = sourceRoot && path.toLocaleLowerCase().startsWith(sourceRoot.toLocaleLowerCase())
-    ? path.slice(sourceRoot.length).split(/[\\/]/).filter(Boolean)
-    : parts
-  const seasonFolderIndex = relativeParts.findIndex(part => /^(?:season\s*|s)(\d{1,2})$/i.test(part))
-  const folderSeason = seasonFolderIndex >= 0 ? Number(relativeParts[seasonFolderIndex].match(/\d+/)?.[0] ?? 0) : 0
-  const folderSeries = seasonFolderIndex > 0 ? cleanMediaWords(relativeParts[seasonFolderIndex - 1]) : ''
-  const tagged = filename.match(/^(.*?)(?:[\s._-]+)?s(\d{1,2})e(\d{1,3})(?:[\s._-]+(.*))?$/i)
-    ?? filename.match(/^(.*?)(?:[\s._-]+)?(\d{1,2})x(\d{1,3})(?:[\s._-]+(.*))?$/i)
-  if (tagged) {
-    const seriesTitle = cleanMediaWords(tagged[1]) || folderSeries || cleanMediaWords(parts[parts.length - 2] ?? '')
-    const episodeTitle = cleanMediaWords(tagged[4] ?? '')
-      .replace(/\s+(?:2160p|1080p|720p|4k|uhd|bluray|brrip|webrip|web-dl|remux|x26[45]|h26[45]|hevc|aac|dts).*$/i, '')
-    if (!seriesTitle) return null
-    return { seriesTitle, seasonNumber:Number(tagged[2]), episodeNumber:Number(tagged[3]), episodeTitle }
+const WORD_NUMBERS: Record<string, number> = {
+  zero:0, one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10,
+  eleven:11, twelve:12, thirteen:13, fourteen:14, fifteen:15, sixteen:16, seventeen:17, eighteen:18, nineteen:19, twenty:20,
+  first:1, second:2, third:3, fourth:4, fifth:5, sixth:6, seventh:7, eighth:8, ninth:9, tenth:10,
+  // French (Quebec libraries), Spanish, German, Italian
+  un:1, une:1, deux:2, trois:3, quatre:4, cinq:5, sept:7, huit:8, neuf:9, dix:10, onze:11, douze:12,
+  premiere:1, deuxieme:2, troisieme:3, quatrieme:4, cinquieme:5,
+  uno:1, dos:2, tres:3, cuatro:4, cinco:5, seis:6, siete:7, ocho:8, nueve:9, diez:10,
+  eins:1, zwei:2, drei:3, vier:4, funf:5, sechs:6, sieben:7, acht:8, neun:9, zehn:10,
+  due:2, tre:3, quattro:4,
+}
+const WORD_NUMBER = Object.keys(WORD_NUMBERS).sort((a,b) => b.length - a.length).join('|')
+const SEASON_WORD = '(?:season|saison|series|serie|temporada|staffel|stagione|seizoen|sezon)'
+/** A season token anywhere in a folder name, with what comes before it (the show, sometimes). */
+const SEASON_IN_FOLDER = new RegExp(`^(.*?)(?:^|[\\s._\\-(\\[])${SEASON_WORD}[\\s._-]*(\\d{1,2}|${WORD_NUMBER})(?=$|[\\s._\\-)\\],])`, 'i')
+const SHORT_SEASON_FOLDER = /^(.*?)(?:^|[\s._-])s(\d{1,2})(?=$|[\s._-])/i
+const SPECIALS_FOLDER = /^(?:specials?|season[\s._-]*0+|s0+|extras?[\s._-]*season)$/i
+
+/** Words that describe the release, not the show: the name stops at the first one. */
+const RELEASE_WORDS = /(?:^|\s)(?:2160p|1080p|720p|576p|480p|4k|uhd|hdr\S*|bluray|blu ray|b[dr]rip|web dl|web|webrip|hdrip|dvdrip|dvd|hdtv|pdtv|remux|x26[45]|h26[45]|hevc|avc|av1|xvid|divx|10 ?bit|8 ?bit|aac\S*|ac3|eac3|dd\S*|dts\S*|truehd|atmos|flac|mp3|\d(?:\.\d)? ?ch|avi|mkv|mp4|multi|dual|vostfr|vf|vff|vfq|french|truefrench|english|subbed|dubbed|proper|repack|complete|integrale|intégrale|the complete|collection|box ?set|boxset|series [0-9]+ ?- ?[0-9]+|seasons?\s*\d+\s*(?:-|to|à|a)\s*\d+|s\d{1,2}\s*-\s*s?\d{1,2})(?=\s|$)/i
+
+function words(value: string): string {
+  return value.replace(/[._]+/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+function plain(value: string): string {
+  return value.normalize('NFKD').replace(/\p{Diacritic}/gu, '').toLocaleLowerCase()
+}
+
+function seasonNumberOf(token: string): number | undefined {
+  if (/^\d+$/.test(token)) return Number(token)
+  return WORD_NUMBERS[plain(token)]
+}
+
+/** A year in the name: "(1999)", "[2004]", " 2010 ". */
+export function yearIn(value: string): number {
+  const match = value.match(/(?:^|[\s(\[._-])((?:19|20)\d{2})(?=$|[\s)\]._-])/)
+  return match ? Number(match[1]) : 0
+}
+
+/**
+ * A show's name from a folder or a file-name prefix: brackets, years and release words dropped.
+ * "Batman Beyond  (DC Comics Classic Collection) The Complete Series (1999) Xvid 2 ch AVI" -> "Batman Beyond"
+ */
+export function cleanShowName(value: string): string {
+  let name = value
+    .replace(/\[[^\]]*\]|\{[^}]*\}/g, ' ')
+    .replace(/\([^)]*\)/g, ' ')
+  name = words(name)
+  const tidy = (value: string) => value
+    .replace(/(?:^|\s)(?:19|20)\d{2}(?=\s|$)/g, ' ')
+    .replace(/\s+(?:the\s+)?(?:complete|tv)\s+(?:series|show)$/i, '')
+    .replace(/\s+(?:us|uk)$/i, match => match.toUpperCase())
+    .replace(/^[\s\-–—:,.]+|[\s\-–—:,.]+$/g, '').replace(/\s+/g, ' ').trim()
+  const release = name.match(RELEASE_WORDS)
+  const cut = release?.index != null ? tidy(name.slice(0, release.index)) : tidy(name)
+  // A show whose own name starts with such a word ("The Collection", "Web Therapy") keeps it.
+  return cut && !/^(?:the|a|an|le|la|les)$/i.test(cut) ? cut : tidy(name)
+}
+
+function cleanEpisodeTitle(value: string): string {
+  return words(value.replace(/\[[^\]]*\]/g, ' '))
+    .replace(/\s+(?:2160p|1080p|720p|576p|480p|4k|uhd|bluray|brrip|bdrip|webrip|web dl|web-dl|hdtv|dvdrip|remux|x26[45]|h26[45]|hevc|xvid|divx|aac|ac3|dts).*$/i, '')
+    .replace(/^[\s\-–—:,.]+|[\s\-–—:,.]+$/g, '')
+    .trim()
+}
+
+type Tagged = { prefix: string; season?: number; episode: number; rest: string; strength: 'full' | 'episode' | 'bare' }
+
+/** The episode tag of a file name (without extension), most specific pattern first. */
+function episodeTag(stem: string, allowBare: boolean): Tagged | null {
+  const name = stem.replace(/_/g, ' ')
+  let match = name.match(/^(.*?)(?:^|[\s.\-\[(])s(\d{1,2})[\s.\-]?e(\d{1,3})(?:[\s.\-]?e\d{1,3}|-\d{1,3}(?!\d))*(?=$|[^a-z0-9])(.*)$/i)
+  if (match) return { prefix:match[1], season:Number(match[2]), episode:Number(match[3]), rest:match[4], strength:'full' }
+  match = name.match(/^(.*?)(?:^|[\s.\-\[(])(\d{1,2})x(\d{2,3})(?=$|[^a-z0-9])(.*)$/i)
+  if (match) return { prefix:match[1], season:Number(match[2]), episode:Number(match[3]), rest:match[4], strength:'full' }
+  match = name.match(new RegExp(`^(.*?)(?:^|[\\s.\\-\\[(])${SEASON_WORD}[\\s.\\-]*(\\d{1,2}|${WORD_NUMBER})[\\s.,\\-]*(?:ep|eps|episode|episodio|[ée]pisode|folge)[\\s.#\\-]*(\\d{1,4})(?=$|[^0-9])(.*)$`, 'i'))
+  if (match) {
+    const season = seasonNumberOf(match[2])
+    if (season != null) return { prefix:match[1], season, episode:Number(match[3]), rest:match[4], strength:'full' }
   }
-  if (folderSeason && folderSeries) {
-    const episode = filename.match(/^(?:episode|ep|e)[\s._-]*(\d{1,3})(?:[\s._-]+(.*))?$/i)
-      ?? filename.match(/^\[?(\d{1,3})\]?(?:[\s._-]+(.*))?$/i)
-    if (episode) return { seriesTitle:folderSeries, seasonNumber:folderSeason, episodeNumber:Number(episode[1]), episodeTitle:cleanMediaWords(episode[2] ?? '') }
-    const episodeTitle = cleanMediaWords(filename)
-      .replace(/\s+(?:2160p|1080p|720p|4k|uhd|bluray|brrip|webrip|web-dl|remux|x26[45]|h26[45]|hevc|aac|dts).*$/i, '')
-    if (episodeTitle) return { seriesTitle:folderSeries, seasonNumber:folderSeason, episodeTitle }
+  match = name.match(/^(.*?)(?:^|[\s.\-\[(])(?:ep|eps|episode|episodio|[ée]pisode|folge|#)[\s.#\-]*(\d{1,4})(?=$|[^0-9a-z])(.*)$/i)
+    // "E" alone needs two digits (E05), so an initial or "Movie E 3" is not taken for an episode.
+    ?? name.match(/^(.*?)(?:^|[\s.\-\[(])e(\d{2,4})(?=$|[^0-9a-z])(.*)$/i)
+  if (match) return { prefix:match[1], episode:Number(match[2]), rest:match[3], strength:'episode' }
+  if (!allowBare) return null
+  match = name.match(/^(.+?)\s+-\s+(\d{1,3})(?=\s|$)\s*(?:-\s+)?(.*)$/)
+  if (match && !/(?:19|20)\d{2}$/.test(match[2])) return { prefix:match[1], episode:Number(match[2]), rest:match[3], strength:'bare' }
+  match = name.match(/^\[?(\d{1,3})\]?(?:\s*[-.)]\s*|\s+|$)(.*)$/)
+  if (match) return { prefix:'', episode:Number(match[1]), rest:match[2], strength:'bare' }
+  return null
+}
+
+/**
+ * Numbered the way episodes without a season are: "01 - Title", "[03] Title", "12. Title",
+ * "[Group] Show - 012 [720p]". Siblings numbered like this (3 or more) make a folder a show's.
+ */
+export function looksNumbered(fileName: string): boolean {
+  const stem = fileName.replace(/\.[^.]+$/, '').replace(/_/g, ' ')
+  return /^\[?\d{1,3}\]?(?:\s*[-.)]\s*|\s+)\S/.test(stem) || /^.+?\s+-\s+\d{1,3}(?=\s|$)/.test(stem)
+}
+
+type SeasonFolder = { index: number; season: number; prefix: string }
+
+function seasonFolderIn(parts: string[]): SeasonFolder | null {
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index]
+    // "Season 3 Extras" holds extras, not a season.
+    if (isExtrasFolderName(part)) continue
+    if (SPECIALS_FOLDER.test(words(part))) return { index, season:0, prefix:'' }
+    const long = part.match(SEASON_IN_FOLDER)
+    if (long) {
+      const season = seasonNumberOf(long[2])
+      if (season != null) return { index, season, prefix:long[1] }
+    }
+    const short = words(part).match(SHORT_SEASON_FOLDER)
+    if (short) return { index, season:Number(short[2]), prefix:short[1] }
   }
   return null
+}
+
+function relativeParts(path: string, sourceRoot: string): string[] {
+  const inRoot = !!sourceRoot && path.toLocaleLowerCase().startsWith(sourceRoot.replace(/[\\/]+$/, '').toLocaleLowerCase())
+  const rest = inRoot ? path.slice(sourceRoot.replace(/[\\/]+$/, '').length) : path
+  return rest.split(/[\\/]/).filter(Boolean)
+}
+
+function unique(names: string[]): string[] {
+  const seen = new Set<string>()
+  return names.filter(name => {
+    const key = plain(name).replace(/[^a-z0-9]+/g, ' ').trim()
+    if (!name || !key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+type Parsed = { episode: SeriesEpisode; context: SeriesContext }
+
+function parse(path: string, sourceRoot: string, options: ParseOptions): Parsed | null {
+  const parts = relativeParts(path, sourceRoot)
+  const fileName = parts.pop() ?? ''
+  const stem = fileName.replace(/\.[^.]+$/, '')
+  const folders = parts
+  const seasonFolder = seasonFolderIn(folders)
+  const allowBare = !!seasonFolder || (folders.length > 0 && (options.numberedSiblings ?? 0) >= 3)
+  const tag = episodeTag(stem, allowBare)
+
+  // Show names: file prefix, the season folder's words before "Season", the folder above it (or
+  // the episode's own folder when there is no season folder).
+  const showIndex = seasonFolder ? seasonFolder.index - 1 : folders.length - 1
+  const showFolder = showIndex >= 0 ? folders[showIndex] : undefined
+  // Its full path: the file's path without the parts below it.
+  const segments = path.split(/[\\/]/)
+  const showFolderPath = showIndex >= 0 ? segments.slice(0, segments.length - 1 - (folders.length - 1 - showIndex)).join('\\') : ''
+  const fromPrefix = tag?.prefix ? cleanShowName(tag.prefix) : ''
+  const fromSeason = seasonFolder?.prefix ? cleanShowName(seasonFolder.prefix) : ''
+  const fromFolder = showFolder ? cleanShowName(showFolder) : ''
+  // A prefix that is only a number or a word like "Episode" names nothing.
+  const prefixName = /^(?:\d+|ep|episode|part|disc|cd\d*)$/i.test(fromPrefix) ? '' : fromPrefix
+  const ordered = seasonFolder ? [fromSeason, fromFolder, prefixName] : [prefixName, fromFolder]
+  // "The Office US" is "The Office" to TMDB (its year tells the two apart).
+  const names = unique(ordered.flatMap(name => {
+    const plainName = name.replace(/\s+(?:US|UK|AU|CA|NZ)$/, '')
+    return plainName !== name ? [name, plainName] : [name]
+  }))
+  const year = yearIn(seasonFolder ? folders[seasonFolder.index] : '') || yearIn(showFolder ?? '') || yearIn(stem)
+
+  // "Star Wars Episode 4 - A New Hope (1977)": a year in the file name, without a season anywhere,
+  // is a movie's.
+  const movieLike = !!tag && tag.strength !== 'full' && !seasonFolder && !!yearIn(stem)
+  if (tag && !movieLike) {
+    if (!names.length) return null
+    const season = tag.season ?? seasonFolder?.season ?? 1
+    return {
+      episode:{ seriesTitle:names[0], seasonNumber:season, episodeNumber:tag.episode, episodeTitle:cleanEpisodeTitle(tag.rest) },
+      context:{ names, year, showFolder:showFolderPath },
+    }
+  }
+  if (seasonFolder && names.length) {
+    const episodeTitle = cleanEpisodeTitle(stem)
+    if (episodeTitle) return { episode:{ seriesTitle:names[0], seasonNumber:seasonFolder.season, episodeTitle }, context:{ names, year, showFolder:showFolderPath } }
+  }
+  return null
+}
+
+/** The episode a video is, or null for a movie. */
+export function parseSeriesEpisode(path: string, sourceRoot = '', options: ParseOptions = {}): SeriesEpisode | null {
+  return parse(path, sourceRoot, options)?.episode ?? null
+}
+
+/** The episode and the show names to search for, or null for a movie. */
+export function parseSeriesContext(path: string, sourceRoot = '', options: ParseOptions = {}): Parsed | null {
+  return parse(path, sourceRoot, options)
 }
 
 export function inferGenre(path: string): string {
@@ -371,11 +568,27 @@ export function createScannedLibrary(
 ): LibraryItem[] {
   const newest = videos.slice().sort((a,b) => (a.modifiedAt ?? 0) - (b.modifiedAt ?? 0))
   const ranks = new Map(newest.map((video, index) => [video.path, index + 1]))
-  return videos.map(video => {
+  // Videos per folder named "01 - …": three or more make bare numbers episodes there.
+  const numbered = new Map<string,number>()
+  for (const video of videos) {
+    if (!looksNumbered(video.name)) continue
+    const folder = parentDirectory(video.path)
+    numbered.set(folder,(numbered.get(folder) ?? 0) + 1)
+  }
+  const showFolders = new Map<string,{ seriesTitle:string; names:string[]; year:number }>()
+  const items = videos.map(video => {
     const parsed = parseMovieFilename(video.name)
-    const episode = parseSeriesEpisode(video.path, video.sourceRoot)
-    const searchTitles = episode
-      ? movieSearchTitles(episode.seriesTitle)
+    // A video in an extras folder (any of its names) belongs to the folder above: never a show,
+    // never a movie of its own, never asked of TMDB (2026-10-27).
+    const extraOf = extrasOwnerFolder(video.path, video.sourceRoot)
+    const series = extraOf ? null : parseSeriesContext(video.path, video.sourceRoot, { numberedSiblings:numbered.get(parentDirectory(video.path)) ?? 0 })
+    if (series?.context.showFolder) {
+      const key = normalizedPath(series.context.showFolder)
+      if (!showFolders.has(key)) showFolders.set(key,{ seriesTitle:series.episode.seriesTitle, names:series.context.names, year:series.context.year })
+    }
+    const episode = series?.episode
+    const searchTitles = series
+      ? series.context.names
       : movieSearchTitles(video.name,video.probe?.title ?? '')
     const hash = stableNumber(video.path)
     const coverUrl = video.coverPath ? coverUrls.get(video.coverPath) : undefined
@@ -385,7 +598,7 @@ export function createScannedLibrary(
     const folder = video.path.replace(/[\\/][^\\/]+$/, '').split(/[\\/]/).pop() || 'your media folder'
     // A filename year usually represents the release. Container tags often
     // contain the encode/import year instead, so only use them as a fallback.
-    const year = parsed.year || video.probe?.year || 0
+    const year = series ? series.context.year : parsed.year || video.probe?.year || 0
     const artwork: LibraryArtwork = coverUrl
       ? { src:coverUrl, x:50, y:50, mode:'cover' }
       : { src:'', x:0, y:0, mode:'placeholder' }
@@ -394,9 +607,9 @@ export function createScannedLibrary(
       title:episode
         ? episode.episodeNumber != null
           ? `S${String(episode.seasonNumber).padStart(2,'0')}E${String(episode.episodeNumber).padStart(2,'0')}${episode.episodeTitle ? ` · ${episode.episodeTitle}` : ''}`
-          : `Season ${episode.seasonNumber}${episode.episodeTitle ? ` · ${episode.episodeTitle}` : ''}`
-        : parsed.title,
-      year,
+          : `${episode.seasonNumber === 0 ? 'Special' : `Season ${episode.seasonNumber}`}${episode.episodeTitle ? ` · ${episode.episodeTitle}` : ''}`
+        : extraOf ? fileStem(video.path).replace(/[._]+/g, ' ').replace(/\s+/g, ' ').trim() : parsed.title,
+      year:extraOf ? 0 : year,
       runtimeMinutes,
       rating:'LOCAL',
       primaryGenre,
@@ -416,8 +629,66 @@ export function createScannedLibrary(
       seasonNumber:episode?.seasonNumber,
       episodeNumber:episode?.episodeNumber,
       metadataSearchTitles:searchTitles,
+      ...(extraOf ? { extraOf, tmdbMatchAttempted:true } : !series ? { folderSearchTitles:folderSearchTitles(video) } : {}),
     }
-  }).sort((a,b) => a.title.localeCompare(b.title, undefined, { numeric:true }))
+  })
+  return attachSeriesExtras(items, showFolders).sort((a,b) => a.title.localeCompare(b.title, undefined, { numeric:true }))
+}
+
+/**
+ * Fallback titles from the folders, for a movie whose file name finds nothing: its folder ("Heat
+ * (1995)\heat-cd1.avi"), then the folder above (a "Disc 1" or "Movie" folder inside the movie's).
+ * Never the source root.
+ */
+function folderSearchTitles(video: ScannedVideo): string[] {
+  const root = normalizedPath(video.sourceRoot)
+  const titles: string[] = []
+  let folder = parentDirectory(video.path)
+  const original = video.path.replace(/[\\/][^\\/]+$/, '').split(/[\\/]/)
+  for (let depth = 0; depth < 2 && folder && folder !== root && folder.startsWith(root); depth += 1) {
+    const name = original[original.length - 1 - depth] ?? ''
+    const title = parsedMovieName(name,false).title
+    if (title && !/^(?:disc|disk|cd|dvd|part|movie|film|video)s?[\s._-]*\d*$/i.test(title) && !EXTRA_FOLDER.test(name)) titles.push(title)
+    folder = folder.replace(/\\[^\\]+$/, '')
+  }
+  return titles
+}
+
+/**
+ * Videos named as extras ("Making of", "-trailer") lying loose in a show's folder, beside its
+ * seasons, belong to the show's folder like an Extras folder's would.
+ */
+function attachSeriesExtras(items: LibraryItem[], showFolders: Map<string,{ seriesTitle:string; names:string[]; year:number }>): LibraryItem[] {
+  if (!showFolders.size) return items
+  return items.map(item => {
+    if (item.mediaKind === 'episode' || item.extraOf || !item.path || !looksLikeExtra(item)) return item
+    const folder = parentDirectory(item.path)
+    if (!showFolders.has(folder)) return item
+    const { folderSearchTitles:_folders, ...rest } = item
+    return { ...rest, extraOf:item.path.replace(/[\\/][^\\/]+$/, ''), tmdbMatchAttempted:true }
+  })
+}
+
+/** Folder names that hold extras: "Extras", "Featurettes", "Season 3 Extras", "Special Features", "Bonus Disc"... */
+const EXTRAS_FOLDER_WORDS = /(?:^|[\s._\-(\[])(?:extras?|bonus(?:es)?|featurettes?|special[\s._-]*features?|behind[\s._-]*the[\s._-]*scenes|deleted[\s._-]*scenes?|interviews?|trailers?|making[\s._-]*of|supplements?|bloopers?|outtakes?|gag[\s._-]*reels?)(?=$|[\s._\-)\]])/i
+
+export function isExtrasFolderName(name: string): boolean {
+  // "Specials" is a show's season 0; a year makes it a movie's folder ("Bonus Track (2020)").
+  if (SPECIALS_FOLDER.test(words(name))) return false
+  return EXTRA_FOLDER.test(name) || (EXTRAS_FOLDER_WORDS.test(name) && !yearIn(name))
+}
+
+/**
+ * The folder a video's extras folder belongs to: the folder above the outermost extras folder on
+ * its path ("…\\Batman Beyond (…)\\Extras\\Season 3 Extras\\x.avi" -> "…\\Batman Beyond (…)").
+ * undefined: not in an extras folder, or the extras folder is the source root's own.
+ */
+export function extrasOwnerFolder(path: string, sourceRoot = ''): string | undefined {
+  const folders = relativeParts(path, sourceRoot).slice(0, -1)
+  const index = folders.findIndex(isExtrasFolderName)
+  if (index <= 0) return undefined
+  const segments = path.split(/[\\/]/)
+  return segments.slice(0, segments.length - 1 - (folders.length - index)).join('\\')
 }
 
 function normalizedPath(path: string): string {
@@ -463,8 +734,12 @@ function namesMovie(item: LibraryItem, movie: LibraryItem): boolean {
 
 export function flattenLibraryExtras(items: LibraryItem[]): LibraryItem[] {
   const flattened:LibraryItem[] = []
+  // One extras folder can be shared by many titles (a show's episodes): each extra once.
+  const seen = new Set<string>()
   const append = (item:LibraryItem) => {
     const { extras, ...standalone } = item
+    if (seen.has(standalone.id)) return
+    seen.add(standalone.id)
     flattened.push(standalone)
     for (const extra of extras ?? []) append(extra)
   }
@@ -482,7 +757,27 @@ export function flattenLibraryExtras(items: LibraryItem[]): LibraryItem[] {
  * The movie of a folder: the one TMDB identified there, else its only video not named as an extra.
  */
 export function bundleMovieExtras(items: LibraryItem[]): LibraryItem[] {
-  const flat = flattenLibraryExtras(items)
+  const all = flattenLibraryExtras(items)
+  // Extras folders first: each extra goes to every movie and episode inside the folder its extras
+  // folder belongs to (a show's Extras: every episode, and the movie beside the seasons).
+  const owned = new Map<string,LibraryItem[]>()
+  for (const item of all) {
+    if (!item.extraOf) continue
+    const key = normalizedPath(item.extraOf)
+    owned.set(key, [...(owned.get(key) ?? []), item])
+  }
+  const shared = new Map<string,LibraryItem[]>()
+  const sharedIds = new Set<string>()
+  if (owned.size) {
+    for (const [owner, extras] of owned) {
+      const sorted = extras.slice().sort((a,b) => (a.path ?? '').localeCompare(b.path ?? '', undefined, { numeric:true }))
+      const recipients = all.filter(item => !item.extraOf && item.path && normalizedPath(item.path).startsWith(`${owner}\\`))
+      if (!recipients.length) continue
+      for (const recipient of recipients) shared.set(recipient.id, [...(shared.get(recipient.id) ?? []), ...sorted])
+      for (const extra of extras) sharedIds.add(extra.id)
+    }
+  }
+  const flat = all.filter(item => !sharedIds.has(item.id))
   type Member = { item:LibraryItem; inExtrasFolder:boolean }
   const folders = new Map<string,Member[]>()
   for (const item of flat) {
@@ -521,5 +816,8 @@ export function bundleMovieExtras(items: LibraryItem[]): LibraryItem[] {
 
   return flat
     .filter(item => !bundledIds.has(item.id))
-    .map(item => extrasByMovie.has(item.id) ? { ...item, extras:extrasByMovie.get(item.id) } : item)
+    .map(item => {
+      const extras = [...(shared.get(item.id) ?? []), ...(extrasByMovie.get(item.id) ?? [])]
+      return extras.length ? { ...item, extras } : item
+    })
 }

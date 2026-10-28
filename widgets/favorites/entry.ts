@@ -4,7 +4,7 @@ import Widget from './Widget.vue'
 export default {
   api: '1.0',
   id: 'favorites',
-  version: '0.1.0',
+  version: '0.2.0',
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
 
@@ -15,17 +15,30 @@ export default {
 
   // Right-click on a favorite or a favorites folder (Widget.vue: sdk.ui().contextMenu, onMenuItem)
   menuContexts: [
-    { id: 'favorites.item',   label: 'Favorite',         icon: '★' },
-    { id: 'favorites.folder', label: 'Favorites folder', icon: '📁' },
+    { id: 'favorites.item',       label: 'Favorite',         icon: '★' },
+    { id: 'favorites.folder',     label: 'Favorites folder', icon: '📁' },
+    // 0.2.0: the bar or list itself, not on a favorite
+    { id: 'favorites.background', label: 'Favorites bar',    icon: '☆' },
   ],
   menus: {
     items: [
-      { id: 'edit',      label: 'Edit…',   icon: '✎', contexts: ['favorites.item'] },
-      { id: 'item.sep',  type: 'separator',          contexts: ['favorites.item'] },
-      { id: 'remove',    label: 'Remove',  icon: '✕', contexts: ['favorites.item'] },
-      { id: 'rename',    label: 'Rename…', icon: '✎', contexts: ['favorites.folder'] },
-      { id: 'folder.sep', type: 'separator',         contexts: ['favorites.folder'] },
-      { id: 'delete',    label: 'Delete…', icon: '✕', contexts: ['favorites.folder'] },
+      // On a favorite: adding goes in the folder it is in
+      { id: 'edit',              label: 'Edit…',               icon: '✎', contexts: ['favorites.item'] },
+      { id: 'item.sep',          type: 'separator',                       contexts: ['favorites.item'] },
+      { id: 'add-here',          label: 'Add favorite here…',  icon: '★', contexts: ['favorites.item'] },
+      { id: 'new-folder-here',   label: 'New folder here…',    icon: '📁', contexts: ['favorites.item'] },
+      { id: 'item.sep2',         type: 'separator',                       contexts: ['favorites.item'] },
+      { id: 'remove',            label: 'Remove',              icon: '✕', contexts: ['favorites.item'] },
+      // On a folder (its button or its open dropdown): inside it
+      { id: 'add-inside',        label: 'Add favorite inside…', icon: '★', contexts: ['favorites.folder'] },
+      { id: 'new-folder-inside', label: 'New folder inside…',  icon: '📁', contexts: ['favorites.folder'] },
+      { id: 'folder.sep0',       type: 'separator',                       contexts: ['favorites.folder'] },
+      { id: 'rename',            label: 'Rename…',             icon: '✎', contexts: ['favorites.folder'] },
+      { id: 'folder.sep',        type: 'separator',                       contexts: ['favorites.folder'] },
+      { id: 'delete',            label: 'Delete…',             icon: '✕', contexts: ['favorites.folder'] },
+      // On the bar itself: the top level
+      { id: 'add',               label: 'Add favorite…',       icon: '★', contexts: ['favorites.background'] },
+      { id: 'new-folder',        label: 'New folder…',         icon: '📁', contexts: ['favorites.background'] },
     ],
   },
 

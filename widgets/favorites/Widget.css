@@ -148,40 +148,6 @@
   border-bottom: 1px dashed rgba(255, 255, 255, 0.4);
 }
 
-.fav-list-top-hint {
-  position: absolute;
-  top: 2px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 6;
-
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border-radius: 9px;
-
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(0, 0, 0, 0.35);
-  color: rgba(255, 255, 255, 0.85);
-  cursor: pointer;
-}
-
-.fav-list-top-hint:hover {
-  background: rgba(0, 0, 0, 0.45);
-}
-
-.fav-list-top-hint .chev {
-  font-size: 9px;
-  line-height: 8px;
-  margin-top: -1px;
-}
-
-
 .fav-list-resize-handle {
   height: 18px;
   margin-top: 6px;
@@ -538,149 +504,6 @@
 }
 
 
-/* Add favorite / folder popup */
-.fav-dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: radial-gradient(
-    circle at top,
-    rgba(0, 0, 0, 0.4),
-    rgba(0, 0, 0, 0.8)
-  );
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 10000;
-}
-
-.fav-dialog {
-  background: rgba(12, 12, 12, 0.96);
-  border-radius: 8px;
-  border: 1px solid var(--fav-border);
-  padding: 8px 10px;
-  min-width: 260px;
-  max-width: 420px;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
-}
-
-.fav-dialog-title {
-  font-size: 13px;
-  font-weight: 600;
-  margin-bottom: 6px;
-}
-
-.fav-type-toggle {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 6px;
-}
-
-.btn-toggle {
-  flex: 1 1 0;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  background: transparent;
-  color: inherit;
-  font-size: 11px;
-  padding: 2px 6px;
-  cursor: pointer;
-}
-
-.btn-toggle.active {
-  background: rgba(255, 255, 255, 0.24);
-}
-
-.btn-toggle:not(.active):hover {
-  background: rgba(255, 255, 255, 0.12);
-}
-
-.fav-dialog-field {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-bottom: 6px;
-}
-
-.field-label {
-  font-size: 11px;
-  opacity: 0.8;
-}
-
-.fav-dialog .fav-input {
-  width: 100%;
-  background: rgba(0, 0, 0, 0.3);
-  border-radius: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  color: inherit;
-  font-size: 12px;
-  padding: 3px 6px;
-  box-sizing: border-box;
-}
-
-.fav-dialog .fav-input:focus {
-  outline: none;
-  border-color: rgba(255, 255, 255, 0.4);
-}
-
-/* A favorite's folders (2026-10-22): one row each, up to 4 side by side */
-.fav-location-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-bottom: 3px;
-}
-
-.fav-location-row .fav-input {
-  flex: 1;
-  min-width: 0;
-}
-
-.btn.btn-small {
-  padding: 2px 6px;
-  font-size: 11px;
-  flex: none;
-}
-
-.fav-location-add {
-  align-self: flex-start;
-}
-
-.fav-dialog-error {
-  font-size: 11px;
-  color: var(--danger, #ff8a80);
-  margin-bottom: 6px;
-}
-
-.fav-dialog-buttons {
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
-  margin-top: 4px;
-}
-
-.btn {
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  background: transparent;
-  color: inherit;
-  font-size: 11px;
-  padding: 2px 10px;
-  cursor: pointer;
-}
-
-.btn.primary {
-  background: rgba(255, 255, 255, 0.16);
-}
-
-.btn:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.btn:not(:disabled):hover {
-  background: rgba(255, 255, 255, 0.24);
-}
-
 /* Folders menu overlay */
 .fav-menu-backdrop {
   position: fixed;
@@ -849,40 +672,127 @@
 }
 
 .fav-toolbar-gutter.left {
-  padding-right: 6px;
+  padding-right: 4px;
 }
 
 .fav-toolbar-gutter.right {
-  padding-left: 6px;
+  padding-left: 4px;
 }
 
-/* Small edge “tab” buttons */
-.fav-edge-tab {
-  height: 22px;
-  min-width: 22px;
-  padding: 0 6px;
-  border-radius: 999px;
+/* ── 0.2.0 (2026-10-28) ─────────────────────────────────────────────── */
 
-  border: 1px solid rgba(255,255,255,0.22);
-  background: rgba(0,0,0,0.25);
-  color: inherit;
-
+/* The add button: a star with a plus (toolbar gutter, sidebar row) */
+.fav-add-star {
+  width: 16px;
+  height: 16px;
+  display: block;
+  overflow: visible;
+}
+.fav-add-star path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+}
+.fav-add-star .fav-add-plus {
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+.fav-edge-add {
+  flex: none;
   display: grid;
   place-items: center;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: color-mix(in srgb, currentColor 80%, transparent);
   cursor: pointer;
 }
-
-.fav-edge-tab:hover:not(:disabled) {
-  background: rgba(255,255,255,0.10);
-  border-color: rgba(255,255,255,0.35);
+.fav-edge-add:hover:not(:disabled),
+.add-favorite-btn:hover .fav-add-star {
+  color: var(--accent, #4ea1ff);
 }
-
-.fav-edge-tab:disabled {
-  opacity: 0.25;
+.fav-edge-add:hover:not(:disabled) {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+.fav-edge-add:disabled {
+  opacity: 0.3;
   cursor: default;
 }
 
-.fav-edge-add {
-  /* keeps it visually aligned with the arrows */
-  padding: 2px 6px;
+/* Scroll strips: thin, flat, only when the favorites don't fit; dimmed at the end they reached */
+.fav-scroll-strip {
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.75;
+}
+.fav-scroll-strip svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.fav-scroll-strip:hover:not(:disabled) {
+  opacity: 1;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+.fav-scroll-strip:disabled {
+  opacity: 0.18;
+  cursor: default;
+}
+.fav-scroll-strip--left,
+.fav-scroll-strip--right {
+  width: 10px;
+  align-self: stretch;
+  margin: 3px 0;
+}
+.fav-scroll-strip--left svg,
+.fav-scroll-strip--right svg {
+  width: 5px;
+  height: 9px;
+}
+.fav-scroll-strip--up {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 6;
+  height: 10px;
+  background: color-mix(in srgb, var(--fav-bg, #141414) 70%, currentColor 10%);
+}
+.fav-scroll-strip--up svg {
+  width: 9px;
+  height: 5px;
+}
+
+/* A favorite opening 2-4 folders side by side: the count on its star */
+.fav-icon--multi {
+  position: relative;
+  margin-right: 4px;
+}
+.fav-pane-count {
+  position: absolute;
+  right: -5px;
+  bottom: -4px;
+  min-width: 11px;
+  height: 11px;
+  padding: 0 2px;
+  box-sizing: border-box;
+  border-radius: 6px;
+  background: var(--accent, #4ea1ff);
+  color: #081018;
+  font: 700 8px/11px system-ui, sans-serif;
+  text-align: center;
+  pointer-events: none;
 }

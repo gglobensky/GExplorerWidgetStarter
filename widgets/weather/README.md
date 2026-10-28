@@ -29,7 +29,7 @@ The shell owns configuration persistence. Location selection emits the existing 
 
 Units accept C/F; forecastDays accepts 3/7. Refresh is clamped to at least five minutes. Wind is currently displayed in km/h independently of temperature units. Legacy NWS grid strings prompt for a new location. No location is silently inferred or sent from device geolocation.
 
-The first implementation focuses on the grid, with responsive sidebar fallback. Toolbar presentation is deliberately not declared until its opening/detail interaction is implemented against the shell API.
+The grid comes first, with the responsive layout in the sidebar. Since v1.3 the toolbar is declared too (see "The strip (v1.3)").
 
 ## Data and service choice
 
@@ -50,6 +50,17 @@ The narrow forecast layout begins at its original breakpoint and presents one da
 Current has an intermediate layout. It keeps the city and region plus the standard left-aligned Current/Forecast pair while Forecast is already using its narrow card presentation. At 240px, the city block is removed, its full location moves into the temperature tooltip, and the view pair becomes one centered flipping button. If the forecast range wraps below that button, the button remains centered on its own row.
 
 First use offers city entry and indicates that automatic detection is unavailable. No geolocation/Wi-Fi service exists in the inspected public widget SDK; implementing it in the widget via browser geolocation or IP lookup would cross the agreed API boundary. A consent-aware device-location API is a future Shell task. No automatic location request occurs.
+
+## The strip (v1.3)
+
+One grid row high (the grid's `minSize` is now 2 × 1), or in the toolbar, the widget is a single line:
+
+- **Icon and temperature:** the current condition; the tooltip gives the details. A click flips the strip (the same flip as the other layouts) to the **3-day forecast**: today and the next two days, icon, high and low, sharing the width. A click there flips back (1.3.1).
+- **Condition, then the city with today's high / low:** a click opens the location picker in a popover (`ui.openPopover`), since the strip has no room for the search. The picker is `WeatherSetup.vue`, the same component the full widget shows inline.
+- **The next three days:** when the strip is wider than about 470 px.
+- **A small "!"** when the last refresh failed or the forecast is out of date (its tooltip says which); a click refreshes. Otherwise the widget refreshes on its own schedule.
+
+Sizes follow the strip's height (container queries): the icon and temperature grow up to a grid row, and under about 44 px (the toolbar at its lowest) the city line and day names drop. As it narrows, the days go first, then the text, leaving the icon and temperature. The strip takes over below about 130 px of height (with a little hysteresis), and always in the toolbar, which starts the widget at a fixed 300 px (`contexts.toolbar.width`).
 
 ## Host integration notes
 

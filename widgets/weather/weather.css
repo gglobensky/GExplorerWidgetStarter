@@ -277,67 +277,6 @@ h2 {
 .notice button {
   margin-top: 4px;
 }
-.setup-heading {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.setup-heading button {
-  font-size: 12px;
-  padding: 3px 7px;
-}
-.choice-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.choice-buttons button {
-  flex: 1;
-  font-size: 12px;
-}
-.setup form {
-  display: flex;
-  align-items: end;
-  gap: 6px;
-}
-.setup label {
-  display: block;
-  flex: 1;
-  min-width: 0;
-  font-size: 12px;
-}
-.setup input {
-  display: block;
-  min-width: 0;
-  width: 100%;
-  padding: 6px;
-  margin-top: 3px;
-  background: var(--weather-panel);
-  border: 1px solid var(--weather-border);
-  border-radius: 6px;
-}
-.setup p {
-  margin-top: 7px;
-  font-size: 12px;
-}
-.results {
-  padding: 0;
-  margin: 8px 0;
-  list-style: none;
-  display: grid;
-  gap: 4px;
-}
-.results button {
-  width: 100%;
-  text-align: left;
-}
-.results span {
-  display: block;
-  font-size: 12px;
-  color: var(--weather-muted);
-}
 .flip-out {
   animation: weather-flip-out 260ms ease-in forwards;
   pointer-events: none;
@@ -412,13 +351,206 @@ h2 {
     scroll-snap-align: start;
     scroll-snap-stop: always;
   }
-  .setup form {
-    flex-wrap: wrap;
-  }
 }
 @media (prefers-reduced-motion: reduce) {
   .flip-out,
   .flip-in {
     animation: none;
+  }
+}
+
+/* ── The strip (1.3.0, 2026-10-28): one grid row high, or the toolbar ─────────────── */
+.weather.is-strip {
+  padding: 4px 10px;
+  overflow: hidden;
+  justify-content: center;
+  border-radius: 10px;
+}
+.strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: 100%;
+  container-type: size;
+  perspective: 900px;
+}
+/* The face that flips (1.3.1): current weather / 3-day forecast */
+.strip-face {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  backface-visibility: hidden;
+  transform-origin: center;
+}
+.strip button {
+  border: 0;
+  background: transparent;
+  padding: 2px 4px;
+  border-radius: 7px;
+  min-width: 0;
+}
+.strip button:hover:not(:disabled) {
+  background: var(--weather-panel);
+}
+.strip-now {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+/* Sized from the strip's height (cqh: the strip is a size container; its children measure it) */
+.strip .strip-icon {
+  width: clamp(18px, calc(100cqh - 10px), 40px);
+  height: clamp(18px, calc(100cqh - 10px), 40px);
+}
+.strip-temp {
+  font-size: clamp(16px, calc(100cqh * 0.42), 30px);
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+}
+.strip-temp small {
+  font-size: 0.55em;
+  font-weight: 500;
+  margin-left: 1px;
+  color: var(--weather-muted);
+}
+.strip-place {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  flex: 1 1 auto;
+  text-align: left;
+  line-height: 1.25;
+  overflow: hidden;
+}
+.strip-condition,
+.strip-sub {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.strip-condition {
+  font-size: 13px;
+  font-weight: 600;
+}
+.strip-sub {
+  font-size: 12px;
+  color: var(--weather-muted);
+}
+.strip-days {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+.strip-day {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 7px;
+  background: var(--weather-panel);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.strip-day-name {
+  color: var(--weather-muted);
+}
+.strip .strip-day-icon {
+  width: 18px;
+  height: 18px;
+}
+.strip .strip-alert {
+  flex: none;
+  padding: 0;
+  border: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #1b1200;
+  background: #e7b34f;
+}
+.strip-set {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.strip .strip-alert:hover:not(:disabled) {
+  background: #f2c76a;
+}
+/* The forecast side: three days sharing the width */
+.strip-forecast {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  height: 100%;
+}
+.strip-fday {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  border-radius: 8px;
+  background: var(--weather-panel);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.strip .strip-fday-icon {
+  width: clamp(16px, calc(100cqh - 20px), 30px);
+  height: clamp(16px, calc(100cqh - 20px), 30px);
+}
+.strip-hl {
+  font-weight: 650;
+}
+.strip-low {
+  margin-left: 4px;
+  font-weight: 400;
+  color: var(--weather-muted);
+}
+/* Tiny (toolbar at its lowest): one text line */
+.strip.tiny .strip-sub {
+  display: none;
+}
+.strip.tiny .strip-day-name {
+  display: none;
+}
+.strip.tiny .strip-fday {
+  background: transparent;
+}
+/* Narrower: the days go first, then the text (icon + temperature stay) */
+@container (max-width: 470px) {
+  .strip-days {
+    display: none;
+  }
+}
+@container (max-width: 190px) {
+  .strip-place {
+    display: none;
+  }
+}
+/* Forecast side, narrow: the lows go, then the day names */
+@container (max-width: 330px) {
+  .strip-low {
+    display: none;
+  }
+}
+@container (max-width: 230px) {
+  .strip-forecast .strip-day-name {
+    display: none;
   }
 }

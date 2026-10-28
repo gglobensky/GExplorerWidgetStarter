@@ -77,6 +77,9 @@ declare module 'gexplorer/widgets' {
          *              file dialog, picks the file.
          *   openUrl    a web link in the user's browser: the user is always asked first, naming this widget.
          *   setView    saves a patch of this placement's view settings (a plain object, at most 8 KB of JSON).
+         *              { save: false } (2026-10-27): shows it without saving it: the host's menus and buttons
+         *              agree with what the widget shows (a layout it chose itself), nothing is written now;
+         *              it is kept if a later setting is saved.
          * navigate, openPath and openUrl only right after the user's own click or key press in this widget
          * (the GExplorer moving its own view to a folder excepted); otherwise refused and written to the security log.
          * openFolder(entry) goes to the folder; openEntry(entry) opens a file (gesture rule) or goes to the
@@ -85,7 +88,7 @@ declare module 'gexplorer/widgets' {
         navigate?: (to: string | string[], options?: { newTab?: boolean; replace?: boolean }) => Promise<WidgetViewResult>
         openPath?: (path: string) => Promise<WidgetViewResult>
         openUrl?: (url: string, options?: { title?: string }) => Promise<WidgetViewResult>
-        setView?: (patch: Record<string, unknown>) => Promise<WidgetViewResult>
+        setView?: (patch: Record<string, unknown>, options?: { save?: boolean }) => Promise<WidgetViewResult>
 
         // Read cap
         /**
@@ -276,8 +279,10 @@ declare module 'gexplorer/widgets' {
          *                                  as networkFetch). Addresses on this computer or the local
          *                                  network are refused (E_PRIVATE_ADDRESS). With storage
          *                                  'cache', the same url + headers + options is fetched once.
-         * storage 'cache' (default): shared and evicted when unused for 30 days or beyond 500 MB:
-         * when an <img> fails to load, make it again. 'persistent': kept until deleted, within the
+         * storage 'cache' (default): this widget's own 500 MB room (2026-10-27; other widgets never
+         * push its images out), its least recently shown going first beyond it, and anything unused
+         * for 30 days. When an <img> fails to load, make it again. A thumbnail of an unchanged file
+         * (same path, size, date, options) comes from the cache, across sessions. 'persistent': kept until deleted, within the
          * widget's room: 200 MB, more if entry.ts asks for it (`storage: { assets: { mb, reason } }`,
          * up to 10240) and the user agrees (asked once, the first time it is needed).
          * Rejects with an Error whose `code` is: E_NOT_FOUND, E_IS_FOLDER, E_NOT_IMAGE, E_FORMAT
@@ -375,16 +380,20 @@ declare module 'gexplorer/widgets' {
         // ── Favorites cap: the user's favorites (the host's shared format) ──
         // A favorite opens a place: one location, or 2-4 folders side by side (sdk.navigate takes the same).
         getGlobalFavorites?: () => Promise<FavoriteTreeNode[]>
-        /** { added: false }: that place already is a favorite (its id); throws when <locations> is not a place. */
-        addFavorite?: (locations: string[], label?: string, parentFolderId?: string) => Promise<{ added: boolean; id: string }>
+        /**
+         * { added: false }: that place already is a favorite (its id), nothing changed; throws when <locations>
+         * is not a place. opts.allowDuplicate (2026-10-28): added anyway, only when the user chose so ("Keep both").
+         */
+        addFavorite?: (locations: string[], label?: string, parentFolderId?: string, opts?: { allowDuplicate?: boolean }) => Promise<{ added: boolean; id: string }>
         addFolder?: (label: string, parentFolderId?: string) => Promise<void>
         /** By the favorite's id. */
         removeFavorite?: (id: string) => Promise<void>
         /**
          * Changes a favorite: its name (empty: the default name), the place it opens, the folder it is in
-         * (null: the top level; moved to the end). Throws when another favorite already opens that place.
+         * (null: the top level; moved to the end). A new place another favorite already opens throws, the
+         * error's code 'E_DUPLICATE' (existingId, existingLabel), unless opts.allowDuplicate (the user's choice).
          */
-        updateFavorite?: (id: string, patch: { label?: string; locations?: string[]; parentFolderId?: string | null }) => Promise<void>
+        updateFavorite?: (id: string, patch: { label?: string; locations?: string[]; parentFolderId?: string | null }, opts?: { allowDuplicate?: boolean }) => Promise<void>
         renameFolder?: (folderId: string, label: string) => Promise<void>
         removeFolder?: (folderId: string) => Promise<void>
         reorderGlobalRootNodes?: (nodeIds: string[]) => Promise<void>
@@ -2181,11 +2190,18 @@ declare module 'gexplorer/widgets' {
             anchor: HTMLElement
             component: Component
             props?: Record<string, unknown>
-            placement?: 'below' | 'above' | 'right' | 'left'
+            /** 'center' (2026-10-27): in the middle of the window over a dimmed page, like a message box; the title bar reads "<widget name> — title". */
+            placement?: 'below' | 'above' | 'right' | 'left' | 'center'
             maxWidth?: number
             maxHeight?: number
             onClose?: () => void
-        }): { close(): void; update(props: Record<string, unknown>): void } | null
+            /** placement 'center': the title after the widget's name (the host writes the name). */
+            title?: string
+        }): {
+            close(): void
+            /** Replaces the content's props: pass them all (close is kept). */
+            update(props: Record<string, unknown>): void
+        } | null
         alert(message: string, opts?: { title?: string; detail?: string; variant?: MbVariant; okLabel?: string }): Promise<void>
         /** true: OK. */
         confirm(message: string, opts?: { title?: string; detail?: string; okLabel?: string; cancelLabel?: string; danger?: boolean }): Promise<boolean>
@@ -2296,6 +2312,48 @@ declare module 'gexplorer/widgets' {
         widgetConfig?: any
         /** Called once when the menu closes (after the chosen item ran), or right away when nothing shows. */
         onClose?: () => void
+        /**
+         * NEW (2026-10-27): the entries of the widget's declared submenus (menus.items with type
+         * 'submenu'), by the submenu's id, for this menu only (its live state: ticks, the user's own
+         * entries). A choice reaches onMenuItem({ itemId: <entry id> }). One nested level at most, 40
+         * entries a list, labels 80 characters, ids letters / digits / . _ - only.
+         *   ui.contextMenu(e, { submenus: { filter: [
+         *     { id: 'show', label: 'Show', children: [{ id: 'show.all', label: 'Everything', checked: true }, ...] },
+         *     { separator: true },
+         *     { id: 'clear', label: 'Clear filter' },
+         *   ] } })
+         */
+        submenus?: Record<string, WidgetMenuNode[]>
+        /**
+         * NEW (2026-10-28): which of the widget's menu situations (entry.ts menuStates) are true now.
+         * Items the user set to "Disable when…" one of them in sys:context-menus (or whose default,
+         * menus.items disableWhen / hideWhen, names one) are greyed with the reason, or left out.
+         * Undeclared ids are ignored; the widget's layout (widgetConfig.view.layout) counts by itself
+         * as 'layout:<id>'. The widget can't grey anything by itself: only these rules decide.
+         *   // entry.ts
+         *   menuStates: [{ id: 'narrow', label: 'Narrow view' }],
+         *   menus: { items: [{ id: 'minimize-all', label: 'Minimize all', contexts: ['tree.folder'], disableWhen: ['narrow'] }] },
+         *   // Widget.vue
+         *   ui.contextMenu(e, { context: 'tree.folder', states: narrow ? ['narrow'] : [] })
+         */
+        states?: string[]
+    }
+
+    /** NEW (2026-10-28): a widget's menu situation (entry.ts menuStates): id (letters, digits, - _), label. */
+    export type MenuStateDecl = { id: string; label: string }
+
+    /**
+     * NEW (2026-10-27): an entry of a declared submenu (WidgetContextMenuOptions.submenus). `checked`
+     * on any entry of a list shows the list as a choice (ticks).
+     */
+    export type WidgetMenuNode = {
+        id?: string
+        label?: string
+        checked?: boolean
+        disabled?: boolean
+        title?: string
+        separator?: boolean
+        children?: WidgetMenuNode[]
     }
 
     /**
@@ -2305,11 +2363,19 @@ declare module 'gexplorer/widgets' {
      */
     export type WidgetMenuItemDecl = {
         id: string
-        type?: 'command' | 'separator'
+        /** 'submenu' (2026-10-27): its entries come with each right-click (contextMenu opts.submenus[id]). */
+        type?: 'command' | 'separator' | 'submenu'
         label?: string
         icon?: string
         contexts: string[]
         when?: Record<string, unknown>
+        /**
+         * NEW (2026-10-28): defaults for the user's "Disable when…": greyed while one of these situations
+         * is true (the widget's menuStates ids, or 'layout:<id>'); hideWhen: left out instead (wins over
+         * disableWhen). The user can change it per item in sys:context-menus.
+         */
+        disableWhen?: string[]
+        hideWhen?: string[]
     }
 
     /**

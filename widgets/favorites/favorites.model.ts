@@ -88,3 +88,22 @@ export function guessLabelFromPath(path: string): string {
   const parts = p.split(/[/\\]/).filter(Boolean)
   return parts[parts.length - 1] || p
 }
+
+/** FavoriteDialog.vue's props (0.2.0): adding or editing a favorite, or a new folder. */
+export type FavoriteDialogProps = {
+  /** 'item': a favorite; 'folder': a folder of favorites. */
+  mode: 'item' | 'folder'
+  /** Editing this favorite (else adding). */
+  editingId?: string | null
+  locations?: string[]
+  label?: string
+  /** The folder of favorites it goes in ('' = the top level). */
+  parentId?: string
+  /** Favorite / Folder can be switched (adding from the + button). */
+  canSwitch?: boolean
+  /** A note shown on opening (more than 4 folders were given). */
+  notice?: string | null
+  /** Done: the favorites changed. */
+  onSaved?: () => void | Promise<void>
+  close?: () => void
+}

@@ -1,13 +1,19 @@
 <script setup lang="ts">
 import { iconFor } from 'gexplorer/widgets'
 import type { ListingEntry } from 'gexplorer/widgets'
+import { sizedIconKey } from './iconSizes'
 
 /* -----------------------------------------------
-   Virtual grid layout (L3b)
-   useVirtualList counts visual rows of `columns` cells; Widget.vue hands in
-   the item indices of the visible rows. Cells not loaded yet are
-   placeholders. The sizer is one cell (same classes): every cell must keep
-   the same height.
+   Icons layout (layout id 'grid'; 2026-10-27, was the Grid)
+   Cells stacked like Windows' large icons: the icon above, the name under it
+   on up to two lines. Widget.vue picks the columns from the pane's width and
+   the icon size (iconSizes.ts). useVirtualList counts visual rows of
+   `columns` cells; cells not loaded yet are placeholders. The sizer is one
+   cell (same classes): every cell keeps the same height (the name always
+   takes two lines' room).
+   Media (layout id 'media', 0.8.0) is the same grid with a bigger square:
+   a picture's, video's, cover's or PDF's thumbnail fills it (fitted, never
+   cropped); folders and other files show their icon at half its size.
 ------------------------------------------------ */
 const props = defineProps<{
   indices: number[]
@@ -23,6 +29,15 @@ const props = defineProps<{
   iconsTick: number
   sourceId: string
   columns: number
+  /** The size system icons were asked for (their keys carry it); 32 px ones show until they arrive. */
+  iconPx: number
+  /** Shown icon size (px): the square each icon (Media: each thumbnail) sits in. */
+  iconSize: number
+  /** Media: the system icons' size in the square (else the square's). */
+  sysIconSize?: number
+  /** Media layout: thumbnails (thumbOf) where there is one. */
+  media?: boolean
+  thumbOf?: (entry: ListingEntry) => string | undefined
   folderDropTarget?: string | null
   S: { gap: number; [key: string]: any }
 }>()
@@ -32,14 +47,22 @@ const emit = defineEmits<{
   (e: 'rowMove', payload: { x: number; y: number }): void
   (e: 'rowUp', payload: { index: number }): void
   (e: 'dblclick', payload: { index: number }): void
+  /** A thumbnail's image failed to load (GEM Shell's cache let it go): made again. */
+  (e: 'thumbError', entry: ListingEntry): void
 }>()
 
+const isImg = (icon: string) => icon.startsWith('data:') || icon.startsWith('http') || icon.startsWith('/')
+
 function iconOf(e: ListingEntry): string {
-  return iconFor({ iconKey: props.iconKeyOf(e), kind: e.Kind, ext: e.Ext })
+  const key = props.iconKeyOf(e)
+  if (props.iconPx > 32) {
+    const large = iconFor({ iconKey: sizedIconKey(key, props.iconPx), kind: e.Kind, ext: e.Ext }, props.iconPx)
+    if (isImg(large)) return large
+  }
+  return iconFor({ iconKey: key, kind: e.Kind, ext: e.Ext })
 }
 function iconIsImg(e: ListingEntry): boolean {
-  const icon = iconOf(e)
-  return icon.startsWith('data:') || icon.startsWith('http') || icon.startsWith('/')
+  return isImg(iconOf(e))
 }
 function keyOf(i: number): string {
   return props.rowAt(i)?.Name ?? `\u0000placeholder:${i}`
@@ -47,7 +70,12 @@ function keyOf(i: number): string {
 </script>
 
 <template>
-  <div class="grid-root" :data-icons="iconsTick" :style="{ height: totalHeight + 'px' }">
+  <div
+    class="grid-root"
+    :class="{ 'is-media': media }"
+    :data-icons="iconsTick"
+    :style="{ height: totalHeight + 'px', '--icon-px': iconSize + 'px', '--sys-icon-px': (sysIconSize ?? iconSize) + 'px' }"
+  >
     <div
       class="grid-cells"
       :ref="bindRows"
@@ -75,12 +103,24 @@ function keyOf(i: number): string {
           @dblclick.stop.prevent="() => emit('dblclick', { index: i })"
         >
           <div class="icon">
-            <img v-if="iconIsImg(rowAt(i)!)" :src="iconOf(rowAt(i)!)" alt="" />
-            <span v-else>{{ iconOf(rowAt(i)!) }}</span>
+            <img
+              v-if="media && thumbOf?.(rowAt(i)!)"
+              class="thumb"
+              :src="thumbOf!(rowAt(i)!)"
+              alt=""
+              decoding="async"
+              draggable="false"
+              @error="emit('thumbError', rowAt(i)!)"
+            />
+            <img v-else-if="iconIsImg(rowAt(i)!)" class="sys" :src="iconOf(rowAt(i)!)" alt="" />
+            <span v-else class="sys">{{ iconOf(rowAt(i)!) }}</span>
             <span v-if="opensElsewhere?.(rowAt(i)!)" class="lnk-elsewhere" title="Opens in the system's file manager, not GEM Shell">↗</span>
           </div>
+          <!-- data-rename-row: the rename box covers the name, not the whole cell (2026-10-27) -->
           <div
             class="name"
+            data-rename-row
+            :title="rowAt(i)!.Name"
             :data-rename-id="rowAt(i)!.FullPath"
             :data-rename-value="rowAt(i)!.Name"
             :data-widget-id="sourceId"
@@ -128,15 +168,17 @@ function keyOf(i: number): string {
 
 .placeholder { opacity: 0.35; }
 
-/* Base icon size for GRID (scoped to this layout only) */
+/* The icon: the size chosen (Small … Extra large), glyph fallbacks scaled to it */
 .grid-root .icon {
   position: relative;
-  width: calc(var(--base-font-size) * 1.4);
-  height: calc(var(--base-font-size) * 1.4);
-  flex: 0 0 calc(var(--base-font-size) * 1.4);
+  width: var(--icon-px, 48px);
+  height: var(--icon-px, 48px);
+  flex: 0 0 var(--icon-px, 48px);
   display: flex;
   align-items: center;
   justify-content: center;
+  font-size: calc(var(--icon-px, 48px) * 0.8);
+  line-height: 1;
 }
 
 /* A folder shortcut that opens outside GEM Shell (shortcuts:probe opensElsewhere, 2026-10-18) */
@@ -144,7 +186,7 @@ function keyOf(i: number): string {
   position: absolute;
   right: -3px;
   bottom: -3px;
-  font-size: 0.6em;
+  font-size: max(10px, calc(var(--sys-icon-px, 48px) * 0.22));
   line-height: 1;
   padding: 1px 2px;
   border-radius: 3px;
@@ -153,28 +195,55 @@ function keyOf(i: number): string {
   pointer-events: auto;
 }
 
-.grid-root .icon img {
+.grid-root .icon img.sys {
   width: 100%;
   height: 100%;
   object-fit: contain;
 }
 
-/* Generic row styling (shared base) */
-.row {
-  border: 1px solid var(--items-border);
-  background: var(--items-bg);
-  color: inherit;
-  border-radius: var(--local-radius);
+/* Media (0.8.0): the thumbnail fitted in the square, its shape kept; icons at half the square */
+.grid-root.is-media .icon .sys {
+  width: var(--sys-icon-px);
+  height: var(--sys-icon-px);
+  font-size: calc(var(--sys-icon-px) * 0.8);
+  line-height: 1;
   display: flex;
-  flex-direction: row;
-  gap: var(--local-spacing);
   align-items: center;
-  min-height: calc(var(--base-font-size) * 2.4);
-  padding: var(--space-xs) var(--space-sm);
+  justify-content: center;
+}
+.grid-root .icon img.thumb {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  border-radius: 3px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .45), 0 0 0 1px rgba(255, 255, 255, .06);
+  background: color-mix(in oklab, var(--fg, #fff) 4%, transparent);
+}
+
+/* A cell: icon on top, the name centred under it (two lines' room, always) */
+.row {
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  border-radius: var(--local-radius, 8px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+  padding: 8px 4px 6px;
   box-sizing: border-box;
-  font-size: var(--local-font-md);
-  text-align: var(--items-row-text-align, left);
+  font-size: var(--local-font-sm, 12px);
+  line-height: 1.3;
+  text-align: center;
   cursor: pointer;
+}
+.row:not(.placeholder):hover {
+  background: color-mix(in oklab, var(--fg, #fff) 6%, transparent);
+  border-color: color-mix(in oklab, var(--fg, #fff) 8%, transparent);
 }
 
 .row:focus,
@@ -186,16 +255,21 @@ function keyOf(i: number): string {
 .row:active { cursor: grabbing; }
 
 .row.selected {
-  box-shadow: inset 0 0 0 2px var(--accent, #4ea1ff) !important;
+  background: color-mix(in oklab, var(--accent, #4ea1ff) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent, #4ea1ff) 70%, transparent) !important;
 }
 
+/* Two lines, then an ellipsis; the room is kept for one-line names so every cell is as tall */
 .name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: var(--items-name-text-align, left);
-  flex: 1 1 auto;
-  min-width: 0;
-  display: block;
+  width: 100%;
+  height: calc(2 * 1.3em);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: center;
 }
-</style>
+</style>

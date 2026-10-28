@@ -3,6 +3,7 @@ import { computed, inject, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { useScrollHints } from "gexplorer/widgets";
 import type { WidgetSdk } from "gexplorer/widgets";
 import WeatherIcon from "./WeatherIcon.vue";
+import WeatherSetup from "./WeatherSetup.vue";
 import {
   condition,
   createOpenMeteo,
@@ -25,6 +26,7 @@ const emit = defineEmits<{
   (e: "event", value: { type: "update:config"; payload: WeatherConfig }): void;
 }>();
 const sdk = inject<WidgetSdk>("widgetSdk");
+const ui = sdk?.ui?.();
 const lifecycle = sdk?.lifecycle?.();
 // The source link has no href: with one, the WebView connects to the site as soon as it is pressed, before any
 // handler runs (NetGuard refuses it: "tried to reach open-meteo.com"). sdk.openUrl asks the user, naming this widget.
@@ -40,19 +42,25 @@ const cachedLocation =
 const location = ref<WeatherLocation | null>(null);
 const loading = ref(false),
   error = ref(""),
-  searching = ref(false),
-  searchError = ref(""),
   editing = ref(false);
-const query = ref(""),
-  matches = ref<WeatherLocation[]>([]),
-  searched = ref(false);
 const activeView = ref<"current" | "forecast">("current");
 const root = ref<HTMLElement | null>(null);
 const forecastScroller = ref<HTMLElement | null>(null);
 const narrow = ref(false);
+/*
+ * Compact strip (1.3.0, 2026-10-28): one grid row high, or in the toolbar. One line: the icon and
+ * temperature (click: refresh), the condition with the city and today's high / low (click: change the
+ * location, in a popover: no room here for the search), and the next days when wide enough. Container
+ * queries (weather.css) drop parts as it narrows; `tiny`: a single text line under ~44 px.
+ */
+const strip = ref(props.placement?.context === "toolbar");
+/** The strip's face (1.3.1): the current weather, or the 3-day forecast; a click flips it. */
+const stripView = ref<"current" | "forecast">("current");
+const stripFlip = ref("");
+const stripTiny = ref(false);
+const STRIP_MAX_HEIGHT = 132;
 const minimalCurrent = ref(false);
 const stacked = ref(false);
-const setupMode = ref<"choice" | "city">("choice");
 const now = ref(Date.now()),
   selected = ref(0),
   range = ref<3 | 7>(props.config?.view?.forecastDays === 7 ? 7 : 3);
@@ -142,7 +150,6 @@ const provider = createOpenMeteo(async (url) => {
 });
 let disposed = false,
   generation = 0,
-  searchGeneration = 0,
   ready = false,
   lastAttempt = 0;
 let flipTimer: ReturnType<typeof setTimeout> | undefined,
@@ -165,6 +172,12 @@ function dayLabel(date: string) {
         weekday: "short",
         timeZone: "UTC",
       }).format(new Date(`${date}T12:00:00Z`));
+}
+/** The strip's 3-day forecast: the weekday, short, for every day, today included (1.3.2: "Today" was too wide). */
+function shortDay(date: string) {
+  return new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" })
+    .format(new Date(`${date}T12:00:00Z`))
+    .replace(/\.$/, "");
 }
 function fullDate(date: string) {
   return new Intl.DateTimeFormat(locale, {
@@ -220,11 +233,8 @@ function showView(next: "current" | "forecast") {
 }
 function chooseLocation(value: WeatherLocation) {
   editing.value = false;
-  setupMode.value = "choice";
+  locationPicker?.close();
   showView("current");
-  matches.value = [];
-  query.value = "";
-  searchGeneration++;
   setLocation(value);
   emit("event", {
     type: "update:config",
@@ -234,25 +244,58 @@ function chooseLocation(value: WeatherLocation) {
     },
   });
 }
-async function search() {
-  const text = query.value.trim();
-  if (text.length < 2 || searching.value) return;
-  const token = ++searchGeneration;
-  searching.value = true;
-  searchError.value = "";
-  searched.value = false;
-  matches.value = [];
-  try {
-    const result = await provider.search(text, locale);
-    if (!disposed && token === searchGeneration) {
-      matches.value = result;
-      searched.value = true;
-    }
-  } catch (e) {
-    if (!disposed && token === searchGeneration) searchError.value = message(e);
-  } finally {
-    if (!disposed && token === searchGeneration) searching.value = false;
+/** The strip's tooltip on the current weather: its click shows the forecast (refresh: the "!" or the timer). */
+const stripTip = computed(() => ({
+  content: currentTip.value.content,
+  detail: currentTip.value.detail.replace(/Click to refresh\.$/, "Click for the 3-day forecast."),
+}));
+
+/** Flips the strip between the current weather and the 3-day forecast (the same flip as the other layouts). */
+let stripFlipTimer: ReturnType<typeof setTimeout> | undefined,
+  stripFinishTimer: ReturnType<typeof setTimeout> | undefined;
+function toggleStrip() {
+  if (stripFlip.value) return;
+  const next = stripView.value === "current" ? "forecast" : "current";
+  clearTimeout(stripFlipTimer);
+  clearTimeout(stripFinishTimer);
+  if (reducedMotion.value) {
+    stripView.value = next;
+    return;
   }
+  stripFlip.value = "flip-out";
+  stripFlipTimer = setTimeout(() => {
+    stripView.value = next;
+    stripFlip.value = "flip-in";
+    stripFinishTimer = setTimeout(() => {
+      stripFlip.value = "";
+    }, 320);
+  }, 260);
+}
+
+/** The location search (WeatherSetup.vue): Open-Meteo's geocoding, in the user's language. */
+function searchPlaces(text: string): Promise<WeatherLocation[]> {
+  return provider.search(text, locale);
+}
+
+/** The strip's location picker: WeatherSetup in a popover under `anchor` (the strip has no room for it). */
+let locationPicker: { close(): void } | null = null;
+function openLocationPicker(anchor: EventTarget | null) {
+  if (!(anchor instanceof HTMLElement) || !ui?.openPopover) {
+    editing.value = true; // no popover: the inline setup (shown when there is room)
+    return;
+  }
+  locationPicker?.close();
+  locationPicker = ui.openPopover({
+    anchor,
+    component: WeatherSetup,
+    props: { hasLocation: !!location.value, search: searchPlaces, onChoose: chooseLocation },
+    placement: "below",
+    maxWidth: 320,
+    maxHeight: 420,
+    onClose: () => {
+      locationPicker = null;
+    },
+  });
 }
 function switchRange(next: 3 | 7) {
   if (next === requestedRange) return;
@@ -319,19 +362,18 @@ watch(
   () => props.config?.view?.forecastDays,
   (value) => switchRange(value === 7 ? 7 : 3),
 );
-watch(query, () => {
-  searchGeneration++;
-  searching.value = false;
-  searched.value = false;
-  matches.value = [];
-  searchError.value = "";
-});
 onMounted(() => {
   // Observe the allocated box, not content height, so switching layouts cannot
   // feed back into its own breakpoint. Hysteresis avoids flicker during resizing.
   const resize = new ResizeObserver(([entry]) => {
     if (!entry || !root.value) return;
     const { width, height } = entry.contentRect;
+    // The strip from the box's outer height (its padding changes with the strip), with hysteresis
+    const outer = root.value.getBoundingClientRect().height;
+    strip.value =
+      props.placement?.context === "toolbar" ||
+      outer < STRIP_MAX_HEIGHT + (strip.value ? 12 : 0);
+    stripTiny.value = strip.value && outer < 46;
     narrow.value = width <= 300;
     minimalCurrent.value = root.value.getBoundingClientRect().width <= 240;
     const fontSize = parseFloat(getComputedStyle(root.value).fontSize) || 14;
@@ -392,7 +434,9 @@ onMounted(() => {
 onBeforeUnmount(() => {
   disposed = true;
   generation++;
-  searchGeneration++;
+  locationPicker?.close();
+  clearTimeout(stripFlipTimer);
+  clearTimeout(stripFinishTimer);
   clearTimeout(flipTimer);
   clearTimeout(finishTimer);
   clearTimeout(viewFlipTimer);
@@ -408,6 +452,7 @@ onBeforeUnmount(() => {
     :class="{
       atmosphere,
       compact: placement?.context === 'sidebar',
+      'is-strip': strip,
       narrow,
       'minimal-current': minimalCurrent,
       stacked,
@@ -418,66 +463,80 @@ onBeforeUnmount(() => {
     :style="hostStyle"
     aria-label="Weather"
   >
-    <div v-if="!location || editing" class="setup">
-      <div class="setup-heading">
-        <h2>{{ location ? "Change location" : "Weather where you are" }}</h2>
-        <button v-if="location" type="button" @click="editing = false">
-          Cancel</button
-        ><button
-          v-else-if="setupMode === 'city'"
-          type="button"
-          @click="setupMode = 'choice'"
-        >
-          Back
-        </button>
-      </div>
-      <div v-if="setupMode === 'choice'" class="location-choice">
-        <div class="choice-buttons">
+    <!-- The strip: one grid row high, or the toolbar (1.3.0) -->
+    <div v-if="strip" class="strip" :class="{ tiny: stripTiny }">
+      <div
+        v-if="location"
+        class="strip-face"
+        :class="stripFlip"
+        :style="{ '--flip-out': `${stripView === 'current' ? 90 : -90}deg`, '--flip-in': `${stripView === 'current' ? 90 : -90}deg` }"
+      >
+        <template v-if="stripView === 'current'">
           <button
             type="button"
-            disabled
-            aria-label="Detect my location — unavailable in this shell"
+            class="strip-now"
+            v-gex-tooltip="stripTip"
+            :aria-label="`${temp(report?.current.temperature)}${unit}. ${stripTip.detail}`"
+            @click="toggleStrip"
           >
-            Detect my location</button
-          ><button type="button" @click="setupMode = 'city'">
-            Enter a city
+            <WeatherIcon class="strip-icon" :kind="report ? currentCondition.kind : 'unknown'" :colored="colored" />
+            <span class="strip-temp">{{ temp(report?.current.temperature) }}<small v-if="report?.current.temperature != null">{{ unit }}</small></span>
           </button>
-        </div>
-        <p class="muted">
-          Automatic location isn't available in this shell yet.
-        </p>
-      </div>
-      <template v-else>
-        <form @submit.prevent="search">
-          <label
-            >City or postal code<input
-              v-model="query"
-              autocomplete="off"
-              placeholder="Search for a location"
-          /></label>
           <button
-            type="submit"
-            :disabled="searching || query.trim().length < 2"
+            type="button"
+            class="strip-place"
+            v-gex-tooltip="locationTip"
+            :aria-label="`${location.name}${region ? `, ${region}` : ''}. Change weather location.`"
+            @click="openLocationPicker($event.currentTarget)"
           >
-            {{ searching ? "Searching…" : "Search" }}
+            <span class="strip-condition">{{ report ? currentCondition.text : loading ? "Loading…" : "Unavailable" }}</span>
+            <span class="strip-sub">{{ location.name }}<template v-if="futureDays[0]"> · {{ temp(futureDays[0].high) }} / {{ temp(futureDays[0].low) }}</template></span>
           </button>
-        </form>
-        <p v-if="searchError" role="alert">{{ searchError }}</p>
-        <p v-else-if="searched && !matches.length" role="status">
-          No matching locations. Try a nearby city or add the country name.
-        </p>
-        <ul v-if="matches.length" class="results">
-          <li v-for="place in matches" :key="locationKey(place)">
-            <button type="button" @click="chooseLocation(place)">
-              <strong>{{ place.name }}</strong
-              ><span>{{
-                [place.region, place.country].filter(Boolean).join(", ")
-              }}</span>
-            </button>
-          </li>
-        </ul>
-      </template>
+          <div v-if="report && futureDays.length > 1" class="strip-days" aria-label="Next days">
+            <span v-for="day in futureDays.slice(1, 4)" :key="day.date" class="strip-day" v-gex-tooltip="dayTip(day)">
+              <span class="strip-day-name">{{ dayLabel(day.date) }}</span>
+              <WeatherIcon class="strip-day-icon" :kind="condition(day.code).kind" :colored="colored" />
+              <span>{{ temp(day.high) }}</span>
+            </span>
+          </div>
+        </template>
+        <!-- The 3-day forecast (1.3.1): a click flips back to the current weather -->
+        <button
+          v-else
+          type="button"
+          class="strip-forecast"
+          :aria-label="`3-day forecast: ${futureDays.slice(0, 3).map((d) => `${fullDate(d.date)}, ${condition(d.code).text}, high ${temp(d.high)}, low ${temp(d.low)}`).join('; ')}. Show the current weather.`"
+          @click="toggleStrip"
+        >
+          <span v-for="day in futureDays.slice(0, 3)" :key="day.date" class="strip-fday" v-gex-tooltip="dayTip(day)">
+            <span class="strip-day-name">{{ shortDay(day.date) }}</span>
+            <WeatherIcon class="strip-fday-icon" :kind="condition(day.code).kind" :colored="colored" />
+            <span class="strip-hl">{{ temp(day.high) }}<span class="strip-low">{{ temp(day.low) }}</span></span>
+          </span>
+          <span v-if="!futureDays.length" class="strip-condition">{{ loading ? "Loading forecast…" : "Forecast unavailable" }}</span>
+        </button>
+        <button
+          v-if="error || stale"
+          type="button"
+          class="strip-alert"
+          :title="`${error || 'This forecast may be out of date.'} Click to refresh.`"
+          :aria-label="`${error || 'This forecast may be out of date.'} Refresh.`"
+          :disabled="loading"
+          @click="refresh"
+        >!</button>
+      </div>
+      <button v-else type="button" class="strip-set" @click="openLocationPicker($event.currentTarget)">
+        <WeatherIcon class="strip-icon" kind="partly" :colored="colored" />
+        <span>Choose a location</span>
+      </button>
     </div>
+    <WeatherSetup
+      v-else-if="!location || editing"
+      :has-location="!!location"
+      :search="searchPlaces"
+      :on-choose="chooseLocation"
+      :on-cancel="location ? () => (editing = false) : undefined"
+    />
     <template v-else>
       <div class="view-heading">
         <h2 v-if="stacked">Current weather</h2>
@@ -550,10 +609,7 @@ onBeforeUnmount(() => {
             type="button"
             v-gex-tooltip="locationTip"
             :aria-label="`${location.name}${region ? `, ${region}` : ''}. Change weather location.`"
-            @click="
-              editing = true;
-              setupMode = 'choice';
-            "
+            @click="editing = true"
           >
             {{ location.name }}
           </button>

@@ -3,19 +3,24 @@ import Widget from './Widget.vue'
 export default {
   api: '1.0',
   id: 'weather',
-  version: '1.2.6',
+  version: '1.3.2',
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
   
-  // Grid-first; sidebar uses the responsive layout. Toolbar support is deferred.
+  // Grid-first; sidebar uses the responsive layout. 1.3.0 (2026-10-28): one grid row high, and in the
+  // toolbar, a compact strip (icon, temperature, condition, city, next days when wide enough).
   contexts: {
     grid: {
-      minSize: { cols: 2, rows: 2 },
+      minSize: { cols: 2, rows: 1 },
       maxSize: { cols: 12, rows: 8 },
       defaultSize: { cols: 4, rows: 3 }
     },
     sidebar: {
       minHeight: 160
+    },
+    toolbar: {
+      // Starts fixed at this width (the user can make it flexible); the strip fits any row height
+      width: 300
     }
   },
   

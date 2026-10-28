@@ -32,7 +32,10 @@ export type ScannedVideo = {
 export type ScanProgress = {
   phase: 'folders' | 'metadata'
   folders: number
+  /** folders: videos found so far; metadata: videos whose details were read. */
   videos: number
+  /** metadata: how many videos there are to read. */
+  total?: number
   current: string
 }
 
@@ -50,9 +53,20 @@ function hasVideoEvidence(probe: MediaProbe | undefined): boolean {
   )
 }
 
-const MAX_DIRECTORIES = 400
-const MAX_VIDEOS = 1500
-const MAX_ENTRIES_PER_DIRECTORY = 3000
+/**
+ * No cap on folders or videos (2026-10-26: the old 400 folders / 1,500 videos are gone). Junctions are
+ * links, never followed, so a folder loop cannot happen; the depth limit is a last safety net.
+ */
+const MAX_DEPTH = 32
+/** A folder's rows are read in pages of this many. */
+const ROWS_PAGE = 1000
+/** Media details are asked for this many files at a time. */
+const DETAILS_BATCH = 100
+
+/** What identifies one version of a file: a changed size or date means it was replaced. */
+export function videoFingerprint(video: Pick<ScannedVideo, 'size' | 'modifiedAt'>): string {
+  return `${video.size ?? '?'}:${video.modifiedAt ?? '?'}`
+}
 
 function settled(source: ListingSource): Promise<ListingSnapshot> {
   return new Promise(resolve => {
@@ -64,7 +78,7 @@ function settled(source: ListingSource): Promise<ListingSnapshot> {
   })
 }
 
-async function listFolder(sdk: WidgetSdk, path: string, owner: string): Promise<{ entries: ListingEntry[]; truncated: boolean }> {
+async function listFolder(sdk: WidgetSdk, path: string, owner: string): Promise<ListingEntry[]> {
   if (!sdk.openListing) throw new Error('The Read API is unavailable for this widget.')
   const source = sdk.openListing(path, {
     owner,
@@ -76,11 +90,11 @@ async function listFolder(sdk: WidgetSdk, path: string, owner: string): Promise<
   try {
     const snapshot = await settled(source)
     if (snapshot.status !== 'ready') throw new Error(snapshot.error?.message || `Could not read ${path}`)
-    const count = Math.min(snapshot.total, MAX_ENTRIES_PER_DIRECTORY)
-    return {
-      entries:count ? await source.rows(0, count, snapshot.version) : [],
-      truncated:snapshot.total > count,
+    const entries: ListingEntry[] = []
+    for (let start = 0; start < snapshot.total; start += ROWS_PAGE) {
+      entries.push(...await source.rows(start, Math.min(snapshot.total, start + ROWS_PAGE), snapshot.version))
     }
+    return entries
   } finally {
     source.close()
   }
@@ -105,28 +119,33 @@ export async function scanVideoSources(
   owner: string,
   onProgress: (progress: ScanProgress) => void,
   isCancelled: () => boolean,
+  /** The previous scan's videos: an unchanged file (same size and date) keeps its media details. */
+  previous: ScannedVideo[] = [],
 ): Promise<ScanResult> {
-  const queue = roots.map(path => ({ path, sourceRoot:path }))
+  const known = new Map(previous.filter(video => video.probe).map(video => [video.path.toLocaleLowerCase(), video]))
+  const queue = roots.map(path => ({ path, sourceRoot:path, depth:0 }))
   const seen = new Set<string>()
   const videos: ScannedVideo[] = []
   const warnings: string[] = []
   let folders = 0
   let truncated = false
 
-  while (queue.length && folders < MAX_DIRECTORIES && videos.length < MAX_VIDEOS) {
+  for (let head = 0; head < queue.length; head += 1) {
     if (isCancelled()) break
-    const next = queue.shift()!
+    const next = queue[head]
     const identity = next.path.toLocaleLowerCase()
     if (seen.has(identity)) continue
     seen.add(identity)
     onProgress({ phase:'folders', folders, videos:videos.length, current:next.path })
     try {
-      const listed = await listFolder(sdk, next.path, `${owner}:${folders}`)
+      const entries = await listFolder(sdk, next.path, `${owner}:${folders}`)
       folders += 1
-      truncated ||= listed.truncated
-      const images = listed.entries.filter(entry => entry.Kind === 'file' && coverExts.has(entry.Ext.toLocaleLowerCase()))
-      for (const entry of listed.entries) {
-        if (entry.Kind === 'dir') queue.push({ path:entry.FullPath, sourceRoot:next.sourceRoot })
+      const images = entries.filter(entry => entry.Kind === 'file' && coverExts.has(entry.Ext.toLocaleLowerCase()))
+      for (const entry of entries) {
+        if (entry.Kind === 'dir') {
+          if (next.depth < MAX_DEPTH) queue.push({ path:entry.FullPath, sourceRoot:next.sourceRoot, depth:next.depth + 1 })
+          else truncated = true
+        }
         if (entry.Kind !== 'file' || !videoExts.has(entry.Ext.toLocaleLowerCase())) continue
         videos.push({
           path:entry.FullPath,
@@ -137,19 +156,22 @@ export async function scanVideoSources(
           sourceRoot:next.sourceRoot,
           coverPath:chooseCover(entry.Name, images),
         })
-        if (videos.length >= MAX_VIDEOS) { truncated = true; break }
       }
     } catch (error) {
       if (warnings.length < 8) warnings.push(`${next.path}: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
-  if (queue.length || folders >= MAX_DIRECTORIES) truncated = true
-
-  if (sdk.mediaInfo && videos.length && !isCancelled()) {
-    for (let start = 0; start < videos.length; start += 100) {
+  const unread: ScannedVideo[] = []
+  for (const video of videos) {
+    const before = known.get(video.path.toLocaleLowerCase())
+    if (before?.probe && videoFingerprint(before) === videoFingerprint(video)) video.probe = { ...before.probe }
+    else unread.push(video)
+  }
+  if (sdk.mediaInfo && unread.length && !isCancelled()) {
+    for (let start = 0; start < unread.length; start += DETAILS_BATCH) {
       if (isCancelled()) break
-      const batch = videos.slice(start, start + 100)
-      onProgress({ phase:'metadata', folders, videos:start, current:batch[0].path })
+      const batch = unread.slice(start, start + DETAILS_BATCH)
+      onProgress({ phase:'metadata', folders, videos:start, total:unread.length, current:batch[0].path })
       try {
         const probes = await sdk.mediaInfo(batch.map(video => video.path))
         const byPath = new Map(probes.map(probe => [probe.path.toLocaleLowerCase(), probe]))
@@ -160,7 +182,7 @@ export async function scanVideoSources(
     }
   }
   const accepted = videos.filter(video => !ambiguousVideoExts.has(video.extension) || hasVideoEvidence(video.probe))
-  onProgress({ phase:'metadata', folders, videos:accepted.length, current:'' })
+  onProgress({ phase:'metadata', folders, videos:accepted.length, total:accepted.length, current:'' })
   return { videos:accepted, warnings, truncated }
 }
 

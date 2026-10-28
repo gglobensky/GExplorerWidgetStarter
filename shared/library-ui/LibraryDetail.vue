@@ -56,6 +56,54 @@ let previewTimer: number | undefined
 let ejectTimer: number | undefined
 let stallTimer: number | undefined
 let paletteRevision = 0
+// Extras under the rating box (movie-store mode): as many square chips as the column holds, then
+// pages (‹ 1/3 ›). A page never holds fewer than one; chips still shrink if even one does not fit.
+const storeRating = ref<HTMLElement | null>(null)
+const extrasPage = ref(0)
+const extrasPerPage = ref(3)
+let extrasObserver: ResizeObserver | undefined
+const extrasPages = computed(() => Math.max(1, Math.ceil((props.item.extras?.length ?? 0) / extrasPerPage.value)))
+const pagedExtras = computed(() => (props.item.extras ?? []).slice(extrasPage.value * extrasPerPage.value, (extrasPage.value + 1) * extrasPerPage.value))
+const EXTRA_GAP = 12
+const EXTRA_CAPTION = 17
+const EXTRAS_HEADER = 23
+const RATING_GAP = 14
+
+function measureExtras() {
+  const aside = storeRating.value
+  const row = aside?.parentElement
+  if (!aside || !row) return
+  const rating = aside.querySelector<HTMLElement>(':scope > button, :scope > .glu-store-rating-static')
+  const room = row.clientHeight - (rating?.offsetHeight ?? 0) - RATING_GAP - EXTRAS_HEADER
+  // A chip is as tall as the column is wide (square), its name above it.
+  const tile = Math.max(56, aside.clientWidth) + EXTRA_CAPTION + EXTRA_GAP
+  const fit = Math.max(1, Math.floor((room + EXTRA_GAP) / tile))
+  if (fit !== extrasPerPage.value) extrasPerPage.value = fit
+}
+function turnExtras(step: number) {
+  extrasPage.value = (extrasPage.value + step + extrasPages.value) % extrasPages.value
+}
+let lastExtrasWheel = 0
+/** The wheel over the chips turns the pages (one per notch, not a page per pixel of a touchpad). */
+function onExtrasWheel(event: WheelEvent) {
+  if (extrasPages.value <= 1 || Math.abs(event.deltaY) < 4) return
+  event.preventDefault()
+  const now = Date.now()
+  if (now - lastExtrasWheel < 280) return
+  lastExtrasWheel = now
+  turnExtras(event.deltaY > 0 ? 1 : -1)
+}
+watch(storeRating, element => {
+  extrasObserver?.disconnect()
+  extrasObserver = undefined
+  if (!element || typeof ResizeObserver === 'undefined') return
+  extrasObserver = new ResizeObserver(() => measureExtras())
+  extrasObserver.observe(element.parentElement ?? element)
+  measureExtras()
+})
+watch(() => props.item.id, () => { extrasPage.value = 0 })
+watch(extrasPages, count => { if (extrasPage.value >= count) extrasPage.value = count - 1 })
+
 const PREVIEW_SECONDS = 8
 /** Hover must rest this long before a decoder is started (sweeping across tiles starts none). */
 const PREVIEW_HOVER_MS = 220
@@ -379,6 +427,7 @@ watch(() => [props.item.id, props.previewStreamUrl] as const, () => {
 }, { immediate:true })
 
 onBeforeUnmount(() => {
+  extrasObserver?.disconnect()
   window.clearTimeout(previewTimer)
   window.clearTimeout(ejectTimer)
   window.clearTimeout(stallTimer)
@@ -496,7 +545,7 @@ onBeforeUnmount(() => {
         <button v-if="detailMode !== 'movie-store'" type="button" class="glu-turn" @click="emit('flip')">{{ flipped ? 'Show front' : 'Turn case over' }}</button>
       </div>
 
-      <aside v-if="detailMode === 'movie-store'" class="glu-store-rating" aria-label="TMDB rating">
+      <aside v-if="detailMode === 'movie-store'" ref="storeRating" class="glu-store-rating" aria-label="TMDB rating">
         <button v-if="hasTmdbPage" type="button" title="Read reviews on TMDB" @click="emit('open-tmdb')">
           <span class="glu-rating-stars" aria-hidden="true"><i :style="{ width:tmdbRatingPercent }">★★★★★</i>★★★★★</span>
           <strong>{{ item.tmdbRating ? item.tmdbRating.toFixed(1) : '—' }}<small>/10</small></strong>
@@ -509,9 +558,17 @@ onBeforeUnmount(() => {
           <small>Match this title with TMDB to see its rating.</small>
         </div>
         <section v-if="item.extras?.length" class="glu-store-extras-panel" aria-label="Extras">
-          <header><span>Extras</span><small>{{ item.extras.length }}</small></header>
-          <div class="glu-store-extra-tiles">
-            <div v-for="extra in item.extras" :key="extra.id" class="glu-store-extra">
+          <header>
+            <span>Extras</span>
+            <span v-if="extrasPages > 1" class="glu-store-extras-pager">
+              <button type="button" aria-label="Previous extras" title="Previous" @click="turnExtras(-1)">‹</button>
+              <small :aria-label="`Page ${extrasPage + 1} of ${extrasPages}, ${item.extras.length} extras`">{{ extrasPage + 1 }}/{{ extrasPages }}</small>
+              <button type="button" aria-label="More extras" title="More" @click="turnExtras(1)">›</button>
+            </span>
+            <small v-else>{{ item.extras.length }}</small>
+          </header>
+          <div class="glu-store-extra-tiles" @wheel="onExtrasWheel">
+            <div v-for="extra in pagedExtras" :key="extra.id" class="glu-store-extra">
               <span class="glu-store-extra-caption" :title="fileName(extra)">{{ extraDisplayName(extra, item.title) }}</span>
               <div
                 class="glu-store-extra-chip"
@@ -554,7 +611,7 @@ onBeforeUnmount(() => {
         </div>
 
         <section v-if="item.extras?.length" class="glu-extras" aria-label="Movie extras">
-          <div class="glu-extras-heading"><h2>Extras</h2><span>{{ item.extras.length }} {{ item.extras.length === 1 ? 'video' : 'videos' }} found beside this movie</span></div>
+          <div class="glu-extras-heading"><h2>Extras</h2><span>{{ item.extras.length }} {{ item.extras.length === 1 ? 'video' : 'videos' }} found {{ item.seriesTitle ? `with ${item.seriesTitle}` : 'beside this movie' }}</span></div>
           <div class="glu-extra-list">
             <article v-for="extra in item.extras" :key="extra.id" class="glu-extra">
               <div><strong>{{ extra.title }}</strong><small>{{ formatRuntime(extra.runtimeMinutes) }}<template v-if="extra.resolution"> · {{ extra.resolution }}</template></small></div>

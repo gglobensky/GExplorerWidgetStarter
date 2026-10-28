@@ -172,9 +172,10 @@ async function favorite(root: Root) {
   } catch (err) { report(err instanceof Error ? err.message : 'The favorite could not be opened.') }
   finally { busy.value = false }
 }
-function menu(event: MouseEvent, path: string, layout: 'tree' | 'columns') {
+function menu(event: MouseEvent, path: string, layout: 'tree' | 'columns', states: string[] = []) {
   const context = layout === 'columns' ? 'treeview.column-folder' : 'treeview.folder'
-  void ui?.contextMenu(event, { context, ref: path, selection: [path], path, entries: [{ FullPath: path, Kind: 'dir' }], widgetConfig: props.config }).catch(err => report(String(err)))
+  // states (0.5.0): narrow / unfocused / this-focused (TreePanel.menuStatesFor; entry.ts menuStates)
+  void ui?.contextMenu(event, { context, ref: path, selection: [path], path, entries: [{ FullPath: path, Kind: 'dir' }], widgetConfig: props.config, states }).catch(err => report(String(err)))
 }
 async function clipboard(operation: 'copy' | 'cut' | 'paste', path: string) {
   if (!path) return

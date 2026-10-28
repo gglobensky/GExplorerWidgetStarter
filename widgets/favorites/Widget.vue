@@ -167,34 +167,28 @@ async function refreshWithMenuSync() {
 }
 
 // --- Dialog (useFavoritesDialog) ---------------------------------------------
+// 0.2.0: FavoriteDialog.vue in the host's centred panel (ui.openPopover 'center'), New folder in its prompt
 const {
-  showAddDialog,
-  saving,
-  error: dialogError,
-  newLocations,
-  newLabel,
-  addMode,
-  newParentId,
-  folderOptions,
-  addDialogTitle,
-  addButtonLabel,
-  labelPlaceholder,
-  canAddLocation,
-  filledLocations,
   openAddDialog,
   openAddDialogWith,
   openEditDialog,
-  editingId,
-  addLocationRow,
-  removeLocationRow,
-  browseLocation,
-  closeAddDialog,
-  confirmAddFavorite,
+  newFolder,
   handleRemoveFolder,
   handleRemoveFavorite,
 } = useFavoritesDialog({
   refresh: refreshWithMenuSync,
+  anchor: rootEl,
 })
+
+/** How many folders a favorite opens (2-4: side by side, a count on its star). */
+function paneCount(locations: string[] | undefined): number {
+  return (locations ?? []).filter(l => l && l.trim()).length
+}
+/** A favorite's tooltip, saying it opens side by side. */
+function favTip(label: string | undefined, locations: string[] | undefined): string {
+  const n = paneCount(locations)
+  return placeTooltip(label, locations) + (n > 1 ? `\n(opens ${n} folders side by side)` : '')
+}
 
 // --- Drag Visuals (useDragVisuals) -------------------------------------------
 const dragVisuals = useDragVisuals({
@@ -292,6 +286,37 @@ function placeName(locations: string[]): string {
   return locations.map(guessLabelFromPath).join(' + ')
 }
 
+/**
+ * A place already a favorite, added without the dialog (0.2.0): the user is told which, and may add it
+ * again (the snackbar's button is their choice: addFavorite opts.allowDuplicate).
+ */
+async function offerDuplicate(locations: string[], existingId: string, leftOut: string) {
+  const ui = sdk?.ui?.()
+  const existing = findItemById(existingId)
+  const name = existing?.label || placeName(locations)
+  const r = await ui?.snack({
+    text: `"${name}" already opens ${locations.length > 1 ? 'these folders' : 'this folder'}.${leftOut}`,
+    actions: [{ label: 'Add a second one', id: 'again' }],
+  })
+  if (r?.type !== 'action' || r.actionId !== 'again') return
+  try {
+    await sdk!.addFavorite!(locations, undefined, undefined, { allowDuplicate: true })
+    void ui?.snack({ text: `Added "${placeName(locations)}" to favorites.` })
+  } catch (e: any) { void ui?.snack({ text: `Not added to favorites: ${e?.message ?? e}` }) }
+}
+
+/** Favorite <id> in the tree, with the folder it is in ('' = the top level). */
+function findItemById(id: string): { label: string; locations: string[]; parentId: string } | null {
+  const walk = (nodes: typeof fullTree.value, parent: string): { label: string; locations: string[]; parentId: string } | null => {
+    for (const n of nodes) {
+      if (n.kind === 'item' && n.id === id) return { label: n.label, locations: n.locations, parentId: parent }
+      if (n.kind === 'folder') { const r = walk(n.children, n.id); if (r) return r }
+    }
+    return null
+  }
+  return walk(fullTree.value, '')
+}
+
 async function onWidgetAction(msg: any) {
   const { actionId, args, tokens } = msg?.payload ?? {}
   const paths: string[] = (Array.isArray(args?.paths) ? args.paths : []).filter((p: unknown) => typeof p === 'string' && p)
@@ -306,11 +331,16 @@ async function onWidgetAction(msg: any) {
     if (actionId === 'add') {
       const list = paths.length ? paths : (typeof tokens?.dir === 'string' && tokens.dir ? [tokens.dir] : [])
       if (!list.length) return
+      if (list.length === 1) {
+        const r = await add(list)
+        if (r.added) say(`Added "${placeName(list)}" to favorites.${leftOut}`)
+        else void offerDuplicate(list, r.id, leftOut)
+        return
+      }
       let added = 0
       for (const p of list) if ((await add([p])).added) added++
       const already = list.length - added
-      if (list.length === 1) say(added ? `Added "${placeName(list)}" to favorites.${leftOut}` : `"${placeName(list)}" is already a favorite.`)
-      else say(`Added ${added} folder${added === 1 ? '' : 's'} to favorites${already ? ` (${already} already were)` : ''}.${leftOut}`)
+      say(`Added ${added} folder${added === 1 ? '' : 's'} to favorites${already ? ` (${already} already were)` : ''}.${leftOut}`)
       return
     }
     if (actionId === 'configure') {
@@ -322,7 +352,8 @@ async function onWidgetAction(msg: any) {
     if (actionId === 'addTogether' || actionId === 'addTab') {
       if (!paths.length) return
       const r = await add(paths)
-      say(r.added ? `Added "${placeName(paths)}" to favorites.${leftOut}` : `"${placeName(paths)}" is already a favorite.`)
+      if (r.added) say(`Added "${placeName(paths)}" to favorites.${leftOut}`)
+      else void offerDuplicate(paths, r.id, leftOut)
       return
     }
     console.warn('[favorites] unknown action', actionId)
@@ -339,6 +370,18 @@ function onFavoriteMenu(id: string, e: MouseEvent) {
 // The folder button the menu was opened on: Rename… edits its label in place (2026-10-23). This
 // widget is shown in several places at once, so the element, not an id, says which copy.
 let menuFolder: { id: string; el: HTMLElement } | null = null
+
+/** Right-click on the bar or list itself, not on a favorite (0.2.0): Add favorite…, New folder…. */
+function onBackgroundMenu(e: MouseEvent) {
+  void sdk?.ui?.().contextMenu(e, { context: 'favorites.background', ref: 'top', widgetConfig: props.config })
+}
+
+/** Right-click on an open folder's dropdown, not on a row: that folder's menu. */
+function onDropdownMenu(folderId: string | null, e: MouseEvent) {
+  if (!folderId) return
+  menuFolder = null
+  void sdk?.ui?.().contextMenu(e, { context: 'favorites.folder', ref: folderId, widgetConfig: props.config })
+}
 
 function onFolderNodeMenu(id: string, e: MouseEvent) {
   menuFolder = e.currentTarget instanceof HTMLElement ? { id, el: e.currentTarget } : null
@@ -383,6 +426,13 @@ async function onMenuItem(m: WidgetMenuItemMessage) {
     case 'remove': await handleRemoveFavorite(id); break
     case 'delete': await handleRemoveFolder(id); break
     case 'rename': await renameFolderInPlace(id); break
+    // 0.2.0: adding from the menus. Next to a favorite: in its folder; on a folder: inside it; elsewhere: the top level.
+    case 'add-here': openAddDialog(findItemById(id)?.parentId ?? ''); break
+    case 'new-folder-here': await newFolder(findItemById(id)?.parentId ?? ''); break
+    case 'add-inside': closeFolderMenu(); openAddDialog(id); break
+    case 'new-folder-inside': await newFolder(id); break
+    case 'add': openAddDialog(''); break
+    case 'new-folder': await newFolder(''); break
     default: console.warn('[favorites] unknown menu item', m.itemId)
   }
 }
@@ -402,15 +452,17 @@ defineExpose({ onWidgetAction, onMenuItem })
       'edit-mode': !!editMode,
     }"
     :style="hostVars"
+    @contextmenu.prevent="onBackgroundMenu"
   >
     <!-- Add button: sidebar as full row, toolbar as inline pill -->
     <template v-if="isSidebar">
       <button
         type="button"
         class="add-favorite-btn"
-        @click="openAddDialog"
+        title="Add a favorite or a folder"
+        @click="openAddDialog()"
       >
-        <span class="add-icon">+</span>
+        <span class="add-icon"><svg class="fav-add-star" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 1.8l2.5 5.2 5.7.8-4.1 4 1 5.6L10 14.7l-5.1 2.7 1-5.6-4.1-4 5.7-.8z" /><path class="fav-add-plus" d="M10 7.4v5.2M7.4 10h5.2" /></svg></span>
         <span class="add-label">Add favorite</span>
       </button>
 
@@ -437,11 +489,12 @@ defineExpose({ onWidgetAction, onMenuItem })
         <button
           v-if="listHasOverflow && !listAtTop"
           type="button"
-          class="fav-list-top-hint"
+          class="fav-scroll-strip fav-scroll-strip--up"
           @click="listScrollByPage(-1)"
           title="Scroll up"
+          aria-label="Scroll up"
         >
-          <span class="chev">▲</span>
+          <svg viewBox="0 0 10 6" aria-hidden="true"><path d="M1 5l4-4 4 4" /></svg>
         </button>
 
         <!-- Scrollable list wrapper -->
@@ -482,9 +535,9 @@ defineExpose({ onWidgetAction, onMenuItem })
                 @pointerdown.stop="sortable.startRowDrag(row, $event)"
                 @click="openFavorite(row.entry, $event)"
                 @contextmenu.prevent.stop="onFavoriteMenu(row.entry.id, $event)"
-                :title="placeTooltip(row.entry.label, row.entry.locations)"
+                :title="favTip(row.entry.label, row.entry.locations)"
               >
-                <span v-if="showIcons" class="fav-icon">★</span>
+                <span v-if="showIcons" class="fav-icon" :class="{ 'fav-icon--multi': paneCount(row.entry.locations) > 1 }">★<span v-if="paneCount(row.entry.locations) > 1" class="fav-pane-count">{{ paneCount(row.entry.locations) }}</span></span>
                 <span v-if="showLabels" class="fav-label">
                   {{ row.entry.label || row.entry.locations.join(' + ') }}
                 </span>
@@ -535,22 +588,26 @@ defineExpose({ onWidgetAction, onMenuItem })
         <div class="fav-toolbar-gutter left">
           <button
             type="button"
-            class="fav-edge-tab left fav-edge-add"
-            @click.stop="openAddDialog"
-            title="Add favorite or folder"
+            class="fav-edge-add"
+            @click.stop="openAddDialog()"
+            title="Add a favorite or a folder"
+            aria-label="Add a favorite or a folder"
             :disabled="editMode"
           >
-            +
+            <svg class="fav-add-star" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 1.8l2.5 5.2 5.7.8-4.1 4 1 5.6L10 14.7l-5.1 2.7 1-5.6-4.1-4 5.7-.8z" /><path class="fav-add-plus" d="M10 7.4v5.2M7.4 10h5.2" /></svg>
           </button>
 
+          <!-- 0.2.0: thin strips, only when the favorites don't fit -->
           <button
+            v-if="toolbarHasOverflow"
             type="button"
-            class="fav-edge-tab left"
+            class="fav-scroll-strip fav-scroll-strip--left"
             title="Scroll left"
-            :disabled="editMode || !toolbarHasOverflow || toolbarAtStart"
+            aria-label="Scroll left"
+            :disabled="editMode || toolbarAtStart"
             @click.stop="toolbarScrollByPage(-1)"
           >
-            ◀
+            <svg viewBox="0 0 6 10" aria-hidden="true"><path d="M5 1L1 5l4 4" /></svg>
           </button>
         </div>
 
@@ -613,9 +670,9 @@ defineExpose({ onWidgetAction, onMenuItem })
                   class="fav-pill"
                   @click="openFavorite(row.entry, $event)"
                   @contextmenu.prevent.stop="onFavoriteMenu(row.entry.id, $event)"
-                  :title="placeTooltip(row.entry.label, row.entry.locations)"
+                  :title="favTip(row.entry.label, row.entry.locations)"
                 >
-                  <span v-if="showIcons" class="fav-icon">★</span>
+                  <span v-if="showIcons" class="fav-icon" :class="{ 'fav-icon--multi': paneCount(row.entry.locations) > 1 }">★<span v-if="paneCount(row.entry.locations) > 1" class="fav-pane-count">{{ paneCount(row.entry.locations) }}</span></span>
                   <span v-if="showLabels" class="fav-label">
                     {{ row.entry.label || row.entry.locations.join(' + ') }}
                   </span>
@@ -639,148 +696,21 @@ defineExpose({ onWidgetAction, onMenuItem })
         <!-- RIGHT gutter: stable scroll (never overlaps X) -->
         <div class="fav-toolbar-gutter right">
           <button
+            v-if="toolbarHasOverflow"
             type="button"
-            class="fav-edge-tab right"
+            class="fav-scroll-strip fav-scroll-strip--right"
             title="Scroll right"
-            :disabled="editMode || !toolbarHasOverflow || toolbarAtEnd"
+            aria-label="Scroll right"
+            :disabled="editMode || toolbarAtEnd"
             @click.stop="toolbarScrollByPage(1)"
           >
-            ▶
+            <svg viewBox="0 0 6 10" aria-hidden="true"><path d="M1 1l4 4-4 4" /></svg>
           </button>
         </div>
       </div>
 
     </template>
 
-
-    <!-- Add favorite / folder popup (global modal) -->
-    <teleport :to="overlay || 'body'">
-      <div
-        v-if="showAddDialog"
-        class="fav-dialog-backdrop"
-      >
-        <div class="fav-dialog">
-          <div class="fav-dialog-title">{{ addDialogTitle }}</div>
-
-          <div v-if="!editingId" class="fav-type-toggle">
-            <button
-              type="button"
-              class="btn-toggle"
-              :class="{ active: addMode === 'item' }"
-              @click="addMode = 'item'"
-            >
-              Favorite
-            </button>
-            <button
-              type="button"
-              class="btn-toggle"
-              :class="{ active: addMode === 'folder' }"
-              @click="addMode = 'folder'"
-            >
-              Folder
-            </button>
-          </div>
-
-          <label class="fav-dialog-field">
-            <span class="field-label">Location</span>
-            <select
-              v-model="newParentId"
-              class="fav-input"
-            >
-              <option value="">Root</option>
-              <option
-                v-for="opt in folderOptions"
-                :key="opt.id"
-                :value="opt.id"
-              >
-                {{ '  '.repeat(opt.depth) + opt.label }}
-              </option>
-            </select>
-          </label>
-
-          <!-- What it opens: one location, or 2-4 folders side by side (2026-10-22) -->
-          <div
-            v-if="addMode === 'item'"
-            class="fav-dialog-field"
-          >
-            <span class="field-label">{{ newLocations.length > 1 ? 'Opens side by side' : 'Opens' }}</span>
-            <div
-              v-for="(_, i) in newLocations"
-              :key="i"
-              class="fav-location-row"
-            >
-              <input
-                v-model="newLocations[i]"
-                type="text"
-                class="fav-input"
-                :placeholder="i === 0 ? 'C:\\Users\\you\\Downloads, home:, sys:settings' : 'Another folder'"
-              />
-              <button
-                type="button"
-                class="btn btn-small"
-                title="Choose a folder"
-                @click="browseLocation(i)"
-              >
-                …
-              </button>
-              <button
-                v-if="newLocations.length > 1"
-                type="button"
-                class="btn btn-small"
-                title="Remove this folder"
-                @click="removeLocationRow(i)"
-              >
-                ✕
-              </button>
-            </div>
-            <button
-              v-if="canAddLocation"
-              type="button"
-              class="btn btn-small fav-location-add"
-              title="A favorite opens up to 4 folders side by side"
-              @click="addLocationRow"
-            >
-              + Folder side by side
-            </button>
-          </div>
-
-          <label class="fav-dialog-field">
-            <span class="field-label">Label</span>
-            <input
-              v-model="newLabel"
-              type="text"
-              class="fav-input"
-              :placeholder="labelPlaceholder"
-            />
-          </label>
-
-          <div v-if="dialogError" class="fav-dialog-error">{{ dialogError }}</div>
-
-          <div class="fav-dialog-buttons">
-            <button
-              type="button"
-              class="btn"
-              @click="closeAddDialog"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              class="btn primary"
-              :disabled="
-                saving ||
-                (addMode === 'item'
-                  ? !filledLocations.length
-                  : !newLabel.trim())
-              "
-              @click="confirmAddFavorite"
-            >
-              {{ addButtonLabel }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </teleport>
 
   <!-- Folders menu overlay (stacked menus) -->
 <teleport :to="overlay || 'body'">
@@ -798,6 +728,7 @@ defineExpose({ onWidgetAction, onMenuItem })
         left: menu.left + 'px',
       }"
       @click.stop
+      @contextmenu.prevent.stop="onDropdownMenu(menu.folderId, $event)"
       :ref="el => setMenuContainerRef(menu, el as HTMLElement | null)"
     >
 
@@ -833,7 +764,7 @@ defineExpose({ onWidgetAction, onMenuItem })
             @pointerdown.stop="sortable.startMenuRowDrag(row, menu.folderId ?? '', $event as PointerEvent)"
             @click="handleFolderMenuClick(row, $event, level)"
             @contextmenu.prevent.stop="row.type === 'item' ? onFavoriteMenu(row.id, $event) : onFolderNodeMenu(row.id, $event)"
-            :title="row.type === 'item' ? placeTooltip(row.label, row.locations) : row.label"
+            :title="row.type === 'item' ? favTip(row.label, row.locations) : row.label"
           >
             <span class="fav-menu-label">
               <span
@@ -842,7 +773,7 @@ defineExpose({ onWidgetAction, onMenuItem })
               />
               <span class="fav-menu-icon">
                 <span v-if="row.type === 'folder'">📁</span>
-                <span v-else>★</span>
+                <span v-else :class="{ 'fav-icon--multi': paneCount(row.locations) > 1 }">★<span v-if="paneCount(row.locations) > 1" class="fav-pane-count">{{ paneCount(row.locations) }}</span></span>
               </span>
               <span class="fav-menu-text">
                 {{ row.label }}

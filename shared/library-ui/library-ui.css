@@ -185,11 +185,15 @@
 .glu-store-controls>button.primary { color:#100d09; background:linear-gradient(145deg,color-mix(in srgb,var(--store-accent) 82%,#fff),var(--store-accent)); }
 .glu-store-controls>button span { font-size:22px; line-height:1; }
 .glu-store-controls>button b { font-size:9px; font-weight:700; line-height:1.2; letter-spacing:.04em; }
-.glu-store-rating { order:3; display:flex; align-self:center; min-width:0; max-height:100%; min-height:0; flex-direction:column; gap:14px; text-align:center; }
-/* Extras under the rating: a picture per extra, play on the picture, ⌖ shows the file in GExplorer. */
+.glu-store-rating { order:3; display:flex; align-self:flex-start; min-width:0; max-height:100%; min-height:0; flex-direction:column; gap:14px; text-align:center; }
+/* Extras under the rating: a picture per extra, play on the picture, ⌖ shows the file in GExplorer.
+   The rating box stays at the top of its column (2026-10-27): 0, 1 or 2 chips below never move it. */
 .glu-store-extras-panel { display:flex; min-height:0; flex:0 1 auto; flex-direction:column; text-align:left; }
 .glu-store-extras-panel>header { display:flex; align-items:center; justify-content:space-between; padding:0 2px 7px; color:color-mix(in srgb,var(--store-text) 70%,transparent); font-size:8px; font-weight:750; letter-spacing:.13em; text-transform:uppercase; }
 .glu-store-extras-panel>header small { display:grid; min-width:16px; height:16px; padding:0 4px; border-radius:8px; background:#ffffff12; font-size:8px; place-items:center; }
+.glu-store-extras-pager { display:flex; align-items:center; gap:3px; }
+.glu-store-extras-pager button { display:grid; width:18px; height:16px; padding:0; border:1px solid #ffffff1f; border-radius:8px; color:var(--store-text); background:#ffffff0d; cursor:pointer; font-size:11px; line-height:1; place-items:center; }
+.glu-store-extras-pager button:hover,.glu-store-extras-pager button:focus-visible { border-color:var(--store-accent); color:var(--store-accent); outline:0; }
 /* Square chips while there is room; then each gets shorter (down to 64 px) to fit the column; scrolling only below that. */
 /* Scrolls (wheel, keyboard) only when the chips are at their smallest; no bar: a pixel or two of rounding after a resize would show one. */
 .glu-store-extra-tiles { display:flex; min-height:0; flex:0 1 auto; flex-direction:column; gap:12px; overflow:auto; padding:2px; scrollbar-width:none; }
@@ -247,7 +251,7 @@
   .movie-store .glu-detail-body { grid-template-columns:76px minmax(180px,330px) 76px; justify-content:center; gap:18px; }
   .movie-store .glu-detail-case-wrap { width:min(100%,330px,calc((100cqh - 112px) * .6667)); }
   .glu-store-controls>button { min-height:70px; padding:7px 5px; }
-  .glu-store-rating { align-self:center; }
+  .glu-store-rating { align-self:flex-start; }
   .glu-store-extra-caption,.glu-store-extra-chip .glu-store-extra-play small,.glu-store-extra-chip .glu-store-extra-find b { display:none; }
   .glu-store-rating > button,.glu-store-rating-static { min-height:104px; padding:10px 5px; border-radius:8px; }
   .glu-store-rating > * > strong { font-size:24px; }

@@ -11,7 +11,7 @@ const emit = defineEmits<{
   (e: 'favorite', root: Root): void
   (e: 'add', path: string): void
   (e: 'refreshRoots'): void
-  (e: 'menu', event: MouseEvent, path: string, layout: 'tree' | 'columns'): void
+  (e: 'menu', event: MouseEvent, path: string, layout: 'tree' | 'columns', states: string[]): void
   (e: 'clipboard', operation: 'copy' | 'cut' | 'paste', path: string): void
 }>()
 const tick = ref(0), selector = ref(false), query = ref(''), focused = ref('')
@@ -32,6 +32,18 @@ controller = new TreeController(props.source, onTreeChange)
 const root = computed(() => props.roots.find(r => r.id === props.memory.active))
 const state = computed(() => props.memory.roots[props.memory.active])
 const narrow = computed(() => panelWidth.value < 242)
+/**
+ * The menu's situations for a right-click on <path> (entry.ts menuStates, 0.5.0): items set to
+ * "Disable when…" one of them (defaults in entry.ts, the user's choice in sys:context-menus) grey out.
+ */
+function menuStatesFor(path: string): string[] {
+  const focus = state.value?.focus
+  const out: string[] = []
+  if (narrow.value) out.push('narrow')
+  if (!focus) out.push('unfocused')
+  else if (key(focus) === key(path)) out.push('this-focused')
+  return out
+}
 const columns = computed(() => props.context === 'grid' && panelWidth.value >= 448)
 const narrowNode = computed(() => {
   void tick.value
@@ -149,9 +161,15 @@ function command(id: string, path: string) {
     scrollTop.value = 0
   }
   if (id === 'minimize-others') {
+    // Narrow view (0.5.1): go into the folder and collapse the rest. It is opened first: the view shows
+    // one level, of an opened folder (else it stayed on "Loading folders…").
+    const node = narrow.value && state.value && within(path, activePath.value) ? controller.find(path) : undefined
+    if (node && node !== controller.root && !controller.isExpanded(node.path)) controller.toggle(node)
     controller.minimize(path)
-    if (narrow.value && state.value && within(path, activePath.value)) {
-      state.value.narrowPath = path; state.value.narrowScroll = 0; state.value.narrowAnchor = undefined
+    if (node && state.value) {
+      state.value.narrowPath = node.path; state.value.columnPath = node.path
+      state.value.narrowScroll = 0; state.value.narrowAnchor = undefined
+      focused.value = ''
       scrollTop.value = 0
     }
   }
@@ -453,7 +471,7 @@ defineExpose({ choose, focusFolder, command, exitFocus, reveal, showCreated, roo
 <template>
   <section ref="panel" class="tv-panel" :class="{ 'tv-narrow': narrow, 'tv-grid-context': context === 'grid' }" aria-label="Tree View">
     <header class="tv-header">
-      <button ref="selectButton" class="tv-root" :aria-expanded="selector" aria-label="Choose root" v-gex-tooltip="{ content: 'Go to', detail: root ? `${root.label} · ${root.path}` : 'Choose a root or favorite.' }" @click="selector = !selector"><span class="tv-root-icon">▱</span><span>{{ root?.label || 'Choose a root' }}</span><span class="tv-chevron">⌄</span></button>
+      <button ref="selectButton" class="tv-root" :aria-expanded="selector" aria-label="Choose root" v-gex-tooltip="{ content: 'Go to', detail: root ? `${root.label} · ${root.path}` : 'Choose a root or favorite.' }" @click="selector = !selector"><span class="tv-root-icon">▱</span><span><small v-if="root" class="tv-root-tag">root:</small>{{ root?.label || 'Choose a root' }}</span><span class="tv-chevron">⌄</span></button>
       <button class="tv-tool" :disabled="!createTarget" v-gex-tooltip="{ content: 'New folder', detail: createTarget ? `Create a folder in ${label(createTarget)} and rename it.` : 'Choose a root first.' }" :aria-label="createTarget ? `Create new folder in ${label(createTarget)}` : 'Choose a root before creating a folder'" @click="createTarget && emit('add', createTarget)">＋</button>
       <button class="tv-tool" v-gex-tooltip="{ content: 'Refresh', detail: 'Reload roots and the folders currently open in the tree.' }" aria-label="Refresh folders and roots" @click="controller.refresh(); emit('refreshRoots')">↻</button>
     </header>
@@ -482,7 +500,7 @@ defineExpose({ choose, focusFolder, command, exitFocus, reveal, showCreated, roo
       <div v-if="columns" class="tv-columns-shell">
         <button v-if="columnsHaveOverflow" class="tv-column-page tv-column-page-left" :disabled="columnsAtStart" :aria-label="columnsAtStart ? 'At first folder level' : 'Show previous folder levels'" @click="scrollColumnsByPage(-1)">{{ columnsAtStart ? '│' : '‹' }}</button>
         <div ref="columnsScroll" class="tv-columns-strip">
-          <TreeColumn v-for="(node, index) in columnNodes" :key="node.path" :owner="node" :rows="controller.levelRows(node, index + 1)" :column="index" :active-child="columnNodes[index + 1]?.path" :selected="state?.selected" :focused="focused" :icon="icon" :widget-id="widgetId" :expanded="path => controller.isExpanded(path)" :tip="folderTip" @open="openColumn" @back="closeColumn" @fold="foldColumn" @navigate="navigate" @focus="focused = $event" @clipboard="(operation, path) => emit('clipboard', operation, path)" @menu="(event, path) => emit('menu', event, path, 'columns')" @more="controller.more($event)" @retry="controller.retry($event)" @probe="beginCountProbe" @end-probe="endCountProbe" />
+          <TreeColumn v-for="(node, index) in columnNodes" :key="node.path" :owner="node" :rows="controller.levelRows(node, index + 1)" :column="index" :active-child="columnNodes[index + 1]?.path" :selected="state?.selected" :focused="focused" :icon="icon" :widget-id="widgetId" :expanded="path => controller.isExpanded(path)" :tip="folderTip" @open="openColumn" @back="closeColumn" @fold="foldColumn" @navigate="navigate" @focus="focused = $event" @clipboard="(operation, path) => emit('clipboard', operation, path)" @menu="(event, path) => emit('menu', event, path, 'columns', menuStatesFor(path))" @more="controller.more($event)" @retry="controller.retry($event)" @probe="beginCountProbe" @end-probe="endCountProbe" />
         </div>
         <button v-if="columnsHaveOverflow" class="tv-column-page tv-column-page-right" :disabled="columnsAtEnd" :aria-label="columnsAtEnd ? 'At current folder level' : 'Show deeper folder levels'" @click="scrollColumnsByPage(1)">{{ columnsAtEnd ? '│' : '›' }}</button>
       </div>
@@ -490,7 +508,7 @@ defineExpose({ choose, focusFolder, command, exitFocus, reveal, showCreated, roo
         <button v-if="hasOverflow" class="tv-scroll-hint tv-scroll-up" :disabled="atStart" :aria-label="atStart ? 'At top' : 'Scroll up'" @click="scrollByPage(-1)"><span>{{ atStart ? '—' : '▲' }}</span></button>
         <div ref="scroll" class="tv-tree" tabindex="0" role="tree" :aria-label="narrow && narrowNode ? `${narrowNode.name} folders` : root?.label || 'Folders'" :aria-activedescendant="activeRow >= start && activeRow < start + visible.length ? `${treeId}-row-${activeRow}` : undefined" @keydown="keydown" @scroll="onScroll">
           <div :style="{ height: `${rows.length * 30}px`, position: 'relative' }">
-          <div v-for="(row, i) in visible" :id="`${treeId}-row-${start + i}`" :key="row.id" class="tv-row" :class="{ 'tv-selected': state?.selected && key(state.selected) === key(row.node.path) && row.type === 'node', 'tv-keyboard': focused && key(focused) === key(row.node.path) && row.type === 'node', 'tv-spine': state?.selected && within(state.selected, row.node.path) && row.type === 'node', 'tv-status': row.type !== 'node' }" :style="{ top: `${(start + i) * 30}px`, paddingLeft: `${Math.min(row.depth - 1, 7) * 14 + 4}px` }" :role="row.type === 'node' ? 'treeitem' : undefined" :aria-level="row.type === 'node' ? row.depth : undefined" :aria-expanded="row.type === 'node' ? controller.isExpanded(row.node.path) : undefined" :aria-selected="row.type === 'node' ? key(state?.selected || '') === key(row.node.path) : undefined" :aria-posinset="row.pos" :aria-setsize="row.size" :aria-busy="row.type === 'node' && controller.isExpanded(row.node.path) && row.node.status === 'loading' ? true : undefined" @contextmenu.prevent="emit('menu', $event, row.node.path, 'tree')">
+          <div v-for="(row, i) in visible" :id="`${treeId}-row-${start + i}`" :key="row.id" class="tv-row" :class="{ 'tv-selected': state?.selected && key(state.selected) === key(row.node.path) && row.type === 'node', 'tv-keyboard': focused && key(focused) === key(row.node.path) && row.type === 'node', 'tv-spine': state?.selected && within(state.selected, row.node.path) && row.type === 'node', 'tv-status': row.type !== 'node' }" :style="{ top: `${(start + i) * 30}px`, paddingLeft: `${Math.min(row.depth - 1, 7) * 14 + 4}px` }" :role="row.type === 'node' ? 'treeitem' : undefined" :aria-level="row.type === 'node' ? row.depth : undefined" :aria-expanded="row.type === 'node' ? controller.isExpanded(row.node.path) : undefined" :aria-selected="row.type === 'node' ? key(state?.selected || '') === key(row.node.path) : undefined" :aria-posinset="row.pos" :aria-setsize="row.size" :aria-busy="row.type === 'node' && controller.isExpanded(row.node.path) && row.node.status === 'loading' ? true : undefined" @contextmenu.prevent="emit('menu', $event, row.node.path, 'tree', menuStatesFor(row.node.path))">
             <template v-if="row.type === 'node'">
               <button class="tv-disclosure" tabindex="-1" :aria-label="narrow ? `Show ${row.node.name}` : `${controller.isExpanded(row.node.path) ? 'Collapse' : 'Expand'} ${row.node.name}`" @click="toggle(row)">{{ narrow ? '›' : controller.isExpanded(row.node.path) ? '⌄' : '›' }}</button>
               <button class="tv-name" tabindex="-1" :data-rename-id="row.node.path" :data-rename-value="row.node.name" :data-widget-id="widgetId || undefined" v-gex-tooltip="folderTip(row.node)" @mouseenter="beginCountProbe(row.node)" @mouseleave="endCountProbe(row.node)" @focus="beginCountProbe(row.node)" @blur="endCountProbe(row.node)" @click="navigate(row.node.path); scroll?.focus()"><img v-if="imageIcon(row.node.path)" :src="icon(row.node.path)" alt="" /><span v-else class="tv-folder">{{ icon(row.node.path) || '▱' }}</span><span>{{ row.node.name }}</span><span v-if="row.node.link" class="tv-link" aria-label="(link)">↗</span></button>

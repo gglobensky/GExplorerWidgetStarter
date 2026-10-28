@@ -114,7 +114,7 @@ defineExpose({ close })
         </ul>
         <p v-else class="media-library-no-sources">No folders selected yet.</p>
         <p v-if="scanWarnings.length" class="media-library-scan-note" :title="scanWarnings.join('\n')">{{ scanWarnings.length }} folder {{ scanWarnings.length === 1 ? 'warning' : 'warnings' }}</p>
-        <p v-if="scanTruncated" class="media-library-scan-note">Scan limit reached; showing the first {{ scannedCount }} videos.</p>
+        <p v-if="scanTruncated" class="media-library-scan-note">Some folders are nested too deep to read; showing {{ scannedCount }} videos.</p>
         <p v-if="artworkProgress" class="media-library-scan-note">Preparing artwork {{ artworkProgress.completed }}/{{ artworkProgress.total }}…</p>
         <p v-if="tmdbArtworkProgress" class="media-library-scan-note">Importing TMDB artwork {{ tmdbArtworkProgress.completed }}/{{ tmdbArtworkProgress.total }}…</p>
         <button class="media-library-add-source" type="button" :disabled="!canAddSource" @click="addSource"><span aria-hidden="true">＋</span>Add media folder</button>

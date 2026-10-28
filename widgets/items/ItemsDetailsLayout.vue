@@ -1,15 +1,15 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { iconFor } from 'gexplorer/widgets'
 import type { ListingEntry, ListingSortKey, ListingSortDir } from 'gexplorer/widgets'
+import { COLUMN_LABELS, COMPACT_PX, DEFAULT_SHOWN, fitColumns, type DetailCol, type DetailWeights, type OptionalCol } from './detailColumns'
 
 /* -----------------------------------------------
    Types
 ------------------------------------------------ */
 type SortKey = ListingSortKey
 type SortDir = ListingSortDir
-type ResCol = 'name' | 'ext' | 'size' | 'mod'
-type DetailWeights = { name: number; ext: number; size: number; mod: number }
+type ResCol = DetailCol
 
 /* -----------------------------------------------
    Props
@@ -34,6 +34,8 @@ const props = defineProps<{
   sortKey:          SortKey
   sortDir:          SortDir
   initialWeights:   DetailWeights
+  /** The columns chosen in the header's menu, most recent first (as many show as fit). */
+  shownColumns?:    OptionalCol[]
   folderDropTarget?: string | null
   marqueeRect:      { x: number; y: number; w: number; h: number } | null
   // VFS state styles — injected by the app via SDK, not by the widget itself.
@@ -57,15 +59,13 @@ const emit = defineEmits<{
   (e: 'surfaceClick', event: MouseEvent): void
   (e: 'planeScroll', event: Event): void
   (e: 'weightsChanged', weights: DetailWeights): void
+  /** Right-click on the header: Widget.vue shows the columns menu. */
+  (e: 'headerMenu', event: MouseEvent): void
 }>()
 
 /* -----------------------------------------------
    Constants
 ------------------------------------------------ */
-const NAME_MIN = 140
-const EXT_MIN  = 70
-const SIZE_MIN = 90
-const MIN_MOD_PX = 150
 const headerH = 36
 
 /* -----------------------------------------------
@@ -76,6 +76,12 @@ const detailsScrollEl = ref<HTMLElement | null>(null)
 const headerEl       = ref<HTMLElement | null>(null)
 const padEl          = ref<HTMLElement | null>(null)
 const sbw            = ref(0)
+/** The rows' box, measured: padding beside the rows, the width a row has, a row's own padding + borders, its column gap. */
+const padL           = ref(0)
+const padR           = ref(0)
+const rowWidth       = ref(0)
+const rowChrome      = ref(18)
+const rowGap         = ref(6)
 
 const colW = ref<DetailWeights>({ ...props.initialWeights })
 const isResizing = ref(false)
@@ -88,12 +94,28 @@ let resizing: null | {
 /* -----------------------------------------------
    Computed
 ------------------------------------------------ */
-const detailsCols = computed(() =>
-  `minmax(${NAME_MIN}px, ${colW.value.name}fr) ` +
-  `minmax(${EXT_MIN}px, ${colW.value.ext}fr) ` +
-  `minmax(${SIZE_MIN}px, ${colW.value.size}fr) ` +
-  `minmax(${MIN_MOD_PX}px, ${colW.value.mod}fr)`
-)
+// One set of pixel widths for the header and the rows (detailColumns.ts): they can no longer drift
+// apart, and below the comfortable widths the columns shrink, then hide, instead of overflowing.
+const fit = computed(() => fitColumns(
+  rowWidth.value,
+  count => rowChrome.value + rowGap.value * Math.max(0, count - 1),
+  colW.value,
+  props.shownColumns ?? DEFAULT_SHOWN,
+))
+const shown = computed(() => {
+  const set = new Set(fit.value.visible)
+  return { ext: set.has('ext'), size: set.has('size'), mod: set.has('mod') }
+})
+const detailsCols = computed(() => rowWidth.value > 0
+  ? fit.value.visible.map(col => `${fit.value.widths[col] ?? 0}px`).join(' ')
+  // Not measured yet (first frame): the old fluid tracks.
+  : fit.value.visible.map(col => `minmax(${COMPACT_PX[col]}px, ${colW.value[col]}fr)`).join(' '))
+/** The next shown column after `col` (a resize handle moves the border between the two). */
+function nextShown(col: DetailCol): DetailCol | null {
+  const order = fit.value.visible
+  const index = order.indexOf(col)
+  return index >= 0 && index < order.length - 1 ? order[index + 1] : null
+}
 
 /* -----------------------------------------------
    VFS State Style Helpers
@@ -201,10 +223,8 @@ function normalizeWeights(o: DetailWeights): DetailWeights {
    Column Resize Logic
 ------------------------------------------------ */
 function pairForHandle(col: ResCol): [ResCol, ResCol] {
-  if (col === 'name') return ['name', 'ext']
-  if (col === 'ext')  return ['ext',  'size']
-  if (col === 'size') return ['size', 'mod']
-  return ['mod', 'mod']
+  const next = nextShown(col)
+  return next ? [col, next] : [col, col]
 }
 
 function measureHeaderColsPx() {
@@ -216,7 +236,7 @@ function measureHeaderColsPx() {
 
 function startResize(col: ResCol, ev: PointerEvent) {
   const [left, right] = pairForHandle(col)
-  if (left === 'mod' && right === 'mod') return
+  if (left === right) return
   const px = measureHeaderColsPx()
   const startLeftPx  = px[left], startRightPx = px[right]
   const pairPx = Math.max(1, startLeftPx + startRightPx)
@@ -234,8 +254,7 @@ function startResize(col: ResCol, ev: PointerEvent) {
 function onResizeMove(ev: PointerEvent) {
   if (!resizing) return
   const dx = ev.clientX - resizing.startX
-  const minBy: Record<ResCol, number> = { name: NAME_MIN, ext: EXT_MIN, size: SIZE_MIN, mod: MIN_MOD_PX }
-  const minLeft  = minBy[resizing.left], minRight = minBy[resizing.right]
+  const minLeft  = COMPACT_PX[resizing.left], minRight = COMPACT_PX[resizing.right]
   const maxLeft  = Math.max(minLeft, resizing.pairPx - minRight)
   const newLeftPx = Math.min(Math.max(resizing.startLeftPx + dx, minLeft), maxLeft)
   const k = resizing.pairW / resizing.pairPx
@@ -251,31 +270,31 @@ function onResizeEnd() {
 }
 
 /* -----------------------------------------------
-   Scrollbar Width Measurement
+   Measuring the rows' box (2026-10-27)
+   The header lines up with the rows by construction: same left padding, same
+   right padding plus the scrollbar's width (always, the old "no compensation
+   near the minimum width" case was the narrow-pane misalignment), same
+   border, same pixel tracks.
 ------------------------------------------------ */
-function measureScrollbarWidth() {
-  const el = detailsScrollEl.value, host = detailsRootEl.value
-  if (!el || !host) return
-  const raw = Math.max(0, el.offsetWidth - el.clientWidth)
-  const minSum = NAME_MIN + EXT_MIN + SIZE_MIN + MIN_MOD_PX
-  const gap = 6 * 3, padX = 8 * 2
-  const contentW = contentGridWidth()
-  const atMinish = contentW <= (minSum + gap + padX + 1)
-  const width = atMinish ? 0 : raw
-  sbw.value = width
-  host.style.setProperty('--sbw', `${width}px`)
+function px(value: string): number { return parseFloat(value) || 0 }
+
+function measure() {
+  const scroll = detailsScrollEl.value, pad = padEl.value
+  if (!scroll || !pad) return
+  const padStyle = getComputedStyle(pad)
+  padL.value = px(padStyle.paddingLeft)
+  padR.value = px(padStyle.paddingRight)
+  rowWidth.value = Math.max(0, pad.clientWidth - padL.value - padR.value)
+  sbw.value = Math.max(0, scroll.offsetWidth - scroll.clientWidth)
+  const sample = pad.querySelector<HTMLElement>('.row.sizer')
+  if (sample) {
+    const rowStyle = getComputedStyle(sample)
+    rowChrome.value = px(rowStyle.paddingLeft) + px(rowStyle.paddingRight) + px(rowStyle.borderLeftWidth) + px(rowStyle.borderRightWidth)
+    rowGap.value = px(rowStyle.columnGap)
+  }
 }
 
-function contentGridWidth(): number {
-  const hdrInner = headerEl.value?.querySelector<HTMLElement>('.details-header-inner')
-  if (hdrInner) return hdrInner.clientWidth
-  const pad = padEl.value
-  if (pad) {
-    const cs = getComputedStyle(pad)
-    return pad.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)
-  }
-  return 0
-}
+let observer: ResizeObserver | null = null
 
 /* -----------------------------------------------
    Event Handlers
@@ -295,39 +314,46 @@ function onSurfaceClick(ev: MouseEvent)         { emit('surfaceClick', ev) }
 /* -----------------------------------------------
    Lifecycle
 ------------------------------------------------ */
-onMounted(() => { requestAnimationFrame(() => { measureScrollbarWidth() }) })
+onMounted(() => {
+  requestAnimationFrame(measure)
+  if (typeof ResizeObserver !== 'undefined') {
+    observer = new ResizeObserver(() => measure())
+    if (detailsScrollEl.value) observer.observe(detailsScrollEl.value)
+    if (padEl.value) observer.observe(padEl.value)
+  }
+})
+onBeforeUnmount(() => { observer?.disconnect(); observer = null })
 watch(colW, (w) => { emit('weightsChanged', w) }, { deep: true })
-defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl })
+// Another folder's saved widths (the host gives each folder its own view).
+watch(() => props.initialWeights, (w) => {
+  if (isResizing.value || !w) return
+  if ((Object.keys(w) as DetailCol[]).some(col => Math.abs((w[col] ?? 0) - (colW.value[col] ?? 0)) > 0.01)) colW.value = { ...w }
+})
+// fit: what the header's menu ticks (the columns on screen) and how many it has room for.
+defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl, fit })
 </script>
 
 <template>
   <div
     class="details-root"
     :data-icons="iconsTick"
-    :style="{ '--cols': detailsCols, '--hdrH': headerH + 'px', '--sbw': sbw + 'px' }"
+    :class="{ 'date-only': fit.dateOnly }"
+    :style="{ '--cols': detailsCols, '--hdrH': headerH + 'px', '--sbw': sbw + 'px', '--padL': padL + 'px', '--padR': padR + 'px' }"
     ref="detailsRootEl"
   >
     <!-- Header OUTSIDE the scroll container -->
     <div class="details-header" ref="headerEl">
-      <div class="details-header-inner">
-        <button class="th th-name" @click="onHeaderClickFiltered('name', $event)">
-          <span class="th-label">Name</span>
-          <span v-if="sortKey === 'name'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
-          <span class="resize-handle" @pointerdown.stop.prevent="startResize('name', $event)" />
-        </button>
-        <button class="th th-ext" @click="onHeaderClickFiltered('ext', $event)">
-          <span class="th-label">Ext</span>
-          <span v-if="sortKey === 'ext'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
-          <span class="resize-handle" @pointerdown.stop.prevent="startResize('ext', $event)" />
-        </button>
-        <button class="th th-size" @click="onHeaderClickFiltered('size', $event)">
-          <span class="th-label">Size</span>
-          <span v-if="sortKey === 'size'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
-          <span class="resize-handle" @pointerdown.stop.prevent="startResize('size', $event)" />
-        </button>
-        <button class="th th-mod" @click="onHeaderClickFiltered('modified', $event)">
-          <span class="th-label">Modified</span>
-          <span v-if="sortKey === 'modified'" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+      <div class="details-header-inner" @contextmenu.prevent.stop="(ev) => emit('headerMenu', ev)">
+        <button
+          v-for="col in fit.visible"
+          :key="col"
+          :class="['th', `th-${col}`]"
+          :title="col === 'name' ? 'Right-click to choose the columns' : undefined"
+          @click="onHeaderClickFiltered(col === 'mod' ? 'modified' : col, $event)"
+        >
+          <span class="th-label">{{ COLUMN_LABELS[col] }}</span>
+          <span v-if="sortKey === (col === 'mod' ? 'modified' : col)" class="caret">{{ sortDir === 'asc' ? '▲' : '▼' }}</span>
+          <span v-if="nextShown(col)" class="resize-handle" @pointerdown.stop.prevent="startResize(col, $event)" />
         </button>
       </div>
     </div>
@@ -398,19 +424,19 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl })
                 >{{ rowAt(i)!.Name }}</span>
               </div>
 
-              <div class="td td-ext"  :title="rowAt(i)!.Ext">{{ rowAt(i)!.Ext }}</div>
-              <div class="td td-size" :title="sizeLabel(rowAt(i)!)">
+              <div v-if="shown.ext" class="td td-ext"  :title="rowAt(i)!.Ext">{{ rowAt(i)!.Ext }}</div>
+              <div v-if="shown.size" class="td td-size" :title="sizeLabel(rowAt(i)!)">
                 <span class="num">{{ sizeParts(rowAt(i)!.Size).num }}</span>
                 <span class="unit">{{ sizeParts(rowAt(i)!.Size).unit }}</span>
               </div>
-              <div class="td td-mod" :title="modLabel(rowAt(i)!)">
+              <div v-if="shown.mod" class="td td-mod" :title="modLabel(rowAt(i)!)">
                 <span class="date">{{ modParts(rowAt(i)!.ModifiedAt).date }}</span>
                 <span class="time">{{ modParts(rowAt(i)!.ModifiedAt).time }}</span>
               </div>
             </button>
             <div v-else class="row placeholder" :data-index="i" aria-hidden="true">
               <div class="td td-name"><span class="icon" /><span class="name">&nbsp;</span></div>
-              <div class="td td-ext" /><div class="td td-size" /><div class="td td-mod" />
+              <div v-if="shown.ext" class="td td-ext" /><div v-if="shown.size" class="td td-size" /><div v-if="shown.mod" class="td td-mod" />
             </div>
           </template>
         </div>
@@ -419,7 +445,7 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl })
         <div class="details-grid sizer-grid" aria-hidden="true">
           <div class="row sizer" :ref="bindSizer">
             <div class="td td-name"><span class="icon" /><span class="name">X</span></div>
-            <div class="td td-ext">X</div><div class="td td-size">X</div><div class="td td-mod">X</div>
+            <div v-if="shown.ext" class="td td-ext">X</div><div v-if="shown.size" class="td td-size">X</div><div v-if="shown.mod" class="td td-mod">X</div>
           </div>
         </div>
       </div>
@@ -493,8 +519,9 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl })
   top: 0;
   z-index: 4;
   height: var(--hdrH);
-  padding-inline: var(--items-gutter-left, 5%)
-                  calc(var(--items-gutter-right, 5%) + var(--sbw, 0px));
+  /* The rows' measured padding (their % gutters resolve against a narrower box: the scrollbar). */
+  padding-inline: var(--padL, var(--items-gutter-left, 5%))
+                  calc(var(--padR, var(--items-gutter-right, 5%)) + var(--sbw, 0px));
   background: transparent;
   border-radius: var(--local-radius);
   box-sizing: border-box;
@@ -512,7 +539,9 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl })
   padding: 0 var(--padX);
   min-width: 0;
   background: var(--items-header-bg, var(--surface-2, #222));
+  border: 1px solid transparent;   /* as wide as a row: rows have a 1px border */
   border-radius: var(--local-radius);
+  box-sizing: border-box;
   overflow: visible;
 }
 
@@ -648,6 +677,9 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl })
 .td-size, .td-mod { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
 .td-size { display: flex; justify-content: flex-end; gap: var(--space-xs); }
 .td-mod  { display: flex; justify-content: flex-end; gap: var(--space-sm); }
+/* Modified too narrow for the time: the date only (the tooltip has both). */
+.date-only .td-mod .time { display: none; }
+.td-size .num, .td-mod .date { overflow: hidden; text-overflow: ellipsis; }
 
 .marquee {
   position: absolute; box-sizing: border-box; pointer-events: none; z-index: 2;
@@ -655,4 +687,4 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl })
   background: color-mix(in oklab, var(--accent, #4ea1ff) 18%, transparent);
   border-radius: 4px;
 }
-</style>
+</style>

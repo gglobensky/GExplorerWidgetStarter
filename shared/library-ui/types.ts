@@ -44,6 +44,10 @@ export type LibraryItem = {
   episodeNumber?: number
   /** Local title candidates used when an optional metadata provider cannot match the display title. */
   metadataSearchTitles?: string[]
+  /** A movie's last resort: titles its folders give, searched when its file name finds nothing. */
+  folderSearchTitles?: string[]
+  /** In an extras folder: the folder it belongs to (its titles list it among their extras; never asked of TMDB). */
+  extraOf?: string
   /** The user replaced provider or inferred description/genre data on this device. */
   localMetadataOverride?: boolean
   /** A synthetic collection card navigates to this shelf instead of opening details. */
@@ -60,7 +64,7 @@ export type LibraryItem = {
   tmdbCollectionName?: string
   /** TMDB was queried for this file, whether or not it produced an accepted title match. */
   tmdbMatchAttempted?: boolean
-  /** Unmatched videos stored beside this identified movie. */
+  /** Extras of this title: unmatched videos beside it, and its folder's extras folders. */
   extras?: LibraryItem[]
 }
 

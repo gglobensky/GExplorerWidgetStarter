@@ -10,23 +10,43 @@ import { errorText, type LibraryContext } from './context'
 import type { Covers } from './useCovers'
 import type { MetadataEdits } from './useMetadataEdits'
 import { bundleMovieExtras, flattenLibraryExtras } from './media'
+import { videoFingerprint, type ScannedVideo } from './scanner'
 import {
-  applyPersistedTmdbMetadata, diagnoseTmdbItem, enrichWithTmdb, persistedTmdbMetadata,
+  applyPersistedTmdbMetadata, createTmdbSession, diagnoseTmdbItem, enrichWithTmdb, persistedTmdbMetadata,
   TMDB_SECRET_HOSTS, TMDB_SECRET_NAME,
   type PersistedTmdbMetadata, type TmdbProgress,
 } from './tmdb'
 
-/** misses: paths TMDB was asked about without a match (not asked again by a scan; their extras stay grouped). */
-type TmdbMetadataStore = { version:1; records:Record<string,PersistedTmdbMetadata>; misses?:string[] }
+/**
+ * misses: paths TMDB was asked about without a match (not asked again by a scan; their extras stay grouped).
+ * fingerprints: each matched or missed file's size and date when it was asked about: a replaced file is asked again.
+ * parser: the file-name parser the misses were found with; a newer one (better at series) asks them once more.
+ */
+type TmdbMetadataStore = {
+  version:1
+  records:Record<string,PersistedTmdbMetadata>
+  misses?:string[]
+  fingerprints?:Record<string,string>
+  parser?:number
+}
 type SecretStatus = Awaited<ReturnType<WidgetSecrets['status']>>
 export type TmdbState = 'idle' | 'matching' | 'ready' | 'error'
 
 const TMDB_METADATA_STORE = 'tmdb-metadata'
+/** 2: series in folders ("Season 1, Episode 01", "Show Season One (1999)", "Ep 05", show extras). */
+const PARSER_VERSION = 2
+/** Titles matched, then saved, at a time: an interrupted run keeps what it matched. */
+const MATCH_BATCH = 500
+
+function plural(count: number, one: string, many = `${one}s`): string {
+  return `${count.toLocaleString()} ${count === 1 ? one : many}`
+}
 
 export function useTmdbMatching(ctx: LibraryContext, covers: Covers, edits: MetadataEdits) {
   const { sdk, items } = ctx
   const records = ref<Record<string,PersistedTmdbMetadata>>({})
   let misses = new Set<string>()
+  let fingerprints: Record<string,string> = {}
   const secret = ref<SecretStatus>({ set:false })
   const secretBusy = ref(false)
   const queryBusy = ref(false)
@@ -39,7 +59,9 @@ export function useTmdbMatching(ctx: LibraryContext, covers: Covers, edits: Meta
     try {
       const saved = await sdk.configRead<TmdbMetadataStore>(TMDB_METADATA_STORE)
       if (saved?.version === 1 && saved.records && typeof saved.records === 'object') records.value = saved.records
-      if (saved?.version === 1 && Array.isArray(saved.misses)) misses = new Set(saved.misses.filter(path => typeof path === 'string'))
+      // Misses found by an older parser get one more chance (Batman Beyond, 2026-10-26).
+      if (saved?.version === 1 && Array.isArray(saved.misses) && saved.parser === PARSER_VERSION) misses = new Set(saved.misses.filter(path => typeof path === 'string'))
+      if (saved?.version === 1 && saved.fingerprints && typeof saved.fingerprints === 'object') fingerprints = { ...saved.fingerprints }
     } catch (error) {
       console.warn('[Media Library] Could not load saved TMDB metadata:', error)
     }
@@ -47,7 +69,32 @@ export function useTmdbMatching(ctx: LibraryContext, covers: Covers, edits: Meta
 
   async function persist() {
     if (!sdk?.configWrite) return
-    await sdk.configWrite(TMDB_METADATA_STORE, { version:1, records:records.value, misses:[...misses] } satisfies TmdbMetadataStore)
+    await sdk.configWrite(TMDB_METADATA_STORE, { version:1, records:records.value, misses:[...misses], fingerprints, parser:PARSER_VERSION } satisfies TmdbMetadataStore)
+  }
+
+  /**
+   * A scan's files against what was matched: a file replaced since (another size or date) loses its
+   * record and miss, so it is matched again. Files seen for the first time are only noted.
+   */
+  async function noteScanned(videos: ScannedVideo[]) {
+    let forgot = 0
+    let noted = false
+    for (const video of videos) {
+      const now = videoFingerprint(video)
+      const before = fingerprints[video.path]
+      if (before === now) continue
+      if (before && (records.value[video.path] || misses.has(video.path))) {
+        const { [video.path]:_dropped, ...rest } = records.value
+        records.value = rest
+        misses.delete(video.path)
+        forgot += 1
+      }
+      fingerprints[video.path] = now
+      noted = true
+    }
+    if (!noted) return
+    if (forgot) console.info(`[Media Library] ${forgot} replaced ${forgot === 1 ? 'file' : 'files'} will be matched again.`)
+    try { await persist() } catch (error) { console.warn('[Media Library] Could not save TMDB file notes:', error) }
   }
 
   /** Remembers which paths matched and which TMDB did not recognize. */
@@ -85,30 +132,66 @@ export function useTmdbMatching(ctx: LibraryContext, covers: Covers, edits: Meta
 
   const canMatch = () => !!sdk?.networkFetch && secret.value.set && state.value !== 'matching'
 
-  /** Matches every scanned title. Resolves false when it could not run. */
+  /**
+   * Matches `list` in batches of MATCH_BATCH: each batch's matches are saved and shown (artwork
+   * too) before the next starts. One paced session for the whole run (see tmdb.ts). Resolves with
+   * the totals, or null when a newer scan replaced the library meanwhile.
+   */
+  async function matchInBatches(list: LibraryItem[], revision: number): Promise<{ matched:number; unmatched:number; failed:number; images:number } | null> {
+    if (!sdk) return null
+    const session = createTmdbSession(sdk)
+    const totals = { matched:0, unmatched:0, failed:0, images:0 }
+    const stale = () => revision !== ctx.revision()
+    for (let start = 0; start < list.length; start += MATCH_BATCH) {
+      const batch = list.slice(start, start + MATCH_BATCH)
+      const result = await enrichWithTmdb(sdk, batch.map(providerBase), next => {
+        progress.value = { completed:start + next.completed, total:list.length, title:next.title }
+      }, session, stale)
+      if (stale()) return null
+      const byId = new Map(result.items.map(item => [item.id, item]))
+      const next = { ...records.value }
+      for (const item of result.items) {
+        const metadata = persistedTmdbMetadata(item)
+        if (item.path && metadata) next[item.path] = metadata
+      }
+      records.value = next
+      noteResults(result.items)
+      items.value = bundleMovieExtras(flattenLibraryExtras(items.value).map(item => byId.has(item.id) ? edits.apply(byId.get(item.id)!) : item))
+      await persist()
+      totals.matched += result.matched
+      totals.unmatched += result.unmatched
+      totals.failed += result.failed
+      ctx.sync()
+      const artwork = await covers.hydrateTmdb(result.items, revision)
+      if (stale()) return null
+      totals.images += artwork.imported
+    }
+    const stats = session.stats()
+    console.info(`[Media Library] TMDB run: ${list.length} titles, ${stats.requests} requests, ${stats.retries} retried.`)
+    return totals
+  }
+
+  function summary(totals: { matched:number; unmatched:number; failed:number; images:number }, fresh: boolean): string {
+    return [
+      `${plural(totals.matched, fresh ? 'new title' : 'title')} matched`,
+      totals.unmatched ? `${totals.unmatched.toLocaleString()} not recognized` : '',
+      totals.failed ? `${totals.failed.toLocaleString()} to retry later` : '',
+      totals.images ? plural(totals.images, 'image') : '',
+    ].filter(Boolean).join(' · ')
+  }
+
+  /** Matches every scanned title again ("Refresh matches"). Resolves false when it could not run. */
   async function matchAll(options: { quiet?: boolean } = {}): Promise<boolean> {
     if (!canMatch() || !items.value.length || !sdk) return false
     const revision = ctx.revision()
     state.value = 'matching'
     message.value = ''
     try {
-      const result = await enrichWithTmdb(sdk, flattenLibraryExtras(items.value).map(providerBase), next => { progress.value = next })
-      if (revision !== ctx.revision()) return false
-      const next = { ...records.value }
-      for (const item of result.items) {
-        const metadata = persistedTmdbMetadata(item)
-        if (item.path && metadata) next[item.path] = metadata
-      }
-      items.value = bundleMovieExtras(result.items.map(edits.apply))
-      records.value = next
-      noteResults(result.items)
-      await persist()
-      const artwork = await covers.hydrateTmdb(result.items, revision)
-      if (revision !== ctx.revision()) return false
+      const totals = await matchInBatches(flattenLibraryExtras(items.value), revision)
+      if (!totals) return false
       state.value = 'ready'
-      message.value = `${result.matched} matched${result.unmatched ? ` · ${result.unmatched} unmatched` : ''}${artwork.imported ? ` · ${artwork.imported} images` : ''}${artwork.failed ? ` · ${artwork.failed} image failures` : ''}`
-      ctx.sync()
-      if (!options.quiet) ctx.snack('tmdb', `TMDB metadata matched ${result.matched} ${result.matched === 1 ? 'title' : 'titles'}.`, 4000)
+      message.value = summary(totals, false)
+      if (!options.quiet) ctx.snack('tmdb', `TMDB matched ${plural(totals.matched, 'title')}.`, 4000)
       return true
     } catch (error) {
       state.value = 'error'
@@ -121,37 +204,23 @@ export function useTmdbMatching(ctx: LibraryContext, covers: Covers, edits: Meta
   }
 
   /**
-   * Matches only the titles never looked up (a scan found them): the rest keep their records.
-   * Runs after Scan again when TMDB is connected. Resolves with the number matched.
+   * Matches only the titles never looked up (new or replaced files): the rest keep their records.
+   * Runs right after a scan when TMDB is connected. Resolves with the number matched.
    */
   async function matchNew(): Promise<number> {
     if (!canMatch() || !sdk) return 0
-    const flat = flattenLibraryExtras(items.value)
-    const fresh = flat.filter(item => item.path && !item.tmdbMatchAttempted)
+    const fresh = flattenLibraryExtras(items.value).filter(item => item.path && !item.tmdbMatchAttempted)
     if (!fresh.length) return 0
     const revision = ctx.revision()
     state.value = 'matching'
     message.value = ''
     try {
-      const result = await enrichWithTmdb(sdk, fresh.map(providerBase), next => { progress.value = next })
-      if (revision !== ctx.revision()) return 0
-      const byId = new Map(result.items.map(item => [item.id, item]))
-      const next = { ...records.value }
-      for (const item of result.items) {
-        const metadata = persistedTmdbMetadata(item)
-        if (item.path && metadata) next[item.path] = metadata
-      }
-      records.value = next
-      noteResults(result.items)
-      items.value = bundleMovieExtras(flat.map(item => byId.has(item.id) ? edits.apply(byId.get(item.id)!) : item))
-      await persist()
-      await covers.hydrateTmdb(result.items, revision)
-      if (revision !== ctx.revision()) return 0
+      const totals = await matchInBatches(fresh, revision)
+      if (!totals) return 0
       state.value = 'ready'
-      message.value = `${result.matched} new ${result.matched === 1 ? 'title' : 'titles'} matched${result.unmatched ? ` · ${result.unmatched} not recognized` : ''}`
-      ctx.sync()
-      if (result.matched) ctx.snack('tmdb', `TMDB matched ${result.matched} new ${result.matched === 1 ? 'title' : 'titles'}.`, 4000)
-      return result.matched
+      message.value = summary(totals, true)
+      if (totals.matched) ctx.snack('tmdb', `TMDB matched ${plural(totals.matched, 'new title')}.`, 4000)
+      return totals.matched
     } catch (error) {
       state.value = 'error'
       message.value = errorText(error)
@@ -251,7 +320,7 @@ export function useTmdbMatching(ctx: LibraryContext, covers: Covers, edits: Meta
 
   return {
     records, secret, secretBusy, queryBusy, state, progress, message,
-    load, noteRestored, markMisses, canMatch, matchAll, matchNew, matchOne, refreshSecret, promptSecret, forgetSecret,
+    load, noteRestored, noteScanned, markMisses, canMatch, matchAll, matchNew, matchOne, refreshSecret, promptSecret, forgetSecret,
   }
 }
 

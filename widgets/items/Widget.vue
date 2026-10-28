@@ -47,6 +47,7 @@ import {
   type SelectMods,
   type FocusAction,
   type ViewPaging,
+  type WidgetMenuItem,
 } from 'gexplorer/widgets'
 
 import ItemsListLayout from './ItemsListLayout.vue'
@@ -54,6 +55,14 @@ import ItemsGridLayout from './ItemsGridLayout.vue'
 import ItemsDetailsLayout from './ItemsDetailsLayout.vue'
 import ItemsPager from './ItemsPager.vue'
 import { useItemsDragDrop } from './useItemsDragDrop'
+import ItemsTypesPanel from './ItemsTypesPanel.vue'
+import {
+  applyFilterChoice, applySortChoice, chipLabel, effectiveFilter, EMPTY_REGISTRY, filterMenu, isFiltering, listingKinds, NO_FILTER,
+  quickFilterOf, registryOf, TYPE_GROUPS, TYPES_DOCUMENT, type QuickFilter, type TypeRegistry,
+} from './quickFilter'
+import { createThumbnailLoader, thumbExtsOf, thumbFormat, thumbKey, thumbPx, wantsThumbnail, type ThumbJob } from './thumbnails'
+import { COLUMN_LABELS, OPTIONAL_COLUMNS, shownColumnsOf, toggleColumn, type ColumnFit, type OptionalCol } from './detailColumns'
+import { columnsFor, ICON_SIZES, iconSizeOf, MEDIA_SIZES, mediaIconOf, requestPx, sizedIconKey, stepIconSize, type IconSize } from './iconSizes'
 
 const sdk = inject<WidgetSdk>('widgetSdk')
 if (!sdk) throw new Error('[items] widgetSdk is not provided')
@@ -142,6 +151,26 @@ const activeFilter = computed<ItemsFilter | null>(() => {
   return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as ItemsFilter : null
 })
 
+/*
+ * Quick filters (2026-10-27): kept here, applied at once, and saved with the view (per folder,
+ * like the layout); another folder's saved filter replaces it. Chosen in the right-click menu's
+ * Filter submenu, the chip, or the Filter command. Not in the file dialog: it has its own filter
+ * (data.filters). The types (built-in ones hidden, the user's own) are the whole widget's
+ * ('file-types' document). Hidden files: the view's showHidden (a global setting, later in the
+ * shell's settings panel), no longer changed from here.
+ */
+const quickFilter = ref<QuickFilter>(quickFilterOf(props.config?.view?.quickFilter))
+const typeRegistry = ref<TypeRegistry>(EMPTY_REGISTRY)
+void sdk?.configRead?.(TYPES_DOCUMENT).then((saved: unknown) => { typeRegistry.value = registryOf(saved) })
+  .catch((err: unknown) => console.warn('[items] could not read the file types:', err))
+const showHiddenLocal = ref<boolean>(!!(props.config?.view?.showHidden ?? false))
+watch(() => JSON.stringify(props.config?.view?.quickFilter ?? null), () => {
+  const next = quickFilterOf(props.config?.view?.quickFilter)
+  if (JSON.stringify(next) !== JSON.stringify(quickFilter.value)) quickFilter.value = next
+})
+watch(() => !!(props.config?.view?.showHidden ?? false), (value) => { showHiddenLocal.value = value })
+const effectiveQuickFilter = computed<QuickFilter>(() => props.placement?.context === 'dialog' ? NO_FILTER : effectiveFilter(quickFilter.value, typeRegistry.value))
+
 const autoColumns = computed(() => {
   if (props.placement?.context === 'sidebar') return 1
   const gridCols = props.placement?.size?.cols || 4
@@ -161,12 +190,26 @@ const autoItemSize = computed(() => {
 
 const cwd = ref<string>('')
 
+/*
+ * Smart default (0.8.1; 0.8.4): a folder with no saved view of its own (the host says
+ * view.folderDefault) shows Media when most of its files are pictures, videos or music; otherwise
+ * the view the host gives it (entry.ts defaults.folderView: Details, in folder tabs and hubs alike). Not saved: the first change made there saves the folder's view (patchView sends
+ * the layout shown with it; the host drops the flag).
+ */
+const folderDefault = computed(() => !!props.config?.view?.folderDefault)
+const autoLayout = ref<string | null>(null)
+
+// The item size, kept here once changed from the widget (Ctrl+wheel, Filter ▸ Icon size): the props
+// catch up after the save; another folder's saved size replaces it.
+const localItemSize = ref<string>('')
+watch(() => String(props.config?.view?.itemSize ?? ''), () => { localItemSize.value = '' })
+
 const merged = computed(() => ({
   // Fallback to the live CWD if the static config is empty
   rpath: String(cfg.value.data.rpath || cwd.value || ''),
-  layout: String(cfg.value.view.layout ?? 'list'),
+  layout: String((folderDefault.value && autoLayout.value) || cfg.value.view.layout || 'list'),
   columns: cfg.value.view.columns || autoColumns.value,
-  itemSize: cfg.value.view.itemSize || autoItemSize.value,
+  itemSize: localItemSize.value || cfg.value.view.itemSize || autoItemSize.value,
   showHidden: !!(cfg.value.view.showHidden ?? false),
   navigateMode: String(cfg.value.view.navigateMode ?? 'tab').toLowerCase(),
 }))
@@ -180,8 +223,26 @@ function sizeTokens(size?: string) {
 const S = computed(() => sizeTokens(merged.value.itemSize))
 
 const layout = computed(() => merged.value.layout)
-const isGrid = computed(() => layout.value === 'grid')
-const cols = computed(() => (isGrid.value ? Math.max(1, Number(merged.value.columns) || 1) : 1))
+/** A grid of cells: Icons ('grid') or Media (0.8.0). Both lay out, scroll and select alike. */
+const isGrid = computed(() => layout.value === 'grid' || layout.value === 'media')
+/** Media: thumbnails of pictures, videos, music covers and PDFs; icons for the rest. */
+const isMedia = computed(() => layout.value === 'media')
+const pixelRatio = () => (typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1)
+
+/*
+ * Icons (2026-10-27, the layout id stays 'grid'): as many columns as the pane holds (its measured
+ * width), cells of the icon size's width. view.columns is no longer read. System icons are asked
+ * for at the size they show (iconSizes.ts).
+ */
+const paneWidth = ref(0)
+const iconSize = computed<IconSize>(() => iconSizeOf(merged.value.itemSize))
+const iconMetrics = computed(() => (isMedia.value ? MEDIA_SIZES : ICON_SIZES)[iconSize.value])
+/** The system icons' size: in Media, folders and other files show their icon at half the thumbnail box. */
+const shownIconPx = computed(() => (isMedia.value ? mediaIconOf(iconMetrics.value.icon) : iconMetrics.value.icon))
+const iconPx = computed(() => requestPx(shownIconPx.value, pixelRatio()))
+const cols = computed(() => (isGrid.value
+  ? columnsFor(paneWidth.value - 2 * S.value.gap, iconMetrics.value.cell, S.value.gap)
+  : 1))
 
 // ---- PathBar ownership announce ----
 watch(cwd, (v) => {
@@ -219,10 +280,12 @@ let openedFor: { path: string; key: string } | null = null
 
 function listingFilter(): ListingFilter {
   const f = activeFilter.value
+  const { kinds, exts } = listingKinds(effectiveQuickFilter.value, f?.exts?.length ? f.exts : undefined, typeRegistry.value)
   return {
-    exts: f?.exts?.length ? f.exts : undefined,
+    exts,
+    ...(kinds ? { kinds } : {}),
     guiOnly: !!f?.activeOptions?.includes('guiOnly'),
-    showHidden: merged.value.showHidden,
+    showHidden: showHiddenLocal.value,
   }
 }
 
@@ -384,6 +447,17 @@ const sizerEl = shallowRef<HTMLElement | null>(null)
 const rowsEl = shallowRef<HTMLElement | null>(null)
 const bindSizer = (el: any) => { sizerEl.value = (el as HTMLElement) ?? null }
 const bindRows = (el: any) => { rowsEl.value = (el as HTMLElement) ?? null }
+
+// The pane's inner width, for the Icons layout's columns.
+let paneObserver: ResizeObserver | null = null
+watch(scrollEl, (el) => {
+  paneObserver?.disconnect()
+  paneObserver = null
+  if (!el || typeof ResizeObserver === 'undefined') return
+  paneWidth.value = el.clientWidth
+  paneObserver = new ResizeObserver(() => { paneWidth.value = el.clientWidth })
+  paneObserver.observe(el)
+}, { flush: 'post' })
 
 // useListing needs the list, the list needs the total: the listing API is
 // published through this ref once created.
@@ -690,7 +764,9 @@ function contextMenuOptions() {
 
 /** Right-click: the host's menu for this widget (file / folder / multi / background, resolved by the host). */
 function openContextMenu(e: MouseEvent) {
-  void ui.contextMenu(e, contextMenuOptions())
+  // The Filter submenu's entries (entry.ts menus.items 'filter'): this menu's live state.
+  const submenus = inDialog.value ? undefined : { filter: filterEntries() }
+  void ui.contextMenu(e, { ...contextMenuOptions(), ...(submenus ? { submenus } : {}) })
 }
 
 /**
@@ -729,7 +805,7 @@ function iconKeyOf(e: ListingEntry): string {
 }
 
 let iconsRaf = 0
-watch([itemIndices, () => listing.snapshot.value.rowsTick], () => {
+watch([itemIndices, () => listing.snapshot.value.rowsTick, isGrid, iconPx], () => {
   if (iconsRaf) return
   iconsRaf = requestAnimationFrame(() => { iconsRaf = 0; void loadVisibleIcons() })
 })
@@ -737,10 +813,18 @@ watch([itemIndices, () => listing.snapshot.value.rowsTick], () => {
 async function loadVisibleIcons() {
   const keys: string[] = []
   const lnks: string[] = []
+  const large = isGrid.value && iconPx.value > 32 ? iconPx.value : 0
+  const largeKeys: string[] = []
+  const wantLarge = (key: string) => {
+    if (!large) return
+    const sized = sizedIconKey(key, large)
+    if (sized !== key && !requestedIconKeys.has(sized)) { requestedIconKeys.add(sized); largeKeys.push(sized) }
+  }
   for (const i of itemIndices.value) {
     const e = rowAt(i)
     if (!e) continue
     if (!requestedIconKeys.has(e.IconKey)) { requestedIconKeys.add(e.IconKey); keys.push(e.IconKey) }
+    wantLarge(iconKeyOf(e))
     if (e.Kind === 'link' && e.Ext === '.lnk' && !lnkProbed.has(e.FullPath)) { lnkProbed.add(e.FullPath); lnks.push(e.FullPath) }
   }
 
@@ -755,6 +839,7 @@ async function loadVisibleIcons() {
         lnkIconKeys.set(x.path, x.iconKey)
         changed = true
         if (!requestedIconKeys.has(x.iconKey)) { requestedIconKeys.add(x.iconKey); keys.push(x.iconKey) }
+        wantLarge(x.iconKey)
       }
     } catch { /* keep the generic shortcut icon */ }
   }
@@ -763,10 +848,93 @@ async function loadVisibleIcons() {
     const n = await ensureIconsFor(keys.map(iconKey => ({ iconKey })), 32)
     if (n > 0) changed = true
   }
+  if (largeKeys.length) {
+    // The 32 px icon shows until its large one arrives (ItemsGridLayout falls back to it).
+    const n = await ensureIconsFor(largeKeys.map(iconKey => ({ iconKey })), large)
+    if (n > 0) changed = true
+  }
   if (changed) iconsTick.value++
 }
 
 void loadIconPack?.()
+
+/* -----------------------------------------------
+   Media layout thumbnails (0.8.0, thumbnails.ts): the visible files', a few at a time.
+   Without the Media capability (or on a system without image support), icons only.
+------------------------------------------------ */
+const THUMB_EXTS = thumbExtsOf(TYPE_GROUPS)
+const thumbBoxPx = computed(() => thumbPx(iconMetrics.value.icon, pixelRatio()))
+const thumbs = createThumbnailLoader({
+  concurrency: 4,
+  onChange: () => { iconsTick.value++ },
+  create: async (job: ThumbJob) => {
+    if (!sdk?.mediaImageCreate) throw new Error('no Media capability')
+    const image = await sdk.mediaImageCreate(
+      { type: 'thumbnail', path: job.path, size: job.px },
+      { width: job.px, height: job.px, fit: 'contain', format: job.format },
+    )
+    return image.url
+  },
+})
+
+/** The thumbnail shown for this entry (Media layout), or undefined: its icon. */
+function thumbOf(e: ListingEntry): string | undefined {
+  if (!isMedia.value || !wantsThumbnail(e, THUMB_EXTS)) return undefined
+  return thumbs.get(thumbKey(e, thumbBoxPx.value))
+}
+function onThumbError(e: ListingEntry) {
+  thumbs.broken(thumbKey(e, thumbBoxPx.value))
+}
+
+let thumbsRaf = 0
+watch([itemIndices, () => listing.snapshot.value.rowsTick, isMedia, thumbBoxPx], () => {
+  if (thumbsRaf) return
+  thumbsRaf = requestAnimationFrame(() => {
+    thumbsRaf = 0
+    if (!isMedia.value || !sdk?.mediaImageCreate) return
+    const px = thumbBoxPx.value
+    const jobs: ThumbJob[] = []
+    for (const i of itemIndices.value) {
+      const e = rowAt(i)
+      if (e && wantsThumbnail(e, THUMB_EXTS)) jobs.push({ key: thumbKey(e, px), path: e.FullPath, px, format: thumbFormat(e) })
+    }
+    thumbs.want(jobs)
+  })
+})
+// Another folder: what was queued for the last one is dropped (its thumbnails stay in GEM Shell's cache).
+watch(cwd, () => thumbs.clear())
+
+// Smart default (see folderDefault): decided once per folder, from its first rows.
+const AUTO_MEDIA_EXTS: ReadonlySet<string> = new Set([...TYPE_GROUPS.pictures.exts, ...TYPE_GROUPS.videos.exts, ...TYPE_GROUPS.music.exts])
+const AUTO_SAMPLE = 300
+let autoFolder = ''
+watch([folderDefault, cwd, () => listing.snapshot.value.rowsTick, () => listing.snapshot.value.status, () => listing.snapshot.value.basePath], () => {
+  if (!folderDefault.value) { autoLayout.value = null; autoFolder = ''; return }
+  if (autoFolder !== cwd.value) { autoLayout.value = null; autoFolder = '' }
+  if (autoFolder || listing.snapshot.value.status !== 'ready') return
+  // Only this folder's rows (0.8.3): right after a move, the listing still holds the last folder's,
+  // 'ready'. Deciding then gave the folder we came back to the last one's choice.
+  if (normalizeDir(listing.snapshot.value.basePath || '') !== normalizeDir(cwd.value)) return
+  const n = Math.min(total.value, AUTO_SAMPLE)
+  let loaded = 0, files = 0, media = 0
+  for (let i = 0; i < n; i++) {
+    const e = rowAt(i)
+    if (!e) continue
+    loaded++
+    if (e.Kind !== 'file') continue
+    files++
+    if (AUTO_MEDIA_EXTS.has(e.Ext.replace(/^\./, '').toLowerCase())) media++
+  }
+  if (loaded < Math.min(n, 40)) {                 // the sample's rows first (they arrive: rowsTick)
+    source.value?.ensure(0, n)
+    return
+  }
+  autoFolder = cwd.value
+  // Mostly media: Media; otherwise the host's view for it stays (0.8.4)
+  autoLayout.value = files >= 3 && media / files >= 0.6 ? 'media' : null
+  // The host's Layout menu and button show the layout chosen, without saving it (0.8.2)
+  if (autoLayout.value && sdk?.setView) void sdk.setView({ layout: autoLayout.value }, { save: false })
+})
 
 /* -----------------------------------------------
    Marquee
@@ -859,7 +1027,7 @@ function isOnScrollbar(el: HTMLElement, ev: PointerEvent) {
 
 function onScrollContainerPointerDown(ev: PointerEvent) {
   if (ev.button !== 0) return
-  if (layout.value === 'list' || layout.value === 'grid') onSurfacePointerDown(ev)
+  if (layout.value === 'list' || isGrid.value) onSurfacePointerDown(ev)
   else (ev.currentTarget as HTMLElement)?.focus?.({ preventScroll: true })
 }
 
@@ -1026,6 +1194,7 @@ const COMMAND_ACTIONS: Record<string, ItemsAction> = {
 /** One of entry.ts's commands, by its key (the host calls it: defineExpose below). */
 function onCommand(id: string) {
   if (id === 'refresh') { refresh({ user: true }); return }
+  if (id === 'filter') { openFilterMenu(filterChip.value ?? viewAnchor.value); return }
   const action = COMMAND_ACTIONS[id]
   if (action) runItemsAction(action)
 }
@@ -1236,6 +1405,134 @@ function onHeaderClick(nextKey: ListingSortKey) {
   if (sortKey.value === nextKey) sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
   else { sortKey.value = nextKey; sortDir.value = 'asc' }
   source.value?.setSort({ key: sortKey.value, dir: sortDir.value })
+  patchView({ sortKey: sortKey.value, sortDir: sortDir.value })
+}
+
+/* -----------------------------------------------
+   Filter (2026-10-27)
+   The right-click menu's Filter submenu (entry.ts menus.items 'filter', its
+   entries given with each right-click: openContextMenu), the chip, and the
+   Filter command (a compact menu at the chip, or the pane's top right).
+   "Edit types…" opens the types editor (a popover).
+------------------------------------------------ */
+const viewAnchor = ref<HTMLElement | null>(null)
+const filterChip = ref<HTMLElement | null>(null)
+let typesPanel: { close(): void; update(props: Record<string, unknown>): void } | null = null
+
+/** The focused file's extension (no dot), offered as "Only .xyz files". */
+function focusedExt(): string | undefined {
+  const i = selection.focusIndex()
+  const e = i == null ? undefined : rowAt(i)
+  const ext = e && e.Kind === 'file' ? e.Ext.replace(/^\./, '').toLowerCase() : ''
+  return /^[a-z0-9]{1,16}$/.test(ext) ? ext : undefined
+}
+
+function setFilter(next: QuickFilter) {
+  quickFilter.value = quickFilterOf(next)
+  patchView({ quickFilter: { ...quickFilter.value } })
+}
+
+function saveTypes(next: TypeRegistry) {
+  typeRegistry.value = registryOf(next)
+  void Promise.resolve(sdk?.configWrite?.(TYPES_DOCUMENT, typeRegistry.value))
+    .catch((err: unknown) => console.warn('[items] could not save the file types:', err))
+  // update() REPLACES the panel's props: all of them again (0.7.1 sent only the registry, and the
+  // panel lost onChange: the next Delete or Add type did nothing until it was reopened).
+  typesPanel?.update(typesPanelProps())
+}
+
+let typesSuggestions: string[] = []
+function typesPanelProps() {
+  return { registry: typeRegistry.value, onChange: saveTypes, suggestions: typesSuggestions }
+}
+
+/** The extensions of the files on screen, most common first (the types panel offers them). */
+function folderExtensions(): string[] {
+  const counts = new Map<string, number>()
+  for (const i of itemIndices.value) {
+    const e = rowAt(i)
+    const ext = e && e.Kind === 'file' ? e.Ext.replace(/^\./, '').toLowerCase() : ''
+    if (/^[a-z0-9]{1,16}$/.test(ext)) counts.set(ext, (counts.get(ext) ?? 0) + 1)
+  }
+  return [...counts].sort((a, b) => b[1] - a[1]).map(([ext]) => ext).slice(0, 24)
+}
+
+/** "Edit types…": a panel in the middle of the window (0.7.2: was a popover at the pane's corner). */
+function openTypesEditor() {
+  const anchor = rootEl.value
+  if (!anchor) return
+  typesPanel?.close()
+  typesSuggestions = folderExtensions()
+  typesPanel = ui.openPopover({
+    anchor,
+    component: ItemsTypesPanel,
+    props: typesPanelProps(),
+    placement: 'center',
+    title: 'File types',
+    maxWidth: 440,
+    maxHeight: 640,
+    onClose: () => { typesPanel = null },
+  })
+}
+
+/** The Filter submenu: Sort, Show, Type, Clear. (The icon size is in the Layout menu: Icons ▸, 0.7.1.) */
+function filterEntries(): any[] {
+  return filterMenu(effectiveQuickFilter.value, typeRegistry.value, focusedExt(), { key: sortKey.value, dir: sortDir.value }) as any[]
+}
+
+/** Icons layout: another icon size (Ctrl + wheel), saved with the folder's view (like the layout). */
+function setIconSize(size: IconSize) {
+  if (size === iconSize.value) return
+  localItemSize.value = size
+  patchView({ itemSize: size })
+}
+
+/** Ctrl + wheel over the Icons layout: one size bigger / smaller. */
+function onPlaneWheel(ev: WheelEvent) {
+  if (!isGrid.value || !(ev.ctrlKey || ev.metaKey) || !ev.deltaY) return
+  ev.preventDefault()
+  setIconSize(stepIconSize(iconSize.value, ev.deltaY < 0 ? 1 : -1))
+}
+
+/** A Filter entry chosen (the submenu, the compact menu): the new filter, or the types editor. */
+function chooseFilter(choice: string) {
+  if (choice === 'types.edit') { openTypesEditor(); return }
+  const sort = applySortChoice({ key: sortKey.value, dir: sortDir.value }, choice)
+  if (sort) {
+    sortKey.value = sort.key
+    sortDir.value = sort.dir
+    source.value?.setSort({ key: sort.key, dir: sort.dir })
+    patchView({ sortKey: sort.key, sortDir: sort.dir })
+    return
+  }
+  const next = applyFilterChoice(quickFilter.value, choice)
+  if (next) setFilter(next)
+}
+
+/** The chip and the Filter command: the same entries, flat (ui.menu), under `anchor`. */
+async function openFilterMenu(anchor: HTMLElement | null) {
+  if (inDialog.value || !anchor) return
+  const items: WidgetMenuItem[] = []
+  const headings: Record<string, string> = { sort: 'Sort', show: 'Show', type: 'Type' }
+  for (const group of filterEntries()) {
+    if (group.separator) continue
+    if (!group.children) { items.push({ id: group.id, label: group.label }); continue }
+    items.push({ id: `~${group.id}`, label: headings[group.id] ?? group.id, disabled: true })
+    for (const child of group.children) {
+      if (child.separator) continue
+      const mark = child.checked === undefined ? '   ' : child.checked ? '●' : '○'
+      items.push({ id: child.id, label: `${mark}  ${child.label}`, disabled: !!child.disabled, title: child.title })
+    }
+  }
+  const choice = await ui.menu(anchor, items.slice(0, 30), { label: 'Filter' })
+  if (choice && !choice.startsWith('~')) chooseFilter(choice)
+}
+
+const filterChipText = computed(() => isFiltering(effectiveQuickFilter.value) ? chipLabel(effectiveQuickFilter.value, typeRegistry.value) : '')
+
+/** The widget's own menu items (entry.ts menus.items): the Filter submenu's entries. */
+function onMenuItem(message: { itemId: string }) {
+  chooseFilter(message.itemId)
 }
 
 // Watch primitive keys, not arrays / objects: hosts may pass `config` as an
@@ -1244,8 +1541,9 @@ watch(
   () => `${props.config?.view?.sortKey ?? ''}|${props.config?.view?.sortDir ?? ''}`,
   () => {
     const k = props.config?.view?.sortKey, d = props.config?.view?.sortDir
-    if (k && ['name', 'kind', 'ext', 'size', 'modified'].includes(k as string)) sortKey.value = k as ListingSortKey
-    if (d === 'asc' || d === 'desc') sortDir.value = d
+    // A folder without a saved order: by name, ascending (0.8.1: it kept the last folder's).
+    sortKey.value = k && ['name', 'kind', 'ext', 'size', 'modified'].includes(k as string) ? k as ListingSortKey : 'name'
+    sortDir.value = d === 'asc' || d === 'desc' ? d : 'asc'
     source.value?.setSort({ key: sortKey.value, dir: sortDir.value })
   }
 )
@@ -1269,14 +1567,99 @@ function initialWeights(): DetailWeights {
 }
 
 const colW = ref<DetailWeights>(initialWeights())
-void NAME_MIN; void EXT_MIN; void SIZE_MIN; void MIN_MOD_PX   // mins live in the Details layout
+void NAME_MIN; void EXT_MIN; void SIZE_MIN; void MIN_MOD_PX   // mins live in detailColumns.ts
+
+function sameWeights(a: Partial<DetailWeights> | undefined, b: DetailWeights): boolean {
+  return !!a && (['name', 'ext', 'size', 'mod'] as const).every(k => Math.abs((a[k] ?? 0) - b[k]) < 0.01)
+}
+
+/**
+ * Saves the Details settings with the view: the host keeps the Items view per folder (with its
+ * layout). The widths and the columns are always sent from here: the props may not have caught up
+ * with the last save yet (2026-10-27: hiding a column did nothing in release builds), and a save
+ * built on them would drop it.
+ */
+function patchView(patch: Record<string, unknown>) {
+  const view: Record<string, unknown> = {
+    detailWeights: { ...normalizeWeights(colW.value) },
+    detailShown: [...shownColumns.value],
+    sortKey: sortKey.value,
+    sortDir: sortDir.value,
+    quickFilter: { ...quickFilter.value },
+    // A folder without a view of its own: its first save keeps the layout shown (the smart choice).
+    ...(folderDefault.value ? { layout: merged.value.layout } : {}),
+    ...patch,
+    detailHidden: undefined,   // the first version's form, replaced by detailShown
+  }
+  // sdk.setView: the host merges the patch into the view and saves it (per folder for Items, with
+  // the layout). 0.4.x emitted 'updateConfig', which nothing listens to: nothing was saved.
+  if (sdk?.setView) void sdk.setView(view)
+  else emit('event', { type: 'update:config', payload: { ...props.config, view: { ...props.config?.view, ...view } } })
+}
 
 watch(colW, (w) => {
-  emit('updateConfig', {
-    ...props.config,
-    view: { ...props.config?.view, detailWeights: { ...normalizeWeights(w) } },
-  })
+  const next = normalizeWeights(w)
+  // A folder's own widths arriving (below) are not a change to save back; nor are the default
+  // widths of a folder that has none (0.8.1).
+  const saved = props.config?.view?.detailWeights as Partial<DetailWeights> | undefined
+  if (sameWeights(saved ?? normalizeWeights(defaultPx), next)) return
+  patchView({ detailWeights: { ...next } })
 }, { deep: true })
+
+// Another folder: its saved widths (or the defaults) replace the last folder's.
+watch(() => JSON.stringify(props.config?.view?.detailWeights ?? null), () => {
+  const saved = props.config?.view?.detailWeights
+  // None saved: the default widths (0.8.1: it kept the last folder's).
+  const next = saved && typeof (saved as any).name === 'number' ? normalizeWeights(saved as any) : normalizeWeights(defaultPx)
+  if (!sameWeights(colW.value, next)) colW.value = next
+})
+
+/* -----------------------------------------------
+   Details columns shown (2026-10-27): the header's right-click menu.
+   Name always shows; Ext, Size and Modified are chosen in the menu, kept most
+   recent first: as many show as the pane has room for, the menu ticks those on
+   screen, ticking a hidden one shows it (the oldest choice gives way). Kept
+   here (applied at once) and saved in the view: per folder, like the layout.
+------------------------------------------------ */
+const shownColumns = ref<OptionalCol[]>(shownColumnsOf(props.config?.view))
+const sameColumns = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((col, i) => col === b[i])
+// Another folder: its own choice (or the last folder's when it has none, as for the layout).
+// Compared by content: the host replaces the config object often (split panes: every rebuild of
+// the panes), and a new object with the same values is not another folder's choice.
+watch(() => JSON.stringify([props.config?.view?.detailShown ?? null, props.config?.view?.detailHidden ?? null]), () => {
+  const next = shownColumnsOf(props.config?.view)
+  if (!sameColumns(next, shownColumns.value)) shownColumns.value = next
+})
+
+async function onDetailsHeaderMenu(ev: MouseEvent) {
+  const fit = detailsLayoutRef.value?.fit as ColumnFit | undefined
+  const visible = fit?.visible ?? ['name', ...shownColumns.value]
+  const allFit = !fit || fit.room >= OPTIONAL_COLUMNS.length
+  const items: WidgetMenuItem[] = [
+    { id: 'name', label: '☑  Name', disabled: true, title: 'Always shown' },
+    ...OPTIONAL_COLUMNS.map(col => ({
+      id: col as string,
+      label: `${visible.includes(col) ? '☑' : '☐'}  ${COLUMN_LABELS[col]}`,
+      title: visible.includes(col) ? `Hide ${COLUMN_LABELS[col]}` : `Show ${COLUMN_LABELS[col]}`,
+    })),
+  ]
+  if (!allFit) {
+    const room = fit!.room
+    items.push({
+      id: 'room',
+      label: room === 0 ? 'No room for more columns here' : `Room for ${room} ${room === 1 ? 'column' : 'columns'} here`,
+      disabled: true,
+      title: 'Widen the pane for more. Ticking another column shows it in place of the one chosen longest ago.',
+    })
+  }
+  items.push({ id: 'reset-widths', label: 'Reset column widths', title: 'Back to the default widths' })
+  const choice = await ui.menu(ev, items, { label: 'Columns' })
+  if (!choice || choice === 'name' || choice === 'room') return
+  if (choice === 'reset-widths') { colW.value = normalizeWeights(defaultPx); return }
+  const next = toggleColumn(shownColumns.value, choice as OptionalCol, visible)
+  shownColumns.value = next
+  patchView({ detailShown: next })
+}
 
 /* -----------------------------------------------
    Drag & drop
@@ -1357,7 +1740,7 @@ watch(
 // key is a string so an equal-but-new config object (DialogHost re-renders
 // pass a fresh literal) does not reopen the folder and lose the selection.
 watch(
-  () => `${JSON.stringify(cfg.value.data?.filters ?? null)}|${merged.value.showHidden}`,
+  () => JSON.stringify(listingFilter()),
   () => { if (cwd.value) openDir(cwd.value) }
 )
 
@@ -1570,6 +1953,9 @@ onBeforeUnmount(() => {
   selectionTip?.hide()
   saveView()      // before the selection goes away
   if (iconsRaf) cancelAnimationFrame(iconsRaf)
+  if (thumbsRaf) cancelAnimationFrame(thumbsRaf)
+  thumbs.clear()
+  paneObserver?.disconnect()
   if (selectionEventTimer) clearTimeout(selectionEventTimer)
   try { driver.destroy() } catch {}
   try { selection.destroy() } catch {}
@@ -1579,7 +1965,7 @@ onBeforeUnmount(() => {
   // released); in the dialog useListing closes it.
 })
 
-defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand })
+defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand, onMenuItem })
 </script>
 
 <template>
@@ -1607,6 +1993,15 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand })
       />
     </Teleport>
 
+    <!-- Filter: the menus' anchor (top right), and the chip (bottom left) while a filter is on -->
+    <span ref="viewAnchor" class="items-view-anchor" aria-hidden="true"></span>
+    <div v-if="filterChipText" ref="filterChip" class="items-filter-chip" role="status">
+      <button type="button" class="items-filter-chip-open" :title="`Filtered: ${filterChipText}. Click to change the filter.`" @click.stop="openFilterMenu(filterChip)">
+        <span aria-hidden="true">⏷</span>{{ filterChipText }}
+      </button>
+      <button type="button" class="items-filter-chip-clear" aria-label="Clear the filter" title="Clear the filter" @click.stop="setFilter({ show: 'all', type: null })">✕</button>
+    </div>
+
     <!-- Focusable scroller; captures keyboard for every layout -->
     <div
       class="items-scroll-container"
@@ -1620,6 +2015,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand })
       @pointerup="onSurfacePointerUp"
       @click.capture="onSurfaceClick"
       @scroll.passive="onPlaneScroll"
+      @wheel="onPlaneWheel"
     >
       <!-- Marquee overlay for List/Grid (Details renders its own internally) -->
       <div
@@ -1654,6 +2050,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand })
         :sort-key="sortKey"
         :sort-dir="sortDir"
         :initial-weights="colW"
+        :shown-columns="shownColumns"
         :folder-drop-target="folderDropTarget"
         :get-entry-style="getEntryStyle"
         :marquee-rect="marqueeRect"
@@ -1668,6 +2065,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand })
         @surface-click="onSurfaceClick"
         @plane-scroll="onPlaneScroll"
         @weights-changed="(w) => colW = w"
+        @header-menu="onDetailsHeaderMenu"
       />
 
       <!-- LIST VIEW -->
@@ -1693,7 +2091,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand })
 
       <!-- GRID VIEW -->
       <ItemsGridLayout
-        v-else-if="layout === 'grid'"
+        v-else-if="isGrid"
         :indices="itemIndices"
         :row-at="rowAt"
         :is-selected="isSelected"
@@ -1706,6 +2104,12 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand })
         :icons-tick="iconsTick"
         :source-id="props.sourceId"
         :columns="cols"
+        :icon-px="iconPx"
+        :icon-size="iconMetrics.icon"
+        :sys-icon-size="shownIconPx"
+        :media="isMedia"
+        :thumb-of="thumbOf"
+        @thumb-error="onThumbError"
         :folder-drop-target="folderDropTarget"
         :S="S"
         @row-down="onRowDown"
@@ -1810,4 +2214,26 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand })
   box-shadow:0 2px 8px rgba(0,0,0,.35);
 }
 .err{ color:#f77; }
+
+/* Sort and filter (2026-10-27) */
+.items-view-anchor{ position:absolute; top:4px; right:12px; width:1px; height:1px; pointer-events:none; }
+.items-filter-chip{
+  position:absolute;
+  bottom:10px;
+  left:12px;
+  z-index:5;
+  display:flex;
+  align-items:center;
+  max-width:calc(100% - 28px);
+  border:1px solid color-mix(in oklab, var(--accent,#4ea1ff) 55%, transparent);
+  border-radius:999px;
+  background:color-mix(in oklab, var(--accent,#4ea1ff) 14%, var(--surface-2,#1a1a1a));
+  box-shadow:0 2px 8px rgba(0,0,0,.35);
+  font-size:var(--local-font-sm);
+}
+.items-filter-chip button{ border:0; background:transparent; color:inherit; cursor:pointer; font:inherit; }
+.items-filter-chip-open{ display:flex; gap:5px; align-items:center; min-width:0; padding:3px 4px 3px 10px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.items-filter-chip-open span{ color:var(--accent,#4ea1ff); font-size:.85em; }
+.items-filter-chip-clear{ padding:3px 9px 3px 5px; opacity:.75; }
+.items-filter-chip-clear:hover{ opacity:1; color:var(--accent,#4ea1ff); }
 </style>

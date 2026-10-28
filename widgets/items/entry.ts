@@ -1,6 +1,7 @@
 // src/widgets/items/entry.ts
 
 import Widget from './Widget.vue'
+import { ICON_SIZE_IDS, ICON_SIZE_LABELS } from './iconSizes'
 
 // Menu: contributed by the host (contextmenu/actions/core.ts registerItemsContributions), Refresh
 // included (2026-10-24: a widget's own contributions may only run its own actions).
@@ -12,7 +13,7 @@ import Widget from './Widget.vue'
 export default {
     api:     '1.0',
     id:      'items',
-    version: '0.3.1',
+    version: '0.8.5',
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     // Takes files and folders anywhere in the pane (dropped on a folder row: into
@@ -42,6 +43,8 @@ export default {
           description: 'In a paged list (Layout ▸ Paged): shows the previous page.' },
         { id: 'page-goto', name: 'Go to page', keys: ['Ctrl+G'],
           description: 'In a paged list (Layout ▸ Paged): opens the pager\'s page number box, to type the page to show.' },
+        { id: 'filter', name: 'Filter', keys: ['Ctrl+Shift+F'],
+          description: 'Opens the Filter menu: the sort order, folders only or files only, one type of file (Pictures, Videos, your own types…), or clears the filter. Kept per folder.' },
     ],
 
     // ── Context declarations ────────────────────────────────────────────────
@@ -60,6 +63,14 @@ export default {
         { id: 'multi',      label: 'Multiple selected', icon: '⬛',  builtin: true },
     ],
 	
+    // ── The widget's own menu items (2026-10-27) ─────────────────────────────
+    // Right-click on empty space: Filter ▸ (Sort ▸, Show ▸, Type ▸, Clear filter). A submenu whose entries
+    // the widget gives with each right-click (Widget.vue openContextMenu: submenus.filter; GEM Shell
+    // 2026-10-27); a choice reaches onMenuItem.
+    menus: { items: [
+        { id: 'filter', type: 'submenu', label: 'Filter', icon: '⏷', contexts: ['background'] },
+    ] },
+
 	actions: [
 		{
 			id: 'navigate',
@@ -92,7 +103,14 @@ export default {
         grid: {
             layouts: [
                 { id: 'list',    icon: '☰', tooltip: 'List'    },
-                { id: 'grid',    icon: '▦', tooltip: 'Grid'    },
+                // Icons (0.7.0, was Grid; the id stays so saved views keep it): its columns follow the pane, and
+                // the Layout menu's Icons entry opens its sizes (view.itemSize; Ctrl + wheel steps them too).
+                { id: 'grid',    icon: '▦', tooltip: 'Icons',  columns: false,
+                  sizes: ICON_SIZE_IDS.map(id => ({ id, label: `${ICON_SIZE_LABELS[id]} icons` })) },
+                // Media (0.8.0): thumbnails of pictures, videos, music covers and PDFs (Media capability);
+                // the same automatic columns and sizes as Icons, bigger.
+                { id: 'media',   icon: '🖼', tooltip: 'Media',  columns: false,
+                  sizes: ICON_SIZE_IDS.map(id => ({ id, label: ICON_SIZE_LABELS[id] })) },
                 { id: 'details', icon: '▤', tooltip: 'Details' },
             ],
             // Layout menu gets "Single page" / "Paged ▸"; the choice is stored per folder
@@ -110,6 +128,10 @@ export default {
 
     defaults: {
         data: { rpath: '' },
+        // A folder with no view of its own (folder tabs and hubs alike) starts from view + folderView (GEM Shell,
+        // 2026-10-27); mostly pictures / videos / music: Media instead (Widget.vue, smart default).
+        // Later a choice in the shell's settings panel (GExplorer section).
+        folderView: { layout: 'details' },
         view: {
             layout:       'list',
             columns:      1,
@@ -124,5 +146,6 @@ export default {
 		{ cap: 'Write',     reason: 'Moves, copies, renames, and deletes files' },
 		{ cap: 'Metadata',  reason: 'Resolves file icons and shortcut targets' },
 		{ cap: 'Clipboard', reason: 'Copies and cuts files to the clipboard' },
+		{ cap: 'Media',     reason: 'Shows thumbnails of pictures, videos and music covers in the Media layout' },
 	]
-}
+}

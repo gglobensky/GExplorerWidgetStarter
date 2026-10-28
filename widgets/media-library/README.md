@@ -2,6 +2,29 @@
 
 GEM Video Club establishes the shared GEM Library UI and video-store shelf experience without requiring Shell changes. With no source folder selected it shows an empty shelf of DVD cases, the middle one asking for a media folder. Once folders are selected, it scans real local video files through the public widget SDK.
 
+## What's new in 0.10.1 (2026-10-27)
+
+- **Extras folders, whatever their name** (`Extras`, `Featurettes`, `Special Features`, `Bonus Disc`, `Season 3 Extras`, `DVD Extras`…; not `Specials`, a show's season 0, and not a folder with a year): every video inside belongs to the folder above the outermost extras folder. It is never a show, never a movie of its own, and **never asked of TMDB**. 0.10.0 matched Tucker & Dale's featurettes as the movie itself (their names contain its title, and the new folder fallback searched "Tucker and Dale vs Evil" for *Outakes*), and took `Extras\Season 3 Extras` for a season of a show called "Extras".
+- **Shared extras**: a show folder's extras are listed with **every episode and every movie inside it** (Batman Beyond's 9 extras with each episode and with *Return of the Joker*), in the extras column, like a movie's.
+- **Extras pages** (movie-store case): as many square chips as the column holds under the rating box, then ‹ 1/3 › in the Extras header; the wheel over the chips turns the pages.
+- Movie titles are also searched without their bracketed words (*Batman Beyond - Return of the Joker (The Original Uncut Version)* → *Batman Beyond - Return of the Joker*).
+- Records TMDB gave extras in 0.10.0 are ignored.
+
+## What's new in 0.10.0 (2026-10-26)
+
+- **No more scan limits.** The old caps (400 folders, 1,500 videos, 3,000 entries a folder) are gone; folders are read in pages of 1,000 rows. Junctions are never followed, and a depth limit of 32 is the last safety net. A rescan keeps the media details of every unchanged file (same size and date) and reads only new or replaced ones.
+- **Scan and match in one go, on one line.** A strip under the top bar says what the library is doing, "n of total" with a thin progress bar: *Searching Movies · 340 found* → *Reading movie details 120 of 480* → *Matching with TMDB 37 of 52* → *Importing TMDB artwork 12 of 52*. The shelves stay up while a known library is scanned again.
+- **Gentle, batched TMDB matching.** At most two requests in flight and about 4.5 a second (a tenth of TMDB's documented ceiling). Titles are matched and **saved in batches of 500**, so stopping halfway keeps what was matched. TMDB's *429 too many requests* waits 2, 4, 8, 16, 30 s; a 5xx or a dropped connection waits 1, 3, 9 s; a title still failing is left for the next run while the others go on. Only a rejected token stops the run. A show and each of its seasons are asked for once per run, whatever the number of episodes.
+- **Replaced files are matched again**: each matched or missed file's size and date is kept; another size or date drops its record.
+- **Series in folders** (Guillaume's *Batman Beyond*): episodes are recognized from `S01E02`, `S01 E02`, `1x02`, `Season 1, Episode 01`, `Ep 05`, `Ep_05`, `Episode 12`, `Épisode 4`, `Folge 3`, `E05`, and, in a season folder or among 3+ numbered files, `03 - Title`, `[03] Title`, `Show - 012`. Season folders: `Season 2`, `S02`, `Saison deux`, `Series 1`, `Staffel 1`, `Temporada 3`, `<Show> Season One (1999)`, `Specials`. The show's name comes from the file, the season folder or the folder above, cleaned of release words: `Batman Beyond  (DC Comics Classic Collection) The Complete Series (1999) Xvid 2 ch AVI` → *Batman Beyond* (1999). A year in a season-less file name keeps it a movie (*Star Wars Episode 4 - A New Hope (1977)*).
+- **Show extras**: a show's `Extras` folder joins the show (replaced in 0.10.1: listed with every episode, never matched).
+- **Smarter matching**: an episode without a number gets the show's metadata; an episode numbered from the start of the show (*Naruto 135*) is placed in its real season; a movie whose file name finds nothing is searched by its folder's name (`Heat (1995)\CD1\heat-cd1.avi`); titles TMDB missed with the old parser are asked once more.
+
+## What's new in 0.9.2 (2026-10-26)
+
+- **"Opening <title>…"** over the library while GEM Shell checks a file before playing it (the first look at a file can take a few seconds): for Play in the Video Club and for *Play in GEM Video Club* from another widget. The player's own *Preparing playback…* takes over once the stream is asked for.
+- Settings (look, sort, *when hidden*) now survive a restart: that needed GEM Shell to save `sdk.setView` changes for widgets in a hub, the sidebar or the toolbar (shell change, same day).
+
 ## What's new in 0.9.1 (2026-10-26)
 
 - **Fixed: blank in the sidebar.** The library has CSS size containment (its layout uses container height units), so in the sidebar, where a widget is as tall as its content, it measured 0 px: a dark grey box. It now declares `contexts.sidebar.scroll: 'self'`: the shell gives its row a maximum (half the sidebar by default, or the height dragged in edit mode) and the Video Club fills it and scrolls its own shelves.
@@ -100,7 +123,7 @@ Real local movies seek and play inside the cue on hover.
 
 ## TMDB metadata beta
 
-Add real media folders, open the library menu, choose **Connect TMDB**, enter an API Read Access Token in GEM Shell's protected dialog, and choose **Match with TMDB**. Matching is opt-in and makes no requests while the widget is merely scanning or browsing. Movie filenames are searched as movies; detected series are searched as TV shows and then matched to their season and episode records.
+Add real media folders, open the library menu, choose **Connect TMDB**, enter an API Read Access Token in GEM Shell's protected dialog, and choose **Match with TMDB**. Matching is opt-in and makes no requests while the widget is merely scanning or browsing. Movie filenames are searched as movies (then by their folder's name); detected series are searched as TV shows (by the names the file and its folders give) and then matched to their season and episode records. Requests are paced and retried, and saved every 500 titles (see 0.10.0).
 
 This product uses the TMDB API but is not endorsed or certified by TMDB. TMDB requires one of its approved logos and this notice in an About or Credits area: both are in the widget's `credits` (`entry.ts`, logo `assets/tmdb-logo.png`, converted from TMDB's SVG), shown on GEM Shell's About page (Widgets tab). The widget uses each user's own TMDB API Read Access Token until GEM Shell's official widget repo can hand widgets their own secrets.
 
@@ -110,4 +133,4 @@ The widget uses `mediaImageCreate` / `mediaImageDelete` for local sidecars, cach
 
 The current and resolved host requirements are tracked in [`API-GAPS.md`](./API-GAPS.md).
 
-The scanner reads up to 3,000 relevant entries per folder, 400 folders and 1,500 videos per refresh. It skips hidden items and folder links, closes every listing after use, and reports truncation or inaccessible folders in the library menu.
+The scanner reads every folder under the media sources (no cap since 0.10.0; folders deeper than 32 levels are reported). It skips hidden items and folder links, closes every listing after use, reuses the media details of unchanged files, and reports inaccessible folders in the library menu.

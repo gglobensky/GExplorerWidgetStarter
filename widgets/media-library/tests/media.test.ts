@@ -180,3 +180,31 @@ test('recursively scans videos, closes listings, and attaches media details', as
   assert.equal(result.videos[0].probe?.durationMs, 7_200_000)
   assert.equal(closed, 2)
 })
+
+test('scans past the old caps (1,500 videos) and keeps the details of unchanged files', async () => {
+  const entry = (Name:string, FullPath:string, Kind:'file'|'dir', Ext = '', ModifiedAt = 10) => ({ Name, FullPath, Kind, Ext, Size:Kind === 'file' ? 100 : null, ModifiedAt, IconKey:'', Hidden:false })
+  const folders:Record<string, ReturnType<typeof entry>[]> = { 'D:\\Big':Array.from({ length:2100 }, (_, index) => entry(`Movie ${index}.mkv`, `D:\\Big\\Movie ${index}.mkv`, 'file', '.mkv')) }
+  const asked:string[] = []
+  const sdk = {
+    openListing(path:string) {
+      const rows = folders[path] ?? []
+      return {
+        snapshot:() => ({ status:'ready', total:rows.length, version:1, sort:{ key:'name', dir:'asc', foldersFirst:true }, progress:null, stale:false, error:null, rowsTick:1, basePath:path }),
+        subscribe:() => () => {}, rows:async (start:number,end:number) => rows.slice(start,end), close:() => {},
+      }
+    },
+    mediaInfo:async (paths:string[]) => { asked.push(...paths); return paths.map(path => ({ path, durationMs:6_000_000 })) },
+  } as any
+  const first = await scanVideoSources(sdk, ['D:\\Big'], 'test', () => {}, () => false)
+  assert.equal(first.videos.length, 2100)
+  assert.equal(first.truncated, false)
+  assert.equal(asked.length, 2100)
+  // One file replaced (another date): only it is read again.
+  folders['D:\\Big'][7] = entry('Movie 7.mkv', 'D:\\Big\\Movie 7.mkv', 'file', '.mkv', 99)
+  asked.length = 0
+  const progress:Array<{ videos:number; total?:number }> = []
+  const second = await scanVideoSources(sdk, ['D:\\Big'], 'test', next => { if (next.phase === 'metadata') progress.push(next) }, () => false, first.videos)
+  assert.deepEqual(asked, ['D:\\Big\\Movie 7.mkv'])
+  assert.equal(second.videos.every(video => video.probe?.durationMs === 6_000_000), true)
+  assert.equal(progress[0].total, 1)
+})

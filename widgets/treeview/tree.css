@@ -12,6 +12,7 @@
 /* A folder link (junction / directory symlink): the tooltip says where it points */
 .tv-link { flex:none; margin-left:4px; font-size:11px; opacity:.65; }
 .tv-chevron { margin-left:auto; }
+.tv-root-tag { margin-right:4px; font-size:10px; font-weight:400; letter-spacing:.02em; color:var(--text-muted, #9baab8); }
 .tv-tool { width:28px; height:30px; flex:none; font-size:17px!important; border-radius:4px; }
 .tv-grid-context .tv-tool { width:34px; height:34px; font-size:19px!important; }
 .tv-focus-strip { display:flex; flex-wrap:wrap; align-items:center; gap:4px; padding:7px 9px; background:#74afce12; border-bottom:1px solid #74afce22; }

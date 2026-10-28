@@ -1,7 +1,7 @@
 // widgets/media-library/useLibraryScan.ts
 //
 // The media folders and their scan: the list of sources (per owner, 'media-sources'), the
-// bounded recursive scan, what the previous scans saw ('scan-history': New arrivals), and the
+// recursive scan (no cap since 2026-10-26), what the previous scans saw ('scan-history': New arrivals), and the
 // lifecycle cache that spares a remount from scanning again.
 import { ref } from 'vue'
 import type { LibraryItem } from '../../shared/library-ui'
@@ -87,7 +87,9 @@ export function useLibraryScan(ctx: LibraryContext, covers: Covers, edits: Metad
       void covers.hydratePreferred(cached.videos, revision)
       return true
     }
-    items.value = []
+    // The shelves stay up while the folders are read again (a rescan of a big library takes a while).
+    const previous = cached?.sourceKey === key ? cached.videos : []
+    if (!previous.length) items.value = []
     state.value = 'scanning'
     progress.value = { phase:'folders', folders:0, videos:0, current:sources.value[0] }
     try {
@@ -97,7 +99,10 @@ export function useLibraryScan(ctx: LibraryContext, covers: Covers, edits: Metad
         `${ctx.owner}:scan:${revision}`,
         next => { if (revision === ctx.revision()) progress.value = next },
         () => revision !== ctx.revision(),
+        previous,
       )
+      if (revision !== ctx.revision()) return false
+      await tmdb.noteScanned(result.videos)
       if (revision !== ctx.revision()) return false
       const discovered = new Set(result.videos.map(video => mediaPathKey(video.path)).filter(path => !knownPaths.has(path)))
       const restored = restorePersistedTmdbMetadata(createScannedLibrary(result.videos, ['',''], new Map()), tmdb.records.value)
