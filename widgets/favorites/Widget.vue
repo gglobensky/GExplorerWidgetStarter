@@ -110,8 +110,9 @@ function openFavorite(fav: { locations: string[]; label?: string }, event?: Mous
   const locations = (fav.locations ?? []).map(l => l.trim()).filter(Boolean)
   if (!locations.length) return
 
-  if (sdk?.navigate) void sdk.navigate(locations.length === 1 ? locations[0] : locations)
-  else if (locations.length === 1) emit('event', { type: 'openPath', payload: locations[0] })
+  // Resolves once the shell opened it, or once the user answered its "where?" question (2026-10-28).
+  if (sdk?.navigate) return sdk.navigate(locations.length === 1 ? locations[0] : locations)
+  if (locations.length === 1) emit('event', { type: 'openPath', payload: locations[0] })
 }
 
 // --- Folder Menus (useFolderMenus) -------------------------------------------

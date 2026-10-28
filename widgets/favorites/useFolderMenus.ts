@@ -8,7 +8,7 @@ export type UseFolderMenusOptions = {
   isSidebar: () => boolean
   findFolderNodeById: (id: string | null) => FavoriteTreeNode | null
   isRootFolder: (folderId: string) => boolean
-  openFavorite: (fav: { locations: string[]; label?: string }, event?: MouseEvent) => void
+  openFavorite: (fav: { locations: string[]; label?: string }, event?: MouseEvent) => void | Promise<unknown>
   rowEls: Map<string, HTMLElement>
 }
 
@@ -194,8 +194,9 @@ export function useFolderMenus(opts: UseFolderMenusOptions) {
 
     // Leaf item
     if (!row.locations?.length) return
-    openFavorite({ locations: row.locations, label: row.label }, event)
-    closeFolderMenu()
+    // CHANGED (2026-10-28): the dropdown closes once the place is opened, after the shell's "where?"
+    // question when it asks one (sdk.navigate resolves then), not as soon as the row is clicked.
+    void Promise.resolve(openFavorite({ locations: row.locations, label: row.label }, event)).finally(closeFolderMenu)
   }
 
   /**
