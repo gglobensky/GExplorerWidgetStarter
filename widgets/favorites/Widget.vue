@@ -418,6 +418,33 @@ async function renameFolderInPlace(id: string) {
   await startRename(label, { value: current.label, validate, onCommit: save })
 }
 
+/** NEW (0.2.2): the element of favorite <id> on screen (list row, pill, open dropdown row), or null. */
+function itemButton(id: string): HTMLElement | null {
+  const sel = `[data-fav-item="${CSS.escape(id)}"]`
+  return rootEl.value?.querySelector<HTMLElement>(sel) ?? overlay.value?.querySelector<HTMLElement>(sel) ?? null
+}
+
+/** NEW (0.2.2): rename a favorite in place (its label), as a folder; a prompt when it isn't on screen. */
+async function renameItemInPlace(id: string) {
+  const ui = sdk?.ui?.()
+  const current = findItemById(id)
+  if (!ui || !current) return
+  const save = async (name: string) => {
+    try { await sdk?.updateFavorite?.(id, { label: name.trim() }) }
+    catch (err: any) { void ui.snack({ text: `Not renamed: ${err?.message ?? err}` }) }
+  }
+  const validate = (v: string) => v.trim() ? null : 'A name is needed.'
+  const value = current.label || current.locations.join(' + ')
+  const btn = itemButton(id)
+  if (!btn) {
+    const name = await ui.prompt('Name of the favorite:', { value, validate })
+    if (name !== null) await save(name)
+    return
+  }
+  const label = btn.querySelector<HTMLElement>('.fav-label, .fav-menu-text') ?? btn
+  await startRename(label, { value, validate, onCommit: save })
+}
+
 /** One of this widget's menu items was chosen (the host calls it). */
 async function onMenuItem(m: WidgetMenuItemMessage) {
   const id = m.ref
@@ -427,6 +454,7 @@ async function onMenuItem(m: WidgetMenuItemMessage) {
     case 'remove': await handleRemoveFavorite(id); break
     case 'delete': await handleRemoveFolder(id); break
     case 'rename': await renameFolderInPlace(id); break
+    case 'rename-item': await renameItemInPlace(id); break
     // 0.2.0: adding from the menus. Next to a favorite: in its folder; on a folder: inside it; elsewhere: the top level.
     case 'add-here': openAddDialog(findItemById(id)?.parentId ?? ''); break
     case 'new-folder-here': await newFolder(findItemById(id)?.parentId ?? ''); break
@@ -438,15 +466,18 @@ async function onMenuItem(m: WidgetMenuItemMessage) {
   }
 }
 
-/** Keys (0.2.1, entry.ts commands): F2 on the folder under the mouse (`when: 'hovered'`), else the focused one. */
+/**
+ * Keys (entry.ts commands): F2 on the folder or favorite under the mouse (`when: 'hovered'`), else the focused
+ * one (0.2.1 folders, 0.2.2 favorites too).
+ */
 function onCommand(id: string) {
   if (id !== 'rename') return
-  const sel = '[data-fav-folder]:hover'
+  const sel = '[data-fav-folder]:hover, [data-fav-item]:hover'
   const hovered = rootEl.value?.querySelector<HTMLElement>(sel) ?? overlay.value?.querySelector<HTMLElement>(sel) ?? null
-  const focused = (document.activeElement as HTMLElement | null)?.closest?.<HTMLElement>('[data-fav-folder]') ?? null
+  const focused = (document.activeElement as HTMLElement | null)?.closest?.<HTMLElement>('[data-fav-folder], [data-fav-item]') ?? null
   const target = hovered ?? (focused && (rootEl.value?.contains(focused) || overlay.value?.contains(focused)) ? focused : null)
-  const fid = target?.dataset.favFolder
-  if (fid) void renameFolderInPlace(fid)
+  if (target?.dataset.favFolder) void renameFolderInPlace(target.dataset.favFolder)
+  else if (target?.dataset.favItem) void renameItemInPlace(target.dataset.favItem)
 }
 
 defineExpose({ onWidgetAction, onMenuItem, onCommand })
@@ -544,6 +575,8 @@ defineExpose({ onWidgetAction, onMenuItem, onCommand })
                 v-else
                 type="button"
                 class="fav-btn"
+                :data-fav-item="row.entry.id"
+                data-rename-row
                 @pointerdown.stop="sortable.startRowDrag(row, $event)"
                 @click="openFavorite(row.entry, $event)"
                 @contextmenu.prevent.stop="onFavoriteMenu(row.entry.id, $event)"
@@ -680,6 +713,8 @@ defineExpose({ onWidgetAction, onMenuItem, onCommand })
                 <button
                   type="button"
                   class="fav-pill"
+                  :data-fav-item="row.entry.id"
+                  data-rename-row
                   @click="openFavorite(row.entry, $event)"
                   @contextmenu.prevent.stop="onFavoriteMenu(row.entry.id, $event)"
                   :title="favTip(row.entry.label, row.entry.locations)"
@@ -772,6 +807,7 @@ defineExpose({ onWidgetAction, onMenuItem, onCommand })
             type="button"
             class="fav-menu-btn"
             :data-fav-folder="row.type === 'folder' ? row.id : undefined"
+            :data-fav-item="row.type === 'item' ? row.id : undefined"
             data-rename-row
             @pointerdown.stop="sortable.startMenuRowDrag(row, menu.folderId ?? '', $event as PointerEvent)"
             @click="handleFolderMenuClick(row, $event, level)"

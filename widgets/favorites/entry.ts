@@ -4,7 +4,7 @@ import Widget from './Widget.vue'
 export default {
   api: '1.0',
   id: 'favorites',
-  version: '0.2.1',
+  version: '0.2.2',
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
 
@@ -13,11 +13,11 @@ export default {
   // "which one?" submenu) and they stay in step.
   instance: 'global',
 
-  // Keys (0.2.1): F2 renames the favorites folder under the mouse (the pills can't take the focus: a click opens
-  // them), or the one focused with Tab. GEM Shell's key mapper: `when: 'hovered'`.
+  // Keys (0.2.1; favorites too 0.2.2): F2 renames the folder or favorite under the mouse (the pills can't take
+  // the focus: a click opens them), or the one focused with Tab. GEM Shell's key mapper: `when: 'hovered'`.
   commands: [
-    { id: 'rename', name: 'Rename folder', keys: ['F2'], when: 'hovered',
-      description: 'Renames the favorites folder under the mouse (or the one you Tabbed to): its name becomes editable. Enter keeps it, Escape cancels.' },
+    { id: 'rename', name: 'Rename', keys: ['F2'], when: 'hovered',
+      description: 'Renames the favorite or favorites folder under the mouse (or the one you Tabbed to): its name becomes editable. Enter keeps it, Escape cancels.' },
   ],
 
   // Right-click on a favorite or a favorites folder (Widget.vue: sdk.ui().contextMenu, onMenuItem)
@@ -30,7 +30,8 @@ export default {
   menus: {
     items: [
       // On a favorite: adding goes in the folder it is in
-      { id: 'edit',              label: 'Edit…',               icon: '✎', contexts: ['favorites.item'] },
+      { id: 'rename-item',       label: 'Rename…',             icon: '✎', contexts: ['favorites.item'] },
+      { id: 'edit',              label: 'Edit…',               icon: '⚙', contexts: ['favorites.item'] },
       { id: 'item.sep',          type: 'separator',                       contexts: ['favorites.item'] },
       { id: 'add-here',          label: 'Add favorite here…',  icon: '★', contexts: ['favorites.item'] },
       { id: 'new-folder-here',   label: 'New folder here…',    icon: '📁', contexts: ['favorites.item'] },

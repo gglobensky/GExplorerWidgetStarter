@@ -1790,8 +1790,24 @@ watch(
   () => { if (cwd.value) openDir(cwd.value) }
 )
 
+/** Open from the shell's menu (0.8.8): exactly as a double-click (a folder navigates this pane, a folder shortcut too). */
+async function openByPath(path: string) {
+  const s = source.value
+  if (!s || !path) return
+  const [index] = await s.find([basename(path)])
+  const e = index >= 0 ? rowAt(index) : undefined
+  if (e && e.FullPath.toLowerCase() === path.toLowerCase()) { await openEntry(e); return }
+  // Not in the listing as it is now (renamed, refreshing): open it as the host would
+  void sdk?.openPath?.(path)
+}
+
 function onWidgetAction(msg: any) {
   if (msg.topic !== 'widget:action') return
+  if (msg.payload.actionId === 'open') {
+    const path = msg.payload.args?.path ?? msg.payload.tokens?.path
+    if (path) void openByPath(path)
+    return
+  }
   if (msg.payload.actionId === 'navigate') {
     const folder = msg.payload.tokens?.path ?? msg.payload.args?.path
     if (folder) void applyExternalCwd(folder)
