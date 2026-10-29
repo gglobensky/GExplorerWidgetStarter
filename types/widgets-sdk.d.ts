@@ -110,6 +110,12 @@ declare module 'gexplorer/widgets' {
         /** Creates an absolute physical folder, or a widget-VFS folder from an explicit/relative VFS path. */
         fsMkdir?: (path: string) => Promise<void>
         /**
+         * Write cap (2026-10-29). Creates a new folder in parentDir under the next free name ("New folder",
+         * "New folder (2)"...: the host picks it, as GEM Shell's New Folder) and resolves with its path; asks
+         * for the Write grant there first when missing. Real folders only (not your VFS).
+         */
+        fsNewFolder?: (parentDir: string) => Promise<string>
+        /**
          * Write cap. Writes a whole text file (UTF-8; bom: true starts it with a byte order
          * mark). overwrite false (the default): fails when the file exists. Rejects on failure.
          * After ui().saveFile() the widget already holds write consent there: pass overwrite: true
@@ -366,8 +372,14 @@ declare module 'gexplorer/widgets' {
         /** Paths, or a ListSelection.toPayload() result (any size: a reference expanded by the backend). */
         clipboardCopyFiles?: (files: string[] | SelectionPayload) => Promise<void>
         clipboardCutFiles?: (files: string[] | SelectionPayload) => Promise<void>
-        /** pathsLimit: return at most that many paths (`count` is always exact). */
-        clipboardGetFiles?: (opts?: { pathsLimit?: number }) => Promise<ClipboardState>
+        /**
+         * pathsLimit: return at most that many paths (`count` is always exact).
+         * inFolder (2026-10-29): only the paths directly inside that folder (`matched`: how many), e.g.
+         * to fade a folder's cut rows without reading a huge cut. under: only the paths anywhere below
+         * those folders (16 at most). A read limited to folders needs no Clipboard grant from the user;
+         * reading every path on the clipboard does (the consent dialog).
+         */
+        clipboardGetFiles?: (opts?: { pathsLimit?: number; inFolder?: string; under?: string[] }) => Promise<ClipboardState>
         /**
          * Clipboard + Write caps. Pastes the OS clipboard into targetDir (copy, or
          * move after a cut), any count, as one backend job: progress dialog,
@@ -535,6 +547,8 @@ declare module 'gexplorer/widgets' {
         paths: string[]
         count: number
         canPaste: boolean
+        /** With inFolder: how many of the clipboard's paths are directly in that folder. */
+        matched?: number
     }
 
     // ── DnD types ──────────────────────────────────────────────────────────
@@ -2441,6 +2455,13 @@ declare module 'gexplorer/widgets' {
         description: string
         keys?: string[]
         whileTyping?: boolean
+        /**
+         * 'hovered' (2026-10-29): the command also runs for your widget when it is under the mouse (it
+         * needn't have the focus: parts that open on a click, like Favorites' pills). Your onCommand finds
+         * what is hovered itself (an element matching ':hover'). The hovered widget's command runs before the
+         * focused one's, only while the mouse moved in the last seconds.
+         */
+        when?: 'hovered'
     }
 
     /** <gex-scroll-area>'s ref (the template ref of the component; see Shared UI components below). */

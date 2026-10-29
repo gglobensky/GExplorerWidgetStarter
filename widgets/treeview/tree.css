@@ -52,6 +52,8 @@
 .tv-narrow .tv-row { padding-left:4px!important; }
 .tv-row { position:absolute; width:100%; height:30px; display:flex; align-items:center; border-left:2px solid transparent; padding-right:6px; }
 .tv-row:hover { background:#ffffff05; }
+/* 0.5.3: cut (on the clipboard to be moved): its content faded, the row's highlight kept */
+.tv-row.tv-cut > * { opacity:.5; }
 .tv-spine { border-left-color:#75b7d43b; }
 .tv-selected { background:#75b7d419!important; border-left-color:var(--tv-accent); }
 .tv-tree:focus-visible .tv-keyboard { outline:1px solid #75b7d46b; outline-offset:-1px; }

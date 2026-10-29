@@ -25,6 +25,8 @@ const props = defineProps<{
   iconKeyOf:        (entry: ListingEntry) => string
   /** A folder shortcut that opens outside GEM Shell: badged. */
   opensElsewhere?: (entry: ListingEntry) => boolean
+  /** 0.8.6: on the clipboard as cut (shown faded until the clipboard changes). */
+  isCut?: (entry: ListingEntry) => boolean
   totalHeight:      number
   offsetY:          number
   bindSizer:        (el: any) => void
@@ -386,6 +388,7 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl, fit })
               :data-kind="rowAt(i)!.Kind"
               :class="{
                 selected:             isSelected(i),
+                cut:                  isCut?.(rowAt(i)!) ?? false,
                 'folder-drop-target': rowAt(i)!.FullPath === props.folderDropTarget,
                 'vfs-ghost':          rowAt(i)!.Meta?.blobState === 'ghost',
                 'vfs-fetching':       rowAt(i)!.Meta?.blobState === 'fetching',
@@ -653,6 +656,11 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl, fit })
 }
 
 /* A folder shortcut that opens outside GEM Shell (shortcuts:probe opensElsewhere, 2026-10-18) */
+/* 0.8.6: cut (on the clipboard to be moved): its content faded, the row's highlight kept */
+.row.cut > * {
+  opacity: 0.5;
+}
+
 .lnk-elsewhere {
   position: absolute;
   right: -3px;

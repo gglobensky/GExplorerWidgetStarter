@@ -71,6 +71,9 @@ What a widget does with keys (the key mapper, 2026-10-24):
   widget has the user's focus (they clicked in it, or Tabbed into it). The user sees every command,
   with its description, in GEM Shell's Keyboard shortcuts page and can change its keys: write the
   description for them, plainly.
+- **Under the mouse:** `when: 'hovered'` on a command also runs it for your widget while it is under the
+  mouse, without the focus (for parts a click opens instead of focusing, as Favorites' pills: F2 renames
+  the hovered folder). Find what is hovered in `onCommand` (`el.querySelector('[data-x]:hover')`).
 - **Defaults:** at most 2 keys per command. A key the shell's own commands use (Ctrl+W, Ctrl+T,
   Alt+←...) is refused as a default: the user may still bind it to your command.
 - **Buttons show their keys.** A button that does what a command does: `v-gex-command="'play-pause'"`

@@ -4,7 +4,7 @@ import Widget from './Widget.vue'
 export default {
   api: '1.0',
   id: 'favorites',
-  version: '0.2.0',
+  version: '0.2.1',
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
 
@@ -12,6 +12,13 @@ export default {
   // shell's, shared by every place this widget is shown, so a menu action reaches one of them (no
   // "which one?" submenu) and they stay in step.
   instance: 'global',
+
+  // Keys (0.2.1): F2 renames the favorites folder under the mouse (the pills can't take the focus: a click opens
+  // them), or the one focused with Tab. GEM Shell's key mapper: `when: 'hovered'`.
+  commands: [
+    { id: 'rename', name: 'Rename folder', keys: ['F2'], when: 'hovered',
+      description: 'Renames the favorites folder under the mouse (or the one you Tabbed to): its name becomes editable. Enter keeps it, Escape cancels.' },
+  ],
 
   // Right-click on a favorite or a favorites folder (Widget.vue: sdk.ui().contextMenu, onMenuItem)
   menuContexts: [

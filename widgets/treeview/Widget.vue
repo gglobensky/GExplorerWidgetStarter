@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { getDrives, iconFor, ensureIconsFor, startRename } from 'gexplorer/widgets'
 import type { DriveStats, FavoriteTreeNode, WidgetMenuItemMessage, WidgetSdk } from 'gexplorer/widgets'
 import TreePanel from './TreePanel.vue'
@@ -106,23 +106,9 @@ async function createFolder(parentPath: string) {
   if (busy.value) return
   busy.value = true; error.value = ''
   try {
-    if (!sdk?.fsMkdir || !sdk.fsValidate) throw new Error('Folder creation is unavailable in this host.')
-    let createdPath = ''
-    for (let index = 1; index <= 1000; index++) {
-      const name = index === 1 ? 'New folder' : `New folder (${index})`
-      const candidate = joinPath(parentPath, name)
-      try {
-        await sdk.fsMkdir(candidate)
-        const created = await sdk.fsValidate(candidate)
-        if (!created.ok || !created.exists || !created.isDir) throw new Error(created.error || 'The host did not create the folder.')
-        createdPath = candidate
-        break
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        if (!/already exists|exists|duplicate/i.test(message)) throw err
-      }
-    }
-    if (!createdPath) throw new Error('Could not find an available name for the new folder.')
+    // 0.5.4: the host picks the free name ("New folder", "New folder (2)"...: sdk.fsNewFolder)
+    if (!sdk?.fsNewFolder) throw new Error('Folder creation is unavailable in this host.')
+    const createdPath = await sdk.fsNewFolder(parentPath)
     const visible = await panel.value?.showCreated(createdPath)
     if (!visible || disposed) {
       report('The folder was created, but its rename field could not be opened. Refresh to see it.')
@@ -147,6 +133,40 @@ async function createFolder(parentPath: string) {
     await startRename(createdPath, renameOptions)
   } catch (err) { report(err instanceof Error ? err.message : 'The folder could not be created.') }
   finally { busy.value = false }
+}
+/** The folder that contains <path> ('' for a root). */
+function parentPathOf(path: string): string {
+  const trimmed = path.replace(/[\\/]+$/, '')
+  const i = Math.max(trimmed.lastIndexOf('\\'), trimmed.lastIndexOf('/'))
+  if (i < 0) return ''
+  const parent = trimmed.slice(0, i)
+  return /^[a-z]:$/i.test(parent) ? parent + '\\' : parent
+}
+/** Rename (0.5.4, the menu and F2): the folder in place, as after New folder. Not a root of the tree. */
+async function renameFolder(path: string) {
+  if (!path || busy.value) return
+  const parentPath = parentPathOf(path)
+  if (!parentPath || roots.value.some(r => key(r.path) === key(path))) { report('A root of the tree can\'t be renamed here.'); return }
+  error.value = ''
+  const visible = await panel.value?.showCreated(path)
+  if (!visible || disposed) { report('The folder could not be shown to rename it. Refresh and try again.'); return }
+  await startRename(path, {
+    selectAll: true,
+    validate: validFolderName,
+    onCommit: async (newName: string) => {
+      const newPath = joinPath(parentPath, newName.trim())
+      if (newPath === path) return
+      if (!sdk?.fsRename) throw new Error('Rename is unavailable in this host.')
+      try {
+        const result = await sdk.fsRename(path, newPath)
+        if (!result.ok) throw new Error(result.error || 'Rename failed.')
+        await panel.value?.showCreated(newPath)
+      } catch (err) {
+        report(err instanceof Error ? err.message : 'The folder could not be renamed.')
+      }
+    },
+    ...(props.sourceId ? { widgetId: props.sourceId } : {}),
+  })
 }
 async function favorite(root: Root) {
   if (busy.value) return
@@ -196,19 +216,45 @@ async function clipboard(operation: 'copy' | 'cut' | 'paste', path: string) {
 }
 function onMenuItem(message: WidgetMenuItemMessage) {
   if (message.itemId === 'copy' || message.itemId === 'cut' || message.itemId === 'paste') void clipboard(message.itemId, message.ref || '')
+  else if (message.itemId === 'rename') void renameFolder(message.ref || '')
   else panel.value?.command(message.itemId, message.ref || '')
 }
 /** entry.ts commands (0.5.2): the focused folder's copy / cut / paste. */
 function onCommand(id: string) {
-  if (id !== 'copy' && id !== 'cut' && id !== 'paste') return
   const path = panel.value?.commandTarget() || ''
-  if (path) void clipboard(id, path)
+  if (!path) return
+  if (id === 'copy' || id === 'cut' || id === 'paste') void clipboard(id, path)
+  else if (id === 'rename') void renameFolder(path)
 }
 defineExpose({ onMenuItem, onCommand })
 // Favorites changed anywhere (this widget, the Favorites widget, the shell): the host tells us.
 sdk?.onHostChange?.('favorites', () => void refreshFavorites())
 // The drive list changed (a drive, a disc, a label, the system-partitions setting)
 sdk?.onHostChange?.('drives', () => { drives.value = getDrives(); void refreshDriveStats() })
+// Cut folders look faded (0.5.3), as in Explorer: what the OS clipboard holds as cut (any app) below the
+// tree's roots (`under`: a read limited to folders needs no Clipboard grant), read again when it changes
+// or the roots do. Past CUT_READ_MAX paths, the rest just don't fade.
+const cutKeys = ref<Set<string>>(new Set())
+const CUT_READ_MAX = 2000
+let cutRev = 0
+async function readCut() {
+  const rev = ++cutRev
+  if (!sdk?.clipboardGetFiles) return
+  try {
+    const under = [...new Set(roots.value.filter(r => r.kind !== 'unavailable' && r.path).map(r => r.path))].slice(0, 16)
+    if (!under.length) { if (cutKeys.value.size) cutKeys.value = new Set(); return }
+    const s = await sdk.clipboardGetFiles({ under, pathsLimit: CUT_READ_MAX })
+    if (rev !== cutRev || disposed) return
+    const next = s.operation === 'cut' ? new Set(s.paths.map(key)) : new Set<string>()
+    if (next.size || cutKeys.value.size) cutKeys.value = next
+  } catch (err) {
+    console.warn('[treeview] the clipboard could not be read (cut folders not faded)', err)
+    if (rev === cutRev && cutKeys.value.size) cutKeys.value = new Set()
+  }
+}
+function isCut(path: string): boolean { return cutKeys.value.size > 0 && cutKeys.value.has(key(path)) }
+sdk?.onHostChange?.('clipboard', () => { void readCut() })
+watch(() => roots.value.map(r => r.path).join('\n'), () => { void readCut() }, { immediate: true })
 onMounted(() => { void refreshRoots() })
 onBeforeUnmount(() => { disposed = true; favoriteRequest++; driveStatsRequest++ })
 </script>
@@ -217,7 +263,7 @@ onBeforeUnmount(() => { disposed = true; favoriteRequest++; driveStatsRequest++ 
   <div class="tv-widget">
     <div v-if="error" key="error" class="tv-error" role="status"><span>{{ error }}</span><button aria-label="Dismiss message" @click="error = ''">×</button></div>
     <TreeToolbar v-if="available && placement?.context === 'toolbar'" key="toolbar" :roots="roots" :source="source" :memory="memory" :ui="ui" :icon="folderIcon" :initial-path="initialPath" :widget-id="sourceId" :set-panel="setPanel" :create-folder="createFolder" :refresh-roots="refreshRoots" :favorite="favorite" :menu="menu" :clipboard="clipboard" />
-    <TreePanel v-else-if="available" key="panel" ref="panel" :roots="roots" :source="source" :memory="memory" :icon="folderIcon" :initial-path="initialPath" :context="placement?.context" :widget-id="sourceId" @add="createFolder" @refresh-roots="refreshRoots" @favorite="favorite" @menu="menu" @clipboard="clipboard" />
+    <TreePanel v-else-if="available" key="panel" ref="panel" :roots="roots" :source="source" :memory="memory" :icon="folderIcon" :initial-path="initialPath" :context="placement?.context" :widget-id="sourceId" :cut="isCut" @add="createFolder" @refresh-roots="refreshRoots" @favorite="favorite" @menu="menu" @clipboard="clipboard" />
   </div>
 </template>
 <style scoped>

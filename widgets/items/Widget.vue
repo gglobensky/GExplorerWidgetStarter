@@ -1194,6 +1194,9 @@ const COMMAND_ACTIONS: Record<string, ItemsAction> = {
 /** One of entry.ts's commands, by its key (the host calls it: defineExpose below). */
 function onCommand(id: string) {
   if (id === 'refresh') { refresh({ user: true }); return }
+  if (id === 'copy' || id === 'cut') { void clipboardSelection(id); return }
+  if (id === 'paste') { void pasteFromClipboard(); return }
+  if (id === 'new-folder') { void newFolderHere(); return }
   if (id === 'filter') { openFilterMenu(filterChip.value ?? viewAnchor.value); return }
   const action = COMMAND_ACTIONS[id]
   if (action) runItemsAction(action)
@@ -1379,6 +1382,49 @@ async function startItemRename(itemPath: string): Promise<void> {
 /* -----------------------------------------------
    Clipboard paste
 ------------------------------------------------ */
+/** Copy / Cut (0.8.6, the keys): the selection (any size: a backend reference) to the OS clipboard. */
+async function clipboardSelection(op: 'copy' | 'cut') {
+  if (selection.count() === 0) return
+  const send = op === 'copy' ? sdk?.clipboardCopyFiles : sdk?.clipboardCutFiles
+  if (!send) return
+  try {
+    await send(await selection.toPayload() as any)
+  } catch (err: any) {
+    console.error(`[items] ${op} failed:`, err?.message ?? err)
+    showSnack({ id: 'items-clipboard', text: `${op === 'copy' ? 'Copy' : 'Cut'} failed: ${err?.message ?? err}`, timeoutMs: 6000, dedupe: 'replace' })
+  }
+}
+
+/* -----------------------------------------------
+   Cut items look faded (0.8.6), as in Explorer: what the OS clipboard holds as cut, in the folder shown
+   (clipboardGetFiles inFolder: never the whole of a huge cut). Read again when the clipboard changes
+   (any app) and when the folder does.
+------------------------------------------------ */
+const cutKeys = shallowRef<Set<string>>(new Set())
+const CUT_READ_MAX = 20_000
+const cutKeyOf = (p: string) => p.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase()
+let cutRev = 0
+async function readCut() {
+  const rev = ++cutRev
+  const dir = cwd.value
+  const realFolder = /^[A-Za-z]:[\\/]|^\\\\|^\//.test(dir)
+  if (!sdk?.clipboardGetFiles || !realFolder) { if (cutKeys.value.size) cutKeys.value = new Set(); return }
+  try {
+    const s = await sdk.clipboardGetFiles({ inFolder: dir, pathsLimit: CUT_READ_MAX })
+    if (rev !== cutRev) return
+    const next = s.operation === 'cut' ? new Set(s.paths.map(cutKeyOf)) : new Set<string>()
+    if (next.size || cutKeys.value.size) cutKeys.value = next
+  } catch (err) {
+    console.warn('[items] the clipboard could not be read (cut items not faded)', err)
+    if (rev === cutRev && cutKeys.value.size) cutKeys.value = new Set()
+  }
+}
+function isCut(e: ListingEntry): boolean {
+  return cutKeys.value.size > 0 && !!e.FullPath && cutKeys.value.has(cutKeyOf(e.FullPath))
+}
+sdk?.onHostChange?.('clipboard', () => { void readCut() })
+watch(cwd, () => { void readCut() }, { immediate: true })
+
 async function pasteFromClipboard() {
   const targetDir = cwd.value
   if (!targetDir || !fsPasteClipboard) return
@@ -1942,6 +1988,19 @@ on('items:startRename', (msg: any) => {
 
 on('items:paste', () => { void pasteFromClipboard() })
 
+/** New folder (0.8.7, the key): in the folder shown, under the next free name (sdk.fsNewFolder), then renamed in place. */
+async function newFolderHere() {
+  const dir = cwd.value
+  if (!sdk?.fsNewFolder || !/^[A-Za-z]:[\\/]|^\\\\|^\//.test(dir)) return
+  try {
+    const path = await sdk.fsNewFolder(dir)
+    if (await revealName(basename(path), { reload: true })) void startItemRename(path)
+  } catch (err: any) {
+    console.error('[items] New folder failed:', err?.message ?? err)
+    showSnack({ id: 'items-new-folder', text: `New folder failed: ${err?.message ?? err}`, timeoutMs: 6000, dedupe: 'replace' })
+  }
+}
+
 on('items:reloadAndRename', async (msg: any) => {
   // A new file / folder was created: show it, then rename it in place.
   const path = msg.payload?.path
@@ -2039,6 +2098,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand, onMenuI
         :indices="itemIndices"
         :row-at="rowAt"
         :is-selected="isSelected"
+        :is-cut="isCut"
         :icon-key-of="iconKeyOf"
         :opens-elsewhere="opensElsewhere"
         :total-height="vlist.totalHeight.value"
@@ -2074,6 +2134,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand, onMenuI
         :indices="itemIndices"
         :row-at="rowAt"
         :is-selected="isSelected"
+        :is-cut="isCut"
         :icon-key-of="iconKeyOf"
         :opens-elsewhere="opensElsewhere"
         :total-height="vlist.totalHeight.value"
@@ -2095,6 +2156,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand, onMenuI
         :indices="itemIndices"
         :row-at="rowAt"
         :is-selected="isSelected"
+        :is-cut="isCut"
         :icon-key-of="iconKeyOf"
         :opens-elsewhere="opensElsewhere"
         :total-height="vlist.totalHeight.value"

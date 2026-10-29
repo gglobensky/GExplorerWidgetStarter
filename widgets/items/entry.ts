@@ -13,7 +13,7 @@ import { ICON_SIZE_IDS, ICON_SIZE_LABELS } from './iconSizes'
 export default {
     api:     '1.0',
     id:      'items',
-    version: '0.8.5',
+    version: '0.8.7',
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     // Takes files and folders anywhere in the pane (dropped on a folder row: into
@@ -33,6 +33,16 @@ export default {
           description: 'Moves the selected files and folders to the Recycle Bin (they can be restored from there).' },
         { id: 'delete-permanent', name: 'Delete permanently', keys: ['Shift+Delete'],
           description: 'Deletes the selected files and folders for good, without the Recycle Bin. Always asks first.' },
+        // 0.8.6: copy / cut / paste (were only in the menu); cut items look faded until the clipboard changes.
+        { id: 'copy', name: 'Copy', keys: ['Ctrl+C'],
+          description: 'Copies the selected files and folders to the clipboard, to paste them elsewhere (here, another folder, or another app).' },
+        { id: 'cut', name: 'Cut', keys: ['Ctrl+X'],
+          description: 'Cuts the selected files and folders: pasting them elsewhere moves them there. They look faded until then.' },
+        { id: 'paste', name: 'Paste', keys: ['Ctrl+V'],
+          description: 'Pastes what the clipboard holds into the folder shown: a copy, or a move after a cut.' },
+        // 0.8.7
+        { id: 'new-folder', name: 'New folder', keys: ['Ctrl+Shift+N'],
+          description: 'Creates a folder in the folder shown ("New folder", or the next free name) and opens its name for typing: Enter keeps it.' },
         { id: 'select-all', name: 'Select all', keys: ['Ctrl+A'],
           description: 'Selects every file and folder in the folder shown (all pages, when the list is paged).' },
         { id: 'refresh', name: 'Refresh', keys: ['F5'],

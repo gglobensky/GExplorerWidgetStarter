@@ -22,6 +22,8 @@ const props = defineProps<{
   iconKeyOf: (entry: ListingEntry) => string
   /** A folder shortcut that opens outside GEM Shell: badged. */
   opensElsewhere?: (entry: ListingEntry) => boolean
+  /** 0.8.6: on the clipboard as cut (shown faded until the clipboard changes). */
+  isCut?: (entry: ListingEntry) => boolean
   totalHeight: number
   offsetY: number
   bindSizer: (el: any) => void
@@ -95,6 +97,7 @@ function keyOf(i: number): string {
           :data-kind="rowAt(i)!.Kind"
           :class="{
             selected: isSelected(i),
+            cut: isCut?.(rowAt(i)!) ?? false,
             'folder-drop-target': rowAt(i)!.FullPath === props.folderDropTarget,
           }"
           @pointerdown.stop="(ev) => emit('rowDown', { index: i, ev })"
@@ -179,6 +182,11 @@ function keyOf(i: number): string {
   justify-content: center;
   font-size: calc(var(--icon-px, 48px) * 0.8);
   line-height: 1;
+}
+
+/* 0.8.6: cut (on the clipboard to be moved): its content faded, the row's highlight kept */
+.row.cut > * {
+  opacity: 0.5;
 }
 
 /* A folder shortcut that opens outside GEM Shell (shortcuts:probe opensElsewhere, 2026-10-18) */

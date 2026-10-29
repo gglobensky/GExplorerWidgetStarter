@@ -1,7 +1,7 @@
 import Widget from './Widget.vue'
 
 export default {
-  api: '1.0', id: 'treeview', version: '0.5.2', license: 'PolyForm-Noncommercial-1.0.0', Component: Widget,
+  api: '1.0', id: 'treeview', version: '0.5.4', license: 'PolyForm-Noncommercial-1.0.0', Component: Widget,
   displayName: 'Tree View', description: 'Browse one folder tree at a time, with remembered roots and focused folders.', category: 'navigation', icon: 'folder-tree',
   contexts: {
     sidebar: { minHeight: 180, fillRemaining: true },
@@ -16,6 +16,8 @@ export default {
       description: 'Copies the focused folder to the clipboard, to paste it elsewhere (here, in a file list, or in another app).' },
     { id: 'cut', name: 'Cut folder', keys: ['Ctrl+X'],
       description: 'Cuts the focused folder: pasting it elsewhere moves it there.' },
+    { id: 'rename', name: 'Rename folder', keys: ['F2'],
+      description: 'Renames the focused folder in place: its name becomes editable. Enter keeps the new name, Escape cancels. Not the tree\'s roots.' },
     { id: 'paste', name: 'Paste into folder', keys: ['Ctrl+V'],
       description: 'Pastes what the clipboard holds (files or folders copied or cut) into the focused folder.' },
   ],
@@ -42,6 +44,7 @@ export default {
     { id: 'copy', label: 'Copy', icon: '📋', contexts: ['treeview.folder', 'treeview.column-folder'] },
     { id: 'cut', label: 'Cut', icon: '✂', contexts: ['treeview.folder', 'treeview.column-folder'] },
     { id: 'paste', label: 'Paste into folder', icon: '📄', contexts: ['treeview.folder', 'treeview.column-folder'], when: { clipboard: { canPaste: true } } },
+    { id: 'rename', label: 'Rename…', icon: '✎', contexts: ['treeview.folder', 'treeview.column-folder'] },
     { id: 'focus', label: 'Focus this folder', contexts: ['treeview.folder', 'treeview.column-folder'], disableWhen: ['this-focused'] },
     { id: 'exit-focus', label: 'Exit focused view', contexts: ['treeview.folder', 'treeview.column-folder'], disableWhen: ['unfocused'] },
     { id: 'minimize-all', label: 'Minimize all', contexts: ['treeview.folder'], disableWhen: ['narrow'] },

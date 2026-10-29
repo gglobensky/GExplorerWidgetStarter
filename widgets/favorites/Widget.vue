@@ -438,7 +438,18 @@ async function onMenuItem(m: WidgetMenuItemMessage) {
   }
 }
 
-defineExpose({ onWidgetAction, onMenuItem })
+/** Keys (0.2.1, entry.ts commands): F2 on the folder under the mouse (`when: 'hovered'`), else the focused one. */
+function onCommand(id: string) {
+  if (id !== 'rename') return
+  const sel = '[data-fav-folder]:hover'
+  const hovered = rootEl.value?.querySelector<HTMLElement>(sel) ?? overlay.value?.querySelector<HTMLElement>(sel) ?? null
+  const focused = (document.activeElement as HTMLElement | null)?.closest?.<HTMLElement>('[data-fav-folder]') ?? null
+  const target = hovered ?? (focused && (rootEl.value?.contains(focused) || overlay.value?.contains(focused)) ? focused : null)
+  const fid = target?.dataset.favFolder
+  if (fid) void renameFolderInPlace(fid)
+}
+
+defineExpose({ onWidgetAction, onMenuItem, onCommand })
 
 </script>
 
