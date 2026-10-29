@@ -198,6 +198,16 @@ declare module 'gexplorer/widgets' {
          */
         ui?: () => WidgetUi
         /**
+         * NEW (2026-10-28): the keys of this widget's own commands (entry.ts commands, by their short id), for
+         * text that isn't a button's tooltip: a canvas, a status line, "press Space to...". Buttons use
+         * v-gex-command instead (see WidgetCommandDecl). Read-only: the user binds keys in Keyboard shortcuts.
+         *   const keys = sdk.keys!()
+         *   const playKeys = ref(keys.of('play-pause'))            // ['Space']
+         *   onUnmounted(keys.onChange(() => { playKeys.value = keys.of('play-pause') }))
+         * Same object on every call; onChange's handlers stop with the instance.
+         */
+        keys?: () => WidgetKeys
+        /**
          * Network cap. This instance's secrets (API tokens...): the user types one in a frame the
          * page can't read, the host stores it protected and adds it to requests that name it, for
          * the hosts it was saved for, over https; the widget never gets the value:
@@ -1289,6 +1299,29 @@ declare module 'gexplorer/widgets' {
         durationMs?: number
         anchorEl?: HTMLElement
     }
+    /**
+     * v-gex-tooltip's value (or a plain string: the label). NEW (2026-10-28) command: one of this widget's
+     * commands (entry.ts, its short id): what's left out comes from it when the tooltip shows (content = its
+     * name, detail = its description ('' leaves it out), shortcut = the keys the user chose).
+     */
+    export type TooltipOptions = {
+        content?: string
+        icon?: string
+        tone?: 'normal' | 'refused' | 'warning'
+        detail?: string
+        shortcut?: string
+        command?: string
+        zones?: string[]
+    }
+
+    /** sdk.keys() (2026-10-28): this widget's own commands' keys, as people read them ("Space", "Ctrl+←"). */
+    export interface WidgetKeys {
+        /** The keys of one of this widget's commands (its short id); [] when it has none. */
+        of(id: string): readonly string[]
+        /** <fn> after the user changes keys (read them again with of()); the returned function stops it. */
+        onChange(fn: () => void): () => void
+    }
+
     export type ZoneTipHandle = {
         update(options: ZoneTipOptions): void
         hide(): void
@@ -2388,6 +2421,15 @@ declare module 'gexplorer/widgets' {
      *   keys: at most 2 defaults, as written: 'Ctrl+Shift+K', 'Alt+Left', 'F2', 'Space', 'Delete'.
      *   Ctrl / Alt / Shift; no Win / Meta. A key the shell's own commands use is refused as a default.
      *   whileTyping: also while the focus is in a text field (default: no).
+     *
+     * A button for a command (2026-10-28): v-gex-command, one attribute. A click runs it (your onCommand(id),
+     * as its keys do); its tooltip shows its name, its description and the keys the user chose (they follow
+     * changes); aria-keyshortcuts is set. Texts you give win (detail: '' leaves the description out):
+     *   <button v-gex-command="'play-pause'">⏯</button>
+     *   <button v-gex-command="{ id: 'play-pause', content: playing ? 'Pause' : 'Play' }">⏯</button>
+     * No @click on that element (it would run twice). A button that does something else when clicked and
+     * only shows a command's keys: v-gex-tooltip="{ content: 'Remove', command: 'remove-track' }".
+     * Only this widget's commands: GEM Shell knows the button's widget (never from the id).
      */
     export type WidgetCommandDecl = {
         id: string

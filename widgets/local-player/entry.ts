@@ -63,9 +63,14 @@ export default {
 
     // ── Commands (the key mapper, 2026-10-24) ────────────────────────────────
     // Run while the player has your focus (the last place you pressed in): Widget.vue's onCommand.
+    // The transport buttons run them too (v-gex-command: their tooltips show the keys you chose).
     commands: [
         { id: 'play-pause', name: 'Play / pause', keys: ['Space'],
           description: 'Plays the current track, or pauses it while it plays.' },
+        { id: 'next-track', name: 'Next track', keys: ['Ctrl+Right'],
+          description: 'Plays the next track of the queue.' },
+        { id: 'previous-track', name: 'Previous track', keys: ['Ctrl+Left'],
+          description: 'Plays the track before the current one in the queue.' },
         { id: 'remove-track', name: 'Remove the selected track', keys: ['Delete'],
           description: 'Takes the selected track out of the queue (the file stays where it is). The next track becomes the selected one.' },
     ],

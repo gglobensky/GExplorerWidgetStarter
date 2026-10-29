@@ -73,6 +73,13 @@ What a widget does with keys (the key mapper, 2026-10-24):
   description for them, plainly.
 - **Defaults:** at most 2 keys per command. A key the shell's own commands use (Ctrl+W, Ctrl+T,
   Alt+←...) is refused as a default: the user may still bind it to your command.
+- **Buttons show their keys.** A button that does what a command does: `v-gex-command="'play-pause'"`
+  (no `@click`). A click runs `onCommand('play-pause')`, as the key does, and the tooltip shows the
+  command's name, its description and the keys the user chose; it follows their changes. Give your own
+  texts with `v-gex-command="{ id: 'play-pause', content: 'Pause' }"` (`detail: ''` leaves the description
+  out). A button with its own click: `v-gex-tooltip="{ content: 'Remove', command: 'remove-track' }"`
+  adds only the keys. Elsewhere (a canvas, a status line): `sdk.keys!().of('play-pause')` and
+  `onChange`. Don't write a key in a text yourself: the user may have changed it.
 - **Keys you don't use: leave them alone.** No `preventDefault` / `stopPropagation` on a key your
   widget does nothing with: the shell may act on it (Escape backs out one level: your selection
   first, then the focused pane).

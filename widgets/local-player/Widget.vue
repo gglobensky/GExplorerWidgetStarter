@@ -715,6 +715,8 @@ onBeforeUnmount(() => {
   /** One of entry.ts's commands, by its key (the host calls it while the player has the user's focus). */
   function onCommand(id: string) {
     if (id === 'play-pause') togglePlay()
+    else if (id === 'next-track') { if (state.canNext.value) next() }
+    else if (id === 'previous-track') { if (state.canPrev.value) prev() }
     else if (id === 'remove-track') keyboard.removeSelected()
   }
 
@@ -739,7 +741,6 @@ onBeforeUnmount(() => {
       :volume-icon="state.volumeIcon.value"
       :is-drop-active="isDropActive"
       :play-tooltip="`${state.isPlaying.value ? 'Pause' : 'Play'}${state.current.value ? '\n' + state.current.value.name : ''}`"
-      @toggle-play="togglePlay"
       @click-pick="clickPick"
       @vol-input="volInput"
       @toggle-mute="toggleMute"
@@ -777,9 +778,6 @@ onBeforeUnmount(() => {
       :resize-phase="props.placement?.resizePhase"
       :set-marquee-box="marquee.setMarqueeBox"
       :set-marquee-copy="marquee.setMarqueeCopy"
-      @toggle-play="togglePlay"
-      @prev="prev"
-      @next="next"
       @seek="seek"
       @adjust-speed="adjustSpeed"
       @toggle-shuffle="toggleShuffle"

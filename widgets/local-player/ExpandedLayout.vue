@@ -58,9 +58,6 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'toggle-play'): void
-  (e: 'prev'): void
-  (e: 'next'): void
   (e: 'seek', event: Event): void
   (e: 'adjust-speed', delta: number): void
   (e: 'toggle-shuffle'): void
@@ -176,14 +173,14 @@ defineExpose({ controlsEl, queueEl })
       <div class="row-1">
         <!-- Adding files: the ➕ under the queue's name (and the empty queue's button), every layout -->
 
-        <!-- Transport controls -->
+        <!-- Transport controls: entry.ts's commands (v-gex-command): a click runs one as its key does,
+             the tooltip shows the keys the user chose -->
         <div class="transport-group">
           <button
             class="btn transport-btn narrow"
             type="button"
             :disabled="!canPrev"
-            v-gex-tooltip="'Previous track'"
-            @click="emit('prev')"
+            v-gex-command="'previous-track'"
           >
             ⏮
           </button>
@@ -192,8 +189,7 @@ defineExpose({ controlsEl, queueEl })
             :class="{ loading: isLoading }"
             type="button"
             :disabled="!hasTracks"
-            v-gex-tooltip="playTooltip"
-            @click="emit('toggle-play')"
+            v-gex-command="{ id: 'play-pause', ...playTooltip }"
           >
             {{ isPlaying ? '⏸' : '▶' }}
           </button>
@@ -201,8 +197,7 @@ defineExpose({ controlsEl, queueEl })
             class="btn transport-btn narrow"
             type="button"
             :disabled="!canNext"
-            v-gex-tooltip="'Next track'"
-            @click="emit('next')"
+            v-gex-command="'next-track'"
           >
             ⏭
           </button>
@@ -363,7 +358,7 @@ defineExpose({ controlsEl, queueEl })
             v-if="['ultra', 'micro'].includes(layoutClass)"
             class="icon-btn row-x"
             type="button"
-            v-gex-tooltip="{ content: 'Remove from queue', detail: 'Or select it and press Delete' }"
+            v-gex-tooltip="{ content: 'Remove from queue', detail: 'Or select it and press the key shown.', command: 'remove-track' }"
             @click.stop="emit('remove-at', i)"
             @pointerdown.stop
         >

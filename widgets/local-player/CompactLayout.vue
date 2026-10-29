@@ -14,7 +14,6 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'toggle-play'): void
   (e: 'click-pick'): void
   (e: 'vol-input', value: number): void
   (e: 'toggle-mute'): void
@@ -49,7 +48,8 @@ const volPop = useVolumePopover({
 
     <!-- Single-row controls -->
     <div class="compact-controls">
-      <button class="btn" v-gex-tooltip="playTooltip" :disabled="!hasTracks" @click="emit('toggle-play')">
+      <!-- The play-pause command (entry.ts): a click runs it as Space does; the tooltip shows its keys -->
+      <button class="btn" v-gex-command="{ id: 'play-pause', content: isPlaying ? 'Pause' : 'Play', detail: current?.name }" :disabled="!hasTracks">
         <span v-if="isPlaying">⏸</span><span v-else>▶</span>
       </button>
       <button class="btn" v-gex-tooltip="'Add files to the queue'" @click="emit('click-pick')">+</button>
