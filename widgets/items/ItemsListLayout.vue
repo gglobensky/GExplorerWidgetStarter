@@ -16,6 +16,8 @@ const props = defineProps<{
   iconKeyOf: (entry: ListingEntry) => string
   /** A folder shortcut that opens outside GEM Shell: badged. */
   opensElsewhere?: (entry: ListingEntry) => boolean
+  /** 0.8.9: a GEM Shell shortcut's folder count (2-4, side by side), else 0: badged with the number. */
+  paneCountOf?: (entry: ListingEntry) => number
   /** 0.8.6: on the clipboard as cut (shown faded until the clipboard changes). */
   isCut?: (entry: ListingEntry) => boolean
   totalHeight: number
@@ -70,6 +72,7 @@ function keyOf(i: number): string {
             <img v-if="iconIsImg(rowAt(i)!)" :src="iconOf(rowAt(i)!)" alt="" />
             <span v-else>{{ iconOf(rowAt(i)!) }}</span>
             <span v-if="opensElsewhere?.(rowAt(i)!)" class="lnk-elsewhere" title="Opens in the system's file manager, not GEM Shell">↗</span>
+            <span v-else-if="paneCountOf?.(rowAt(i)!)" class="lnk-elsewhere lnk-panes" :title="`Opens ${paneCountOf!(rowAt(i)!)} folders side by side in GEM Shell`">{{ paneCountOf!(rowAt(i)!) }}</span>
           </div>
           <div
             class="name"
@@ -140,6 +143,13 @@ function keyOf(i: number): string {
 }
 
 /* A folder shortcut that opens outside GEM Shell (shortcuts:probe opensElsewhere, 2026-10-18) */
+/* 0.8.9: a GEM Shell shortcut's folder count (the ↗ badge's place and look, a number) */
+.lnk-panes {
+  min-width: 1.1em;
+  text-align: center;
+  font-weight: 700;
+}
+
 .lnk-elsewhere {
   position: absolute;
   right: -3px;
