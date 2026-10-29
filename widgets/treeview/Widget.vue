@@ -198,7 +198,13 @@ function onMenuItem(message: WidgetMenuItemMessage) {
   if (message.itemId === 'copy' || message.itemId === 'cut' || message.itemId === 'paste') void clipboard(message.itemId, message.ref || '')
   else panel.value?.command(message.itemId, message.ref || '')
 }
-defineExpose({ onMenuItem })
+/** entry.ts commands (0.5.2): the focused folder's copy / cut / paste. */
+function onCommand(id: string) {
+  if (id !== 'copy' && id !== 'cut' && id !== 'paste') return
+  const path = panel.value?.commandTarget() || ''
+  if (path) void clipboard(id, path)
+}
+defineExpose({ onMenuItem, onCommand })
 // Favorites changed anywhere (this widget, the Favorites widget, the shell): the host tells us.
 sdk?.onHostChange?.('favorites', () => void refreshFavorites())
 // The drive list changed (a drive, a disc, a label, the system-partitions setting)

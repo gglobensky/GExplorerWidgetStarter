@@ -1756,6 +1756,10 @@ declare module 'gexplorer/widgets' {
         readonly paused: boolean
         readonly readyState: number
         readonly duration: number
+        /** (2026-10-28) What it plays now ('' none), its network state (3: no source), its last error (null: none). */
+        readonly currentSrc: string
+        readonly networkState: number
+        readonly error: MediaError | null
         src: string
         currentTime: number
         volume: number

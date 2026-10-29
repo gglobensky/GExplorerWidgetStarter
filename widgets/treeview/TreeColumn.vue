@@ -54,10 +54,8 @@ function keydown(event: KeyboardEvent) {
   const index = nodes.findIndex(row => key(row.node.path) === key(props.focused || ''))
   const row = nodes[index]
   let target: TreeRow | undefined
-  if ((event.ctrlKey || event.metaKey) && ['c', 'x', 'v'].includes(event.key.toLowerCase())) {
-    const path = row?.node.path || props.owner.path
-    emit('clipboard', event.key.toLowerCase() === 'c' ? 'copy' : event.key.toLowerCase() === 'x' ? 'cut' : 'paste', path)
-  } else if (event.key === 'ArrowDown') target = nodes[Math.min(nodes.length - 1, index + 1)]
+  // Ctrl+C / X / V are commands now (entry.ts, 0.5.2): the panel's commandTarget is the focused row.
+  if (event.key === 'ArrowDown') target = nodes[Math.min(nodes.length - 1, index + 1)]
   else if (event.key === 'ArrowUp') target = nodes[Math.max(0, index - 1)]
   else if (event.key === 'Home') target = nodes[0]
   else if (event.key === 'End') target = nodes[nodes.length - 1]

@@ -80,6 +80,15 @@ What a widget does with keys (the key mapper, 2026-10-24):
   out). A button with its own click: `v-gex-tooltip="{ content: 'Remove', command: 'remove-track' }"`
   adds only the keys. Elsewhere (a canvas, a status line): `sdk.keys!().of('play-pause')` and
   `onChange`. Don't write a key in a text yourself: the user may have changed it.
+- **Shortcut keys are the shell's to see (2026-10-29).** Your code never sees a shortcut combo on a
+  key event: Ctrl / Alt / Meta + a key, the F-keys, and Delete / Insert outside a text field read as
+  nothing (`key` is `'Unidentified'`, no modifiers, `getModifierState()` false). Declare a command
+  instead: the user sees it and can change its keys. Still yours to read: a modifier pressed alone
+  (hold Ctrl to show something), any key without Ctrl / Alt / Meta (typing, type-ahead, Enter, Escape,
+  Tab, Space, Backspace, arrows, Home / End, Page Up / Down, with or without Shift), Ctrl + an arrow /
+  Home / End / Page Up / Page Down / Space (a list's conventions), and AltGr characters in a text
+  field. Typing works as always. `npm run build` warns about a line that tests a modifier with a
+  shortcut key.
 - **Keys you don't use: leave them alone.** No `preventDefault` / `stopPropagation` on a key your
   widget does nothing with: the shell may act on it (Escape backs out one level: your selection
   first, then the focused pane).

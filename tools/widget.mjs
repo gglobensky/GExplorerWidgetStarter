@@ -204,9 +204,43 @@ async function dep(name) {
     }
 }
 
+// ── Keys hint (2026-10-29) ─────────────────────────────────────────────────
+// GEM Shell hides shortcut combos from widget code (Ctrl / Alt / Meta + a key, F-keys, Delete / Insert
+// outside a text field: the event reads as nothing). A widget's actions are commands (README, Keys).
+// A warning, not an error: a line testing a modifier together with a key that makes it a shortcut, in a
+// file that listens to keys. Fed to the official repo's review too.
+const KEY_LISTENER = /\bkey(down|up|press)\b/i
+const MODIFIER_READ = /\b(ctrlKey|altKey|metaKey)\b|getModifierState\s*\(/
+const SHORTCUT_KEY = /\.key\b[^\n]*['"`][a-z0-9]['"`]|\[\s*['"`][a-z0-9]['"`]\s*,|['"`]F([1-9]|1[0-9]|2[0-4])['"`]|['"`](Delete|Insert)['"`]|getModifierState\s*\(|\.keyCode\b|\.which\b/i
+
+function filesOf(dir) {
+    const out = []
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (e.isDirectory()) {
+            if (e.name === 'tests' || e.name === 'preview' || e.name === 'node_modules') continue
+            out.push(...filesOf(path.join(dir, e.name)))
+        } else if (/\.(vue|ts|js|mjs)$/.test(e.name)) out.push(path.join(dir, e.name))
+    }
+    return out
+}
+
+function checkKeys(type, dir) {
+    for (const file of filesOf(dir)) {
+        const text = fs.readFileSync(file, 'utf8')
+        if (!KEY_LISTENER.test(text)) continue
+        text.split(/\r?\n/).forEach((line, i) => {
+            if (MODIFIER_READ.test(line) && SHORTCUT_KEY.test(line)) {
+                log(`${type}: ${rel(file)}:${i + 1} reads a shortcut key on a key event. GEM Shell hides those `
+                    + 'from widgets: declare a command in entry.ts instead (README, Keys).')
+            }
+        })
+    }
+}
+
 async function build(type, { watch = false, install: doInstall = true, sourcemap = false } = {}) {
     const dir = widgetDir(type)
     checkId(type, dir)
+    checkKeys(type, dir)
     const publicDir = doInstall ? shellPublicDir() : null      // before building: a wrong setting fails first
     const { build: viteBuild } = await dep('vite')
     const vue = (await dep('@vitejs/plugin-vue')).default

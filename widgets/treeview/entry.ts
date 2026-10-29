@@ -1,7 +1,7 @@
 import Widget from './Widget.vue'
 
 export default {
-  api: '1.0', id: 'treeview', version: '0.5.1', license: 'PolyForm-Noncommercial-1.0.0', Component: Widget,
+  api: '1.0', id: 'treeview', version: '0.5.2', license: 'PolyForm-Noncommercial-1.0.0', Component: Widget,
   displayName: 'Tree View', description: 'Browse one folder tree at a time, with remembered roots and focused folders.', category: 'navigation', icon: 'folder-tree',
   contexts: {
     sidebar: { minHeight: 180, fillRemaining: true },
@@ -9,6 +9,16 @@ export default {
     toolbar: { minSize: { cols: 4, rows: 1 }, maxSize: { cols: 16, rows: 1 }, defaultSize: { cols: 8, rows: 1 } },
   },
   defaults: { data: { folders: [] }, view: {} },
+  // Commands (0.5.2, GEM Shell's key mapper): run while the tree has your focus; Widget.vue onCommand.
+  // They act on the focused folder (else the folder the tree is focused on, else its root).
+  commands: [
+    { id: 'copy', name: 'Copy folder', keys: ['Ctrl+C'],
+      description: 'Copies the focused folder to the clipboard, to paste it elsewhere (here, in a file list, or in another app).' },
+    { id: 'cut', name: 'Cut folder', keys: ['Ctrl+X'],
+      description: 'Cuts the focused folder: pasting it elsewhere moves it there.' },
+    { id: 'paste', name: 'Paste into folder', keys: ['Ctrl+V'],
+      description: 'Pastes what the clipboard holds (files or folders copied or cut) into the focused folder.' },
+  ],
   capabilities: [
     { cap: 'Read', reason: 'Lists folders as you expand the tree and identifies favorite destinations.' },
     { cap: 'Metadata', reason: 'Shows total and available capacity for drive roots.' },

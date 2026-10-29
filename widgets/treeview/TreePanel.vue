@@ -391,10 +391,8 @@ function keydown(event: KeyboardEvent) {
   const index = nodes.findIndex(r => key(r.node.path) === key(focused.value))
   const row = nodes[index]
   let target: TreeRow | undefined
-  if ((event.ctrlKey || event.metaKey) && ['c', 'x', 'v'].includes(event.key.toLowerCase())) {
-    const path = row?.node.path || narrowNode.value?.path || activePath.value
-    emit('clipboard', event.key.toLowerCase() === 'c' ? 'copy' : event.key.toLowerCase() === 'x' ? 'cut' : 'paste', path)
-  } else if (event.key === 'ArrowDown') target = nodes[Math.min(nodes.length - 1, index + 1)]
+  // Ctrl+C / X / V are commands now (entry.ts, 0.5.2: GEM Shell hides shortcut keys from widgets).
+  if (event.key === 'ArrowDown') target = nodes[Math.min(nodes.length - 1, index + 1)]
   else if (event.key === 'ArrowUp') target = nodes[Math.max(0, index - 1)]
   else if (event.key === 'Home') target = nodes[0]
   else if (event.key === 'End') target = nodes[nodes.length - 1]
@@ -465,7 +463,11 @@ let scrollObserver: ResizeObserver | undefined, panelObserver: ResizeObserver | 
 watch(scroll, el => { scrollObserver?.disconnect(); if (el) { scrollObserver = new ResizeObserver(() => viewport.value = el.clientHeight); scrollObserver.observe(el); viewport.value = el.clientHeight } })
 watch(panel, el => { panelObserver?.disconnect(); if (el) { panelObserver = new ResizeObserver(() => panelWidth.value = el.clientWidth); panelObserver.observe(el); panelWidth.value = el.clientWidth } })
 onBeforeUnmount(() => { saveScroll(); closeCountProbes(); scrollObserver?.disconnect(); panelObserver?.disconnect(); controller.close() })
-defineExpose({ choose, focusFolder, command, exitFocus, reveal, showCreated, root, selector })
+/** The folder the keys' commands act on (0.5.2): the focused one, else the tree's focus, else its root. */
+function commandTarget(): string {
+  return focused.value || narrowNode.value?.path || activePath.value
+}
+defineExpose({ choose, focusFolder, command, exitFocus, reveal, showCreated, root, selector, commandTarget })
 </script>
 
 <template>
