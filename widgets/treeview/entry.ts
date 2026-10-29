@@ -1,7 +1,7 @@
 import Widget from './Widget.vue'
 
 export default {
-  api: '1.0', id: 'treeview', version: '0.5.4', license: 'PolyForm-Noncommercial-1.0.0', Component: Widget,
+  api: '1.0', id: 'treeview', version: '0.5.5', license: 'PolyForm-Noncommercial-1.0.0', Component: Widget,
   displayName: 'Tree View', description: 'Browse one folder tree at a time, with remembered roots and focused folders.', category: 'navigation', icon: 'folder-tree',
   contexts: {
     sidebar: { minHeight: 180, fillRemaining: true },

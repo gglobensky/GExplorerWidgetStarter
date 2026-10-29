@@ -496,8 +496,14 @@ defineExpose({ choose, focusFolder, command, exitFocus, reveal, showCreated, roo
     <template v-else>
       <div v-if="state?.focus" class="tv-focus-strip"><span :title="state.focus">Focused: {{ label(state.focus) }}</span><button @click="exitFocus">Entire {{ root?.label }}</button></div>
       <div v-if="narrow && narrowNode" class="tv-narrow-level">
-        <button v-if="narrowParent" v-gex-tooltip="{ content: `Go up to ${label(narrowParent)}`, detail: narrowParent }" :aria-label="`Collapse ${narrowNode.name} and show ${label(narrowParent)}`" @click="leaveNarrow"><span class="tv-folder-up-icon" aria-hidden="true"><span>↑</span></span><strong>{{ label(narrowParent) }}</strong></button>
-        <div :title="narrowNode.path"><span>▱</span><strong>{{ narrowNode.name }}</strong></div>
+        <!-- 0.5.5 (Guillaume): the up row is split: its icon shows the parent's folders here (the pane stays), its
+             name takes the focused pane there. The level shown takes the pane there too, so a root (C:, D:) can be
+             reached: it is never a row of its own. -->
+        <div v-if="narrowParent" class="tv-narrow-up">
+          <button class="tv-up-step" v-gex-tooltip="{ content: `Up to ${label(narrowParent)}`, detail: 'Shows its folders here. The pane stays where it is.' }" :aria-label="`Collapse ${narrowNode.name} and show ${label(narrowParent)}`" @click="leaveNarrow"><span class="tv-folder-up-icon" aria-hidden="true"><span>↑</span></span></button>
+          <button class="tv-up-go" v-gex-tooltip="{ content: `Go to ${label(narrowParent)}`, detail: narrowParent }" :aria-label="`Open ${label(narrowParent)} in the pane`" @click="navigate(narrowParent)"><strong>{{ label(narrowParent) }}</strong></button>
+        </div>
+        <button class="tv-narrow-here" v-gex-tooltip="{ content: `Go to ${narrowNode.name}`, detail: narrowNode.path }" :aria-label="`Open ${narrowNode.name} in the pane`" @click="navigate(narrowNode.path)"><span>▱</span><strong>{{ narrowNode.name }}</strong></button>
       </div>
       <div v-if="columns" class="tv-columns-shell">
         <button v-if="columnsHaveOverflow" class="tv-column-page tv-column-page-left" :disabled="columnsAtStart" :aria-label="columnsAtStart ? 'At first folder level' : 'Show previous folder levels'" @click="scrollColumnsByPage(-1)">{{ columnsAtStart ? '│' : '‹' }}</button>

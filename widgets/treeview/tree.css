@@ -27,6 +27,10 @@
 .tv-column>header { display:grid; grid-template-columns:18px minmax(0,1fr) auto 24px; align-items:center; flex:none; gap:7px; min-height:31px; padding:4px 5px 4px 8px; border-bottom:1px solid #ffffff12; color:var(--text-muted, #9baab8); }
 .tv-column>header>span { color:var(--tv-accent); font-size:17px; }
 .tv-column>header>strong { overflow:hidden; color:var(--text, #dce4eb); text-overflow:ellipsis; white-space:nowrap; font-weight:550; }
+/* 0.5.5: a level's name takes the pane there (a root included) */
+.tv-column>header>.tv-column-go { min-width:0; padding:2px 4px; margin:-2px -4px; border:0; border-radius:4px; background:transparent; color:var(--text, #dce4eb); text-align:left; cursor:pointer; }
+.tv-column>header>.tv-column-go:hover { background:#ffffff0d; }
+.tv-column>header>.tv-column-go strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:550; }
 .tv-column>header>small { font-size:10px; font-variant-numeric:tabular-nums; }
 .tv-column-fold { display:grid; place-items:center; width:24px; height:23px; padding:0; border-radius:3px; color:var(--tv-accent)!important; font-size:14px!important; line-height:1; }
 .tv-column-body { display:flex; flex:1; flex-direction:column; min-height:0; }
@@ -43,6 +47,15 @@
 .tv-narrow-level { flex:none; border-bottom:1px solid #ffffff12; background:#00000010; }
 .tv-narrow-level>button,.tv-narrow-level>div { display:grid; grid-template-columns:18px minmax(0,1fr); align-items:center; width:100%; min-height:30px; padding:4px 8px; text-align:left; }
 .tv-narrow-level>button { grid-template-columns:28px minmax(0,1fr); color:var(--text-muted, #9baab8); }
+/* 0.5.5: the up row, split (icon: up a level here; name: the pane goes there); the level shown takes the pane there */
+.tv-narrow-level>.tv-narrow-up { display:flex; align-items:stretch; min-height:30px; padding:0; }
+.tv-narrow-up>button { display:flex; align-items:center; min-height:30px; border:0; background:transparent; color:var(--text-muted, #9baab8); cursor:pointer; }
+.tv-narrow-up>.tv-up-step { flex:0 0 36px; justify-content:center; padding:4px 0 4px 8px; }
+.tv-narrow-up>.tv-up-go { flex:1 1 auto; min-width:0; padding:4px 8px; text-align:left; border-left:1px solid #ffffff10; }
+.tv-narrow-up>.tv-up-go strong { display:block; min-width:0; }
+.tv-narrow-up>button:hover, .tv-narrow-level>.tv-narrow-here:hover { background:#ffffff0a; }
+.tv-narrow-level>.tv-narrow-here { grid-template-columns:18px minmax(0,1fr); color:inherit; border:0; background:transparent; cursor:pointer; }
+.tv-narrow-level>.tv-narrow-here span { color:var(--tv-accent); font-size:17px; }
 .tv-narrow-level strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:500; }
 .tv-narrow-level>div span { color:var(--tv-accent); font-size:17px; }
 .tv-folder-up-icon { position:relative; display:block; width:20px; height:16px; color:var(--tv-accent); }
