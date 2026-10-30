@@ -277,6 +277,23 @@ function searchPlaces(text: string): Promise<WeatherLocation[]> {
   return provider.search(text, locale);
 }
 
+/**
+ * 1.4.0: "Detect my location": the user's city from GEM Shell (sdk.geolocate, the Geolocation capability), with the
+ * city's coordinates. Only offered when the shell has it; called from the button's click (the shell requires one).
+ */
+const detectPlace = sdk?.geolocate
+  ? async (): Promise<WeatherLocation> => {
+      const city = await sdk.geolocate!();
+      return {
+        name: city.name,
+        ...(city.region ? { region: city.region } : {}),
+        ...(city.country ? { country: city.country } : {}),
+        latitude: city.latitude,
+        longitude: city.longitude,
+      };
+    }
+  : undefined;
+
 /** The strip's location picker: WeatherSetup in a popover under `anchor` (the strip has no room for it). */
 let locationPicker: { close(): void } | null = null;
 function openLocationPicker(anchor: EventTarget | null) {
@@ -288,7 +305,7 @@ function openLocationPicker(anchor: EventTarget | null) {
   locationPicker = ui.openPopover({
     anchor,
     component: WeatherSetup,
-    props: { hasLocation: !!location.value, search: searchPlaces, onChoose: chooseLocation },
+    props: { hasLocation: !!location.value, search: searchPlaces, onChoose: chooseLocation, detect: detectPlace },
     placement: "below",
     maxWidth: 320,
     maxHeight: 420,
@@ -535,6 +552,7 @@ onBeforeUnmount(() => {
       :has-location="!!location"
       :search="searchPlaces"
       :on-choose="chooseLocation"
+      :detect="detectPlace"
       :on-cancel="location ? () => (editing = false) : undefined"
     />
     <template v-else>

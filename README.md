@@ -130,6 +130,26 @@ const geo = createVirtualGeometry({ vlist: v.lines, scrollEl, flow, count: () =>
   The Layout menu offers them after the sizes; the choice arrives in `props.config.view.arrange` and is kept
   per folder for an explorer (Items does this for Icons and Media).
 
+## The user's city
+
+Declare `{ cap: 'Geolocation', reason: '…' }` (GEM Shell, 2026-10-30) and call `sdk.geolocate()` from a click or a
+key press in your widget:
+
+```ts
+try {
+  const city = await sdk.geolocate!()   // { name, region?, country?, countryCode, latitude, longitude }
+} catch (e: any) {
+  if (e.code === 'os-off') { /* the shell already offered the system's location settings */ }
+}
+```
+
+- You get a **city** and **the city's coordinates**, never the computer's position (GEM Shell finds the nearest
+  town offline; GeoNames data, CC BY 4.0).
+- Only right after the user's own click or key press in your widget (`no-gesture` otherwise, in the security log):
+  don't call it on mount or on a timer. Keep the city you got, and offer "Detect again".
+- The user is asked first (the shell's consent dialog); errors carry a `code`: `no-gesture`, `declined`, `os-off`,
+  `unavailable`, `timeout`, `error`.
+
 ## Keys
 
 What a widget does with keys (the key mapper, 2026-10-24):

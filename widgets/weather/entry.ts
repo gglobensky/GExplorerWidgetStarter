@@ -3,7 +3,7 @@ import Widget from './Widget.vue'
 export default {
   api: '1.0',
   id: 'weather',
-  version: '1.3.2',
+  version: '1.4.0',   // 1.4.0 (2026-10-30): Detect my location (Geolocation)
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
   
@@ -29,5 +29,8 @@ export default {
     view: { units: 'C', coloredIcons: true, atmosphere: true, forecastDays: 3, refreshInterval: 900000 }
   },
   
-  capabilities: [{ cap: 'Network', reason: 'Searches locations and retrieves weather forecasts from Open-Meteo.' }]
+  capabilities: [
+    { cap: 'Network', reason: 'Searches locations and retrieves weather forecasts from Open-Meteo.' },
+    { cap: 'Geolocation', reason: 'Finds the city you are in when you click "Detect my location".' },
+  ]
 }

@@ -65,6 +65,13 @@ declare module 'gexplorer/widgets' {
          */
         reveal?: (path: string, options?: { newTab?: boolean }) => Promise<{ ok: true } | { ok: false; reason: 'no-gesture' | 'not-found' | 'not-a-file' }>
         /**
+         * 2026-10-30 ('Geolocation' declared): the user's CITY, never this computer's position: its name, region,
+         * country and the city's own coordinates (offline from GeoNames). Only right after the user's own click or key
+         * press in this widget, and with their consent (the shell's dialog). Rejects with an Error whose `code` is
+         * a GeolocateErrorCode; on 'os-off' the shell itself offers the system's location settings.
+         */
+        geolocate?: () => Promise<GeoCity>
+        /**
          * Where this widget sends the user (the runAction prop they replaced is gone). Each resolves to { ok: true } or
          * { ok: false, reason: 'no-gesture' | 'not-on-screen' | 'bad-argument' }.
          *   navigate   a place: one location (a folder, a hub "home:", a sys: page) or 2-4 folders side by side
@@ -510,6 +517,25 @@ declare module 'gexplorer/widgets' {
         | 'Favorites'
         /** See which folder you're browsing (sdk.getCurrentPath, the 'location' host topic). */
         | 'Location'
+        /** 2026-10-30: the user's city (sdk.geolocate), never this computer's position. */
+        | 'Geolocation'
+
+    /** sdk.geolocate()'s answer: a city and the CITY's coordinates. */
+    export type GeoCity = {
+        name: string
+        region?: string
+        country?: string
+        /** ISO 3166-1 alpha-2 ("CA"). */
+        countryCode: string
+        latitude: number
+        longitude: number
+    }
+    /**
+     * Why sdk.geolocate() failed (the Error's `code`): no-gesture (not right after a click or key press in the widget),
+     * declined (the user said no), os-off (the system's location is off), unavailable (no position, no city table,
+     * or no location on this system yet), timeout, error.
+     */
+    export type GeolocateErrorCode = 'no-gesture' | 'declined' | 'os-off' | 'unavailable' | 'timeout' | 'error'
 
     // ── FS types ───────────────────────────────────────────────────────────
 

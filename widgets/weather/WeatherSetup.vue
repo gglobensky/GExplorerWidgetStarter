@@ -2,6 +2,7 @@
 // widgets/weather/WeatherSetup.vue (1.3.0, 2026-10-28): choosing the weather's location. Shown in the
 // widget when there is room, and in a popover from the compact strip (one grid row high, the toolbar),
 // which has none. It only searches (props.search) and reports the place chosen (props.onChoose).
+// 1.4.0 (2026-10-30): "Detect my location" (props.detect: GEM Shell's sdk.geolocate, the user's city).
 import { ref, watch } from "vue";
 import type { WeatherLocation } from "./weather";
 
@@ -10,6 +11,8 @@ const props = defineProps<{
   hasLocation: boolean;
   search: (text: string) => Promise<WeatherLocation[]>;
   onChoose: (place: WeatherLocation) => void;
+  /** 1.4.0: the user's city (absent: the shell has no location for widgets). Rejects with an Error carrying `code`. */
+  detect?: () => Promise<WeatherLocation>;
   onCancel?: () => void;
   /** In a popover (the SDK passes it): framed on its own, with the widget's colors. */
   close?: () => void;
@@ -22,6 +25,32 @@ const searching = ref(false);
 const searched = ref(false);
 const error = ref("");
 let generation = 0;
+const detecting = ref(false);
+const detectError = ref("");
+
+/** What the user reads when detecting fails (codes: GEM Shell's sdk.geolocate). */
+function detectMessage(e: unknown): string {
+  switch ((e as { code?: string })?.code) {
+    case "declined": return "Location wasn't allowed. You can enter a city instead.";
+    case "os-off": return "Location is turned off in the system settings. Enter a city, or turn it on and try again.";
+    case "timeout": return "Finding your city took too long. Try again, or enter a city.";
+    case "no-gesture": return "Click Detect my location to find your city.";
+    default: return "Your city couldn't be found. Enter a city instead.";
+  }
+}
+
+async function runDetect() {
+  if (!props.detect || detecting.value) return;
+  detecting.value = true;
+  detectError.value = "";
+  try {
+    props.onChoose(await props.detect());
+  } catch (e) {
+    detectError.value = detectMessage(e);
+  } finally {
+    detecting.value = false;
+  }
+}
 
 const keyOf = (l: WeatherLocation) => `${l.latitude},${l.longitude}`;
 
@@ -70,10 +99,13 @@ function cancel() {
     </div>
     <div v-if="mode === 'choice'" class="location-choice">
       <div class="choice-buttons">
-        <button type="button" disabled aria-label="Detect my location — unavailable in this shell">Detect my location</button>
+        <button v-if="detect" type="button" :disabled="detecting" @click="runDetect">{{ detecting ? "Finding your city…" : "Detect my location" }}</button>
+        <button v-else type="button" disabled aria-label="Detect my location — unavailable in this shell">Detect my location</button>
         <button type="button" @click="mode = 'city'">Enter a city</button>
       </div>
-      <p class="muted">Automatic location isn't available in this shell yet.</p>
+      <p v-if="detectError" role="alert">{{ detectError }}</p>
+      <p v-else-if="detect" class="muted">Detecting finds the city you're in, never your exact position.</p>
+      <p v-else class="muted">Automatic location isn't available in this shell yet.</p>
     </div>
     <template v-else>
       <form @submit.prevent="run">
