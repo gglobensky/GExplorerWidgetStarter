@@ -1566,6 +1566,14 @@ function chooseFilter(choice: string) {
 /** The chip and the Filter command: the same entries, flat (ui.menu), under `anchor`. */
 async function openFilterMenu(anchor: HTMLElement | null) {
   if (inDialog.value || !anchor) return
+  // 0.9.1: the Filter submenu as the user arranged it in Settings › Context Menu (order, hidden entries), drawn by
+  // GEM Shell (ui.declaredMenu); an older shell without it: the list below, as before.
+  if (typeof ui.declaredMenu === 'function') {
+    const parts = filterMenuParts(effectiveQuickFilter.value, typeRegistry.value, focusedExt(), { key: sortKey.value, dir: sortDir.value })
+    const choice = await ui.declaredMenu(anchor, 'filter', { slots: parts.slots, state: parts.state, states: parts.states, label: 'Filter' })
+    if (choice) chooseFilter(choice)
+    return
+  }
   const items: WidgetMenuItem[] = []
   const headings: Record<string, string> = { sort: 'Sort', show: 'Show', type: 'Type' }
   for (const group of filterEntries()) {

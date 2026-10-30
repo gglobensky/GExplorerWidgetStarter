@@ -213,7 +213,7 @@ export function filterMenuParts(filter: QuickFilter, registry: TypeRegistry, foc
     disabled: foldersOnly,
     title: t.exts.map(ext => `.${ext}`).join(' ').slice(0, 200),
   }))
-  const focused: Array<Record<string, unknown>> = []
+  const focused: Array<{ id: string; label: string; checked?: boolean; disabled?: boolean; title?: string }> = []
   if (filter.type?.startsWith('ext:')) focused.push({ id: `type.ext.${filter.type.slice(4)}`, label: typeLabel(filter.type), checked: true })
   else if (focusedExt) focused.push({ id: `type.ext.${focusedExt}`, label: `Only .${focusedExt} files`, checked: false, disabled: foldersOnly, title: 'The selected file\'s type' })
   const columns = sort ? SORT_COLUMNS.map(c => c.key === sort.key

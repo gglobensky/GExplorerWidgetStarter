@@ -2227,6 +2227,13 @@ declare module 'gexplorer/widgets' {
          */
         menu(at: MouseEvent | HTMLElement, items: WidgetMenuItem[], opts?: { preferred?: string; label?: string }): Promise<string | null>
         /**
+         * NEW (2026-10-29): one of the widget's submenus declared with its entries (menus.items children) as a
+         * flat menu at the click or under a button, as the user arranged it in Settings › Context Menu (order,
+         * hidden entries, "Disable when…"); sub-lists become headed groups. The chosen entry's id, or null.
+         *   const id = await ui.declaredMenu(chip, 'filter', { slots, state, states })
+         */
+        declaredMenu?(at: MouseEvent | HTMLElement, submenuId: string, opts?: WidgetDeclaredMenuOptions): Promise<string | null>
+        /**
          * The widget's own component in the host's overlay, next to opts.anchor (an element of this
          * widget): never clipped by the widget's place, kept on screen. Same rules as menu() (the
          * user's own click or key press, on screen); null when refused. One per instance (a new one
@@ -2401,6 +2408,17 @@ declare module 'gexplorer/widgets' {
          *   ui.contextMenu(e, { context: 'tree.folder', states: narrow ? ['narrow'] : [] })
          */
         states?: string[]
+    }
+
+    /** NEW (2026-10-29): sdk.ui().declaredMenu's options (the same slots / state / states as contextMenu's). */
+    export type WidgetDeclaredMenuOptions = {
+        slots?: Record<string, WidgetMenuNode[]>
+        state?: Record<string, WidgetMenuEntryState>
+        states?: string[]
+        /** The menu's accessible name. Default: the submenu's label. */
+        label?: string
+        /** For "layout:<id>" situations in rules. */
+        widgetConfig?: unknown
     }
 
     /** NEW (2026-10-29): a declared submenu entry's state for one menu (WidgetContextMenuOptions.state). */
