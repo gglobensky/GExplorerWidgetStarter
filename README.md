@@ -125,6 +125,10 @@ const geo = createVirtualGeometry({ vlist: v.lines, scrollEl, flow, count: () =>
 - Shift ranges and the marquee work unchanged (indices are contiguous in both orders); give the marquee
   driver's scroller `axis: () => flow.axis` so it auto-scrolls the right way.
 - `useVirtualList` still works alone (now with `axis: 'x'`); `columns` options still mean a rows flow.
+- To let people choose, declare `arranges` on a layout in `entry.ts` (next to `sizes`):
+  `arranges: [{ id: 'rows', label: 'Arrange in rows' }, { id: 'columns', label: 'Arrange in columns' }]`.
+  The Layout menu offers them after the sizes; the choice arrives in `props.config.view.arrange` and is kept
+  per folder for an explorer (Items does this for Icons and Media).
 
 ## Keys
 

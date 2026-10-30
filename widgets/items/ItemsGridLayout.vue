@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { iconFor } from 'gexplorer/widgets'
 import type { ListingEntry } from 'gexplorer/widgets'
 import { sizedIconKey } from './iconSizes'
@@ -14,6 +15,10 @@ import { sizedIconKey } from './iconSizes'
    Media (layout id 'media', 0.8.0) is the same grid with a bigger square:
    a picture's, video's, cover's or PDF's thumbnail fills it (fitted, never
    cropped); folders and other files show their icon at half its size.
+   Arrange in columns (0.10.1, order 'columns'): the same cells flow top to
+   bottom, then right; `columns` is then the cells per column, the list
+   scrolls sideways (totalHeight / offsetY are along x), cells are
+   `cellWidth` wide and the sizer measures a column's width.
 ------------------------------------------------ */
 const props = defineProps<{
   indices: number[]
@@ -33,6 +38,10 @@ const props = defineProps<{
   iconsTick: number
   sourceId: string
   columns: number
+  /** 0.10.1: 'columns' = top to bottom, then right (scrolls sideways). Default 'rows'. */
+  order?: 'rows' | 'columns'
+  /** 0.10.1: a cell's width in columns (px; in rows the cells share the pane's width). */
+  cellWidth?: number
   /** The size system icons were asked for (their keys carry it); 32 px ones show until they arrive. */
   iconPx: number
   /** Shown icon size (px): the square each icon (Media: each thumbnail) sits in. */
@@ -71,6 +80,47 @@ function iconIsImg(e: ListingEntry): boolean {
 function keyOf(i: number): string {
   return props.rowAt(i)?.Name ?? `\u0000placeholder:${i}`
 }
+
+const inColumns = computed(() => props.order === 'columns')
+const lanes = computed(() => Math.max(1, props.columns))
+
+/** The scroll content: its size along the axis (height in rows, width in columns). */
+const rootStyle = computed<Record<string, string>>(() => {
+  const s: Record<string, string> = {
+    '--icon-px': `${props.iconSize}px`,
+    '--sys-icon-px': `${props.sysIconSize ?? props.iconSize}px`,
+  }
+  if (inColumns.value) { s.width = `${props.totalHeight}px`; s.height = '100%' }
+  else s.height = `${props.totalHeight}px`
+  return s
+})
+
+/** The rendered cells: a row-flow grid moved on y, or a column-flow grid moved on x. */
+const cellsStyle = computed<Record<string, string>>(() => {
+  const gap = `${props.S.gap}px`
+  if (inColumns.value) {
+    return {
+      gap,
+      padding: `${props.S.gap}px 0`,
+      gridAutoFlow: 'column',
+      gridTemplateRows: `repeat(${lanes.value}, auto)`,
+      gridAutoColumns: `${props.cellWidth ?? 104}px`,
+      width: 'max-content',
+      transform: `translateX(${props.offsetY}px)`,
+    }
+  }
+  return {
+    gap,
+    padding: `0 ${props.S.gap}px`,
+    gridTemplateColumns: `repeat(${lanes.value}, minmax(0, 1fr))`,
+    transform: `translateY(${props.offsetY}px)`,
+  }
+})
+
+/** The sizer cell: as wide as a cell (columns: its width is the line size), its height a cell's. */
+const sizerStyle = computed<Record<string, string>>(() => (inColumns.value
+  ? { left: '0px', top: `${props.S.gap}px`, width: `${props.cellWidth ?? 104}px` }
+  : { left: `${props.S.gap}px`, right: `${props.S.gap}px` }))
 </script>
 
 <template>
@@ -78,17 +128,12 @@ function keyOf(i: number): string {
     class="grid-root"
     :class="{ 'is-media': media }"
     :data-icons="iconsTick"
-    :style="{ height: totalHeight + 'px', '--icon-px': iconSize + 'px', '--sys-icon-px': (sysIconSize ?? iconSize) + 'px' }"
+    :style="rootStyle"
   >
     <div
       class="grid-cells"
       :ref="bindRows"
-      :style="{
-        gap: S.gap + 'px',
-        padding: `0 ${S.gap}px`,
-        gridTemplateColumns: `repeat(${Math.max(1, columns)}, minmax(0, 1fr))`,
-        transform: `translateY(${offsetY}px)`,
-      }"
+      :style="cellsStyle"
     >
       <template v-for="i in indices" :key="keyOf(i)">
         <button
@@ -140,7 +185,7 @@ function keyOf(i: number): string {
     </div>
 
     <!-- Cell-height probe for useVirtualList -->
-    <div class="row sizer" :ref="bindSizer" aria-hidden="true" :style="{ left: S.gap + 'px', right: S.gap + 'px' }">
+    <div class="row sizer" :ref="bindSizer" aria-hidden="true" :style="sizerStyle">
       <div class="icon" />
       <div class="name">X</div>
     </div>

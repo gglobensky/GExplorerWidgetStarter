@@ -3,6 +3,12 @@
 import Widget from './Widget.vue'
 import { ICON_SIZE_IDS, ICON_SIZE_LABELS } from './iconSizes'
 
+/** Icons / Media: how the cells flow (view.arrange; the Layout menu, after the sizes). */
+const ARRANGES = [
+    { id: 'rows', label: 'Arrange in rows' },
+    { id: 'columns', label: 'Arrange in columns' },
+]
+
 // Menu: contributed by the host (contextmenu/actions/core.ts registerItemsContributions), Refresh
 // included (2026-10-24: a widget's own contributions may only run its own actions).
 
@@ -13,7 +19,7 @@ import { ICON_SIZE_IDS, ICON_SIZE_LABELS } from './iconSizes'
 export default {
     api:     '1.0',
     id:      'items',
-    version: '0.10.0',   // 0.10.0 (GEM Shell 2026-10-30, Session M2): the list runs on useVirtualFlow + a ListFlow
+    version: '0.10.1',   // 0.10.0 (GEM Shell 2026-10-30, M2): useVirtualFlow + a ListFlow; 0.10.1 (M3): Arrange in columns
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     // Takes files and folders anywhere in the pane (dropped on a folder row: into
@@ -141,12 +147,13 @@ export default {
                 { id: 'list',    icon: '☰', tooltip: 'List'    },
                 // Icons (0.7.0, was Grid; the id stays so saved views keep it): its columns follow the pane, and
                 // the Layout menu's Icons entry opens its sizes (view.itemSize; Ctrl + wheel steps them too).
+                // 0.10.1: and how they flow (view.arrange, after the sizes): rows, or columns scrolling sideways.
                 { id: 'grid',    icon: '▦', tooltip: 'Icons',  columns: false,
-                  sizes: ICON_SIZE_IDS.map(id => ({ id, label: `${ICON_SIZE_LABELS[id]} icons` })) },
+                  sizes: ICON_SIZE_IDS.map(id => ({ id, label: `${ICON_SIZE_LABELS[id]} icons` })), arranges: ARRANGES },
                 // Media (0.8.0): thumbnails of pictures, videos, music covers and PDFs (Media capability);
                 // the same automatic columns and sizes as Icons, bigger.
                 { id: 'media',   icon: '🖼', tooltip: 'Media',  columns: false,
-                  sizes: ICON_SIZE_IDS.map(id => ({ id, label: ICON_SIZE_LABELS[id] })) },
+                  sizes: ICON_SIZE_IDS.map(id => ({ id, label: ICON_SIZE_LABELS[id] })), arranges: ARRANGES },
                 { id: 'details', icon: '▤', tooltip: 'Details' },
             ],
             // Layout menu gets "Single page" / "Paged ▸"; the choice is stored per folder

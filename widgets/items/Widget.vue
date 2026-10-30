@@ -9,8 +9,9 @@
               visible lines (+ overscan), counted in items through one
               ListFlow (order + lanes) that the selection and the marquee
               geometry share; layouts get item indices and look rows up with
-              rowAt(i). Rows only for now; Icons / Media get "Arrange in
-              columns" next.
+              rowAt(i). Icons / Media: "Arrange in rows / in columns"
+              (0.10.1, view.arrange per folder): columns flow top to bottom,
+              then right, and scroll sideways (the wheel too).
    SELECTION  createListSelection (names; "all except"; ranges resolved in
               the background, large ones held by the backend as selection
               sets). Marquee = createMarqueeDriver over
@@ -34,6 +35,7 @@ import {
   createListSelection,
   createVirtualGeometry,
   createListFlow,
+  lanesFor,
   useVirtualFlow,
   useListing,
   startRename,
@@ -215,6 +217,8 @@ const merged = computed(() => ({
   layout: String((folderDefault.value && autoLayout.value) || cfg.value.view.layout || 'list'),
   columns: cfg.value.view.columns || autoColumns.value,
   itemSize: localItemSize.value || cfg.value.view.itemSize || autoItemSize.value,
+  // 0.10.1: Icons / Media in rows or in columns (the Layout menu, per folder like the size)
+  arrange: cfg.value.view.arrange === 'columns' ? 'columns' : 'rows',
   showHidden: !!(cfg.value.view.showHidden ?? false),
   navigateMode: String(cfg.value.view.navigateMode ?? 'tab').toLowerCase(),
 }))
@@ -232,6 +236,11 @@ const layout = computed(() => merged.value.layout)
 const isGrid = computed(() => layout.value === 'grid' || layout.value === 'media')
 /** Media: thumbnails of pictures, videos, music covers and PDFs; icons for the rest. */
 const isMedia = computed(() => layout.value === 'media')
+/**
+ * How the cells flow (0.10.1): 'columns' = top to bottom, then right, scrolling sideways (Icons and
+ * Media only; List and Details are always rows).
+ */
+const arrange = computed<'rows' | 'columns'>(() => (isGrid.value && merged.value.arrange === 'columns' ? 'columns' : 'rows'))
 const pixelRatio = () => (typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1)
 
 /*
@@ -240,14 +249,21 @@ const pixelRatio = () => (typeof window === 'undefined' ? 1 : window.devicePixel
  * for at the size they show (iconSizes.ts).
  */
 const paneWidth = ref(0)
+/** 0.10.1: the pane's inner height (Arrange in columns: how many cells a column holds). */
+const paneHeight = ref(0)
+/** 0.10.1: a cell's height, measured on the sizer cell (in columns the virtual list measures its width). */
+const cellHeight = ref(0)
 const iconSize = computed<IconSize>(() => iconSizeOf(merged.value.itemSize))
 const iconMetrics = computed(() => (isMedia.value ? MEDIA_SIZES : ICON_SIZES)[iconSize.value])
 /** The system icons' size: in Media, folders and other files show their icon at half the thumbnail box. */
 const shownIconPx = computed(() => (isMedia.value ? mediaIconOf(iconMetrics.value.icon) : iconMetrics.value.icon))
 const iconPx = computed(() => requestPx(shownIconPx.value, pixelRatio()))
-const cols = computed(() => (isGrid.value
-  ? columnsFor(paneWidth.value - 2 * S.value.gap, iconMetrics.value.cell, S.value.gap)
-  : 1))
+/** Items across a line: the Icons / Media columns in rows, the cells per column in columns, else 1. */
+const cols = computed(() => {
+  if (!isGrid.value) return 1
+  if (arrange.value === 'columns') return lanesFor(paneHeight.value - 2 * S.value.gap, cellHeight.value, S.value.gap)
+  return columnsFor(paneWidth.value - 2 * S.value.gap, iconMetrics.value.cell, S.value.gap)
+})
 
 // ---- PathBar ownership announce ----
 watch(cwd, (v) => {
@@ -461,9 +477,23 @@ watch(scrollEl, (el) => {
   paneObserver = null
   if (!el || typeof ResizeObserver === 'undefined') return
   paneWidth.value = el.clientWidth
-  paneObserver = new ResizeObserver(() => { paneWidth.value = el.clientWidth })
+  paneHeight.value = el.clientHeight
+  paneObserver = new ResizeObserver(() => { paneWidth.value = el.clientWidth; paneHeight.value = el.clientHeight })
   paneObserver.observe(el)
 }, { flush: 'post' })
+
+// 0.10.1: the sizer cell's height (a column's cells in Arrange in columns).
+let sizerObserver: ResizeObserver | null = null
+watch(sizerEl, (el) => {
+  sizerObserver?.disconnect()
+  sizerObserver = null
+  if (!el || typeof ResizeObserver === 'undefined') return
+  const read = () => { cellHeight.value = el.getBoundingClientRect().height }
+  read()
+  sizerObserver = new ResizeObserver(read)
+  sizerObserver.observe(el)
+}, { flush: 'post' })
+onBeforeUnmount(() => { sizerObserver?.disconnect() })
 
 // useListing needs the list, the list needs the total: the listing API is
 // published through this ref once created.
@@ -515,7 +545,7 @@ const LIST_TOP_PAD = 6   // was the scroller's padding-block; now inside the row
  * How the items flow (0.10.0): one ListFlow for the virtual list, the selection's keys and the marquee
  * geometry. Lanes = items across a line (the Icons / Media columns; 1 in List and Details).
  */
-const flow = createListFlow({ order: () => 'rows', lanes: () => cols.value })
+const flow = createListFlow({ order: () => arrange.value, lanes: () => cols.value })
 
 const vflow = useVirtualFlow({
   scrollEl: scrollerEl,
@@ -543,7 +573,7 @@ function ensureItems(first: number, end: number) {
 watch(pageStart, () => ensureItems(vflow.first.value, vflow.end.value))
 
 // Re-measure when the layout, item size or column count changes the rows.
-watch([layout, () => merged.value.itemSize, cols], () => nextTick(() => vlist.measure()))
+watch([layout, () => merged.value.itemSize, cols, arrange], () => nextTick(() => vlist.measure()))
 
 /** Line (in the current page window) of source index `i`. */
 function localRow(i: number): number {
@@ -644,6 +674,20 @@ const selection = createListSelection({
     })
   },
   onFocusMove: (index) => itemView.scrollToIndex(index, 'nearest'),
+})
+
+// 0.10.1: switching rows <-> columns keeps the focused item, else the first one shown, in view. The
+// first one shown is tracked after each render (post), so the switch reads it from before.
+let firstShown = 0
+watch([() => vlist.logicalTop.value, () => vlist.rowPitch.value, cols, pageStart], () => {
+  const p = vlist.rowPitch.value
+  firstShown = pageStart.value + flow.firstOfLine(p > 0 ? Math.ceil(vlist.logicalTop.value / p) : 0)
+}, { flush: 'post' })
+watch(arrange, () => {
+  const focus = selection.focusIndex()
+  const target = focus ?? firstShown
+  // After the re-measure on the new axis (nextTick), then one frame for the new cells.
+  void nextTick(() => requestAnimationFrame(() => itemView.scrollToIndex(target, focus != null ? 'center' : 'start')))
 })
 
 const selState = shallowRef(selection.state())
@@ -966,28 +1010,39 @@ const geo = createVirtualGeometry({
   offset: () => pageStart.value,        // …hit ranges come back as source indices
   flow,
   lane: () => {
-    // Cross-axis cell geometry from the first rendered cell (viewport-relative).
+    // Cross-axis cell geometry from the first rendered cell (viewport-relative): x in rows, y in columns.
     const sc = scrollerEl.value
     const cell = rowsEl.value?.firstElementChild as HTMLElement | null
     if (!sc || !cell) return { start: 0, size: 0, gap: 0 }
     const r = cell.getBoundingClientRect()
     const scR = sc.getBoundingClientRect()
-    return { start: r.left - scR.left - sc.clientLeft, size: r.width, gap: S.value.gap }
+    return flow.axis === 'x'
+      ? { start: r.top - scR.top - sc.clientTop, size: r.height, gap: S.value.gap }
+      : { start: r.left - scR.left - sc.clientLeft, size: r.width, gap: S.value.gap }
   },
 })
 
+// Along the flow's axis (0.10.1): scrollLeft in Arrange in columns.
 const scroller: ScrollerAdapter = {
-  scrollTop: () => scrollerEl.value?.scrollTop ?? 0,
+  scrollTop: () => {
+    const el = scrollerEl.value
+    return el ? (flow.axis === 'x' ? el.scrollLeft : el.scrollTop) : 0
+  },
   maxScrollTop: () => {
     const el = scrollerEl.value
-    return el ? Math.max(0, el.scrollHeight - el.clientHeight) : 0
+    if (!el) return 0
+    return flow.axis === 'x'
+      ? Math.max(0, el.scrollWidth - el.clientWidth)
+      : Math.max(0, el.scrollHeight - el.clientHeight)
   },
-  scrollBy: (dy) => {
+  scrollBy: (d) => {
     // The driver decides when (edge zone + outside); this just scrolls.
     const el = scrollerEl.value
-    if (el) el.scrollTop += dy
+    if (!el) return
+    if (flow.axis === 'x') el.scrollLeft += d
+    else el.scrollTop += d
   },
-  axis: () => flow.axis,     // 'y' while the flow is rows (0.10.0)
+  axis: () => flow.axis,
 }
 
 function pointerInsideScroller(cx: number, cy: number) {
@@ -1012,7 +1067,8 @@ const driver = createMarqueeDriver(
     rectChanged: (r) => {
       if (r) {
         const st = scrollerEl.value?.scrollTop ?? 0
-        marqueeRect.value = { x: r.x, y: r.y + st, w: r.w, h: r.h }
+        const sl = scrollerEl.value?.scrollLeft ?? 0     // 0.10.1: columns scroll sideways
+        marqueeRect.value = { x: r.x + sl, y: r.y + st, w: r.w, h: r.h }
         squelchNextPlaneClick = r.w > 0 || r.h > 0
       } else {
         marqueeRect.value = null
@@ -1039,7 +1095,10 @@ function onPlaneScroll() {
 function isOnScrollbar(el: HTMLElement, ev: PointerEvent) {
   const r = el.getBoundingClientRect()
   const sb = Math.max(0, el.offsetWidth - el.clientWidth)
-  return sb > 0 && ev.clientX >= r.right - sb - 1
+  if (sb > 0 && ev.clientX >= r.right - sb - 1) return true
+  // 0.10.1: the horizontal one (Arrange in columns)
+  const sbx = Math.max(0, el.offsetHeight - el.clientHeight)
+  return sbx > 0 && ev.clientY >= r.bottom - sbx - 1
 }
 
 function onScrollContainerPointerDown(ev: PointerEvent) {
@@ -1550,11 +1609,23 @@ function setIconSize(size: IconSize) {
   patchView({ itemSize: size })
 }
 
-/** Ctrl + wheel over the Icons layout: one size bigger / smaller. */
+/**
+ * Ctrl + wheel over the Icons layout: one size bigger / smaller. 0.10.1: in Arrange in columns the plain
+ * wheel scrolls sideways (Shift + wheel already does).
+ */
 function onPlaneWheel(ev: WheelEvent) {
-  if (!isGrid.value || !(ev.ctrlKey || ev.metaKey) || !ev.deltaY) return
+  if (!isGrid.value || !ev.deltaY) return
+  if (ev.ctrlKey || ev.metaKey) {
+    ev.preventDefault()
+    setIconSize(stepIconSize(iconSize.value, ev.deltaY < 0 ? 1 : -1))
+    return
+  }
+  if (arrange.value !== 'columns' || ev.shiftKey || Math.abs(ev.deltaX) >= Math.abs(ev.deltaY)) return
+  const el = scrollEl.value
+  if (!el) return
+  const unit = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? el.clientWidth : 1
   ev.preventDefault()
-  setIconSize(stepIconSize(iconSize.value, ev.deltaY < 0 ? 1 : -1))
+  el.scrollLeft += ev.deltaY * unit
 }
 
 /** A Filter entry chosen (the submenu, the compact menu): the new filter, or the types editor. */
@@ -2105,7 +2176,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand, onMenuI
     <!-- Focusable scroller; captures keyboard for every layout -->
     <div
       class="items-scroll-container"
-      :class="{ 'is-details': layout === 'details' }"
+      :class="{ 'is-details': layout === 'details', 'is-columns': arrange === 'columns' }"
       ref="scrollEl"
       tabindex="0"
       @keydown="onKeyDown"
@@ -2210,6 +2281,8 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand, onMenuI
         :icons-tick="iconsTick"
         :source-id="props.sourceId"
         :columns="cols"
+        :order="arrange"
+        :cell-width="iconMetrics.cell"
         :icon-px="iconPx"
         :icon-size="iconMetrics.icon"
         :sys-icon-size="shownIconPx"
@@ -2280,6 +2353,12 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand, onMenuI
   border-radius: var(--local-radius);
 }
 .items-scroll-container:hover{ overscroll-behavior:contain; }
+/* 0.10.1: Arrange in columns scrolls sideways; no side gutters (the first column's gap is in the virtual list) */
+.items-scroll-container.is-columns{
+  overflow-x:auto;
+  overflow-y:hidden;
+  padding-inline: 0;
+}
 
 .items-scroll-container.is-details{
   overflow: hidden;            /* the Details layout scrolls its own rows */
