@@ -13,7 +13,7 @@ import { ICON_SIZE_IDS, ICON_SIZE_LABELS } from './iconSizes'
 export default {
     api:     '1.0',
     id:      'items',
-    version: '0.9.2',
+    version: '0.10.0',   // 0.10.0 (GEM Shell 2026-10-30, Session M2): the list runs on useVirtualFlow + a ListFlow
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     // Takes files and folders anywhere in the pane (dropped on a folder row: into

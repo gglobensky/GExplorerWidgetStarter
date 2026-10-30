@@ -5,8 +5,12 @@
    DATA       sdk.openListing(cwd) -> ListingSource (backend-sorted pages).
               useListing adapts it to Vue and keeps the view in place across
               re-sorts / refreshes. The listing watches the folder itself.
-   ROWS       useVirtualList renders only the visible rows (+ overscan);
-              layouts get item indices and look rows up with rowAt(i).
+   ROWS       useVirtualFlow (0.10.0, GEM Shell 2026-10-30) renders only the
+              visible lines (+ overscan), counted in items through one
+              ListFlow (order + lanes) that the selection and the marquee
+              geometry share; layouts get item indices and look rows up with
+              rowAt(i). Rows only for now; Icons / Media get "Arrange in
+              columns" next.
    SELECTION  createListSelection (names; "all except"; ranges resolved in
               the background, large ones held by the backend as selection
               sets). Marquee = createMarqueeDriver over
@@ -29,7 +33,8 @@ import {
   createMarqueeDriver,
   createListSelection,
   createVirtualGeometry,
-  useVirtualList,
+  createListFlow,
+  useVirtualFlow,
   useListing,
   startRename,
   useWidgetChrome,
@@ -506,10 +511,17 @@ function pageOf(index: number): number {
 
 const LIST_TOP_PAD = 6   // was the scroller's padding-block; now inside the rows
 
-const vlist = useVirtualList({
+/**
+ * How the items flow (0.10.0): one ListFlow for the virtual list, the selection's keys and the marquee
+ * geometry. Lanes = items across a line (the Icons / Media columns; 1 in List and Details).
+ */
+const flow = createListFlow({ order: () => 'rows', lanes: () => cols.value })
+
+const vflow = useVirtualFlow({
   scrollEl: scrollerEl,
   sizerEl,
-  count: () => Math.ceil(pageLen.value / cols.value),
+  flow,
+  count: () => pageLen.value,          // items of the page window
   gap: () => {
     if (isGrid.value) return S.value.gap
     const g = rowsEl.value ? parseFloat(getComputedStyle(rowsEl.value).rowGap) : 0
@@ -517,24 +529,25 @@ const vlist = useVirtualList({
   },
   contentOffset: () => (layout.value === 'details' ? 0 : isGrid.value ? S.value.gap : LIST_TOP_PAD),
   overscan: 6,
-  // Runs immediately, inside useVirtualList: must not touch `vlist` itself.
-  onRange: (s, e) => ensureRows(s, e),
+  // Runs immediately, inside useVirtualFlow: must not touch `vflow` itself.
+  onRange: (first, end) => ensureItems(first, end),
 })
+/** The line windowing underneath (measures, scroll position, place-keeping). */
+const vlist = vflow.lines
 
-/** Loads the rows of visual rows [s, e) of the current page window (source indices). */
-function ensureRows(s: number, e: number) {
-  const c = cols.value
-  source.value?.ensure(pageStart.value + s * c, pageStart.value + Math.min(pageLen.value, e * c))
+/** Loads the rows of items [first, end) of the current page window (source indices). */
+function ensureItems(first: number, end: number) {
+  source.value?.ensure(pageStart.value + first, pageStart.value + end)
 }
 // Same rendered range on another page still needs that page's rows.
-watch(pageStart, () => ensureRows(vlist.start.value, vlist.end.value))
+watch(pageStart, () => ensureItems(vflow.first.value, vflow.end.value))
 
 // Re-measure when the layout, item size or column count changes the rows.
 watch([layout, () => merged.value.itemSize, cols], () => nextTick(() => vlist.measure()))
 
-/** Visual row (in the current page window) of source index `i`. */
+/** Line (in the current page window) of source index `i`. */
 function localRow(i: number): number {
-  return Math.floor((i - pageStart.value) / cols.value)
+  return flow.lineOf(i - pageStart.value)
 }
 
 /** Runs `then` with source index `index` on the current page (switches page first if needed). */
@@ -553,12 +566,12 @@ function withIndexOnPage(index: number, then: () => void) {
  * items; paged lists show one page). useListing, selection and reveal use it.
  */
 const itemView = {
-  start: computed(() => pageStart.value + vlist.start.value * cols.value),
-  end: computed(() => pageStart.value + Math.min(pageLen.value, vlist.end.value * cols.value)),
+  start: computed(() => pageStart.value + vflow.first.value),
+  end: computed(() => pageStart.value + vflow.end.value),
   captureAnchor: (prefer?: number | null) => {
     const onPage = prefer != null && prefer >= pageStart.value && prefer < pageStart.value + pageLen.value
     const a = vlist.captureAnchor(onPage ? localRow(prefer!) : null)
-    return a ? { ...a, index: pageStart.value + a.index * cols.value } : null
+    return a ? { ...a, index: pageStart.value + flow.firstOfLine(a.index) } : null
   },
   restoreAnchor: (a: { index: number; offset: number; edge: 'top' | 'bottom' }, index?: number) => {
     const target = index ?? a.index
@@ -568,18 +581,13 @@ const itemView = {
     })
   },
   scrollToIndex: (index: number, align?: 'start' | 'center' | 'end' | 'nearest') =>
-    withIndexOnPage(index, () => vlist.scrollToIndex(localRow(index), align)),
+    withIndexOnPage(index, () => vflow.scrollToItem(index - pageStart.value, align)),
 }
 
+/** The rendered items, in source indices (contiguous). */
 const itemIndices = computed(() => {
-  const out: number[] = []
-  const c = cols.value
   const base = pageStart.value
-  const end = base + pageLen.value
-  for (const r of vlist.indices.value) {
-    for (let i = base + r * c; i < Math.min(end, base + (r + 1) * c); i++) out.push(i)
-  }
-  return out
+  return vflow.items.value.map(i => base + i)
 })
 
 /** User page change (pager / keys): new page from its top. */
@@ -611,7 +619,7 @@ watch(
     const focus = selection.focusIndex()
     const anchor = focus != null && focus >= oldStart && focus < oldStart + oldLen
       ? focus
-      : Math.min(Math.max(0, total.value - 1), oldStart + firstRow * cols.value)
+      : Math.min(Math.max(0, total.value - 1), oldStart + flow.firstOfLine(firstRow))
     pageIndex.value = pageOf(anchor)
     void nextTick(() => vlist.scrollToIndex(localRow(anchor), focus === anchor ? 'nearest' : 'start'))
   }
@@ -622,8 +630,8 @@ watch(
 ------------------------------------------------ */
 const selection = createListSelection({
   source: () => source.value,
-  columns: () => cols.value,
-  pageSize: () => Math.max(1, Math.floor(vlist.viewportHeight.value / Math.max(1, vlist.rowPitch.value)) - 1),
+  flow,
+  pageSize: () => Math.max(1, vflow.pageLines.value - 1),
   policy,
   onLimit: (l) => {
     showSnack({
@@ -956,15 +964,15 @@ const geo = createVirtualGeometry({
   scrollEl: scrollerEl,
   count: () => pageLen.value,           // the page window…
   offset: () => pageStart.value,        // …hit ranges come back as source indices
-  columns: () => cols.value,
-  cell: () => {
-    // Grid cell geometry from the first rendered cell (viewport-relative).
+  flow,
+  lane: () => {
+    // Cross-axis cell geometry from the first rendered cell (viewport-relative).
     const sc = scrollerEl.value
     const cell = rowsEl.value?.firstElementChild as HTMLElement | null
-    if (!sc || !cell) return { x0: 0, width: 0, gapX: 0 }
+    if (!sc || !cell) return { start: 0, size: 0, gap: 0 }
     const r = cell.getBoundingClientRect()
     const scR = sc.getBoundingClientRect()
-    return { x0: r.left - scR.left - sc.clientLeft, width: r.width, gapX: S.value.gap }
+    return { start: r.left - scR.left - sc.clientLeft, size: r.width, gap: S.value.gap }
   },
 })
 
@@ -979,6 +987,7 @@ const scroller: ScrollerAdapter = {
     const el = scrollerEl.value
     if (el) el.scrollTop += dy
   },
+  axis: () => flow.axis,     // 'y' while the flow is rows (0.10.0)
 }
 
 function pointerInsideScroller(cx: number, cy: number) {
