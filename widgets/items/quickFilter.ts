@@ -185,6 +185,48 @@ export function filterMenu(filter: QuickFilter, registry: TypeRegistry, focusedE
   ]
 }
 
+/** 0.9.0: a declared Filter entry's live state (GEM Shell's contextMenu opts.state). */
+export type FilterEntryState = { checked?: boolean; disabled?: boolean; label?: string; title?: string }
+
+/**
+ * 0.9.0 (GEM Shell 2026-10-29, declared submenus): the Filter submenu as entry.ts declares it (menus.items
+ * children): the live state of its declared entries, what fills its slots (sort.columns, type.list, type.focused),
+ * and the menu situations ('unfiltered': Clear filter hides). Same entries and ids as filterMenu.
+ */
+export function filterMenuParts(filter: QuickFilter, registry: TypeRegistry, focusedExt?: string, sort?: SortState) {
+  const foldersOnly = filter.show === 'folders'
+  const current = sort ? SORT_COLUMNS.find(c => c.key === sort.key) : undefined
+  const state: Record<string, FilterEntryState> = {
+    show: { label: `Show: ${SHOW_LABELS[filter.show]}` },
+    'show.all': { checked: filter.show === 'all' },
+    'show.folders': { checked: filter.show === 'folders' },
+    'show.files': { checked: filter.show === 'files' },
+    type: { label: `Type: ${typeLabel(filter.type, registry)}` },
+    'type.any': { checked: !filter.type, disabled: foldersOnly },
+  }
+  if (sort) state.sort = { label: `Sort: ${current?.label ?? 'Name'} ${sort.dir === 'asc' ? '↑' : '↓'}` }
+
+  const typeList = menuTypes(registry).map(t => ({
+    id: t.ref.startsWith('custom:') ? `type.custom.${t.ref.slice(7)}` : `type.${t.ref}`,
+    label: t.label,
+    checked: filter.type === t.ref,
+    disabled: foldersOnly,
+    title: t.exts.map(ext => `.${ext}`).join(' ').slice(0, 200),
+  }))
+  const focused: Array<Record<string, unknown>> = []
+  if (filter.type?.startsWith('ext:')) focused.push({ id: `type.ext.${filter.type.slice(4)}`, label: typeLabel(filter.type), checked: true })
+  else if (focusedExt) focused.push({ id: `type.ext.${focusedExt}`, label: `Only .${focusedExt} files`, checked: false, disabled: foldersOnly, title: 'The selected file\'s type' })
+  const columns = sort ? SORT_COLUMNS.map(c => c.key === sort.key
+    ? { id: `sort.${c.key}`, label: `${c.label} (${sort.dir === 'asc' ? 'ascending' : 'descending'})`, title: 'Choose again to reverse the order' }
+    : { id: `sort.${c.key}`, label: c.label }) : []
+
+  return {
+    state,
+    slots: { 'sort.columns': columns, 'type.list': typeList, 'type.focused': focused },
+    states: isFiltering(filter) ? [] : ['unfiltered'],
+  }
+}
+
 /** The order once a Sort entry is chosen (the same column again reverses, another starts ascending, like the headers); null: not a sort entry. */
 export function applySortChoice(sort: SortState, choice: string): SortState | null {
   if (!choice.startsWith('sort.')) return null

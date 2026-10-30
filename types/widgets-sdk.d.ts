@@ -2376,6 +2376,19 @@ declare module 'gexplorer/widgets' {
          */
         submenus?: Record<string, WidgetMenuNode[]>
         /**
+         * NEW (2026-10-29): for submenus declared with their entries (menus.items children), what fills their
+         * slots for this menu, by slot id. Flat lists; entry ids start with the slot's prefix ('type.list' ->
+         * 'type.') and aren't declared entries'. A choice reaches onMenuItem({ itemId }).
+         *   ui.contextMenu(e, { slots: { 'type.list': [{ id: 'type.pictures', label: 'Pictures', checked: false }] } })
+         */
+        slots?: Record<string, WidgetMenuNode[]>
+        /**
+         * NEW (2026-10-29): the live state of declared entries for this menu, by entry id: a tick, greyed, a
+         * label showing the current value (Settings › Context Menu keeps the declared one), a tooltip.
+         *   ui.contextMenu(e, { state: { 'show.all': { checked: true }, sort: { label: 'Sort: Name ↑' } } })
+         */
+        state?: Record<string, WidgetMenuEntryState>
+        /**
          * NEW (2026-10-28): which of the widget's menu situations (entry.ts menuStates) are true now.
          * Items the user set to "Disable when…" one of them in sys:context-menus (or whose default,
          * menus.items disableWhen / hideWhen, names one) are greyed with the reason, or left out.
@@ -2388,6 +2401,30 @@ declare module 'gexplorer/widgets' {
          *   ui.contextMenu(e, { context: 'tree.folder', states: narrow ? ['narrow'] : [] })
          */
         states?: string[]
+    }
+
+    /** NEW (2026-10-29): a declared submenu entry's state for one menu (WidgetContextMenuOptions.state). */
+    export type WidgetMenuEntryState = { checked?: boolean; disabled?: boolean; label?: string; title?: string }
+
+    /**
+     * NEW (2026-10-29): an entry of a submenu declared with its entries (menus.items children). The user can
+     * reorder and hide them in Settings › Context Menu, never add to them. Ids: letters, digits, . _ - (unique in
+     * the submenu); 40 entries a list; one nested level.
+     *   { id, label, title?, disableWhen?, hideWhen? }     a choice: onMenuItem({ itemId: id })
+     *   { id, label, type: 'submenu', children: [...] }   a sub-list
+     *   { type: 'separator' }
+     *   { slot, label }                                    filled per menu (contextMenu opts.slots[slot]); label:
+     *                                                      what the editor shows for it
+     */
+    export type WidgetMenuEntryDecl = {
+        id?: string
+        type?: 'command' | 'submenu' | 'separator'
+        label?: string
+        title?: string
+        slot?: string
+        children?: WidgetMenuEntryDecl[]
+        disableWhen?: string[]
+        hideWhen?: string[]
     }
 
     /** NEW (2026-10-28): a widget's menu situation (entry.ts menuStates): id (letters, digits, - _), label. */
@@ -2416,6 +2453,8 @@ declare module 'gexplorer/widgets' {
         id: string
         /** 'submenu' (2026-10-27): its entries come with each right-click (contextMenu opts.submenus[id]). */
         type?: 'command' | 'separator' | 'submenu'
+        /** NEW (2026-10-29): a submenu declared with its entries (WidgetMenuEntryDecl); then opts.slots / state. */
+        children?: WidgetMenuEntryDecl[]
         label?: string
         icon?: string
         contexts: string[]

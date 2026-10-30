@@ -13,7 +13,7 @@ import { ICON_SIZE_IDS, ICON_SIZE_LABELS } from './iconSizes'
 export default {
     api:     '1.0',
     id:      'items',
-    version: '0.8.9',
+    version: '0.9.0',
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     // Takes files and folders anywhere in the pane (dropped on a folder row: into
@@ -74,12 +74,38 @@ export default {
     ],
 	
     // ── The widget's own menu items (2026-10-27) ─────────────────────────────
-    // Right-click on empty space: Filter ▸ (Sort ▸, Show ▸, Type ▸, Clear filter). A submenu whose entries
-    // the widget gives with each right-click (Widget.vue openContextMenu: submenus.filter; GEM Shell
-    // 2026-10-27); a choice reaches onMenuItem.
+    // Right-click on empty space: Filter ▸ (Sort ▸, Show ▸, Type ▸, Clear filter).
+    // CHANGED (0.9.0, GEM Shell 2026-10-29: declared submenus): its entries are declared here, so the user can
+    // reorder and hide them in Settings › Context Menu; the lists only known when the menu opens are slots, and
+    // the ticks and current values come with each right-click (Widget.vue openContextMenu: slots, state;
+    // quickFilter.ts filterMenuParts). A choice reaches onMenuItem.
     menus: { items: [
-        { id: 'filter', type: 'submenu', label: 'Filter', icon: '⏷', contexts: ['background'] },
+        { id: 'filter', type: 'submenu', label: 'Filter', icon: '⏷', contexts: ['background'], hideWhen: ['dialog'],
+          children: [
+            { id: 'sort', type: 'submenu', label: 'Sort', children: [
+                { slot: 'sort.columns', label: 'Sort columns' },
+            ] },
+            { id: 'show', type: 'submenu', label: 'Show', children: [
+                { id: 'show.all', label: 'Everything' },
+                { id: 'show.folders', label: 'Folders only' },
+                { id: 'show.files', label: 'Files only' },
+            ] },
+            { id: 'type', type: 'submenu', label: 'Type', children: [
+                { id: 'type.any', label: 'Any type' },
+                { slot: 'type.list', label: 'Your types and the built-in ones' },
+                { slot: 'type.focused', label: "The selected file's type" },
+                { type: 'separator' },
+                { id: 'types.edit', label: 'Edit types…', title: 'Make your own types, delete them, or hide built-in ones' },
+            ] },
+            { type: 'separator' },
+            { id: 'clear', label: 'Clear filter', hideWhen: ['unfiltered'] },
+          ] },
     ] },
+    // 0.9.0: menu situations ("Disable when…" in Settings › Context Menu)
+    menuStates: [
+        { id: 'unfiltered', label: 'Nothing is filtered' },
+        { id: 'dialog', label: 'In a file dialog' },
+    ],
 
 	actions: [
 		{

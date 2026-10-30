@@ -57,7 +57,7 @@ import ItemsPager from './ItemsPager.vue'
 import { useItemsDragDrop } from './useItemsDragDrop'
 import ItemsTypesPanel from './ItemsTypesPanel.vue'
 import {
-  applyFilterChoice, applySortChoice, chipLabel, effectiveFilter, EMPTY_REGISTRY, filterMenu, isFiltering, listingKinds, NO_FILTER,
+  applyFilterChoice, applySortChoice, chipLabel, effectiveFilter, EMPTY_REGISTRY, filterMenu, filterMenuParts, isFiltering, listingKinds, NO_FILTER,
   quickFilterOf, registryOf, TYPE_GROUPS, TYPES_DOCUMENT, type QuickFilter, type TypeRegistry,
 } from './quickFilter'
 import { createThumbnailLoader, thumbExtsOf, thumbFormat, thumbKey, thumbPx, wantsThumbnail, type ThumbJob } from './thumbnails'
@@ -765,9 +765,11 @@ function contextMenuOptions() {
 
 /** Right-click: the host's menu for this widget (file / folder / multi / background, resolved by the host). */
 function openContextMenu(e: MouseEvent) {
-  // The Filter submenu's entries (entry.ts menus.items 'filter'): this menu's live state.
-  const submenus = inDialog.value ? undefined : { filter: filterEntries() }
-  void ui.contextMenu(e, { ...contextMenuOptions(), ...(submenus ? { submenus } : {}) })
+  // CHANGED (0.9.0): the Filter submenu is declared in entry.ts; this menu's ticks, current values and the lists
+  // only known now (slots) come with it. In a file dialog it hides ('dialog': its own type filter applies there).
+  if (inDialog.value) { void ui.contextMenu(e, { ...contextMenuOptions(), states: ['dialog'] }); return }
+  const parts = filterMenuParts(effectiveQuickFilter.value, typeRegistry.value, focusedExt(), { key: sortKey.value, dir: sortDir.value })
+  void ui.contextMenu(e, { ...contextMenuOptions(), slots: parts.slots, state: parts.state, states: parts.states } as any)
 }
 
 /**
