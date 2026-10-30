@@ -13,7 +13,7 @@ import { ICON_SIZE_IDS, ICON_SIZE_LABELS } from './iconSizes'
 export default {
     api:     '1.0',
     id:      'items',
-    version: '0.9.1',
+    version: '0.9.2',
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     // Takes files and folders anywhere in the pane (dropped on a folder row: into
@@ -153,13 +153,9 @@ export default {
             paging: { pageSizes: [100, 250, 500, 1000, 2500, 5000], defaultPageSize: 500 },
             minSize: { cols: 2, rows: 2 },
         },
-        sidebar: {
-            layouts: [
-                { id: 'compact', icon: '─', tooltip: 'Compact Browser' },
-                { id: 'list',    icon: '☰', tooltip: 'File List'       },
-            ],
-            minHeight: 100,
-        },
+        // 0.9.2 (GEM Shell 2026-10-29, Session K): no sidebar (nor toolbar) context. The explorer works in panes
+        // only (folder tabs, hubs' grids, the file dialog): its navigation and its focus are a pane's. The shell
+        // enforces it for whichever widget is the explorer.
     },
 
     defaults: {

@@ -4,7 +4,7 @@ import Widget from './Widget.vue'
 export default {
   api: '1.0',
   id: 'favorites',
-  version: '0.2.2',
+  version: '0.2.3',
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
 

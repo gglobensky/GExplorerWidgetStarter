@@ -868,10 +868,15 @@ declare module 'gexplorer/widgets' {
     }
     export type GeometryAdapter = RectGeometry | IndexGeometry
 
+    /**
+     * The scroll element along its scroll axis. axis (2026-10-30): 'x' for a list that scrolls sideways
+     * (a 'columns' ListFlow): the methods then mean scrollLeft / its max / a scroll along x. Default 'y'.
+     */
     export type ScrollerAdapter = {
         scrollTop(): number
         maxScrollTop(): number
         scrollBy(dy: number): void
+        axis?: 'x' | 'y' | (() => 'x' | 'y')
     }
 
     export type SelectionEngineLite = {
@@ -1162,12 +1167,19 @@ declare module 'gexplorer/widgets' {
         /** Extra rows above and below the viewport. Default 6. */
         overscan?: number
         onRange?: (start: number, end: number) => void
+        /**
+         * 2026-10-30: the scroll axis. Default 'y'. 'x': lines are columns (scrollLeft, the sizer's width,
+         * column-gap); every member below then means "along the main axis".
+         */
+        axis?: FlowAxis | (() => FlowAxis)
     }
     /**
      * Windowing: every row has the same height; only rows in view (+ overscan)
      * are rendered. Handles lists taller than the browser's element limit.
+     * With axis 'x' the rows are columns (see UseVirtualListOptions.axis).
      */
     export interface VirtualList {
+        axis: ComputedRef<FlowAxis>
         start: ComputedRef<number>
         end: ComputedRef<number>
         indices: ComputedRef<number[]>
@@ -1191,8 +1203,106 @@ declare module 'gexplorer/widgets' {
         captureAnchor(prefer?: number | null): VirtualAnchor | null
         restoreAnchor(anchor: VirtualAnchor, index?: number): void
         measure(): void
+        // 2026-10-30: axis-neutral names (same values as the vertical ones).
+        /** The viewport's other dimension (width on 'y', height on 'x'): what lanes fit into. */
+        viewportCross: Ref<number>
+        lineSize: Ref<number>
+        linePitch: ComputedRef<number>
+        viewportSize: Ref<number>
+        logicalStart: ComputedRef<number>
+        totalSize: ComputedRef<number>
+        offset: ComputedRef<number>
+        logicalAt(viewPos: number): number
+        viewStartOfIndex(index: number): number
+        /** Line under a client point, -1 outside the lines. */
+        indexAtClient(clientX: number, clientY: number): number
+        /** Lines that fit in the viewport (at least 1). */
+        linesInView: ComputedRef<number>
+        /** The scroll content's style (its size along the axis). */
+        contentStyle: ComputedRef<Record<string, string>>
+        /** The rendered block's style (translateX / translateY). */
+        blockStyle: ComputedRef<Record<string, string>>
     }
     export function useVirtualList(options: UseVirtualListOptions): VirtualList
+
+    // ── List flow (2026-10-30): rows or columns ───────────────────────────
+    // A column-major list that scrolls sideways is a row-major list with the
+    // axes swapped. A line is a step along the scroll axis (a row, or a
+    // column); a lane is a slot across it. index = line * lanes + lane in
+    // both orders, so indices stay contiguous: selection ranges, marquee
+    // ranges and the rendered block need nothing new (CSS places the cells:
+    // grid-auto-flow row or column). Give useVirtualFlow, createVirtualGeometry
+    // and createListSelection the same flow.
+    /** 'rows': left to right, then down (scrolls y). 'columns': top to bottom, then right (scrolls x). */
+    export type FlowOrder = 'rows' | 'columns'
+    export type FlowAxis = 'x' | 'y'
+    export interface ListFlow {
+        readonly order: FlowOrder
+        /** The scroll axis: 'y' for rows, 'x' for columns. */
+        readonly axis: FlowAxis
+        /** Items across one line; at least 1. */
+        readonly lanes: number
+        lines(count: number): number
+        lineOf(index: number): number
+        laneOf(index: number): number
+        firstOfLine(line: number): number
+        /**
+         * Where a key moves the focus. Rows: Up / Down a line, Left / Right an item. Columns: Left / Right
+         * a column, Up / Down an item. Page keys: `page` lines. A line step back past the start keeps the
+         * lane; past the end: the last item. -1 for an empty list.
+         */
+        step(index: number | null, key: FocusAction, count: number, page?: number): number
+    }
+    export interface ListFlowOptions {
+        /** Default 'rows'. Live: read on each use. */
+        order?: () => FlowOrder
+        /** Default 1. Live. */
+        lanes?: () => number
+    }
+    export function createListFlow(options?: ListFlowOptions): ListFlow
+    /** How many cells of `cell` px, `gap` px apart, fit in `space` px (at least 1). */
+    export function lanesFor(space: number, cell: number, gap?: number): number
+
+    /** Cross-axis cell geometry, viewport-relative px (left / width on rows, top / height on columns). */
+    export type FlowLane = { start: number; size: number; gap: number }
+    export interface UseVirtualFlowOptions {
+        scrollEl: Ref<HTMLElement | null>
+        /** One hidden cell: its size along the axis is the line size. */
+        sizerEl: Ref<HTMLElement | null>
+        rowsEl?: Ref<HTMLElement | null>
+        flow: ListFlow
+        /** Number of ITEMS. */
+        count: Ref<number> | (() => number)
+        /** Px between lines. */
+        gap?: number | (() => number)
+        contentOffset?: number | (() => number)
+        overscan?: number
+        /** For itemAtClient on more than one lane. */
+        lane?: () => FlowLane
+        /** The rendered ITEM range [first, end) (e.g. listing.ensure). */
+        onRange?: (first: number, end: number) => void
+    }
+    /** Windowing in items over a ListFlow (a useVirtualList of lines underneath). */
+    export interface VirtualFlow {
+        /** The line windowing: place-keeping (useListing's vlist), geometry, measures. */
+        lines: VirtualList
+        axis: ComputedRef<FlowAxis>
+        lanes: ComputedRef<number>
+        first: ComputedRef<number>
+        end: ComputedRef<number>
+        /** The rendered items, contiguous. */
+        items: ComputedRef<number[]>
+        /** Lines per viewport (createListSelection's pageSize). */
+        pageLines: ComputedRef<number>
+        contentStyle: ComputedRef<Record<string, string>>
+        blockStyle: ComputedRef<Record<string, string>>
+        scrollToItem(index: number, align?: ScrollAlign): void
+        isItemVisible(index: number): boolean
+        /** null in a gap, outside the lines or past the last item. */
+        itemAtClient(clientX: number, clientY: number): number | null
+        measure(): void
+    }
+    export function useVirtualFlow(options: UseVirtualFlowOptions): VirtualFlow
 
     // ── Virtual geometry (marquee on a useVirtualList) ────────────────────
     export interface VirtualGeometryOptions {
@@ -1206,6 +1316,10 @@ declare module 'gexplorer/widgets' {
         cell?: () => { x0: number; width: number; gapX: number }
         /** Paged lists: source index of the list's first item; hit ranges come back as source indices. Default 0. */
         offset?: () => number
+        /** 2026-10-30: the flow (wins over columns). On 'columns' the rect's axes are swapped. */
+        flow?: ListFlow
+        /** 2026-10-30: cross-axis cell geometry with `flow` (wins over cell). */
+        lane?: () => FlowLane
     }
     export interface VirtualGeometry extends IndexGeometry {
         /** Logical scroll distance since the last call: pass to driver.adjustForScroll in the scroll handler. */
@@ -1223,9 +1337,11 @@ declare module 'gexplorer/widgets' {
     export type SelectionLimit = { kind: 'range' | 'resolve'; count: number; max: number }
     export interface ListSelectionOptions {
         source: () => ListingSource | null
-        /** Items per visual row (grid). Default 1. */
+        /** Items per visual row (grid). Default 1. Same as a 'rows' flow of that many lanes. */
         columns?: () => number
-        /** Items per page for pageUp / pageDown. Default 20. */
+        /** 2026-10-30: how items flow; the arrow keys follow it (wins over columns). */
+        flow?: ListFlow
+        /** Lines (rows, or columns on a 'columns' flow) per page for pageUp / pageDown. Default 20. */
         pageSize?: () => number
         policy?: 'windows' | 'mac'
         /** Largest range turned into names in the frontend; larger ones become backend sets. Default 5,000. */
@@ -2597,5 +2713,30 @@ declare module 'vue' {
         'gex-video-surface': import('vue').DefineComponent<{
             video: import('gexplorer/widgets').VideoHandle | null | undefined
         }>
+        // NEW (2026-10-29): the shell's path field (README "A path field"): the path bar's predictions; it lists and
+        // checks as your widget (your Read capability). Emits update:modelValue, enter (the text), valid (a GexPathCheck).
+        'gex-path-input': import('vue').DefineComponent<{
+            modelValue?: string; kind?: 'folder' | 'file' | 'any'; showFiles?: boolean; exts?: string[]
+            mustExist?: boolean; lazy?: boolean; placeholder?: string; inputId?: string; disabled?: boolean; mono?: boolean
+            'onUpdate:modelValue'?: (value: string) => void
+            onEnter?: (value: string) => void
+            onValid?: (check: GexPathCheck) => void
+        }>
     }
+}
+
+/** NEW (2026-10-29): what <gex-path-input must-exist> found (its @valid). */
+type GexPathCheck = {
+    /** It exists, and is what the field asks for (kind). */
+    ok: boolean
+    exists: boolean
+    isDir: boolean
+    /** As typed. */
+    typed: string
+    /** Where it leads (folder variables expanded). */
+    expanded: string
+    /** Variables left as typed (not folder variables). */
+    unknown: string[]
+    /** The check line. */
+    message: string
 }

@@ -60,6 +60,72 @@ Then build GEM Shell in Release: it ships everything in `public/runtime-widgets`
 Create `widgets/<type>/entry.ts` with `id: '<type>'` (lowercase letters, digits and dashes) and
 copy a `tsconfig.json` from another widget. `npm run build -- <type>` finds it.
 
+## Places
+
+Where a widget can be placed comes from its `entry.ts` `contexts`: `grid` (a hub's grid), `sidebar`,
+`toolbar`. Declare only the places your widget works in; it is offered for those only.
+
+- **The file explorer is a pane (2026-10-29).** Whichever widget is GEM Shell's explorer (today the
+  GExplorer, `items`; the goal is that a better one can replace it) works in panes only: a folder tab, a
+  hub's grid, the file dialog. Its navigation (its own Back / Forward / Up, the path bar, other widgets
+  opening a folder in "the focused pane") and its focus (its keys, the pane GEM Shell aims at) are a
+  pane's. The shell never offers it for the sidebar or the toolbar, whatever its `contexts` say, and
+  shows a notice instead of running it if one was placed there before. An explorer replacing the
+  GExplorer gets the same rule: build it for panes.
+
+## A path field
+
+`<gex-path-input>` (GEM Shell, 2026-10-29) is the shell's path field: a text field with the path bar's predictions.
+Use it wherever your widget asks for a path; it needs no import.
+
+```vue
+<gex-path-input v-model="folder" kind="folder" must-exist @valid="c => ok = c.ok" />
+```
+
+- Typing a separator lists that folder; typing filters; **Tab** takes the highlighted entry (no list: Tab moves
+  the focus); Enter takes it after moving to it; Escape closes the list; Ctrl+Backspace deletes back to the previous
+  separator. Folder variables work (`%APPDATA%\`, `~/`): only the ones that name folders.
+- `v-model`: the text as typed. `lazy`: updated on Enter, blur and a pick only.
+- `show-files` suggests files too (folders only by default); `exts: ['exe', 'lnk']` limits them.
+- `must-exist`: a check line under it ("✓ Folder: C:\…", "There's no folder at …"); `kind` ('folder' | 'file' |
+  'any') is what it expects; `@valid` gets `{ ok, exists, isDir, typed, expanded, unknown, message }`.
+- `@enter`: Enter with nothing picked. `placeholder`, `disabled`, `input-id`, `:mono="false"`.
+- It lists and checks **as your widget**: it needs your `Read` capability (without it, no suggestions), the same as
+  your own listings.
+- Its look: CSS variables `--gpi-bg`, `--gpi-border`, `--gpi-radius`, `--gpi-font-size`, `--gpi-fg`, `--gpi-pad`
+  on it or a parent (your scoped classes don't reach inside it).
+
+## Lists and grids, in rows or in columns
+
+The list kit (GEM Shell, 2026-10-30) handles both flows: **rows** (left to right, then down; scrolls vertically)
+and **columns** (top to bottom, then right; scrolls sideways). One `ListFlow` drives the three parts, so they
+always agree:
+
+```ts
+import { createListFlow, lanesFor, useVirtualFlow, createVirtualGeometry, createListSelection } from 'gexplorer/widgets'
+
+const lanes = ref(1)   // declared first: the flow reads it right away
+const flow = createListFlow({ order: () => arrange.value, lanes: () => lanes.value })   // 'rows' | 'columns'
+const v = useVirtualFlow({ scrollEl, sizerEl, rowsEl, flow, count: () => total.value,
+                           onRange: (first, end) => source.ensure(first, end) })
+watchEffect(() => { lanes.value = lanesFor(v.lines.viewportCross.value - 2 * pad, cellSize, gap) })
+const selection = createListSelection({ source: () => src, flow, pageSize: () => v.pageLines.value - 1,
+                                        onFocusMove: i => v.scrollToItem(i) })
+const geo = createVirtualGeometry({ vlist: v.lines, scrollEl, flow, count: () => total.value, lane: () => laneGeometry() })
+```
+
+- `v.items` is one contiguous run of item indices: render them in order and let CSS place them
+  (`grid-auto-flow: row` with `grid-template-columns: repeat(lanes, …)`, or `grid-auto-flow: column` with
+  `grid-template-rows: repeat(lanes, …)`). `v.contentStyle` / `v.blockStyle` size and move them on the right axis.
+- Lanes are yours to choose: `lanesFor(space, cell, gap)` over the viewport's other side
+  (`v.lines.viewportCross`): its width in rows, its height in columns.
+- Keys stay yours too (your keymap / commands): `selection.focusMove('left')` etc. go where the flow says.
+  In columns, Left / Right move a column and Up / Down an item, and Down at a column's bottom continues at the
+  top of the next one.
+- Shift ranges and the marquee work unchanged (indices are contiguous in both orders); give the marquee
+  driver's scroller `axis: () => flow.axis` so it auto-scrolls the right way.
+- `useVirtualList` still works alone (now with `axis: 'x'`); `columns` options still mean a rows flow.
+
 ## Keys
 
 What a widget does with keys (the key mapper, 2026-10-24):

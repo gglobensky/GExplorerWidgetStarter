@@ -173,8 +173,13 @@ function cancel() { picking?.abort(); props.close?.() }
       <div v-if="mode === 'item'" class="fd-field">
         <span class="fd-label">{{ locations.length > 1 ? 'Opens side by side' : 'Opens' }}</span>
         <div v-for="(_, i) in locations" :key="i" class="fd-row">
-          <input :ref="i === 0 ? (el => { firstInput = el as HTMLInputElement | null }) : undefined" v-model="locations[i]" type="text" spellcheck="false"
-                 :placeholder="i === 0 ? 'C:\\Users\\you\\Downloads, home:, sys:settings' : 'Another folder'" />
+          <!-- 0.2.3 (GEM Shell 2026-10-29): the shell's path field: the path bar's predictions (Tab takes one), %APPDATA% and
+               the like; it lists as this widget. No check line: hubs and sys: pages (home:, sys:settings) are valid here. -->
+          <gex-path-input :ref="i === 0 ? ((el: any) => { firstInput = el as HTMLInputElement | null }) : undefined"
+                          v-model="locations[i]"
+                          class="fd-path"
+                          kind="folder"
+                          :placeholder="i === 0 ? 'C:\\Users\\you\\Downloads, home:, sys:settings' : 'Another folder'" />
           <button type="button" class="fd-icon-btn" title="Choose a folder" @click="browse(i)">…</button>
           <button v-if="locations.length > 1" type="button" class="fd-icon-btn" title="Remove this folder" @click="removeRow(i)">✕</button>
         </div>
@@ -256,6 +261,15 @@ function cancel() { picking?.abort(); props.close?.() }
 .fd-label { font-size: 12px; color: var(--fd-muted); }
 .fd-row { display: flex; gap: 4px; }
 .fd-row input { flex: 1; width: auto; }
+/* 0.2.3: the shell's path field, in this dialog's field look */
+.fd-path {
+  flex: 1;
+  --gpi-bg: var(--fd-field);
+  --gpi-border: var(--fd-line);
+  --gpi-pad: 5px 8px;
+  --gpi-font-size: inherit;
+  --gpi-fg: inherit;
+}
 .fd input, .fd select {
   width: 100%;
   min-width: 0;
