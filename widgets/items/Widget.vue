@@ -837,10 +837,11 @@ function contextMenuOptions() {
 /** Right-click: the host's menu for this widget (file / folder / multi / background, resolved by the host). */
 function openContextMenu(e: MouseEvent) {
   // CHANGED (0.9.0): the Filter submenu is declared in entry.ts; this menu's ticks, current values and the lists
-  // only known now (slots) come with it. In a file dialog it hides ('dialog': its own type filter applies there).
-  if (inDialog.value) { void ui.contextMenu(e, { ...contextMenuOptions(), states: ['dialog'] }); return }
+  // only known now (slots) come with it.
+  // CHANGED (0.11.1): in a file dialog too, for its Sort: 'dialog' greys Show and Type (its own type filter applies
+  // there; the quick filter is off: effectiveQuickFilter) and leaves Clear filter out (entry.ts rules).
   const parts = filterMenuParts(effectiveQuickFilter.value, typeRegistry.value, focusedExt(), { key: sortKey.value, dir: sortDir.value })
-  void ui.contextMenu(e, { ...contextMenuOptions(), slots: parts.slots, state: parts.state, states: parts.states } as any)
+  void ui.contextMenu(e, { ...contextMenuOptions(), slots: parts.slots, state: parts.state, states: menuStatesNow(parts.states) } as any)
 }
 
 /**
@@ -1661,8 +1662,15 @@ function onPlaneWheel(ev: WheelEvent) {
   el.scrollLeft += ev.deltaY * unit
 }
 
+/** The menu situations now (entry.ts menuStates): the filter's, and 'dialog' in a file dialog (0.11.1). */
+function menuStatesNow(filterStates: string[]): string[] {
+  return inDialog.value ? ['dialog', ...filterStates] : filterStates
+}
+
 /** A Filter entry chosen (the submenu, the compact menu): the new filter, or the types editor. */
 function chooseFilter(choice: string) {
+  // 0.11.1: in a file dialog only the order applies (the quick filter is off there), whatever the menu's rules say
+  if (inDialog.value && !choice.startsWith('sort.')) return
   if (choice === 'types.edit') { openTypesEditor(); return }
   const sort = applySortChoice({ key: sortKey.value, dir: sortDir.value }, choice)
   if (sort) {
@@ -1678,12 +1686,14 @@ function chooseFilter(choice: string) {
 
 /** The chip and the Filter command: the same entries, flat (ui.menu), under `anchor`. */
 async function openFilterMenu(anchor: HTMLElement | null) {
-  if (inDialog.value || !anchor) return
+  if (!anchor) return
+  // 0.11.1: in a file dialog too (its Sort); the old flat list below stays out of dialogs
+  if (inDialog.value && typeof ui.declaredMenu !== 'function') return
   // 0.9.1: the Filter submenu as the user arranged it in Settings › Context Menu (order, hidden entries), drawn by
   // GEM Shell (ui.declaredMenu); an older shell without it: the list below, as before.
   if (typeof ui.declaredMenu === 'function') {
     const parts = filterMenuParts(effectiveQuickFilter.value, typeRegistry.value, focusedExt(), { key: sortKey.value, dir: sortDir.value })
-    const choice = await ui.declaredMenu(anchor, 'filter', { slots: parts.slots, state: parts.state, states: parts.states, label: 'Filter' })
+    const choice = await ui.declaredMenu(anchor, 'filter', { slots: parts.slots, state: parts.state, states: menuStatesNow(parts.states), label: 'Filter' })
     if (choice) chooseFilter(choice)
     return
   }

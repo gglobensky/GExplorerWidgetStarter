@@ -19,8 +19,9 @@ const ARRANGES = [
 export default {
     api:     '1.0',
     id:      'items',
-    version: '0.11.0',   // 0.10.0 (GEM Shell 2026-10-30, M2): useVirtualFlow + a ListFlow; 0.10.1 (M3): Arrange in columns;
+    version: '0.11.1',   // 0.10.0 (GEM Shell 2026-10-30, M2): useVirtualFlow + a ListFlow; 0.10.1 (M3): Arrange in columns;
                          // 0.11.0 (D4b, 2026-10-31): hidden / protected files from sdk.prefs(); the Layout of a new folder setting
+                         // 0.11.1 (2026-10-31): Filter ▸ Sort in the file dialog (Show / Type greyed there)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     // A file explorer (GEM Shell 2026-10-31, E4a): works in panes; one explorer is GEM Shell's default
@@ -89,17 +90,19 @@ export default {
     // the ticks and current values come with each right-click (Widget.vue openContextMenu: slots, state;
     // quickFilter.ts filterMenuParts). A choice reaches onMenuItem.
     menus: { items: [
-        { id: 'filter', type: 'submenu', label: 'Filter', icon: '⏷', contexts: ['background'], hideWhen: ['dialog'],
+        // 0.11.1: shown in a file dialog too, for its Sort; Show and Type are greyed there (the dialog's own type
+        // filter applies), Clear filter left out. Rules the user can change in Settings › Context Menu.
+        { id: 'filter', type: 'submenu', label: 'Filter', icon: '⏷', contexts: ['background'],
           children: [
             { id: 'sort', type: 'submenu', label: 'Sort', children: [
                 { slot: 'sort.columns', label: 'Sort columns' },
             ] },
-            { id: 'show', type: 'submenu', label: 'Show', children: [
+            { id: 'show', type: 'submenu', label: 'Show', disableWhen: ['dialog'], children: [
                 { id: 'show.all', label: 'Everything' },
                 { id: 'show.folders', label: 'Folders only' },
                 { id: 'show.files', label: 'Files only' },
             ] },
-            { id: 'type', type: 'submenu', label: 'Type', children: [
+            { id: 'type', type: 'submenu', label: 'Type', disableWhen: ['dialog'], children: [
                 { id: 'type.any', label: 'Any type' },
                 { slot: 'type.list', label: 'Your types and the built-in ones' },
                 { slot: 'type.focused', label: "The selected file's type" },
@@ -107,7 +110,7 @@ export default {
                 { id: 'types.edit', label: 'Edit types…', title: 'Make your own types, delete them, or hide built-in ones' },
             ] },
             { type: 'separator' },
-            { id: 'clear', label: 'Clear filter', hideWhen: ['unfiltered'] },
+            { id: 'clear', label: 'Clear filter', hideWhen: ['unfiltered', 'dialog'] },
           ] },
     ] },
     // 0.9.0: menu situations ("Disable when…" in Settings › Context Menu)
