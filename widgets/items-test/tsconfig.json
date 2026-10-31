@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.json",
+  "include": ["./**/*.ts", "./**/*.vue", "../../shared/**/*.ts", "../../shared/**/*.vue", "../../types/**/*.d.ts"],
+  "exclude": ["./tests"]
+}

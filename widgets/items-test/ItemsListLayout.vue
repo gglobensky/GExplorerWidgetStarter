@@ -1,0 +1,231 @@
+<script setup lang="ts">
+import { iconFor } from 'gexplorer/widgets'
+import type { ListingEntry } from 'gexplorer/widgets'
+
+/* -----------------------------------------------
+   Virtual list layout (L3b)
+   Renders only the rows Widget.vue hands in (`indices`, from useVirtualList)
+   inside a block translated to `offsetY`, in a container `totalHeight` tall.
+   Rows not loaded yet render as same-height placeholders. One hidden sizer
+   row (same classes) gives the row height: every row must stay one line.
+------------------------------------------------ */
+const props = defineProps<{
+  indices: number[]
+  rowAt: (index: number) => ListingEntry | undefined
+  isSelected: (index: number) => boolean
+  iconKeyOf: (entry: ListingEntry) => string
+  /** A folder shortcut that opens outside GEM Shell: badged. */
+  opensElsewhere?: (entry: ListingEntry) => boolean
+  /** 0.8.9: a GEM Shell shortcut's folder count (2-4, side by side), else 0: badged with the number. */
+  paneCountOf?: (entry: ListingEntry) => number
+  /** 0.8.6: on the clipboard as cut (shown faded until the clipboard changes). */
+  isCut?: (entry: ListingEntry) => boolean
+  totalHeight: number
+  offsetY: number
+  bindSizer: (el: any) => void
+  bindRows: (el: any) => void
+  iconsTick: number
+  sourceId: string
+  folderDropTarget?: string | null
+}>()
+
+const emit = defineEmits<{
+  (e: 'rowDown', payload: { index: number; ev: PointerEvent }): void
+  (e: 'rowMove', payload: { x: number; y: number }): void
+  (e: 'rowUp', payload: { index: number }): void
+  (e: 'dblclick', payload: { index: number }): void
+}>()
+
+function iconOf(e: ListingEntry): string {
+  return iconFor({ iconKey: props.iconKeyOf(e), kind: e.Kind, ext: e.Ext })
+}
+function iconIsImg(e: ListingEntry): boolean {
+  const icon = iconOf(e)
+  return icon.startsWith('data:') || icon.startsWith('http') || icon.startsWith('/')
+}
+function keyOf(i: number): string {
+  return props.rowAt(i)?.Name ?? `\u0000placeholder:${i}`
+}
+</script>
+
+<template>
+  <div class="list-root" :data-icons="iconsTick" :style="{ height: totalHeight + 'px' }">
+    <div class="list-rows" :ref="bindRows" :style="{ transform: `translateY(${offsetY}px)` }">
+      <template v-for="i in indices" :key="keyOf(i)">
+        <button
+          v-if="rowAt(i)"
+          class="row"
+          :data-path="rowAt(i)!.FullPath"
+          :data-index="i"
+          :data-kind="rowAt(i)!.Kind"
+          :class="{
+            selected: isSelected(i),
+            cut: isCut?.(rowAt(i)!) ?? false,
+            'is-hidden': !!rowAt(i)!.Hidden,
+            'folder-drop-target': rowAt(i)!.FullPath === props.folderDropTarget,
+          }"
+          @pointerdown.stop="(ev) => emit('rowDown', { index: i, ev })"
+          @pointermove.stop="(ev) => emit('rowMove', { x: ev.clientX, y: ev.clientY })"
+          @click.stop.prevent="() => emit('rowUp', { index: i })"
+          @dblclick.stop.prevent="() => emit('dblclick', { index: i })"
+        >
+          <div class="icon">
+            <img v-if="iconIsImg(rowAt(i)!)" :src="iconOf(rowAt(i)!)" alt="" />
+            <span v-else>{{ iconOf(rowAt(i)!) }}</span>
+            <span v-if="opensElsewhere?.(rowAt(i)!)" class="lnk-elsewhere" title="Opens in the system's file manager, not GEM Shell">↗</span>
+            <span v-else-if="paneCountOf?.(rowAt(i)!)" class="lnk-elsewhere lnk-panes" :title="`Opens ${paneCountOf!(rowAt(i)!)} folders side by side in GEM Shell`">{{ paneCountOf!(rowAt(i)!) }}</span>
+            <span v-if="rowAt(i)!.Hidden" class="hid-badge" :class="{ protected: !!rowAt(i)!.System }" :title="rowAt(i)!.System ? 'Protected system file (hidden and system)' : 'Hidden'">{{ rowAt(i)!.System ? '🛡' : '◌' }}</span>
+          </div>
+          <div
+            class="name"
+            :data-rename-id="rowAt(i)!.FullPath"
+            :data-rename-value="rowAt(i)!.Name"
+            :data-widget-id="sourceId"
+          >{{ rowAt(i)!.Name }}</div>
+        </button>
+        <div v-else class="row placeholder" :data-index="i" aria-hidden="true">
+          <div class="icon" />
+          <div class="name">&nbsp;</div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Row-height probe for useVirtualList (never visible, never scrolls away) -->
+    <div class="row sizer" :ref="bindSizer" aria-hidden="true">
+      <div class="icon" />
+      <div class="name">X</div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.row.folder-drop-target {
+  /* Inset ring in accent color — matches .row.selected but distinct */
+  box-shadow: inset 0 0 0 2px var(--accent, #4ea1ff),
+              inset 0 0 0 4px color-mix(in oklab, var(--accent, #4ea1ff) 25%, transparent) !important;
+  background: color-mix(in oklab, var(--accent, #4ea1ff) 10%, transparent) !important;
+}
+
+/* ================ LIST CONTAINER ================ */
+.list-root {
+  position: relative;
+}
+
+.list-rows {
+  display: grid;
+  gap: var(--space-xs);
+  will-change: transform;
+}
+
+.sizer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.placeholder { opacity: 0.35; }
+
+/* Base icon size for LIST (scoped to this layout only) */
+.list-root .icon {
+  position: relative;
+  width: calc(var(--base-font-size) * 1.4);
+  height: calc(var(--base-font-size) * 1.4);
+  flex: 0 0 calc(var(--base-font-size) * 1.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 0.8.6: cut (on the clipboard to be moved): its content faded, the row's highlight kept */
+.row.cut > * {
+  opacity: 0.5;
+}
+
+/* A folder shortcut that opens outside GEM Shell (shortcuts:probe opensElsewhere, 2026-10-18) */
+/* 0.8.9: a GEM Shell shortcut's folder count (the ↗ badge's place and look, a number) */
+.lnk-panes {
+  min-width: 1.1em;
+  text-align: center;
+  font-weight: 700;
+}
+
+.lnk-elsewhere {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  font-size: 0.6em;
+  line-height: 1;
+  padding: 1px 2px;
+  border-radius: 3px;
+  background: var(--items-bg, #111);
+  color: var(--accent, #4ea1ff);
+  pointer-events: auto;
+}
+
+.list-root .icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Generic row styling (shared base) */
+.row {
+  border: 1px solid var(--items-border);
+  background: var(--items-bg);
+  color: inherit;
+  border-radius: var(--local-radius);
+  display: flex;
+  flex-direction: row;
+  gap: var(--local-spacing);
+  align-items: center;
+  min-height: calc(var(--base-font-size) * 2.4);
+  padding: var(--space-xs) var(--space-sm);
+  box-sizing: border-box;
+  font-size: var(--local-font-md);
+  text-align: var(--items-row-text-align, left);
+  cursor: pointer;
+}
+
+.row:focus,
+.row:focus-visible {
+  outline: none !important;
+}
+
+.row { cursor: grab; }
+.row:active { cursor: grabbing; }
+
+.row.selected {
+  box-shadow: inset 0 0 0 2px var(--accent, #4ea1ff) !important;
+}
+
+.name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: var(--items-name-text-align, left);
+  flex: 1 1 auto;
+  min-width: 0;
+  display: block;
+}
+
+/* 0.11.1: hidden files (and protected system files: hidden AND system), shown when the user shows them
+   (GEM Shell ▸ Files & drives): a badge on the icon's top-left corner and the name in italics. Not faded:
+   faded is cut (on the clipboard). */
+.hid-badge {
+  position: absolute;
+  left: -3px;
+  top: -3px;
+  font-size: 0.55em;
+  line-height: 1;
+  padding: 1px 2px;
+  border-radius: 3px;
+  background: var(--items-bg, #111);
+  color: var(--muted, #9aa4ae);
+  pointer-events: auto;
+}
+.hid-badge.protected { color: var(--warning, #e0a800); }
+.row.is-hidden .name, .cell.is-hidden .name { font-style: italic; }
+</style>
