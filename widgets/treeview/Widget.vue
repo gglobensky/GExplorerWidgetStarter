@@ -21,6 +21,11 @@ const iconKeys = new Map<string, string>()
 // The folder you're browsing when the tree opens ('Location' cap)
 const initialPath = sdk?.getCurrentPath?.() || null
 const available = computed(() => !life || life.visibility.value !== 'collapsed')
+// 0.6.0 (GEM Shell D4b, 2026-10-31): hidden / protected folders as the user set them in GEM Shell (Settings ▸
+// Files & drives), read through sdk.prefs(); none on an older shell. A change lists the tree again (listKey:
+// the panel is redrawn, its expanded folders kept in memory).
+const shellPrefs = sdk?.prefs?.() ?? null
+const listKey = computed(() => `${shellPrefs?.showHidden ? 'h' : ''}${shellPrefs?.showProtected ? 'p' : ''}`)
 const roots = computed<Root[]>(() => {
   const folders: Root[] = [...drives.value.map(d => {
     const capacity = driveStats.value[key(d.root)]
@@ -34,7 +39,12 @@ const source: RootSource = {
   open(path, options) {
     if (!sdk?.openListing) throw new Error('Folder listing access is unavailable. Check the widget’s Read permission.')
     // Folders and folder links (junctions, directory symlinks); file links stay out
-    const source = sdk.openListing(path, { filter: { kinds: ['dir', 'dirLink'] }, sort: { key: 'name', dir: 'asc', foldersFirst: true }, consent: options?.consent })
+    const filter = {
+      kinds: ['dir', 'dirLink'] as Array<'dir' | 'dirLink'>,
+      ...(shellPrefs?.showHidden ? { showHidden: true } : {}),
+      ...(shellPrefs?.showProtected ? { showProtected: true } : {}),
+    }
+    const source = sdk.openListing(path, { filter, sort: { key: 'name', dir: 'asc', foldersFirst: true }, consent: options?.consent })
     // Keep the source's own methods and receiver intact; prepare icons only for requested rows.
     const rows = source.rows.bind(source)
     source.rows = async (...args) => {
@@ -262,8 +272,8 @@ onBeforeUnmount(() => { disposed = true; favoriteRequest++; driveStatsRequest++ 
 <template>
   <div class="tv-widget">
     <div v-if="error" key="error" class="tv-error" role="status"><span>{{ error }}</span><button aria-label="Dismiss message" @click="error = ''">×</button></div>
-    <TreeToolbar v-if="available && placement?.context === 'toolbar'" key="toolbar" :roots="roots" :source="source" :memory="memory" :ui="ui" :icon="folderIcon" :initial-path="initialPath" :widget-id="sourceId" :set-panel="setPanel" :create-folder="createFolder" :refresh-roots="refreshRoots" :favorite="favorite" :menu="menu" :clipboard="clipboard" />
-    <TreePanel v-else-if="available" key="panel" ref="panel" :roots="roots" :source="source" :memory="memory" :icon="folderIcon" :initial-path="initialPath" :context="placement?.context" :widget-id="sourceId" :cut="isCut" @add="createFolder" @refresh-roots="refreshRoots" @favorite="favorite" @menu="menu" @clipboard="clipboard" />
+    <TreeToolbar v-if="available && placement?.context === 'toolbar'" :key="'toolbar' + listKey" :roots="roots" :source="source" :memory="memory" :ui="ui" :icon="folderIcon" :initial-path="initialPath" :widget-id="sourceId" :set-panel="setPanel" :create-folder="createFolder" :refresh-roots="refreshRoots" :favorite="favorite" :menu="menu" :clipboard="clipboard" />
+    <TreePanel v-else-if="available" :key="'panel' + listKey" ref="panel" :roots="roots" :source="source" :memory="memory" :icon="folderIcon" :initial-path="initialPath" :context="placement?.context" :widget-id="sourceId" :cut="isCut" @add="createFolder" @refresh-roots="refreshRoots" @favorite="favorite" @menu="menu" @clipboard="clipboard" />
   </div>
 </template>
 <style scoped>

@@ -391,6 +391,7 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl, fit })
               :class="{
                 selected:             isSelected(i),
                 cut:                  isCut?.(rowAt(i)!) ?? false,
+                'is-hidden': !!rowAt(i)!.Hidden,
                 'folder-drop-target': rowAt(i)!.FullPath === props.folderDropTarget,
                 'vfs-ghost':          rowAt(i)!.Meta?.blobState === 'ghost',
                 'vfs-fetching':       rowAt(i)!.Meta?.blobState === 'fetching',
@@ -409,6 +410,7 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl, fit })
                   <span v-else>{{ iconText(rowAt(i)!) }}</span>
                   <span v-if="opensElsewhere?.(rowAt(i)!)" class="lnk-elsewhere" title="Opens in the system's file manager, not GEM Shell">↗</span>
                   <span v-else-if="paneCountOf?.(rowAt(i)!)" class="lnk-elsewhere lnk-panes" :title="`Opens ${paneCountOf!(rowAt(i)!)} folders side by side in GEM Shell`">{{ paneCountOf!(rowAt(i)!) }}</span>
+                  <span v-if="rowAt(i)!.Hidden" class="hid-badge" :class="{ protected: !!rowAt(i)!.System }" :title="rowAt(i)!.System ? 'Protected system file (hidden and system)' : 'Hidden'">{{ rowAt(i)!.System ? '🛡' : '◌' }}</span>
                 </span>
 
                 <!-- VFS state badge — only rendered when provider declares one.
@@ -705,4 +707,22 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl, fit })
   background: color-mix(in oklab, var(--accent, #4ea1ff) 18%, transparent);
   border-radius: 4px;
 }
+
+/* 0.11.1: hidden files (and protected system files: hidden AND system), shown when the user shows them
+   (GEM Shell ▸ Files & drives): a badge on the icon's top-left corner and the name in italics. Not faded:
+   faded is cut (on the clipboard). */
+.hid-badge {
+  position: absolute;
+  left: -3px;
+  top: -3px;
+  font-size: 0.55em;
+  line-height: 1;
+  padding: 1px 2px;
+  border-radius: 3px;
+  background: var(--items-bg, #111);
+  color: var(--muted, #9aa4ae);
+  pointer-events: auto;
+}
+.hid-badge.protected { color: var(--warning, #e0a800); }
+.row.is-hidden .name, .cell.is-hidden .name { font-style: italic; }
 </style>

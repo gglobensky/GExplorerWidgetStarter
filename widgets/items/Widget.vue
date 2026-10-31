@@ -163,19 +163,25 @@ const activeFilter = computed<ItemsFilter | null>(() => {
  * like the layout); another folder's saved filter replaces it. Chosen in the right-click menu's
  * Filter submenu, the chip, or the Filter command. Not in the file dialog: it has its own filter
  * (data.filters). The types (built-in ones hidden, the user's own) are the whole widget's
- * ('file-types' document). Hidden files: the view's showHidden (a global setting, later in the
- * shell's settings panel), no longer changed from here.
+ * ('file-types' document). Hidden files (0.11.0): GEM Shell's own setting (Settings ▸ Files & drives),
+ * read through sdk.prefs() (showHidden, showProtected), for every widget alike; the view's showHidden only
+ * on an older shell, and in the file dialog when its caller asks for hidden files.
  */
 const quickFilter = ref<QuickFilter>(quickFilterOf(props.config?.view?.quickFilter))
 const typeRegistry = ref<TypeRegistry>(EMPTY_REGISTRY)
 void sdk?.configRead?.(TYPES_DOCUMENT).then((saved: unknown) => { typeRegistry.value = registryOf(saved) })
   .catch((err: unknown) => console.warn('[items] could not read the file types:', err))
-const showHiddenLocal = ref<boolean>(!!(props.config?.view?.showHidden ?? false))
+const shellPrefs = sdk.prefs?.() ?? null
+const showHiddenLocal = computed<boolean>(() => {
+  const asked = !!(props.config?.view?.showHidden ?? false)
+  if (!shellPrefs) return asked
+  return shellPrefs.showHidden || (props.placement?.context === 'dialog' && asked)
+})
+const showProtectedLocal = computed<boolean>(() => !!shellPrefs?.showProtected)
 watch(() => JSON.stringify(props.config?.view?.quickFilter ?? null), () => {
   const next = quickFilterOf(props.config?.view?.quickFilter)
   if (JSON.stringify(next) !== JSON.stringify(quickFilter.value)) quickFilter.value = next
 })
-watch(() => !!(props.config?.view?.showHidden ?? false), (value) => { showHiddenLocal.value = value })
 const effectiveQuickFilter = computed<QuickFilter>(() => props.placement?.context === 'dialog' ? NO_FILTER : effectiveFilter(quickFilter.value, typeRegistry.value))
 
 const autoColumns = computed(() => {
@@ -205,6 +211,17 @@ const cwd = ref<string>('')
  */
 const folderDefault = computed(() => !!props.config?.view?.folderDefault)
 const autoLayout = ref<string | null>(null)
+/**
+ * 0.11.0: the layout of a folder with no view of its own, the user's choice (its page in GEM Shell's Settings:
+ * entry.ts settings `newFolderLayout`): 'auto' (as before: Media for a folder of pictures, videos or music,
+ * else the host's folderView, Details), or always 'list' / 'details' / 'grid' (Icons) / 'media'.
+ */
+const NEW_FOLDER_LAYOUTS = new Set(['auto', 'list', 'details', 'grid', 'media'])
+const itemsSettings = sdk.settings?.() ?? null
+const newFolderLayout = computed<string>(() => {
+  const v = String(itemsSettings?.values?.newFolderLayout ?? 'auto')
+  return NEW_FOLDER_LAYOUTS.has(v) ? v : 'auto'
+})
 
 // The item size, kept here once changed from the widget (Ctrl+wheel, Filter ▸ Icon size): the props
 // catch up after the save; another folder's saved size replaces it.
@@ -307,6 +324,8 @@ function listingFilter(): ListingFilter {
     ...(kinds ? { kinds } : {}),
     guiOnly: !!f?.activeOptions?.includes('guiOnly'),
     showHidden: showHiddenLocal.value,
+    // 0.11.0: protected system files (hidden AND system), when the user shows them (sdk.prefs())
+    ...(showProtectedLocal.value ? { showProtected: true } : {}),
   }
 }
 
@@ -968,9 +987,23 @@ watch(cwd, () => thumbs.clear())
 const AUTO_MEDIA_EXTS: ReadonlySet<string> = new Set([...TYPE_GROUPS.pictures.exts, ...TYPE_GROUPS.videos.exts, ...TYPE_GROUPS.music.exts])
 const AUTO_SAMPLE = 300
 let autoFolder = ''
-watch([folderDefault, cwd, () => listing.snapshot.value.rowsTick, () => listing.snapshot.value.status, () => listing.snapshot.value.basePath], () => {
+let pickedFor = ''   // 0.11.0: the folder the user's fixed new-folder layout was applied to
+watch([folderDefault, cwd, () => listing.snapshot.value.rowsTick, () => listing.snapshot.value.status, () => listing.snapshot.value.basePath, newFolderLayout], () => {
   if (!folderDefault.value) { autoLayout.value = null; autoFolder = ''; return }
   if (autoFolder !== cwd.value) { autoLayout.value = null; autoFolder = '' }
+  // 0.11.0: the user chose one layout for every new folder: no sampling
+  const pick = newFolderLayout.value
+  if (pick !== 'auto') {
+    if (autoLayout.value !== pick) {
+      autoLayout.value = pick
+      autoFolder = cwd.value
+      pickedFor = cwd.value
+      if (sdk?.setView) void sdk.setView({ layout: pick }, { save: false })
+    }
+    return
+  }
+  // Back to 'auto' while a picked layout shows: decide again from the folder's files
+  if (pickedFor) { pickedFor = ''; autoLayout.value = null; autoFolder = '' }
   if (autoFolder || listing.snapshot.value.status !== 'ready') return
   // Only this folder's rows (0.8.3): right after a move, the listing still holds the last folder's,
   // 'ready'. Deciding then gave the folder we came back to the last one's choice.

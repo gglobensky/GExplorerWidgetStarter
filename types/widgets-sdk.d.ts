@@ -78,6 +78,13 @@ declare module 'gexplorer/widgets' {
          */
         settings?: () => WidgetSettings
         /**
+         * 2026-10-31: GEM Shell's file preferences, set by the user in Settings ▸ Files & drives, for every widget
+         * alike: show hidden files, show protected system files. Read-only and reactive: watch it and list again
+         * (pass them to openListing's filter: showHidden / showProtected). Absent on older shells. Same object on
+         * every call.
+         */
+        prefs?: () => Readonly<WidgetShellPrefs>
+        /**
          * Where this widget sends the user (the runAction prop they replaced is gone). Each resolves to { ok: true } or
          * { ok: false, reason: 'no-gesture' | 'not-on-screen' | 'bad-argument' }.
          *   navigate   a place: one location (a folder, a hub "home:", a sys: page) or 2-4 folders side by side
@@ -566,6 +573,14 @@ declare module 'gexplorer/widgets' {
         fields: WidgetSettingField[]
         groups?: Array<{ title: string; description?: string; keys: string[] }>
     }
+    /** sdk.prefs() (2026-10-31): GEM Shell's file preferences, the user's, read-only. */
+    export interface WidgetShellPrefs {
+        /** Show files and folders marked hidden. */
+        showHidden: boolean
+        /** Show protected system files (hidden AND system: desktop.ini, $Recycle.Bin…). */
+        showProtected: boolean
+    }
+
     export interface WidgetSettings {
         /** Read-only and reactive: every declared field's value (its default until the user changes it). */
         readonly values: Readonly<Record<string, WidgetSettingValue>>
@@ -1093,6 +1108,11 @@ declare module 'gexplorer/widgets' {
         guiOnly?: boolean
         /** Include hidden entries (Hidden attribute on Windows, dot-names elsewhere). Default false. */
         showHidden?: boolean
+        /**
+         * 2026-10-31: include protected system files (hidden AND system on Windows). Honoured only while the user
+         * shows them (sdk.prefs().showProtected); otherwise ignored. Default false.
+         */
+        showProtected?: boolean
         /**
          * Keep only these kinds. Default: all. 'link': every link; 'dirLink': folder links only
          * (junctions, directory symlinks). A folder tree asks ['dir', 'dirLink'].
@@ -1817,6 +1837,12 @@ declare module 'gexplorer/widgets' {
     export type WidgetStorageRequest = {
         /** Persistent image assets: MB (more than 200, at most 10240), and why (shown to the user). */
         assets?: { mb: number; reason?: string }
+        /**
+         * 2026-10-31: a cache room beyond the 500 MB every widget has: MB (more than 500, at most 2048), and why
+         * (shown on its page). Not asked: the cache cleans itself (unused 30 days, or beyond the room). The user
+         * sees the usage and may clear it (Settings); the room itself is the widget's.
+         */
+        cache?: { mb: number; reason?: string }
     }
 
     // ── Credits (entry.ts license / about / credits / notices) ────────────

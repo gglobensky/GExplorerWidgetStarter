@@ -19,7 +19,8 @@ const ARRANGES = [
 export default {
     api:     '1.0',
     id:      'items',
-    version: '0.10.1',   // 0.10.0 (GEM Shell 2026-10-30, M2): useVirtualFlow + a ListFlow; 0.10.1 (M3): Arrange in columns
+    version: '0.11.0',   // 0.10.0 (GEM Shell 2026-10-30, M2): useVirtualFlow + a ListFlow; 0.10.1 (M3): Arrange in columns;
+                         // 0.11.0 (D4b, 2026-10-31): hidden / protected files from sdk.prefs(); the Layout of a new folder setting
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     // Takes files and folders anywhere in the pane (dropped on a folder row: into
@@ -165,11 +166,32 @@ export default {
         // enforces it for whichever widget is the explorer.
     },
 
+    // ── Settings (its page in GEM Shell's Settings; sdk.settings(), 0.11.0) ───────────────────────────
+    // Hidden and protected files aren't here: they are GEM Shell's (Settings ▸ Files & drives), for every
+    // widget alike, read through sdk.prefs().
+    settings: {
+        fields: [
+            {
+                key: 'newFolderLayout', type: 'choice', label: 'Layout of a new folder', default: 'auto',
+                hint: 'How a folder you never changed the layout of opens. Automatic: Media for a folder of pictures, '
+                    + 'videos or music, Details otherwise. A folder keeps its own layout once you change it there.',
+                choices: [
+                    { value: 'auto', label: 'Automatic' },
+                    { value: 'details', label: 'Details' },
+                    { value: 'list', label: 'List' },
+                    { value: 'grid', label: 'Icons' },
+                    { value: 'media', label: 'Media' },
+                ],
+            },
+        ],
+        groups: [{ title: 'Folders', keys: ['newFolderLayout'] }],
+    },
+
     defaults: {
         data: { rpath: '' },
         // A folder with no view of its own (folder tabs and hubs alike) starts from view + folderView (GEM Shell,
-        // 2026-10-27); mostly pictures / videos / music: Media instead (Widget.vue, smart default).
-        // Later a choice in the shell's settings panel (GExplorer section).
+        // 2026-10-27); then the user's "Layout of a new folder" (settings above, Widget.vue): Automatic keeps
+        // this, or Media for a folder of pictures / videos / music.
         folderView: { layout: 'details' },
         view: {
             layout:       'list',

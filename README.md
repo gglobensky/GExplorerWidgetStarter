@@ -182,6 +182,45 @@ const off = settings?.onAction('rebuild', async () => { /* the page's button */ 
 - A field GEM Shell can't use is left out with a console error naming it. Values are checked against your
   declaration: what doesn't fit is replaced by the default. Each field has Reset; the page has Reset all.
 - You never draw on the Settings page: it is GEM Shell's, so people can trust it.
+- The user's changes are a draft until they press Save (2026-10-30): `onChange` fires once per Save (`key` is the
+  field when one changed, `null` when several did). Action buttons run at once.
+
+## GEM Shell's file preferences
+
+Hidden and protected files are the user's choice for every widget alike (Settings ▸ Files & drives, 2026-10-31),
+not each widget's. Read them with `sdk.prefs()` (read-only, reactive) and pass them to your listings:
+
+```ts
+const prefs = sdk.prefs?.()
+const filter = computed(() => ({
+  kinds: ['dir', 'dirLink'],
+  ...(prefs?.showHidden ? { showHidden: true } : {}),
+  ...(prefs?.showProtected ? { showProtected: true } : {}),   // honoured only while the user shows them
+}))
+watch(filter, () => reopen())   // the user changed them: list again
+```
+
+GEM Shell lists them on your widget's page ("Set by GEM Shell") when your widget follows them.
+
+## Image storage
+
+`sdk.mediaImageCreate(…, { storage })` keeps images in one of two places (Settings ▸ Widget storage shows both):
+- `'cache'` (the default): **made again when needed**. Gone when unused for 30 days, beyond your room (500 MB), or
+  when the user clears it. Right for anything you can fetch or decode again (posters, thumbnails).
+- `'persistent'`: **kept until you delete it** (`mediaImageDelete`). Counts against your quota (200 MB). Right for
+  what can't be made again (a frame the user picked, an edited cover).
+
+Need more? Declare it in `entry.ts`; the user sees the reason on your page:
+
+```ts
+storage: {
+  assets: { mb: 1024, reason: 'Covers you pick for your films' },   // asked once, the first time you need it
+  cache:  { mb: 1500, reason: 'Posters of your whole library' },     // not asked (at most 2048)
+},
+```
+
+The user can't resize these (your logic may count on them), only see them and clear your cache: expect a cached
+URL to stop working, and make the image again.
 
 ## Keys
 
