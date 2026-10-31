@@ -96,7 +96,8 @@ const rootStyle = computed<Record<string, string>>(() => {
 })
 
 /** The rendered cells: a row-flow grid moved on y, or a column-flow grid moved on x. */
-const cellsStyle = computed<Record<string, string>>(() => {
+// (typed on the arrow: each return is checked on its own; a union of the two literals didn't fit the Record)
+const cellsStyle = computed((): Record<string, string> => {
   const gap = `${props.S.gap}px`
   if (inColumns.value) {
     return {
@@ -118,7 +119,7 @@ const cellsStyle = computed<Record<string, string>>(() => {
 })
 
 /** The sizer cell: as wide as a cell (columns: its width is the line size), its height a cell's. */
-const sizerStyle = computed<Record<string, string>>(() => (inColumns.value
+const sizerStyle = computed((): Record<string, string> => (inColumns.value
   ? { left: '0px', top: `${props.S.gap}px`, width: `${props.cellWidth ?? 104}px` }
   : { left: `${props.S.gap}px`, right: `${props.S.gap}px` }))
 </script>

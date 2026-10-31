@@ -1897,6 +1897,16 @@ declare module 'gexplorer/widgets' {
         notices?: WidgetNotice[]
     }
 
+    /**
+     * NEW (2026-10-31): entry.ts `role`. `'explorer'`: a file explorer, like the GExplorer (`items`). It works in
+     * panes only (never offered for the sidebar or the toolbar). One installed explorer is GEM Shell's DEFAULT: folder
+     * tabs, the file dialog and every "open a folder" use it. Another one runs only where the user places it, a hub's
+     * grid, marked as not the default. Other values are ignored (with a console warning).
+     */
+    export type WidgetRoleDeclaration = {
+        role?: 'explorer'
+    }
+
     /** What sdk.navigate / openPath / openUrl / setView resolve to. */
     export type WidgetViewResult = { ok: true } | { ok: false; reason: 'no-gesture' | 'not-on-screen' | 'bad-argument' }
 

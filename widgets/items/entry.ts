@@ -23,6 +23,8 @@ export default {
                          // 0.11.0 (D4b, 2026-10-31): hidden / protected files from sdk.prefs(); the Layout of a new folder setting
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
+    // A file explorer (GEM Shell 2026-10-31, E4a): works in panes; one explorer is GEM Shell's default
+    role: 'explorer',
     // Takes files and folders anywhere in the pane (dropped on a folder row: into
     // that folder). Moves them (Shift / Ctrl choice: backlog). See the host's
     // widgets/dnd/dropSpec.ts for every field and its default.

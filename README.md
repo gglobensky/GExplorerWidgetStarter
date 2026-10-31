@@ -65,6 +65,10 @@ copy a `tsconfig.json` from another widget. `npm run build -- <type>` finds it.
 Where a widget can be placed comes from its `entry.ts` `contexts`: `grid` (a hub's grid), `sidebar`,
 `toolbar`. Declare only the places your widget works in; it is offered for those only.
 
+- **A file explorer declares `role: 'explorer'` (2026-10-31)** in its `entry.ts` (the GExplorer does). One
+  installed explorer is GEM Shell's **default**: folder tabs, the file dialog and every "open a folder" use
+  it. Another one runs only where the user places it, a hub's grid, with a small `*` saying it isn't the
+  default. Each explorer keeps its own menu layout and per-folder views (for now).
 - **The file explorer is a pane (2026-10-29).** Whichever widget is GEM Shell's explorer (today the
   GExplorer, `items`; the goal is that a better one can replace it) works in panes only: a folder tab, a
   hub's grid, the file dialog. Its navigation (its own Back / Forward / Up, the path bar, other widgets
