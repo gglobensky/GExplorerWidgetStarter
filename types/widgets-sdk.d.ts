@@ -1907,10 +1907,19 @@ declare module 'gexplorer/widgets' {
     // inject<Ref<HTMLElement | null>>('widgetOverlay') (the widget's own layer), not body.
     export type WidgetPlacement = {
         context: 'grid' | 'sidebar' | 'toolbar' | 'embedded' | 'dialog'
-        /** The layout chosen in the Layout menu (or the widget's `variant`). */
+        /**
+         * The layout chosen in the Layout menu (`config.view.layout`), else the first layout the widget declares
+         * for this place, else 'list' (2026-10-31).
+         */
         layout: string
-        /** Sidebar: pixels; elsewhere: grid cells. */
-        size: { width?: number; height?: number } | { cols?: number; rows?: number }
+        /**
+         * CHANGED (2026-10-31): the widget's own box, for laying itself out. Information only: the user sizes
+         * widgets by dragging in Edit Layout, never through a widget.
+         * - `width` / `height`: CSS px, measured in every place (the pane's header row left out), updated as it is
+         *   resized; missing until first measured.
+         * - `cols` / `rows`: grid cells, in a hub's grid and folder panes only.
+         */
+        size: { width?: number; height?: number; cols?: number; rows?: number }
         phase: 'active' | 'idle'
         resizing: boolean
         resizePhase?: 'active' | 'idle'

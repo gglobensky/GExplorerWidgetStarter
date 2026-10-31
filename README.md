@@ -72,6 +72,10 @@ Where a widget can be placed comes from its `entry.ts` `contexts`: `grid` (a hub
   pane's. The shell never offers it for the sidebar or the toolbar, whatever its `contexts` say, and
   shows a notice instead of running it if one was placed there before. An explorer replacing the
   GExplorer gets the same rule: build it for panes.
+- **Your size (2026-10-31).** `props.placement.size.width` / `.height` are your box in CSS pixels, in every
+  place, updated as the user resizes you (in a hub's grid and folder panes, `cols` / `rows` too). Lay yourself
+  out from them instead of guessing the row height. They are information, not a control: the user sizes widgets
+  by dragging in Edit Layout, and a widget never offers pixel fields for its own size.
 
 ## A path field
 
