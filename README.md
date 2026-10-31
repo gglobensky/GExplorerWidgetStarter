@@ -222,6 +222,48 @@ storage: {
 The user can't resize these (your logic may count on them), only see them and clear your cache: expect a cached
 URL to stop working, and make the image again.
 
+## Shared libraries (a suite of widgets)
+
+Code several of your widgets share (components, CSS, helpers, an animated logo…) lives **once** in
+`shared/<name>/` and is **bundled into each widget** that imports it. Change it once, then rebuild the widgets that
+use it:
+
+```
+npm run build -- --lib library-ui        # every widget importing it (directly or through another library)
+npm run test  -- --lib library-ui        # shared/library-ui/tests/*.test.ts
+```
+
+A library is a folder with a `library.json` and an `index.ts` (its public face):
+
+```
+shared/library-ui/
+  library.json   { "name": "library-ui", "version": "1.0.0", "licence": "PolyForm-Noncommercial-1.0.0",
+                   "description": "…", "uses": ["gem-logo"] }
+  index.ts       export { default as MediaShelf } from './MediaShelf.vue' …
+  tests/         *.test.ts (optional)
+```
+
+```ts
+import { MediaShelf, LibraryCase } from '@shared/library-ui'
+```
+
+- Import the library by name (`@shared/<name>`), never a file inside it: export what you need from its `index.ts`.
+- A library imports `vue`, `gexplorer/widgets`, npm packages, its own files, and the libraries listed in its
+  `uses`. Never a widget's files. The build refuses the rest, and loops between libraries.
+- Each build says what it carried (`media-library carries library-ui 1.0.0`). Bump `version` when you change a
+  library, so you can tell which build has which.
+- Every widget stays **one file**, and GEM Shell's identity hash covers it: a library changes nothing about
+  approval, and a change to it reaches a widget only when that widget is rebuilt (and updated). A few KB repeat
+  across bundles; that's expected.
+- Prefix a library's CSS classes (`.lib-library-ui-…`, or the suite's own prefix): its styles then never clash with a
+  widget's.
+- `npm run watch -- <type>` rebuilds a widget when a library it imports changes too.
+- A suite kept in another repo can publish its library as an npm package instead: the build bundles npm packages
+  the same way (and records their licences for the About page).
+- An older `import … from '../../shared/x/…'` still builds, with a warning: switch it to `@shared/x`.
+- What every widget should do the same way (hidden files, the listing filter, the clipboard, prefs) is the SDK's,
+  not a library's.
+
 ## Keys
 
 What a widget does with keys (the key mapper, 2026-10-24):

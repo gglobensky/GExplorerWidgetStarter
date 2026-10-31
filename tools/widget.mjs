@@ -8,7 +8,12 @@
 //   npm run preview   -- <type> [--port <n>]                   widgets/<type>/preview/ with sample data
 //   npm run test      -- <type>                                widgets/<type>/tests/*.test.ts
 //   npm run typecheck -- <type>                                widgets/<type>/tsconfig.json
+//   npm run build     -- --lib <name> [--no-install]           every widget using shared/<name> (2026-10-31)
+//   npm run test      -- --lib <name>                          shared/<name>/tests/*.test.ts
 // (pnpm: pnpm build <type> ...)
+//
+// SHARED LIBRARIES (2026-10-31, tools/libs.mjs, README "Shared libraries"): shared/<name>/ with a library.json,
+// imported as '@shared/<name>', bundled into each widget using it (written once, built into each).
 //
 // BUILD: widgets/<type>/entry.ts -> dist/runtime-widgets/<type>/index.js, ONE file: CSS injected
 // by the JS, assets and lazy imports inlined (GEM Shell's identity hash covers that file: a widget
@@ -34,6 +39,7 @@ import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { widgetNotices, wrapperEntry } from './notices.mjs'
+import { sharedLibraries, widgetsUsing, readLibrary, LibraryError, sharedDir } from './libs.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const WIDGETS = path.join(ROOT, 'widgets')
@@ -54,18 +60,25 @@ const USAGE = `Usage:
   npm run preview   -- <type> [--port <n>]
   npm run test      -- <type>
   npm run typecheck -- <type>
-<type>: a folder of widgets/ (its entry.ts declares the same id).`
+  npm run build     -- --lib <name> [--no-install]     (every widget using shared/<name>)
+  npm run test      -- --lib <name>
+<type>: a folder of widgets/ (its entry.ts declares the same id). <name>: a folder of shared/ (a library).`
 
 // ── Arguments ──────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
     const [command, ...rest] = argv
-    const opts = { command, type: null, all: false, install: true, sourcemap: false, port: null }
+    const opts = { command, type: null, all: false, install: true, sourcemap: false, port: null, lib: null }
     for (let i = 0; i < rest.length; i++) {
         const a = rest[i]
         if (a === '--no-install') opts.install = false
         else if (a === '--sourcemap') opts.sourcemap = true
         else if (a === '--all') opts.all = true
+        else if (a === '--lib') {
+            const name = rest[++i]
+            if (!name || name.startsWith('-')) fail('--lib: a library name (a folder of shared/).')
+            opts.lib = name
+        }
         else if (a === '--port') {
             const n = Number(rest[++i])
             if (!Number.isInteger(n) || n < 1 || n > 65535) fail('--port: a port number (1-65535).')
@@ -75,7 +88,7 @@ function parseArgs(argv) {
         else if (opts.type) fail(`one widget at a time (got ${opts.type} and ${a})\n${USAGE}`)
         else opts.type = a
     }
-    const known = { build: ['install', 'sourcemap', 'all'], watch: ['install'], preview: ['port'], test: [], typecheck: [] }
+    const known = { build: ['install', 'sourcemap', 'all', 'lib'], watch: ['install'], preview: ['port'], test: ['lib'], typecheck: [] }
     if (!command || !(command in known)) fail(`unknown command "${command ?? ''}"\n${USAGE}`)
     const allowed = new Set(known[command])
     if (!opts.install && !allowed.has('install')) fail(`--no-install: not an option of ${command}`)
@@ -83,7 +96,9 @@ function parseArgs(argv) {
     if (opts.port != null && !allowed.has('port')) fail(`--port: not an option of ${command}`)
     if (opts.all && !allowed.has('all')) fail(`--all: not an option of ${command}`)
     if (opts.all && opts.type) fail('--all or a widget, not both')
-    if (!opts.all && !opts.type) fail(`which widget? ${listWidgets().join(', ') || '(none in widgets/)'}\n${USAGE}`)
+    if (opts.lib && !allowed.has('lib')) fail(`--lib: not an option of ${command}`)
+    if (opts.lib && (opts.type || opts.all)) fail('--lib, a widget or --all: one of them')
+    if (!opts.all && !opts.type && !opts.lib) fail(`which widget? ${listWidgets().join(', ') || '(none in widgets/)'}\n${USAGE}`)
     return opts
 }
 
@@ -266,7 +281,13 @@ async function build(type, { watch = false, install: doInstall = true, sourcemap
         root: ROOT,
         clearScreen: false,
         logLevel: 'info',
-        plugins: [widgetNotices({ widgetDir: dir, warn: (m) => log(`${type}: ${m}`) }), vue(), cssInjectedByJs(), output],
+        plugins: [
+            sharedLibraries({
+                root: ROOT, who: type, warn: (m) => log(`${type}: ${m}`),
+                onUsed: (libs) => { if (libs.length) log(`${type} carries ${libs.map(l => `${l.name} ${l.version}`).join(', ')}`) },
+            }),
+            widgetNotices({ widgetDir: dir, warn: (m) => log(`${type}: ${m}`) }), vue(), cssInjectedByJs(), output,
+        ],
         define: { 'process.env.NODE_ENV': JSON.stringify('production') },
         build: {
             target: 'es2020',
@@ -303,7 +324,7 @@ async function preview(type, port) {
         configFile: false,
         root: ROOT,
         clearScreen: false,
-        plugins: [vue()],
+        plugins: [sharedLibraries({ root: ROOT, who: type, warn: (m) => log(`${type}: ${m}`) }), vue()],
         resolve: { alias: { 'gexplorer/widgets': shim } },
         server: { host: '127.0.0.1', port: port ?? 5173, strictPort: port != null },
     })
@@ -312,10 +333,11 @@ async function preview(type, port) {
     log(`${type} preview: ${base}widgets/${type}/preview/`)
 }
 
-function test(type) {
-    const dir = path.join(widgetDir(type), 'tests')
+function test(type, lib) {
+    const owner = lib ? `shared/${lib}` : `widgets/${type}`
+    const dir = lib ? path.join(libraryCheck(lib).dir, 'tests') : path.join(widgetDir(type), 'tests')
     const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter(f => f.endsWith('.test.ts')).sort() : []
-    if (!files.length) fail(`widgets/${type} has no tests (widgets/${type}/tests/*.test.ts).`)
+    if (!files.length) fail(`${owner} has no tests (${owner}/tests/*.test.ts).`)
     const [major, minor] = process.versions.node.split('.').map(Number)
     if (major < 22 || (major === 22 && minor < 6)) fail(`the tests run TypeScript directly: Node 22.6 or later (this is ${process.versions.node}).`)
     const r = spawnSync(process.execPath, ['--experimental-strip-types', '--test', ...files.map(f => rel(path.join(dir, f)))],
@@ -333,6 +355,12 @@ function typecheck(type) {
     return r.status ?? 1
 }
 
+/** shared/<name>, its library.json checked (a Failure, with the library's message). */
+function libraryCheck(name) {
+    try { return readLibrary(ROOT, name) }
+    catch (e) { fail(e instanceof LibraryError ? e.message : String(e?.message ?? e)) }
+}
+
 async function main() {
     const opts = parseArgs(process.argv.slice(2))
     switch (opts.command) {
@@ -344,13 +372,24 @@ async function main() {
                 for (const t of types) checkId(t, widgetDir(t))              // every id before any build
                 for (const t of types) await build(t, { install: opts.install, sourcemap: opts.sourcemap })
                 log(`built ${types.length} widgets: ${types.join(', ')}`)
+            } else if (opts.lib) {
+                // Every widget using the library (directly or through another library): changed once, rebuilt in each
+                const lib = libraryCheck(opts.lib)
+                let types
+                try { types = widgetsUsing(ROOT, opts.lib, listWidgets, filesOf) }
+                catch (e) { fail(e instanceof LibraryError ? e.message : String(e?.message ?? e)) }
+                if (!types.length) fail(`no widget imports shared/${opts.lib} ('@shared/${opts.lib}').`)
+                if (opts.install) shellPublicDir()
+                for (const t of types) checkId(t, widgetDir(t))
+                for (const t of types) await build(t, { install: opts.install, sourcemap: opts.sourcemap })
+                log(`${lib.name} ${lib.version}: rebuilt ${types.length} widget${types.length === 1 ? '' : 's'}: ${types.join(', ')}`)
             } else {
                 await build(opts.type, { install: opts.install, sourcemap: opts.sourcemap })
             }
             return 0
         case 'watch': await build(opts.type, { watch: true, install: opts.install }); return null
         case 'preview': await preview(opts.type, opts.port); return null
-        case 'test': return test(opts.type)
+        case 'test': return test(opts.type, opts.lib)
         case 'typecheck': return typecheck(opts.type)
     }
 }
