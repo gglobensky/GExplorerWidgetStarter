@@ -72,6 +72,12 @@ declare module 'gexplorer/widgets' {
          */
         geolocate?: () => Promise<GeoCity>
         /**
+         * 2026-10-30: the values of the settings this widget declares (entry.ts `settings`), which the user sets on its
+         * page in GEM Shell's Settings (drawn by the shell). One set for every copy of the widget. Only for widgets
+         * declaring settings. Same object on every call.
+         */
+        settings?: () => WidgetSettings
+        /**
          * Where this widget sends the user (the runAction prop they replaced is gone). Each resolves to { ok: true } or
          * { ok: false, reason: 'no-gesture' | 'not-on-screen' | 'bad-argument' }.
          *   navigate   a place: one location (a folder, a hub "home:", a sys: page) or 2-4 folders side by side
@@ -536,6 +542,40 @@ declare module 'gexplorer/widgets' {
      * or no location on this system yet), timeout, error.
      */
     export type GeolocateErrorCode = 'no-gesture' | 'declined' | 'os-off' | 'unavailable' | 'timeout' | 'error'
+
+    // ── Widget settings (entry.ts `settings`, 2026-10-30) ─────────────────
+    // Declared fields; GEM Shell draws them on the widget's page in Settings, checks and stores the values (one set
+    // per widget type), and hands them over through sdk.settings().
+    export type WidgetSettingValue = boolean | string | number | string[] | Array<{ key: string; value: string }>
+    export type WidgetSettingShowWhen = { key: string; equals?: unknown; in?: unknown[]; truthy?: boolean }
+    type WidgetSettingBase = { key: string; label: string; hint?: string; showWhen?: WidgetSettingShowWhen }
+    /** One field of entry.ts `settings.fields` (a key: a letter, then letters, digits, _ or -; 40 at most). */
+    export type WidgetSettingField =
+        | (WidgetSettingBase & { type: 'toggle'; default?: boolean })
+        | (WidgetSettingBase & { type: 'choice'; choices: Array<{ value: string | number; label: string }>; default?: string | number })
+        | (WidgetSettingBase & { type: 'number'; min?: number; max?: number; step?: number; unit?: string; slider?: boolean; default?: number })
+        | (WidgetSettingBase & { type: 'text'; maxLength?: number; placeholder?: string; default?: string })
+        | (WidgetSettingBase & { type: 'path'; kind?: 'folder' | 'file' | 'any'; default?: string })
+        | (WidgetSettingBase & { type: 'color'; default?: string })
+        | (WidgetSettingBase & { type: 'list'; item?: 'text' | 'path'; kind?: 'folder' | 'file' | 'any'; maxItems?: number; default?: string[] })
+        | (WidgetSettingBase & { type: 'keyValue'; keyLabel?: string; valueLabel?: string; maxItems?: number; default?: Array<{ key: string; value: string }> })
+        /** A button on the widget's page: runs the handler of every open instance (sdk.settings().onAction(key, fn)). */
+        | (WidgetSettingBase & { type: 'action'; buttonLabel?: string })
+    /** entry.ts `settings`. */
+    export type WidgetSettingsDecl = {
+        fields: WidgetSettingField[]
+        groups?: Array<{ title: string; description?: string; keys: string[] }>
+    }
+    export interface WidgetSettings {
+        /** Read-only and reactive: every declared field's value (its default until the user changes it). */
+        readonly values: Readonly<Record<string, WidgetSettingValue>>
+        /** Resolves once the stored values are read (values holds the defaults before). */
+        readonly ready: Promise<void>
+        /** After the user changed one (key) or several (null: a reset). Returns: stop listening. */
+        onChange(fn: (values: Readonly<Record<string, WidgetSettingValue>>, key: string | null) => void): () => void
+        /** The handler of an action field; the button is enabled while an instance has one. Returns: remove it. */
+        onAction(key: string, fn: () => void | Promise<void>): () => void
+    }
 
     // ── FS types ───────────────────────────────────────────────────────────
 

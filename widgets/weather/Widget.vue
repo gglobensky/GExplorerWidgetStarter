@@ -28,6 +28,12 @@ const emit = defineEmits<{
 const sdk = inject<WidgetSdk>("widgetSdk");
 const ui = sdk?.ui?.();
 const lifecycle = sdk?.lifecycle?.();
+/**
+ * 1.5.0 (2026-10-30): settings for every Weather widget, set on its page in GEM Shell's control panel (entry.ts
+ * `settings`, sdk.settings()): units, coloured icons, the backdrop, how often it refreshes, and "Refresh now".
+ * Without them (an older shell), the placement's view config as before.
+ */
+const settings = sdk?.settings?.();
 // The source link has no href: with one, the WebView connects to the site as soon as it is pressed, before any
 // handler runs (NetGuard refuses it: "tried to reach open-meteo.com"). sdk.openUrl asks the user, naming this widget.
 const SOURCE_URL = "https://open-meteo.com/en/licence";
@@ -67,11 +73,14 @@ const now = ref(Date.now()),
 const flip = ref(""),
   direction = ref(1),
   reducedMotion = ref(true);
-const unit = computed(() => (props.config?.view?.units === "F" ? "F" : "C"));
-const colored = computed(() => props.config?.view?.coloredIcons !== false);
-const atmosphere = computed(() => props.config?.view?.atmosphere !== false);
+const unit = computed(() => ((settings ? settings.values.units : props.config?.view?.units) === "F" ? "F" : "C"));
+const colored = computed(() => (settings ? settings.values.coloredIcons : props.config?.view?.coloredIcons) !== false);
+const atmosphere = computed(() => (settings ? settings.values.atmosphere : props.config?.view?.atmosphere) !== false);
 const refreshInterval = computed(() =>
-  Math.max(300000, props.config?.view?.refreshInterval || 900000),
+  Math.max(
+    300000,
+    settings ? Number(settings.values.refreshMinutes) * 60000 || 900000 : props.config?.view?.refreshInterval || 900000,
+  ),
 );
 const locale = navigator.language || "en";
 const region = computed(() =>
@@ -399,6 +408,8 @@ onMounted(() => {
   });
   if (root.value) resize.observe(root.value);
   cleanups.push(() => resize.disconnect());
+  // The control panel's "Refresh now" (an action setting): every open Weather widget refreshes.
+  if (settings) cleanups.push(settings.onAction("refreshNow", () => refresh()));
   const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const updateMotion = () => {
     reducedMotion.value = motion.matches;

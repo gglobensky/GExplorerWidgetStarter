@@ -150,6 +150,39 @@ try {
 - The user is asked first (the shell's consent dialog); errors carry a `code`: `no-gesture`, `declined`, `os-off`,
   `unavailable`, `timeout`, `error`.
 
+## Settings
+
+Declare fields in `entry.ts` (GEM Shell, 2026-10-30): GEM Shell draws them on your widget's page in Settings (its
+Settings tab), checks and saves what the user picks, and gives it to you. One set of values for every copy of your
+widget; per-copy choices stay in your own UI.
+
+```ts
+settings: {
+  fields: [
+    { key: 'units', type: 'choice', label: 'Temperature', default: 'C',
+      choices: [{ value: 'C', label: 'Celsius' }, { value: 'F', label: 'Fahrenheit' }] },
+    { key: 'refreshMinutes', type: 'number', label: 'Refresh every', unit: 'minutes', min: 5, max: 120, step: 5, slider: true, default: 15 },
+    { key: 'rebuild', type: 'action', label: 'Rebuild the index', buttonLabel: 'Rebuild now' },
+  ],
+  groups: [{ title: 'Display', keys: ['units'] }],
+},
+```
+
+```ts
+const settings = sdk.settings?.()
+const unit = computed(() => settings?.values.units === 'F' ? 'F' : 'C')     // reactive
+settings?.onChange((values, key) => { /* after the user changed one */ })
+const off = settings?.onAction('rebuild', async () => { /* the page's button */ })
+```
+
+- Types: `toggle`, `choice` (radios up to 4, a list beyond), `number` (`slider` with min and max), `text`, `path`
+  (GEM Shell's path field), `color` (`#rrggbb`), `list` (of text or paths: add, remove, reorder), `keyValue`, and
+  `action` (a button running your handler; enabled while a copy of your widget is open).
+- `showWhen: { key, equals | in | truthy }` shows a field only when another fits. `hint` explains it.
+- A field GEM Shell can't use is left out with a console error naming it. Values are checked against your
+  declaration: what doesn't fit is replaced by the default. Each field has Reset; the page has Reset all.
+- You never draw on the Settings page: it is GEM Shell's, so people can trust it.
+
 ## Keys
 
 What a widget does with keys (the key mapper, 2026-10-24):
