@@ -2499,6 +2499,12 @@ declare module 'gexplorer/widgets' {
             parent?: WidgetPopoverHandle | null
             /** GEM Shell 2026-10-31: the frame's look. Ignored for 'center'. */
             style?: WidgetPopoverStyle
+            /**
+             * GEM Shell 2026-10-31: a hover submenu (child levels only). Opening it needs no fresh click while the
+             * pointer is over your open popover; it closes by itself once the pointer has been off it, its children
+             * and its parent for a moment. Opening it again on the same row leaves it open (no toggle).
+             */
+            hover?: boolean
         }): WidgetPopoverHandle | null
         /**
          * GEM Shell 2026-10-31: a drag ghost GEM Shell draws at the pointer, for a drag that leaves your box

@@ -344,6 +344,11 @@ popover handles (a child of that one) or `null` (a top-level one; your others cl
 ui.openPopover({ anchor: rowEl, component: FolderMenu, props: { folderId }, placement: 'right' })
 ```
 
+A child level placed `'right'` / `'left'` sits against its parent's edge, at its row's height, never
+over the parent. **Hover submenus**: `hover: true` on a child level lets it open on a hover (no
+fresh click needed while the pointer is over your popover) and closes it by itself once the pointer
+has been off it, its children and its parent for a moment; opening it again on its row leaves it open.
+
 **Your look.** `openPopover({ ..., style })` restyles the frame: `background`, `color`,
 `borderColor` (CSS colours or theme variables), `borderWidth` (0–3), `radius` (0–16), `shadow`
 (`'none' | 'small' | 'normal' | 'large'`), `padding` (0–16). Size, position, stacking and the close

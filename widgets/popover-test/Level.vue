@@ -22,17 +22,17 @@ function openChild(el: HTMLElement) {
     component: markRaw(props.self),
     props: { depth: props.depth + 1, styled: props.styled, self: props.self, isDragging: props.isDragging },
     placement: 'right',
+    hover: true,   // E5c-2a: opens on hover, closes after a moment off it and its parent
     style: props.styled ? { background: '#1d2b1d', color: '#c8f7c8', borderColor: '#4caf50', borderWidth: 2, radius: 14, padding: 6 } : undefined,
   })
   if (!p) console.warn(`[popover-test] level ${props.depth + 1} refused`)
 }
 
-// During a drag: a folder row opens its child after a short hover (the held gesture lets it, however long the drag).
+// A folder row opens its child on hover (E5c-2a), a little later during a drag (the held gesture lets it).
 let timer: number | null = null
 function onEnter(e: PointerEvent) {
-  if (!props.isDragging()) return
   const el = e.currentTarget as HTMLElement
-  timer = window.setTimeout(() => openChild(el), 450)
+  timer = window.setTimeout(() => openChild(el), props.isDragging() ? 450 : 150)
 }
 function onLeave() { if (timer !== null) { clearTimeout(timer); timer = null } }
 onBeforeUnmount(onLeave)
@@ -46,7 +46,7 @@ onBeforeUnmount(onLeave)
             @pointerenter="onEnter" @pointerleave="onLeave">
       📁 {{ r.label }} ›
     </button>
-    <button type="button" class="r" @click="close?.()">Close this level</button>
+    <button type="button" class="r" @click="close?.()">Close this level <span class="x">✕</span></button>
   </div>
 </template>
 
@@ -55,4 +55,5 @@ onBeforeUnmount(onLeave)
 .title { font-weight: 600; padding: 4px 8px; opacity: .7; }
 .r { text-align: left; padding: 5px 8px; border: 0; border-radius: 4px; background: transparent; color: inherit; cursor: pointer; }
 .r:hover { background: rgba(255, 255, 255, .08); }
+.x { float: right; opacity: .6; }
 </style>
