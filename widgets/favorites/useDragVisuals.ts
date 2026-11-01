@@ -12,6 +12,11 @@ export type UseDragVisualsOptions = {
   rowEls: Map<RootRowId, HTMLElement>
   findFolderNodeById: (id: string | null) => FavoriteTreeNode | null
   openFolderDropdownFromDrag: (folder: FavoriteTreeNode, anchor: HTMLElement | null) => void
+  /**
+   * 0.2.4 (GEM Shell E5d / E5e): where the drag ghost is drawn: the widget's own overlay layer (inject('widgetOverlay')).
+   * GEM Shell refuses a widget inserting into document.body; with no layer, no ghost (the insert bar still shows).
+   */
+  ghostHost: () => HTMLElement | null
 }
 
 export function useDragVisuals(opts: UseDragVisualsOptions) {
@@ -21,6 +26,7 @@ export function useDragVisuals(opts: UseDragVisualsOptions) {
     rowEls,
     findFolderNodeById,
     openFolderDropdownFromDrag,
+    ghostHost,
   } = opts
 
   // Ghost element (follows cursor)
@@ -62,11 +68,16 @@ export function useDragVisuals(opts: UseDragVisualsOptions) {
     teardownDragVisuals()
 
     const row = rowEls.get(id)
-    if (!row) return
+    const host = ghostHost()
+    if (!row || !host) return
 
     const rect = row.getBoundingClientRect()
 
     ghostEl = row.cloneNode(true) as HTMLElement
+    // A picture of the row, nothing to find or use: no id, hidden from assistive tech, inert
+    ghostEl.removeAttribute('id')
+    ghostEl.setAttribute('aria-hidden', 'true')
+    ghostEl.setAttribute('inert', '')
     ghostEl.style.position = 'fixed'
     ghostEl.style.left = '0'
     ghostEl.style.top = '0'
@@ -77,7 +88,9 @@ export function useDragVisuals(opts: UseDragVisualsOptions) {
     ghostEl.style.zIndex = '9999'
     ghostEl.classList.add('gex-fav-ghost')
 
-    document.body.appendChild(ghostEl)
+    // CHANGED (0.2.4): into the widget's overlay layer (fixed, at the window's origin: the same coordinates as the
+    // page), not document.body, which GEM Shell refuses to widgets.
+    host.appendChild(ghostEl)
 
     // pointer offset so the ghost doesn't "jump"
     dragOffsetX = ev.clientX - rect.left

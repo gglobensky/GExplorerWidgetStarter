@@ -3,7 +3,7 @@
 // THE WIDGET COMMANDS (2026-10-15). One script for every widget: a widget is a folder
 // widgets/<type>/ whose name is its type, the id its entry.ts declares (checked on every build).
 //
-//   npm run build     -- <type> [--no-install] [--sourcemap]   (or --all instead of <type>)
+//   npm run build     -- <type> [--no-install] [--sourcemap] [--allow <rule>]   (or --all instead of <type>)
 //   npm run watch     -- <type> [--no-install]                 rebuilds (and installs) on save
 //   npm run preview   -- <type> [--port <n>]                   widgets/<type>/preview/ with sample data
 //   npm run test      -- <type>                                widgets/<type>/tests/*.test.ts
@@ -11,6 +11,11 @@
 //   npm run build     -- --lib <name> [--no-install]           every widget using shared/<name> (2026-10-31)
 //   npm run test      -- --lib <name>                          shared/<name>/tests/*.test.ts
 // (pnpm: pnpm build <type> ...)
+//
+// THE PACKAGING CHECK (2026-10-31, GEM Shell E5e, tools/review.mjs, README "Drawing outside your box"): every build and
+// watch first reads the widget's sources for what GEM Shell refuses or changes at run time; an error stops the build
+// unless the widget allows that rule with a reason (widgets/<type>/review.allow.json) or the command line does for
+// that build (--allow <rule>). The findings: dist/reviews/<type>.json.
 //
 // SHARED LIBRARIES (2026-10-31, tools/libs.mjs, README "Shared libraries"): shared/<name>/ with a library.json,
 // imported as '@shared/<name>', bundled into each widget using it (written once, built into each).
@@ -40,6 +45,7 @@ import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { widgetNotices, wrapperEntry } from './notices.mjs'
 import { sharedLibraries, widgetsUsing, readLibrary, LibraryError, sharedDir } from './libs.mjs'
+import { reviewWidget, describeReview, writeReview, ReviewError, RULES } from './review.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const WIDGETS = path.join(ROOT, 'widgets')
@@ -55,20 +61,22 @@ const rel = (p) => path.relative(ROOT, p).split(path.sep).join('/')
 const log = (message) => console.log(`[widget] ${message}`)
 
 const USAGE = `Usage:
-  npm run build     -- <type> [--no-install] [--sourcemap]    (or --all)
-  npm run watch     -- <type> [--no-install]
+  npm run build     -- <type> [--no-install] [--sourcemap] [--allow <rule>]    (or --all)
+  npm run watch     -- <type> [--no-install] [--allow <rule>]
   npm run preview   -- <type> [--port <n>]
   npm run test      -- <type>
   npm run typecheck -- <type>
   npm run build     -- --lib <name> [--no-install]     (every widget using shared/<name>)
   npm run test      -- --lib <name>
-<type>: a folder of widgets/ (its entry.ts declares the same id). <name>: a folder of shared/ (a library).`
+<type>: a folder of widgets/ (its entry.ts declares the same id). <name>: a folder of shared/ (a library).
+<rule>: a packaging check rule allowed for this build only (${RULES.map(r => r.id).join(', ')}); to allow one for good,
+with its reason: widgets/<type>/review.allow.json.`
 
 // ── Arguments ──────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
     const [command, ...rest] = argv
-    const opts = { command, type: null, all: false, install: true, sourcemap: false, port: null, lib: null }
+    const opts = { command, type: null, all: false, install: true, sourcemap: false, port: null, lib: null, allow: [] }
     for (let i = 0; i < rest.length; i++) {
         const a = rest[i]
         if (a === '--no-install') opts.install = false
@@ -79,6 +87,11 @@ function parseArgs(argv) {
             if (!name || name.startsWith('-')) fail('--lib: a library name (a folder of shared/).')
             opts.lib = name
         }
+        else if (a === '--allow') {
+            const rule = rest[++i]
+            if (!rule || rule.startsWith('-')) fail(`--allow: a rule (${RULES.map(r => r.id).join(', ')}).`)
+            opts.allow.push(rule)
+        }
         else if (a === '--port') {
             const n = Number(rest[++i])
             if (!Number.isInteger(n) || n < 1 || n > 65535) fail('--port: a port number (1-65535).')
@@ -88,7 +101,7 @@ function parseArgs(argv) {
         else if (opts.type) fail(`one widget at a time (got ${opts.type} and ${a})\n${USAGE}`)
         else opts.type = a
     }
-    const known = { build: ['install', 'sourcemap', 'all', 'lib'], watch: ['install'], preview: ['port'], test: ['lib'], typecheck: [] }
+    const known = { build: ['install', 'sourcemap', 'all', 'lib', 'allow'], watch: ['install', 'allow'], preview: ['port'], test: ['lib'], typecheck: [] }
     if (!command || !(command in known)) fail(`unknown command "${command ?? ''}"\n${USAGE}`)
     const allowed = new Set(known[command])
     if (!opts.install && !allowed.has('install')) fail(`--no-install: not an option of ${command}`)
@@ -97,6 +110,7 @@ function parseArgs(argv) {
     if (opts.all && !allowed.has('all')) fail(`--all: not an option of ${command}`)
     if (opts.all && opts.type) fail('--all or a widget, not both')
     if (opts.lib && !allowed.has('lib')) fail(`--lib: not an option of ${command}`)
+    if (opts.allow.length && !allowed.has('allow')) fail(`--allow: not an option of ${command}`)
     if (opts.lib && (opts.type || opts.all)) fail('--lib, a widget or --all: one of them')
     if (!opts.all && !opts.type && !opts.lib) fail(`which widget? ${listWidgets().join(', ') || '(none in widgets/)'}\n${USAGE}`)
     return opts
@@ -252,10 +266,33 @@ function checkKeys(type, dir) {
     }
 }
 
-async function build(type, { watch = false, install: doInstall = true, sourcemap = false } = {}) {
+/** The packaging check (tools/review.mjs): printed; an error not allowed stops the build. */
+function review(type, dir, allow) {
+    let r
+    try { r = reviewWidget({ root: ROOT, type, dir, cliAllow: allow }) }
+    catch (e) { fail(e instanceof ReviewError ? e.message : String(e?.message ?? e)) }
+    for (const line of describeReview(r)) log(`${type}: ${line}`)
+    if (r.blocking.length) {
+        const rules = [...new Set(r.blocking.map(f => f.rule))]
+        fail(`${type}: the packaging check found ${r.blocking.length} error${r.blocking.length === 1 ? '' : 's'} (${rules.join(', ')}): `
+            + `GEM Shell refuses these at run time. Change the code (README, "Drawing outside your box"), or, for a reviewed `
+            + `case, allow the rule with its reason in widgets/${type}/review.allow.json `
+            + `({ "allow": { "${rules[0]}": "why this widget needs it" } }), or for this build only: --allow ${rules[0]}.`)
+    }
+    return r
+}
+
+/** The version the entry declares (a string literal), for the review file; null if not found. */
+function declaredVersion(dir) {
+    const m = /\bversion\s*:\s*['"`]([^'"`]+)['"`]/.exec(fs.readFileSync(path.join(dir, 'entry.ts'), 'utf8'))
+    return m ? m[1] : null
+}
+
+async function build(type, { watch = false, install: doInstall = true, sourcemap = false, allow = [] } = {}) {
     const dir = widgetDir(type)
     checkId(type, dir)
     checkKeys(type, dir)
+    const checked = review(type, dir, allow)
     const publicDir = doInstall ? shellPublicDir() : null      // before building: a wrong setting fails first
     const { build: viteBuild } = await dep('vite')
     const vue = (await dep('@vitejs/plugin-vue')).default
@@ -267,7 +304,10 @@ async function build(type, { watch = false, install: doInstall = true, sourcemap
         // After each write (each rebuild in watch mode): one file, then installed.
         writeBundle() {
             try {
-                checkOutput(type)
+                const bundle = checkOutput(type)
+                const { file, extra } = writeReview({ root: ROOT, review: checked, bundle, version: declaredVersion(dir) })
+                for (const f of extra) log(`${type}: warning ${f.rule}: ${f.text.slice(0, 160)}`)
+                log(`${type}: packaging check: ${rel(file)} (${checked.findings.length + extra.length} finding${checked.findings.length + extra.length === 1 ? '' : 's'})`)
                 if (publicDir) install(type, publicDir)
                 else log(`${type} built: dist/runtime-widgets/${type}/index.js (not installed: --no-install).`)
             } catch (e) {
@@ -370,7 +410,7 @@ async function main() {
                 if (!types.length) fail('no widgets in widgets/.')
                 if (opts.install) shellPublicDir()                          // a wrong setting fails before any build
                 for (const t of types) checkId(t, widgetDir(t))              // every id before any build
-                for (const t of types) await build(t, { install: opts.install, sourcemap: opts.sourcemap })
+                for (const t of types) await build(t, { install: opts.install, sourcemap: opts.sourcemap, allow: opts.allow })
                 log(`built ${types.length} widgets: ${types.join(', ')}`)
             } else if (opts.lib) {
                 // Every widget using the library (directly or through another library): changed once, rebuilt in each
@@ -381,13 +421,13 @@ async function main() {
                 if (!types.length) fail(`no widget imports shared/${opts.lib} ('@shared/${opts.lib}').`)
                 if (opts.install) shellPublicDir()
                 for (const t of types) checkId(t, widgetDir(t))
-                for (const t of types) await build(t, { install: opts.install, sourcemap: opts.sourcemap })
+                for (const t of types) await build(t, { install: opts.install, sourcemap: opts.sourcemap, allow: opts.allow })
                 log(`${lib.name} ${lib.version}: rebuilt ${types.length} widget${types.length === 1 ? '' : 's'}: ${types.join(', ')}`)
             } else {
-                await build(opts.type, { install: opts.install, sourcemap: opts.sourcemap })
+                await build(opts.type, { install: opts.install, sourcemap: opts.sourcemap, allow: opts.allow })
             }
             return 0
-        case 'watch': await build(opts.type, { watch: true, install: opts.install }); return null
+        case 'watch': await build(opts.type, { watch: true, install: opts.install, allow: opts.allow }); return null
         case 'preview': await preview(opts.type, opts.port); return null
         case 'test': return test(opts.type, opts.lib)
         case 'typecheck': return typecheck(opts.type)

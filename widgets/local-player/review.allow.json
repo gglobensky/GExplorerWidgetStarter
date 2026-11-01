@@ -1,0 +1,5 @@
+{
+  "allow": {
+    "page-keys": "The queue's arrows / Enter / Escape after a click in the player (useKeyboardNav.ts, document keydown): GEM Shell scopes them to the player (its own box, or nothing focused after a click in it). To move onto the player's own element later."
+  }
+}

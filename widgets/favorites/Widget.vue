@@ -198,6 +198,7 @@ const dragVisuals = useDragVisuals({
   rowEls,
   findFolderNodeById,
   openFolderDropdownFromDrag,
+  ghostHost: () => overlay.value,   // 0.2.4: the ghost in the widget's overlay layer (not document.body)
 })
 
 // --- Sortable (useFavoritesSortable) -----------------------------------------

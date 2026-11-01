@@ -311,6 +311,85 @@ What a widget does with keys (the key mapper, 2026-10-24):
   that has the focus, typing in a field. Listen to them on your own elements, not the whole
   document: on `document` they would take keys from every other widget and the shell.
 
+## Drawing outside your box (GEM Shell 2026-10-31)
+
+A widget draws **inside its own box**. Anything outside it goes through GEM Shell, which frames it
+and names your widget: `sdk.ui().menu(...)` (a menu of choices), `sdk.ui().openPopover(...)` (your
+own component in a panel the shell places and keeps on screen), message boxes.
+
+What GEM Shell does at run time:
+- **Your box contains you.** Nothing you render paints outside it; `position: fixed` inside it is
+  relative to your box, not the window.
+- **Your overlay layer** (`inject('widgetOverlay')`, where a `<Teleport>` of yours lands) draws under
+  every shell dialog; from E5c it is clipped to your box plus 24 px, and a `<Teleport>` lands there
+  (or in a GEM Shell target inside your box, like the pane header slot) whatever its `to` says.
+- **Refused** (nothing happens, a line in the security log and a notice naming your widget): your
+  code inserting into the page's `<body>` / `<html>` (`appendChild`, `append`, `insertAdjacentHTML`,
+  `innerHTML`...), `document.write`, a modal `<dialog>` (`showModal`), a popover (`showPopover`).
+- **Keys**: a `keydown` / `keyup` / `keypress` / `input` / `beforeinput` listener you add on `window`
+  or `document` only sees the keys typed in your own box (or, with nothing focused, the keys pressed
+  after the user last clicked in your widget). It never sees what is typed in the path bar, another
+  widget or a shell field.
+- Not a wall: widgets share one page. The official repo's review reads the code for the rest.
+
+**Menus that open menus** (GEM Shell 2026-10-31). `openPopover` with an anchor inside one of your
+open popovers (a row of a menu you opened) opens a **child level** next to it: the parent stays, a
+new child of the same parent replaces the previous one, closing a level closes those under it, a
+click in any level counts as inside the chain, Esc closes the deepest (8 levels at most). Drag and
+drop between levels works: they are all your elements. `parent` overrides the guess: one of your
+popover handles (a child of that one) or `null` (a top-level one; your others close).
+
+```ts
+// a folder row inside the first menu: its sub-folder opens beside it
+ui.openPopover({ anchor: rowEl, component: FolderMenu, props: { folderId }, placement: 'right' })
+```
+
+**Your look.** `openPopover({ ..., style })` restyles the frame: `background`, `color`,
+`borderColor` (CSS colours or theme variables), `borderWidth` (0–3), `radius` (0–16), `shadow`
+(`'none' | 'small' | 'normal' | 'large'`), `padding` (0–16). Size, position, stacking and the close
+rules stay GEM Shell's; a `'center'` panel keeps GEM Shell's frame and title (your widget's name).
+
+**Drag ghosts.** A drag that leaves your box can't show your own ghost element (clipped, or refused
+in `<body>`). Ask GEM Shell for one at the start of the drag, while the user holds the button they
+pressed in your widget:
+
+```ts
+const ghost = ui.dragGhost?.({ label: fav.label, icon: '★', offset: { x: 12, y: 8 },
+                               style: { background: 'var(--surface-1)', borderColor: 'var(--accent)' } })
+// it follows the pointer and closes by itself on release; ghost?.close() if your drag ends otherwise
+```
+
+Text only (label and sub-label 80 characters, icon 4); `style` takes colours and a radius. It is
+hidden while GEM Shell asks the user something. While the button stays held, your widget's gesture
+lasts (a menu you open by hovering a folder during a long drag is allowed).
+
+**The packaging check.** Every `npm run build` / `watch` first reads your widget's sources and
+styles (and the shared libraries it imports) for these:
+
+| Rule | Level | What it finds |
+|---|---|---|
+| `page-root` | error | `document.body`, `document.documentElement` |
+| `top-layer` | error | `showModal()`, `showPopover()`, `togglePopover()`, `<dialog>`, the `popover` attribute |
+| `iframe` | error | an `<iframe>` |
+| `eval` | error | `eval(...)`, `new Function(...)` |
+| `page-keys` | error | a key / input listener on `window` or `document` (`addEventListener`, `onkeydown = ...`) |
+| `teleport` | warning | `<Teleport to=...>` |
+| `fixed` | warning | `position: fixed` |
+| `shadow` | warning | `attachShadow()` |
+
+An **error stops the build**. Change the code, or, for a case you can explain (the repo's review
+reads it), allow the rule in `widgets/<type>/review.allow.json`:
+
+```json
+{ "allow": { "page-keys": "Queue keys after a click in the player (GEM Shell scopes them to it)." } }
+```
+
+(a reason of at least 15 characters per rule), or for one build only: `npm run build -- <type>
+--allow <rule>`. The findings, what was allowed and why go to `dist/reviews/<type>.json` (next to the
+build: `dist/runtime-widgets/<type>/` holds only `index.js`). After the build the bundle is read too:
+an error rule found only in `index.js` (a bundled npm package) is listed as a warning. Comments are
+not read.
+
 ## Credits and licences
 
 GEM Shell's About page (Settings → About GEM Shell → Widgets) lists every widget with what its

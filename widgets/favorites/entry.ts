@@ -4,7 +4,7 @@ import Widget from './Widget.vue'
 export default {
   api: '1.0',
   id: 'favorites',
-  version: '0.2.3',
+  version: '0.2.4',   // 0.2.4 (GEM Shell E5, 2026-10-31): the drag ghost in the widget's overlay layer, not document.body
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
 

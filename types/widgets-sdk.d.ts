@@ -1913,8 +1913,10 @@ declare module 'gexplorer/widgets' {
     // ── The props every widget gets (WidgetHost) ──────────────────────────
     //   const props = defineProps<WidgetProps>()
     // Going somewhere, opening a file or a web link, saving a view setting: the SDK (sdk.navigate / openPath /
-    // openUrl / setView / reveal), not a prop. Menus and dialogs a widget teleports go into
-    // inject<Ref<HTMLElement | null>>('widgetOverlay') (the widget's own layer), not body.
+    // openUrl / setView / reveal), not a prop. CHANGED (2026-10-31, GEM Shell E5): a widget draws inside its own box;
+    // menus and panels outside it go through sdk.ui().menu / sdk.ui().openPopover / message boxes (README "Drawing
+    // outside your box"). inject<Ref<HTMLElement | null>>('widgetOverlay') (the widget's own layer, where a <Teleport>
+    // of its lands) draws under every shell dialog and, from E5c, is clipped to the widget's box plus 24 px.
     export type WidgetPlacement = {
         context: 'grid' | 'sidebar' | 'toolbar' | 'embedded' | 'dialog'
         /**
@@ -2463,11 +2465,18 @@ declare module 'gexplorer/widgets' {
         /**
          * The widget's own component in the host's overlay, next to opts.anchor (an element of this
          * widget): never clipped by the widget's place, kept on screen. Same rules as menu() (the
-         * user's own click or key press, on screen); null when refused. One per instance (a new one
-         * closes the last); clicking the anchor again closes it, so do a click elsewhere, Esc, and the
-         * anchor leaving the page. The component gets props.close() besides opts.props, and
+         * user's own click or key press, on screen); null when refused. One chain per instance (a new
+         * top-level one closes the last); clicking the anchor again closes it, so do a click elsewhere, Esc, and the
+         * anchor leaving the page.
+         * LEVELS (GEM Shell 2026-10-31): an anchor inside one of your open popovers (a row of a menu you
+         * opened) opens a child level next to it: the parent stays, a new child of the same parent replaces
+         * the previous one, closing a level closes those under it, a click in any level counts as inside the
+         * chain, Esc closes the deepest; 8 levels at most. `parent` overrides it. Drag and drop between your
+         * levels works (they are all your elements). `style` restyles the frame (not for 'center', which
+         * keeps GEM Shell's frame and title). The component gets props.close() besides opts.props, and
          * inject('widgetSdk') gives it this instance's SDK; a click in it counts as the widget's own
-         * gesture. Widgets never teleport elements themselves: this is the way out of a clipping place.
+         * gesture. This is the way out of a clipping place: a widget's own <Teleport> lands in its overlay layer, clipped
+         * to its box plus 24 px from GEM Shell E5c (README "Drawing outside your box").
          *
          *   ui.openPopover({ anchor: ev.currentTarget as HTMLElement, component: ColorPicker, props: { value } })
          */
@@ -2482,10 +2491,38 @@ declare module 'gexplorer/widgets' {
             onClose?: () => void
             /** placement 'center': the title after the widget's name (the host writes the name). */
             title?: string
+            /**
+             * GEM Shell 2026-10-31: its level. Absent: automatic (an anchor inside one of your open popovers
+             * opens a child of it, else a top-level one). One of your popover handles: a child of that one.
+             * null: top level (your other popovers close).
+             */
+            parent?: WidgetPopoverHandle | null
+            /** GEM Shell 2026-10-31: the frame's look. Ignored for 'center'. */
+            style?: WidgetPopoverStyle
+        }): WidgetPopoverHandle | null
+        /**
+         * GEM Shell 2026-10-31: a drag ghost GEM Shell draws at the pointer, for a drag that leaves your box
+         * (your own elements can't be drawn outside it: README "Drawing outside your box"). Only while the user
+         * holds the button they pressed in your widget (null otherwise): call it from your drag's start. It
+         * follows the pointer by itself and closes by itself on release; close() it earlier when your drag
+         * ends otherwise. Text only (label, subLabel: 80 characters; icon: 4). Hidden while GEM Shell is
+         * asking the user something. Older GEM Shell: absent (check `ui.dragGhost`).
+         *
+         *   const ghost = ui.dragGhost?.({ label: fav.label, icon: '★', offset: { x: 12, y: 8 } })
+         *   // ...on drop or cancel: ghost?.close()
+         */
+        dragGhost?(opts: {
+            label: string
+            subLabel?: string
+            /** A short text icon: 4 characters at most. */
+            icon?: string
+            /** From the pointer to the ghost's top-left corner, px, each -120..120. Default 12, 12. */
+            offset?: { x?: number; y?: number }
+            /** Its look (sanitised): colours, border colour, radius 0..16. */
+            style?: { background?: string; color?: string; borderColor?: string; radius?: number }
         }): {
+            update(patch: { label?: string; subLabel?: string; icon?: string }): void
             close(): void
-            /** Replaces the content's props: pass them all (close is kept). */
-            update(props: Record<string, unknown>): void
         } | null
         alert(message: string, opts?: { title?: string; detail?: string; variant?: MbVariant; okLabel?: string }): Promise<void>
         /** true: OK. */
@@ -2635,6 +2672,31 @@ declare module 'gexplorer/widgets' {
          *   ui.contextMenu(e, { context: 'tree.folder', states: narrow ? ['narrow'] : [] })
          */
         states?: string[]
+    }
+
+    /** GEM Shell 2026-10-31: what sdk.ui().openPopover returns (also its `parent` option). */
+    export type WidgetPopoverHandle = {
+        close(): void
+        /** Replaces the content's props: pass them all (close is kept). */
+        update(props: Record<string, unknown>): void
+    }
+
+    /**
+     * GEM Shell 2026-10-31: a popover frame's look (sdk.ui().openPopover `style`). Colours are CSS colours or theme
+     * variables ('var(--surface-1)'); numbers in px, clamped; anything else is dropped. Size, position, stacking and
+     * the close rules stay GEM Shell's.
+     */
+    export type WidgetPopoverStyle = {
+        background?: string
+        color?: string
+        borderColor?: string
+        /** 0..3 */
+        borderWidth?: number
+        /** 0..16 */
+        radius?: number
+        shadow?: 'none' | 'small' | 'normal' | 'large'
+        /** 0..16 */
+        padding?: number
     }
 
     /** NEW (2026-10-29): sdk.ui().declaredMenu's options (the same slots / state / states as contextMenu's). */
