@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { extraDisplayName } from '../../../shared/library-ui/types.ts'
+import { extraDisplayName } from '../movie-types.ts'
 
 const extra = (file: string) => ({ title:file, path:`D:\\Movies\\Heat (1995)\\${file}` })
 

@@ -1,194 +1,94 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useScrollHints } from 'gexplorer/widgets'
-import {
-  ArtworkFrame, itemsForSeason, LibraryCase, seasonLabel, seasonsFor,
-  type LibraryItem, type LibraryShelf, type SeasonFilter,
-} from '../../shared/library-ui'
-import { showroomRowsFor, showroomTitleCount, type ShowroomRackRow, type SortMode } from './media'
+// The Video Club's showroom (2026-10-31, library-ui 2.0.0): the shared store floor (LibraryFloor), plus what only
+// the Video Club has: its wordmark, series grouped on the genre racks (showroomRowsFor), a series department's season
+// filter, the watched / progress marks, and the words of its counts (movies, episodes).
+import { computed, ref, watch } from 'vue'
+import { LibraryFloor, staffPicks, titleRange, yearRange, type LibraryFloorRow } from '@shared/library-ui'
+import { moviePickNote, moviePickScore, movieTag } from './shelf-labels'
+import CaseMarks from './CaseMarks.vue'
+import NeonSign from './NeonSign.vue'
+import { showroomRowsFor, showroomTitleCount, type SortMode } from './media'
+import type { MovieItem, MovieShelf } from './movie-types'
+import { itemsForSeason, seasonLabel, seasonsFor, type SeasonFilter } from './seasons'
 
 const props = defineProps<{
   /** Genre racks. */
-  shelves: LibraryShelf[]
+  shelves: MovieShelf[]
   /** Racks at the head of the aisle (Continue watching, New arrivals, Collections): their own items, in their order. */
-  featured?: LibraryShelf[]
-  items: LibraryItem[]
-  activeShelf?: LibraryShelf | null
+  featured?: MovieShelf[]
+  items: MovieItem[]
+  activeShelf?: MovieShelf | null
   selectedId?: string
   sort?: SortMode
 }>()
 const emit = defineEmits<{
   (e:'select-shelf', shelfId:string):void
-  (e:'open', item:LibraryItem):void
-  (e:'menu', item:LibraryItem, event:MouseEvent):void
+  (e:'open', item:MovieItem):void
+  (e:'menu', item:MovieItem, event:MouseEvent):void
 }>()
-const FEATURED_ROWS = 3
+/** As many boxes as a rack's row holds (LibraryFloor's RACK_CAPACITY). */
 const RACK_CAPACITY = 6
 
-const root = ref<HTMLElement | null>(null)
-const rackScroller = ref<HTMLElement | null>(null)
-const columns = ref(6)
 const season = ref<SeasonFilter>('all')
-let observer: ResizeObserver | null = null
-
 const isActiveSeries = computed(() => props.activeShelf?.id.startsWith('series-') ?? false)
 const seasonOptions = computed(() => isActiveSeries.value ? seasonsFor(props.activeShelf?.items ?? []) : [])
 const visibleActiveItems = computed(() => itemsForSeason(props.activeShelf?.items ?? [],season.value))
 const activeShelfNote = computed(() => season.value === 'all'
   ? props.activeShelf?.note
   : `${seasonLabel(season.value)} · ${visibleActiveItems.value.length} ${visibleActiveItems.value.length === 1 ? 'episode' : 'episodes'}`)
-function chunk(items: LibraryItem[]): LibraryItem[][] {
-  const result: LibraryItem[][] = []
-  for (let index = 0; index < items.length; index += columns.value) result.push(items.slice(index,index + columns.value))
-  return result
-}
-/** The department's shelves: one per set where the shelf has sets (Collections), else its items in rows. */
-const sections = computed(() => {
-  const shelf = props.activeShelf
-  if (shelf?.groups?.length) return shelf.groups.map(group => ({ id:group.id, label:group.title, count:group.items.length, rows:chunk(group.items) }))
-  return [{ id:shelf?.id ?? 'shelf', label:'', count:0, rows:chunk(visibleActiveItems.value) }]
-})
-function featuredRows(shelf: LibraryShelf): ShowroomRackRow[] {
-  // Sets (Collections): one row each, never two sets on a row.
-  if (shelf.groups?.length) return shelf.groups.slice(0, FEATURED_ROWS).map(group => ({
-    id:group.id, label:group.title, unit:'movie' as const, total:group.items.length, items:group.items.slice(0, RACK_CAPACITY),
-  }))
-  const rows: ShowroomRackRow[] = []
-  for (let index = 0; index < shelf.items.length && rows.length < FEATURED_ROWS; index += RACK_CAPACITY) {
-    const items = shelf.items.slice(index, index + RACK_CAPACITY)
-    const last = rows.length === FEATURED_ROWS - 1
-    rows.push({ id:`${shelf.id}-${rows.length}`, total:last ? shelf.items.length - index : items.length, items })
-  }
-  return rows
-}
-const featuredShelves = computed(() => props.featured ?? [])
-const racks = computed(() => [
-  ...featuredShelves.value.map(shelf => ({ shelf, featured:true })),
-  ...props.shelves.map(shelf => ({ shelf, featured:false })),
-])
-const showroomRows = computed(() => new Map([
-  ...featuredShelves.value.map(shelf => [shelf.id,featuredRows(shelf)] as const),
-  ...props.shelves.map(shelf => [shelf.id,showroomRowsFor(props.items,shelf.title,RACK_CAPACITY,props.sort)] as const),
-]))
-const showroomCounts = computed(() => new Map([
-  ...featuredShelves.value.map(shelf => [shelf.id,shelf.items.length] as const),
-  ...props.shelves.map(shelf => [shelf.id,showroomTitleCount(props.items,shelf.title)] as const),
-]))
 watch(() => props.activeShelf?.id, () => { season.value = 'all' })
 watch(seasonOptions, options => {
   if (season.value !== 'all' && !options.includes(season.value)) season.value = 'all'
 })
-const {
-  hasOverflow: racksHaveOverflow,
-  atStart: racksAtStart,
-  atEnd: racksAtEnd,
-  scrollByPage: scrollRacksByPage,
-} = useScrollHints({
-  scrollEl:rackScroller,
-  axis:'x',
-  deps:() => `${props.activeShelf?.id ?? 'showroom'}:${props.shelves.map(shelf => shelf.id).join('|')}`,
-  eps:2,
-  wheel:'transpose',
-  pageRatio:.88,
-  minPageStep:240,
-})
 
-function measure() {
-  const width = root.value?.clientWidth ?? 0
-  columns.value = width >= 940 ? 6 : width >= 790 ? 5 : width >= 620 ? 4 : width >= 420 ? 3 : 2
-}
-
-onMounted(() => {
-  observer = new ResizeObserver(measure)
-  if (root.value) observer.observe(root.value)
-  measure()
-})
-onBeforeUnmount(() => observer?.disconnect())
+// As many rows as the rack's height holds (library-ui 2.8.0)
+const rowsFor = (shelf: MovieShelf, maxRows: number) => showroomRowsFor(props.items,shelf.title,RACK_CAPACITY,props.sort,maxRows)
+const countFor = (shelf: MovieShelf) => showroomTitleCount(props.items,shelf.title)
+/** A row's count: a set of movies, or a series' episodes (rows without a unit). */
+const rowCount = (row: LibraryFloorRow<MovieItem>) => `${row.total} ${row.unit === 'movie' ? (row.total === 1 ? 'movie' : 'movies') : (row.total === 1 ? 'episode' : 'episodes')}`
+// 0.17.0 (library-ui 3.6.0): what's written on a department's shelves: a tag under each case, the shelf's range, a
+// staff-pick card on the best rated (shelf-labels.ts)
+const picks = computed(() => staffPicks(visibleActiveItems.value, moviePickScore, { min: 75 }))
+const pickFor = (item: MovieItem) => (picks.value.has(item.id) ? moviePickNote(item) : undefined)
+const rowStrip = (items: MovieItem[]) => (props.sort === 'release' ? yearRange(items) : !props.sort || props.sort === 'title' ? titleRange(items) : undefined)
+const setCount = (count: number) => `${count} ${count === 1 ? 'movie' : 'movies'}`
 </script>
 
 <template>
-  <section ref="root" class="media-store-floor" :class="{ focused:activeShelf }">
-    <template v-if="!activeShelf">
-      <header class="media-store-floor-intro">
-        <p>Showroom</p>
-        <h1 class="media-video-club-wordmark"><span>GEM</span><strong>VIDEO CLUB</strong></h1>
-        <span>Browse the aisle and step closer to a genre rack.</span>
-      </header>
-      <div class="media-store-aisle">
-        <button
-          v-if="racksHaveOverflow"
-          class="media-store-aisle-arrow previous"
-          type="button"
-          :disabled="racksAtStart"
-          aria-label="Scroll showroom left"
-          @click="scrollRacksByPage(-1)"
-        >‹</button>
-        <div ref="rackScroller" class="media-store-rack-grid">
-          <button
-            v-for="{ shelf, featured } in racks"
-            :key="shelf.id"
-            type="button"
-            class="media-store-rack"
-            :class="{ featured }"
-            :aria-label="`Browse ${shelf.title}, ${showroomCounts.get(shelf.id) ?? 0} media files`"
-            @click="emit('select-shelf',shelf.id)"
-          >
-            <span class="media-store-rack-sign"><strong>{{ shelf.title }}</strong><small>{{ showroomCounts.get(shelf.id) ?? 0 }} {{ showroomCounts.get(shelf.id) === 1 ? 'title' : 'titles' }}</small></span>
-            <span class="media-store-rack-shelves">
-              <span v-for="row in showroomRows.get(shelf.id) ?? []" :key="row.id" class="media-store-rack-shelf">
-                <span v-if="row.label" class="media-store-rack-row-label"><b>{{ row.label }}</b><small>{{ row.total }} {{ row.unit === 'movie' ? (row.total === 1 ? 'movie' : 'movies') : (row.total === 1 ? 'episode' : 'episodes') }}</small></span>
-                <span class="media-store-rack-bay">
-                  <span v-for="item in row.items" :key="item.id" class="media-store-mini-case">
-                    <ArtworkFrame :artwork="item.artwork" :alt="`${item.title} artwork`" />
-                  </span>
-                  <span v-if="row.total > row.items.length" class="media-store-rack-more">+{{ row.total - row.items.length }} more</span>
-                </span>
-                <span class="media-store-rack-edge" aria-hidden="true"></span>
-              </span>
-            </span>
-            <span class="media-store-rack-action">{{ featured ? 'Browse' : 'Enter department' }} <b aria-hidden="true">›</b></span>
-          </button>
-        </div>
-        <button
-          v-if="racksHaveOverflow"
-          class="media-store-aisle-arrow next"
-          type="button"
-          :disabled="racksAtEnd"
-          aria-label="Scroll showroom right"
-          @click="scrollRacksByPage(1)"
-        >›</button>
-      </div>
+  <LibraryFloor
+    :shelves="shelves"
+    :featured="featured"
+    :active-shelf="activeShelf"
+    :active-items="visibleActiveItems"
+    :active-note="activeShelfNote"
+    :selected-id="selectedId"
+    :rows-for="rowsFor"
+    :count-for="countFor"
+    :row-count="rowCount"
+    :set-count="setCount"
+    set-unit="movie"
+    :tag-for="movieTag"
+    :pick-for="pickFor"
+    :row-strip="isActiveSeries ? undefined : rowStrip"
+    items-noun="media files"
+    @select-shelf="emit('select-shelf', $event)"
+    @open="emit('open', $event)"
+    @menu="(item, event) => emit('menu', item, event)"
+  >
+    <template #intro>
+      <p>Showroom</p>
+      <h1 class="media-neon-heading"><NeonSign size="sign" /></h1>
+      <span>Browse the aisle and step closer to a genre rack.</span>
     </template>
-
-    <template v-else>
-      <header class="media-store-focus-heading">
-        <div><h2>{{ activeShelf.title }}</h2><p>{{ activeShelfNote }}</p></div>
-        <label v-if="isActiveSeries && seasonOptions.length" class="media-store-season-filter">
-          <span>Season</span>
-          <select v-model="season" :aria-label="`Filter ${activeShelf.title} by season`">
-            <option value="all">All seasons</option>
-            <option v-for="option in seasonOptions" :key="option" :value="option">{{ seasonLabel(option) }}</option>
-          </select>
-        </label>
-      </header>
-      <div class="media-store-focus-rows">
-        <template v-for="section in sections" :key="section.id">
-        <h3 v-if="section.label" class="media-store-focus-set"><b>{{ section.label }}</b><small>{{ section.count }} {{ section.count === 1 ? 'movie' : 'movies' }}</small></h3>
-        <div v-for="(row,index) in section.rows" :key="`${section.id}-${index}`" class="media-store-focus-row">
-          <div class="media-store-focus-cases">
-            <LibraryCase
-              v-for="item in row"
-              :key="item.id"
-              :item="item"
-              :selected="selectedId === item.id"
-              @open="emit('open',$event)"
-              @menu="(item, event) => emit('menu', item, event)"
-            />
-          </div>
-          <div class="media-store-focus-edge" aria-hidden="true"></div>
-        </div>
-        </template>
-      </div>
+    <template v-if="isActiveSeries && seasonOptions.length" #focus-tools>
+      <label class="media-store-season-filter">
+        <span>Season</span>
+        <select v-model="season" :aria-label="`Filter ${activeShelf?.title} by season`">
+          <option value="all">All seasons</option>
+          <option v-for="option in seasonOptions" :key="option" :value="option">{{ seasonLabel(option) }}</option>
+        </select>
+      </label>
     </template>
-  </section>
+    <template #marks="{ item }"><CaseMarks :item="item" /></template>
+  </LibraryFloor>
 </template>

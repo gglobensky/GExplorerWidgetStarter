@@ -11,7 +11,7 @@
 //     element's time, catches up, and takes the sound back (the element is muted again).
 // With "Keep playing when hidden" off, nothing follows: the player reopens paused where it was.
 import type { AudioHandle } from 'gexplorer/widgets'
-import type { LibraryItem } from '../../shared/library-ui'
+import type { MovieItem } from './movie-types'
 import type { LibraryContext } from './context'
 
 export const BACKGROUND_JOB = 'background'
@@ -39,7 +39,7 @@ const nextFrame = (fn: () => void) => typeof requestAnimationFrame === 'function
 
 /** What played when the widget left the screen (plain data: a lifecycle cell). */
 export type PlaybackSession = {
-  item: LibraryItem
+  item: MovieItem
   url: string
   positionMs: number
   durationMs: number
@@ -58,7 +58,7 @@ function trace(step: string, detail?: unknown) {
 }
 
 /** Minimal copy of an item for the cell (no extras: they could be many). */
-function sessionItem(item: LibraryItem): LibraryItem {
+function sessionItem(item: MovieItem): MovieItem {
   const { extras: _extras, ...rest } = item
   return { ...rest, genres:[...item.genres], previews:item.previews.map(cue => ({ ...cue })), artwork:{ ...item.artwork } }
 }
@@ -69,7 +69,7 @@ function seekTo(media: { currentTime:number }, seconds: number) {
 
 export function useBackgroundPlayback(
   ctx: LibraryContext,
-  onPosition: (item: LibraryItem, positionMs: number, durationMs: number, final: boolean) => void,
+  onPosition: (item: MovieItem, positionMs: number, durationMs: number, final: boolean) => void,
   options: { armDelayMs?: number } = {},
 ) {
   const armDelay = options.armDelayMs ?? ARM_DELAY_MS
@@ -105,7 +105,7 @@ export function useBackgroundPlayback(
    * The player shows `item` in `video`: the muted element follows it (or, after takeBack, hands
    * the sound back to it). `enabled`: the "Keep playing when hidden" setting.
    */
-  function follow(video: HTMLVideoElement, item: LibraryItem, url: string, enabled: boolean) {
+  function follow(video: HTMLVideoElement, item: MovieItem, url: string, enabled: boolean) {
     stopFollowing()
     if (!enabled || !item.path || !sdk?.jobs || !sdk.audio) {
       if (rejoining) release()
@@ -278,7 +278,7 @@ export function useBackgroundPlayback(
   }
 
   /** The widget is leaving the screen while the player is open. */
-  function handOff(item: LibraryItem, url: string, snapshot: PlayerSnapshot, keepPlaying: boolean) {
+  function handOff(item: MovieItem, url: string, snapshot: PlayerSnapshot, keepPlaying: boolean) {
     const playing = !snapshot.paused
     const followed = following
     stopFollowing()
@@ -319,7 +319,7 @@ export function useBackgroundPlayback(
    * Back on screen: what to reopen, or null. live: the sound is still going (it carries on; the
    * next followed video takes it back), else the player reopens there.
    */
-  function takeBack(): { item:LibraryItem; positionMs:number; playing:boolean; live:boolean } | null {
+  function takeBack(): { item:MovieItem; positionMs:number; playing:boolean; live:boolean } | null {
     const current = session.value
     if (!current) return null
     trace('background: back on screen', { background:current.background })

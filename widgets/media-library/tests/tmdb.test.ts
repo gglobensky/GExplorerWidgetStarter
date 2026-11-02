@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import type { LibraryItem } from '../../../shared/library-ui/types.ts'
+import type { MovieItem } from '../movie-types.ts'
 import { applyPersistedTmdbMetadata, createTmdbSession, enrichWithTmdb, persistedTmdbMetadata, restorePersistedTmdbMetadata, tmdbImageUrl, tmdbReviewsUrl } from '../tmdb.ts'
 
-function item(values: Partial<LibraryItem>): LibraryItem {
+function item(values: Partial<MovieItem>): MovieItem {
   return {
     id:'item', title:'Local title', year:0, runtimeMinutes:0, rating:'LOCAL', primaryGenre:'Unsorted', genres:['Unsorted'],
     synopsis:'Local synopsis', artwork:{ src:'', x:0, y:0, mode:'placeholder' }, previews:[], addedRank:1, ...values,

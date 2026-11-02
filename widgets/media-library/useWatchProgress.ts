@@ -3,7 +3,7 @@
 // Live playback positions, written to the 'watch-progress' document when playback pauses, ends
 // or closes (and every 30 s while it plays): the shelves only change when a record is committed.
 import { ref } from 'vue'
-import type { LibraryItem } from '../../shared/library-ui'
+import type { MovieItem } from './movie-types'
 import type { LibraryContext } from './context'
 import { applyWatchRecord, loadWatchProgress, nextRecord, progressKey, saveWatchProgress, type WatchRecord } from './watch-progress'
 
@@ -23,7 +23,7 @@ export function useWatchProgress(ctx: LibraryContext) {
     }
   }
 
-  function apply(item: LibraryItem): LibraryItem {
+  function apply(item: MovieItem): MovieItem {
     return item.path ? applyWatchRecord(item, records.value[progressKey(item.path)]) : item
   }
 
@@ -40,7 +40,7 @@ export function useWatchProgress(ctx: LibraryContext) {
   }
 
   /** The player is at `positionMs` of `durationMs` in this item; `commit`: playback paused, ended or closed. */
-  function note(item: LibraryItem, positionMs: number, durationMs: number, commit = false) {
+  function note(item: MovieItem, positionMs: number, durationMs: number, commit = false) {
     if (!item.path || !Number.isFinite(positionMs)) return
     const key = progressKey(item.path)
     pending.set(key, nextRecord(pending.get(key) ?? records.value[key], positionMs, durationMs, Date.now()))
@@ -48,7 +48,7 @@ export function useWatchProgress(ctx: LibraryContext) {
   }
 
   /** Marks titles watched, or clears their progress (unwatched, from the start). */
-  async function setWatched(items: LibraryItem[], watched: boolean) {
+  async function setWatched(items: MovieItem[], watched: boolean) {
     const next = { ...records.value }
     const now = Date.now()
     for (const item of items) {

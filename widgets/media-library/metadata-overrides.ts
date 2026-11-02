@@ -1,5 +1,5 @@
 import type { WidgetSdk } from 'gexplorer/widgets'
-import type { LibraryItem } from '../../shared/library-ui'
+import type { MovieItem } from './movie-types'
 
 export type MediaMetadataOverride = {
   title?: string
@@ -30,7 +30,7 @@ export async function saveMetadataOverrides(
   await storage.configWrite(METADATA_OVERRIDE_STORE,{ version:1, records } satisfies MetadataOverrideStore)
 }
 
-export function applyMetadataOverride(item: LibraryItem, override: MediaMetadataOverride | undefined): LibraryItem {
+export function applyMetadataOverride(item: MovieItem, override: MediaMetadataOverride | undefined): MovieItem {
   if (!override) return item
   const genres = override.genres?.map(genre => genre.trim()).filter(Boolean)
   return {

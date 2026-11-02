@@ -1,0 +1,178 @@
+/* The Video Club's own part of the library look (2026-10-31, library-ui 2.0.0; it was in shared/library-ui/library-ui.css):
+   the movie detail page (case, back cover, scene previews, extras, the movie-store layout), the season filter and the
+   watched / progress marks on the cases. Same rules, same order. 0.11.0 (2026-11-01): the movie-store layout's
+   rules are gone, it is library-ui's StoreDetail now. */
+.glu-season-filter { display:flex; align-items:center; height:25px; overflow:hidden; border:1px solid color-mix(in srgb,var(--glu-border) 75%,transparent); border-radius:5px; color:var(--glu-muted); background:#0b1016a8; }
+.glu-season-filter>span { padding-left:7px; font-size:8px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; }
+.glu-season-filter select { width:92px; height:100%; padding:0 4px; border:0; outline:0; color:var(--glu-fg); background:transparent; cursor:pointer; font-size:9px; }
+.glu-season-filter option { color:var(--glu-fg); background:var(--glu-panel); }
+.glu-case-progress { position:absolute; z-index:4; right:5px; bottom:5px; left:5px; height:3px; overflow:hidden; border-radius:2px; background:#071017b8; }
+.glu-case-progress span { display:block; height:100%; background:var(--glu-accent); }
+.glu-case-watched { position:absolute; z-index:4; top:5px; right:5px; display:grid; width:18px; height:18px; border:1px solid #ffffff55; border-radius:50%; color:#071116; background:var(--glu-accent); box-shadow:0 2px 6px #000a; font-size:10px; font-weight:800; line-height:1; place-items:center; }
+.glu-detail { position:absolute; z-index:10; inset:0; display:flex; flex-direction:column; overflow:auto; background:radial-gradient(circle at 22% 35%, color-mix(in srgb,var(--glu-accent) 13%,transparent), transparent 32%), linear-gradient(125deg,#0c1319 0%,var(--glu-bg) 55%,#10161c 100%); animation:glu-detail-in 220ms ease-out both; scrollbar-width:none; }
+.glu-detail::-webkit-scrollbar { display:none; }
+.glu-detail-header { position:sticky; z-index:5; top:0; flex:0 0 auto; display:grid; grid-template-columns:1fr auto 1fr; align-items:center; padding:14px 8px 14px 4px; color:var(--glu-muted); border-bottom:1px solid #ffffff12; background:color-mix(in srgb,var(--glu-bg) 88%,transparent); backdrop-filter:blur(16px); font-size:11px; letter-spacing:.08em; text-transform:uppercase; }
+.glu-back { justify-self:start; width:auto; margin-left:0; padding:5px 8px 5px 0; border:0; color:var(--glu-fg)!important; background:transparent; cursor:pointer; letter-spacing:0; text-align:left; text-transform:none; }
+.glu-back span { display:inline-block; margin-right:5px; font-size:20px; line-height:10px; vertical-align:-2px; }
+/* The back button everywhere in the library (top bar, a title's details, the player): an arrow. */
+.glu-back-icon { display:grid; justify-self:start; width:31px; height:31px; padding:0; border:1px solid #ffffff16; border-radius:6px; color:var(--glu-fg)!important; background:#0b1117a8; cursor:pointer; place-items:center; }
+.glu-back-icon:hover,.glu-back-icon:focus-visible { border-color:color-mix(in srgb,var(--glu-accent) 55%,#ffffff16); color:var(--glu-accent)!important; background:#ffffff0b; outline:0; }
+.glu-back-icon span { font-size:17px; line-height:1; }
+.glu-detail-close { justify-self:end; width:28px; height:28px; padding:0; border:1px solid #ffffff18; border-radius:50%; color:var(--glu-muted)!important; background:#0b1117; cursor:pointer; font-size:17px!important; line-height:1; }
+.glu-detail-body { display:grid; grid-template-columns:minmax(190px,300px) minmax(310px,1fr); gap:clamp(28px,5vw,72px); align-items:center; width:min(1040px,100%); flex:1 0 auto; min-height:0; margin:0 auto; padding:30px clamp(22px,5vw,68px) 45px; }
+.glu-detail-case-wrap { position:relative; justify-self:center; width:min(100%,270px); text-align:center; perspective:1400px; }
+.glu-detail-case-stage { position:relative; width:100%; aspect-ratio:2/3; }
+.glu-detail-case { position:absolute; inset:0; width:100%; padding:0; border:0; background:transparent; cursor:pointer; transform-style:preserve-3d; transition:transform 620ms cubic-bezier(.2,.76,.2,1); }
+.glu-detail-case.flipped { transform:rotateY(180deg); }
+.glu-detail-face { position:absolute; inset:0; overflow:hidden; border:3px solid #090b0e; border-radius:4px 10px 10px 4px; box-shadow:-7px 5px 0 #050607, 0 24px 42px #000c; backface-visibility:hidden; -webkit-backface-visibility:hidden; }
+.glu-detail-front { transform:rotateY(0deg); }
+.glu-detail-front::after { content:""; position:absolute; inset:0; background:linear-gradient(112deg,transparent 16%,#fff0 41%,#ffffff29 48%,#fff0 57%); pointer-events:none; }
+.glu-detail-title { position:absolute; z-index:2; right:0; bottom:0; left:0; display:flex; flex-direction:column; align-items:flex-start; gap:1px; padding:28px 13px 12px; color:white; background:linear-gradient(transparent,#05080bdd 45%,#05080bf2); text-align:left; }
+.glu-detail-title strong { font-size:clamp(17px,2vw,23px); font-weight:680; line-height:1.05; }
+.glu-detail-title small { color:#dce4e9; font-size:7px; letter-spacing:.16em; }
+.glu-detail-back { display:flex; flex-direction:column; align-items:flex-start; padding:24px 21px; color:#182028; background:linear-gradient(145deg,#e9e0cf,#c9bda8); text-align:left; transform:rotateY(180deg); }
+.glu-detail-back::before { content:""; position:absolute; inset:0; opacity:.18; background:repeating-linear-gradient(0deg,transparent 0 3px,#573b1c 4px); pointer-events:none; }
+.glu-detail-back>* { position:relative; }
+.glu-detail:not(.movie-store) .glu-detail-back .glu-back-kicker { margin-bottom:20px; color:#76532c; font-size:8px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
+.glu-detail:not(.movie-store) .glu-detail-back>strong { margin-bottom:14px; font:700 clamp(19px,2.3vw,27px)/.95 Georgia,serif; }
+.glu-detail:not(.movie-store) .glu-detail-back>span:not(.glu-back-kicker) { display:-webkit-box; overflow:hidden; font:clamp(10px,1.2vw,13px)/1.55 Georgia,serif; -webkit-box-orient:vertical; -webkit-line-clamp:8; }
+.glu-detail:not(.movie-store) .glu-detail-back>small { margin-top:auto; padding-top:18px; font-size:9px; font-weight:600; }
+.glu-detail:not(.movie-store) .glu-detail-back>i { width:68%; height:19px; margin:13px auto 0; opacity:.5; background:repeating-linear-gradient(90deg,#101820 0 2px,transparent 2px 4px); }
+.glu-turn { margin-top:17px; padding:6px 10px; border:1px solid #ffffff25; border-radius:999px; color:var(--glu-muted)!important; background:#0b1117; cursor:pointer; font-size:11px!important; }
+.glu-artwork-edit { position:absolute; z-index:4; top:-12px; right:-12px; width:34px; height:34px; padding:0; border:1px solid #ffffff35; border-radius:50%; color:var(--glu-fg)!important; background:#101820f5; box-shadow:0 5px 16px #0009; cursor:pointer; font-size:17px!important; }
+.glu-artwork-edit:hover { color:var(--glu-accent)!important; border-color:var(--glu-accent); }
+.glu-detail-copy { min-width:0; }
+.glu-eyebrow { margin:0 0 9px; color:var(--glu-accent); font-size:10px; font-weight:650; letter-spacing:.14em; text-transform:uppercase; }
+.glu-detail-copy h1 { margin:0; font:500 clamp(30px,4vw,50px)/.98 Georgia,"Times New Roman",serif; letter-spacing:-.035em; }
+.glu-meta { margin:10px 0 0; color:var(--glu-muted); font-size:11px; }
+.glu-meta span { padding:0 6px; color:var(--glu-warm); }
+.glu-synopsis { max-width:620px; margin:20px 0 0; color:color-mix(in srgb,var(--glu-fg) 84%,var(--glu-bg)); font-size:13px; line-height:1.7; }
+.glu-synopsis-row { display:flex; align-items:flex-start; gap:7px; max-width:650px; }
+.glu-edit-icon { flex:0 0 auto; width:25px; height:25px; padding:0!important; border:1px solid transparent; border-radius:50%; color:var(--glu-muted)!important; background:transparent; cursor:pointer; }
+.glu-edit-icon:hover { border-color:var(--glu-border); color:var(--glu-accent)!important; background:var(--glu-panel); }
+.glu-synopsis-row .glu-edit-icon { margin-top:18px; }
+.glu-local-editor { display:flex; gap:7px; margin-top:10px; max-width:650px; }
+.glu-local-editor input, .glu-local-editor textarea { min-width:0; flex:1; padding:8px 10px; border:1px solid var(--glu-border); border-radius:6px; color:var(--glu-fg); background:color-mix(in srgb,var(--glu-panel) 90%,#000); resize:vertical; }
+.glu-local-editor button { padding:7px 11px; border:1px solid #ffffff25; border-radius:6px; background:var(--glu-panel); cursor:pointer; }
+.glu-local-editor button.primary { border-color:color-mix(in srgb,var(--glu-accent) 72%,#fff); color:#071116; background:var(--glu-accent); font-weight:650; }
+.glu-synopsis-editor { display:block; margin-top:17px; }
+.glu-synopsis-editor textarea { width:100%; box-sizing:border-box; }
+.glu-synopsis-editor > div { display:flex; gap:7px; margin-top:7px; }
+.glu-metadata-credit { margin:7px 0 0; color:var(--glu-muted); font-size:8px; letter-spacing:.06em; text-transform:uppercase; }
+.glu-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:22px; }
+.glu-actions button { padding:8px 14px; border:1px solid #ffffff25; border-radius:6px; background:var(--glu-panel); cursor:pointer; }
+.glu-actions .primary { border-color:color-mix(in srgb,var(--glu-accent) 72%,#fff); color:#071116!important; background:var(--glu-accent); font-weight:650; }
+.glu-extras { margin-top:27px; padding-top:18px; border-top:1px solid #ffffff13; }
+.glu-extras-heading { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:9px; }
+.glu-extras-heading h2 { margin:0; font-size:13px; font-weight:620; }
+.glu-extras-heading span { color:var(--glu-muted); font-size:9px; }
+.glu-extra-list { display:grid; gap:6px; }
+.glu-extra { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; align-items:center; min-width:0; padding:9px 10px; border:1px solid #ffffff16; border-radius:6px; background:#0b11178c; }
+.glu-extra>div:first-child { display:flex; min-width:0; flex-direction:column; gap:2px; }
+.glu-extra strong { overflow:hidden; font-size:11px; font-weight:620; text-overflow:ellipsis; white-space:nowrap; }
+.glu-extra small { color:var(--glu-muted); font-size:8px; }
+.glu-extra-actions { display:flex; gap:6px; }
+.glu-extra-actions button { padding:6px 9px; border:1px solid #ffffff22; border-radius:5px; background:var(--glu-panel); cursor:pointer; font-size:9px; }
+.glu-extra-actions button.primary { border-color:color-mix(in srgb,var(--glu-accent) 72%,#fff); color:#071116; background:var(--glu-accent); font-weight:650; }
+.glu-previews { margin-top:32px; }
+.glu-preview-heading { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:9px; }
+.glu-preview-heading h2 { margin:0; font-size:13px; font-weight:620; }
+.glu-preview-heading span { color:var(--glu-muted); font-size:10px; }
+.glu-preview-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:7px; }
+.glu-preview { position:relative; min-width:0; aspect-ratio:16/10; overflow:hidden; padding:0; border:1px solid #ffffff24; border-radius:5px; background:#101820; cursor:pointer; }
+.glu-preview .glu-artwork { filter:sepia(.2) hue-rotate(var(--preview-tone)) saturate(.78) brightness(.64); transform:scale(1.32); transition:transform 1.2s ease,filter .25s ease; }
+.glu-preview-frame { position:absolute; inset:0; background-position:center; background-size:cover; }
+.glu-preview-frame.loading { background:linear-gradient(110deg,#273039 8%,#333d45 18%,#273039 33%); background-size:240% 100%; animation:glu-preview-loading 1.5s linear infinite; }
+.glu-preview video { position:absolute; z-index:1; inset:0; width:100%; height:100%; opacity:0; object-fit:cover; pointer-events:none; transition:opacity 180ms ease; }
+.glu-preview video.ready { opacity:1; }
+.glu-preview.playing .glu-artwork { filter:sepia(0) hue-rotate(var(--preview-tone)) saturate(1.05) brightness(.88); transform:scale(1.48) translateX(3%); transition:transform 6s linear,filter .25s ease; }
+.glu-preview-vignette { position:absolute; z-index:1; inset:0; background:linear-gradient(transparent 36%,#020406e8); }
+.glu-preview-label { position:absolute; z-index:2; right:6px; bottom:5px; left:6px; display:flex; align-items:end; justify-content:space-between; gap:4px; text-align:left; }
+.glu-preview-label b { overflow:hidden; font-size:9px; font-weight:600; text-overflow:ellipsis; white-space:nowrap; }
+.glu-preview-label small { color:#d4dde2; font-size:8px; }
+.glu-preview>i { position:absolute; z-index:3; right:0; bottom:0; left:0; height:2px; background:var(--glu-accent); transform:scaleX(var(--preview-progress,0)); transform-origin:left; transition:transform 180ms linear; }
+.glu-store-back-preview { position:absolute!important; z-index:2; display:block; aspect-ratio:16/10; overflow:hidden; border:clamp(2px,.45cqw,5px) solid #eee7d8; background-color:var(--store-base); background-position:center; background-repeat:no-repeat; background-size:cover; box-shadow:0 8px 18px #000b,0 0 0 1px #0008; }
+.glu-store-back-preview::after { content:""; position:absolute; z-index:1; inset:0; background:linear-gradient(130deg,#fff2,transparent 34%,#0002); pointer-events:none; }
+.glu-store-back-preview.playing { border-color:color-mix(in srgb,var(--store-accent) 70%,#fff); box-shadow:0 10px 24px #000d,0 0 0 2px var(--store-accent); }
+.glu-store-back-preview>small { position:absolute; z-index:3; right:3px; bottom:3px; padding:2px 4px; color:#fff; background:#050708b8; font-size:clamp(5px,.6cqw,8px); font-style:normal; line-height:1; text-shadow:0 1px 2px #000; }
+.glu-store-back-preview>i { position:absolute; z-index:4; right:0; bottom:0; left:0; height:2px; background:var(--store-accent); transform-origin:left; transition:transform 180ms linear; }
+.glu-store-preview-player { position:absolute!important; z-index:7; display:block; aspect-ratio:16/10; overflow:hidden; border:clamp(2px,.45cqw,5px) solid color-mix(in srgb,var(--store-accent) 70%,#fff); background:var(--store-base); box-shadow:0 10px 24px #000d,0 0 0 2px var(--store-accent); pointer-events:none; }
+.glu-store-preview-player video { position:absolute; z-index:1; inset:0; width:100%; height:100%; opacity:0; background:var(--store-base); object-fit:contain; transition:opacity 160ms ease; }
+.glu-store-preview-player video.ready { opacity:1; }
+.glu-store-preview-player>small { position:absolute; z-index:2; right:3px; bottom:3px; padding:2px 4px; color:#fff; background:#050708b8; font-size:clamp(5px,.6cqw,8px); line-height:1; text-shadow:0 1px 2px #000; }
+.glu-store-preview-player>i { position:absolute; z-index:3; right:0; bottom:0; left:0; height:2px; background:var(--store-accent); transform-origin:left; transition:transform 180ms linear; }
+/* Extras under the rating: a picture per extra, play on the picture, ⌖ shows the file in GExplorer.
+   The rating box stays at the top of its column (2026-10-27): 0, 1 or 2 chips below never move it. */
+.glu-store-extras-panel { display:flex; min-height:0; flex:0 1 auto; flex-direction:column; text-align:left; }
+.glu-store-extras-panel>header { display:flex; align-items:center; justify-content:space-between; padding:0 2px 7px; color:color-mix(in srgb,var(--store-text) 70%,transparent); font-size:8px; font-weight:750; letter-spacing:.13em; text-transform:uppercase; }
+.glu-store-extras-panel>header small { display:grid; min-width:16px; height:16px; padding:0 4px; border-radius:8px; background:#ffffff12; font-size:8px; place-items:center; }
+.glu-store-extras-pager { display:flex; align-items:center; gap:3px; }
+.glu-store-extras-pager button { display:grid; width:18px; height:16px; padding:0; border:1px solid #ffffff1f; border-radius:8px; color:var(--store-text); background:#ffffff0d; cursor:pointer; font-size:11px; line-height:1; place-items:center; }
+.glu-store-extras-pager button:hover,.glu-store-extras-pager button:focus-visible { border-color:var(--store-accent); color:var(--store-accent); outline:0; }
+/* Square chips while there is room; then each gets shorter (down to 64 px) to fit the column; scrolling only below that. */
+/* Scrolls (wheel, keyboard) only when the chips are at their smallest; no bar: a pixel or two of rounding after a resize would show one. */
+.glu-store-extra-tiles { display:flex; min-height:0; flex:0 1 auto; flex-direction:column; gap:12px; overflow:auto; padding:2px; scrollbar-width:none; }
+.glu-store-extra-tiles::-webkit-scrollbar { display:none; }
+/* An extra: its name above, then a chip like the rating box whose face is a picture of the video,
+   left as it is. Square while the column has room; name and chip shrink together to fit it. Two
+   see-through buttons cover the chip: play (top three quarters) and Find in GExplorer (bottom
+   quarter). Only their icon and text are painted; hovering one lightens it a little. */
+.glu-store-extra { display:flex; min-height:0; flex:0 1 auto; flex-direction:column; gap:5px; }
+.glu-store-extra-caption { flex:0 0 auto; overflow:hidden; padding:0 2px; color:var(--store-text); font-size:10px; font-weight:700; line-height:1.25; text-overflow:ellipsis; white-space:nowrap; }
+.glu-store-extra-chip { position:relative; display:grid; flex:0 1 auto; grid-template-rows:3fr 1fr; width:100%; aspect-ratio:1; min-height:56px; overflow:hidden; border:1px solid color-mix(in srgb,var(--store-accent) 42%,#ffffff20); border-radius:12px; color:#fff; background:#080c0f center/cover no-repeat; box-shadow:0 14px 32px #0008; container:glu-extra / size; }
+.glu-store-extra-chip.bare { background-image:radial-gradient(circle at 50% 35%,color-mix(in srgb,var(--store-accent) 26%,transparent),transparent 62%); }
+.glu-store-extra-chip:hover,.glu-store-extra-chip:focus-within { border-color:var(--store-accent); }
+.glu-store-extra-chip .glu-store-extra-play,.glu-store-extra-chip .glu-store-extra-find { position:relative; display:grid; min-width:0; min-height:0; margin:0; padding:0; border:0; border-radius:0; color:#fff; background:transparent; box-shadow:none; cursor:pointer; text-shadow:0 1px 2px #000,0 0 8px #000c; transform:none; transition:background-color 140ms ease; }
+.glu-store-extra-chip .glu-store-extra-play:hover,.glu-store-extra-chip .glu-store-extra-find:hover,.glu-store-extra-chip .glu-store-extra-play:focus-visible,.glu-store-extra-chip .glu-store-extra-find:focus-visible { background:#ffffff26; outline:0; }
+.glu-store-extra-chip .glu-store-extra-play { place-items:center; }
+.glu-store-extra-chip .glu-store-extra-icon { display:grid; width:clamp(22px,30cqh,40px); height:clamp(22px,30cqh,40px); border-radius:50%; color:#100d09; background:color-mix(in srgb,var(--store-accent) 90%,#fff); box-shadow:0 3px 12px #000a; font-size:clamp(9px,11cqh,15px); text-shadow:none; place-items:center; transition:transform 150ms ease; }
+.glu-store-extra-chip .glu-store-extra-play:hover .glu-store-extra-icon,.glu-store-extra-chip .glu-store-extra-play:focus-visible .glu-store-extra-icon { transform:scale(1.08); }
+.glu-store-extra-chip .glu-store-extra-play small { position:absolute; right:8px; bottom:4px; color:#fffd; font-size:8px; font-weight:650; }
+.glu-store-extra-chip .glu-store-extra-find { grid-auto-flow:column; align-items:center; justify-content:center; gap:5px; font-size:9px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+.glu-store-extra-chip .glu-store-extra-find span { font-size:13px; letter-spacing:0; }
+@container glu-extra (max-height:150px) {
+  .glu-store-extra-chip .glu-store-extra-play small { display:none; }
+}
+@container glu-extra (max-height:110px) {
+  .glu-store-extra-chip .glu-store-extra-find b { display:none; }
+}
+/* The movie-store page is library-ui's StoreDetail since 0.11.0 (glu-sd-*, with class vc-store-detail): what only
+   movies add to it. The scene previews (glu-store-back-preview, glu-store-preview-player), the extras and the disc
+   above keep their own rules. */
+.vc-store-detail .glu-detail-title { padding:48px 18px 17px; }
+.vc-store-detail .glu-detail-title strong { font-size:clamp(21px,2.7vw,34px); }
+.glu-dvd-disc { position:absolute; z-index:1; top:50%; left:47%; display:block; width:78%; aspect-ratio:1; border:1px solid #ffffff85; border-radius:50%; opacity:.28; background:conic-gradient(from 16deg,#d5e8ec,#8f77bd 11%,#dfeae8 22%,#9ad2bd 34%,#eff3ee 48%,#d2939b 62%,#dbecf0 75%,#9f87c9 88%,#d5e8ec); box-shadow:0 18px 32px #000c,inset 0 0 0 4px #ffffff28,inset 0 0 20px #fff; transform:translate(-47%,-50%) rotate(0); }
+.glu-dvd-disc::before { content:""; position:absolute; inset:37%; border:1px solid #ffffffa8; border-radius:50%; background:#111820; box-shadow:0 0 0 8px #e8ececb8; }
+.glu-dvd-disc::after { content:"GEM VIDEO"; position:absolute; top:21%; right:0; left:0; color:#26323a; font-size:7px; font-weight:800; letter-spacing:.18em; text-align:center; text-shadow:0 1px #fff8; }
+.glu-dvd-disc i { position:absolute; inset:6%; border:1px solid #ffffff55; border-radius:50%; }
+.vc-store-detail.ejecting .glu-dvd-disc { opacity:1; animation:glu-disc-eject 680ms cubic-bezier(.22,.72,.18,1) both; }
+@keyframes glu-detail-in { from { opacity:0; transform:translateY(8px); } }
+@keyframes glu-preview-loading { to { background-position-x:-240%; } }
+@keyframes glu-disc-eject {
+  0% { opacity:.3; transform:translate(-47%,-50%) rotate(0); }
+  58% { opacity:1; transform:translate(-118%,-50%) rotate(-210deg); }
+  100% { opacity:1; transform:translate(-132%,-50%) rotate(-285deg) scale(1.03); }
+}
+@container (max-width:700px) {
+  .glu-detail-body { grid-template-columns:150px minmax(0,1fr); gap:24px; align-items:start; padding:24px 18px 40px; }
+  .glu-detail-case-wrap { width:145px; }
+  .glu-preview-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .glu-store-extra-caption,.glu-store-extra-chip .glu-store-extra-play small,.glu-store-extra-chip .glu-store-extra-find b { display:none; }
+}
+@container (max-width:470px) {
+  .glu-season-filter>span { display:none; }
+  .glu-season-filter select { width:83px; }
+  .glu-detail-header>span { display:none; }
+  .glu-detail-body { display:block; }
+  .glu-detail-case-wrap { width:138px; margin:0 auto 25px; }
+  .glu-detail-back>span:not(.glu-back-kicker) { -webkit-line-clamp:6; }
+  .glu-detail-copy h1 { font-size:28px; }
+  .glu-synopsis { font-size:12px; }
+  .glu-extra { grid-template-columns:1fr; }
+  .glu-extra-actions { justify-content:flex-start; }
+}
+@media (prefers-reduced-motion:reduce) {
+  .glu-detail-case,.glu-preview .glu-artwork { transition:none!important; }
+  .glu-detail { animation:none!important; }
+  .vc-store-detail.ejecting .glu-dvd-disc { animation:none!important; }
+}

@@ -1,11 +1,18 @@
 <script setup lang="ts">
+// widgets/media-library/LibraryDetail.vue
+//
+// A title, opened. Two looks:
+//   - movie-store (the Video Club look): library-ui's StoreDetail (0.11.0, 2026-11-01; the Game Shop's page, made from
+//     this one), with what only movies add: the scene previews that play on the back, the extras under the rating,
+//     the disc that slides out on Play, the ✎ artwork button, renaming the title (T).
+//   - classic: the details page (glu-detail), the Video Club's own.
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { startRename } from 'gexplorer/widgets'
-import ArtworkFrame from './ArtworkFrame.vue'
-import { extraDisplayName, formatCue, formatRuntime, formatYear, type LibraryItem } from './types'
+import { ArtworkFrame, StoreDetail, formatYear } from '@shared/library-ui'
+import { extraDisplayName, formatCue, formatRuntime, type MovieItem } from './movie-types'
 
 const props = defineProps<{
-  item: LibraryItem
+  item: MovieItem
   detailMode?: 'classic' | 'movie-store'
   flipped: boolean
   activePreview: number | null
@@ -26,11 +33,11 @@ const emit = defineEmits<{
   (e: 'flip'): void
   (e: 'play'): void
   (e: 'play-from-start'): void
-  (e: 'play-extra', item: LibraryItem): void
+  (e: 'play-extra', item: MovieItem): void
   (e: 'show-in-folder'): void
   /** Open the file in another app: the default one, or (openWithChoice) a list under <anchor>, the button. */
   (e: 'open-external', anchor?: HTMLElement): void
-  (e: 'show-extra-in-folder', item: LibraryItem): void
+  (e: 'show-extra-in-folder', item: MovieItem): void
   (e: 'edit-artwork'): void
   (e: 'open-tmdb'): void
   (e: 'update-title', value: string): void
@@ -49,16 +56,15 @@ const editingGenres = ref(false)
 const genresDraft = ref('')
 const storeTitle = ref<HTMLElement | null>(null)
 const ejecting = ref(false)
-const storePalette = ref({ base:'#29343a', accent:'#b97645', text:'#f8f1e6' })
 let previewStart = 0
 let previewEnd = 0
 let previewTimer: number | undefined
 let ejectTimer: number | undefined
 let stallTimer: number | undefined
-let paletteRevision = 0
 // Extras under the rating box (movie-store mode): as many square chips as the column holds, then
 // pages (‹ 1/3 ›). A page never holds fewer than one; chips still shrink if even one does not fit.
-const storeRating = ref<HTMLElement | null>(null)
+// The extras panel: its column is StoreDetail's right column (glu-sd-side), in the page's body row.
+const extrasPanel = ref<HTMLElement | null>(null)
 const extrasPage = ref(0)
 const extrasPerPage = ref(3)
 let extrasObserver: ResizeObserver | undefined
@@ -70,10 +76,10 @@ const EXTRAS_HEADER = 23
 const RATING_GAP = 14
 
 function measureExtras() {
-  const aside = storeRating.value
+  const aside = extrasPanel.value?.closest('.glu-sd-side') as HTMLElement | null | undefined
   const row = aside?.parentElement
   if (!aside || !row) return
-  const rating = aside.querySelector<HTMLElement>(':scope > button, :scope > .glu-store-rating-static')
+  const rating = aside.querySelector<HTMLElement>(':scope > .glu-sd-rating')
   const room = row.clientHeight - (rating?.offsetHeight ?? 0) - RATING_GAP - EXTRAS_HEADER
   // A chip is as tall as the column is wide (square), its name above it.
   const tile = Math.max(56, aside.clientWidth) + EXTRA_CAPTION + EXTRA_GAP
@@ -93,12 +99,13 @@ function onExtrasWheel(event: WheelEvent) {
   lastExtrasWheel = now
   turnExtras(event.deltaY > 0 ? 1 : -1)
 }
-watch(storeRating, element => {
+watch(extrasPanel, element => {
   extrasObserver?.disconnect()
   extrasObserver = undefined
-  if (!element || typeof ResizeObserver === 'undefined') return
+  const aside = (element as HTMLElement | null)?.closest('.glu-sd-side') as HTMLElement | null | undefined
+  if (!aside || typeof ResizeObserver === 'undefined') return
   extrasObserver = new ResizeObserver(() => measureExtras())
-  extrasObserver.observe(element.parentElement ?? element)
+  extrasObserver.observe(aside.parentElement ?? aside)
   measureExtras()
 })
 watch(() => props.item.id, () => { extrasPage.value = 0 })
@@ -161,17 +168,12 @@ const activeStorePreview = computed(() => {
   const cue = props.item.previews[index]
   return cue ? { cue, index } : null
 })
-const storeStyle = computed(() => ({
-  '--store-base':storePalette.value.base,
-  '--store-accent':storePalette.value.accent,
-  '--store-text':storePalette.value.text,
-}))
 const storeBackdropStyle = computed(() => backdropSource.value
   ? { backgroundImage:`linear-gradient(180deg,#06080a3d,#06080a9e), url(${JSON.stringify(backdropSource.value)})` }
   : undefined)
 
 /** An extra's file name, without its folder and extension. */
-function fileName(extra: LibraryItem) {
+function fileName(extra: MovieItem) {
   return (extra.path?.split(/[\\/]/).pop() ?? extra.title).replace(/\.[^.]+$/, '')
 }
 
@@ -189,64 +191,6 @@ function stableHash(value: string) {
     hash = Math.imul(hash,16777619)
   }
   return hash >>> 0
-}
-
-function fallbackPalette() {
-  const hash = stableHash(props.item.path || props.item.id)
-  const hue = hash % 360
-  const accent = (hue + 37 + ((hash >>> 8) % 56)) % 360
-  return { base:`hsl(${hue} 28% 22%)`, accent:`hsl(${accent} 48% 53%)`, text:'#fff8ea' }
-}
-
-function channel(value: number) {
-  return Math.max(0,Math.min(255,Math.round(value)))
-}
-
-function loadArtworkPalette() {
-  const revision = ++paletteRevision
-  storePalette.value = fallbackPalette()
-  const src = props.item.artwork.src
-  if (!src) return
-  const image = new Image()
-  image.crossOrigin = 'anonymous'
-  image.onload = () => {
-    if (revision !== paletteRevision) return
-    try {
-      const canvas = document.createElement('canvas')
-      canvas.width = 24
-      canvas.height = 24
-      const context = canvas.getContext('2d',{ willReadFrequently:true })
-      if (!context) return
-      context.drawImage(image,0,0,24,24)
-      const pixels = context.getImageData(0,0,24,24).data
-      let red = 0
-      let green = 0
-      let blue = 0
-      let weight = 0
-      for (let offset = 0; offset < pixels.length; offset += 4) {
-        if (pixels[offset + 3] < 80) continue
-        red += pixels[offset]
-        green += pixels[offset + 1]
-        blue += pixels[offset + 2]
-        weight += 1
-      }
-      if (!weight) return
-      red /= weight
-      green /= weight
-      blue /= weight
-      const base = [channel(red * .62),channel(green * .62),channel(blue * .62)]
-      const accent = [channel(red * 1.24 + 24),channel(green * 1.24 + 24),channel(blue * 1.24 + 24)]
-      const luminance = (.2126 * base[0] + .7152 * base[1] + .0722 * base[2]) / 255
-      storePalette.value = {
-        base:`rgb(${base.join(' ')})`,
-        accent:`rgb(${accent.join(' ')})`,
-        text:luminance > .58 ? '#15120f' : '#fff8ea',
-      }
-    } catch {
-      // Some remote artwork cannot be sampled; the title-derived palette remains stable.
-    }
-  }
-  image.src = src
 }
 
 function storePreviewStyle(index: number) {
@@ -423,7 +367,6 @@ watch(() => [props.item.id, props.previewStreamUrl] as const, () => {
   editingGenres.value = false
   ejecting.value = false
   window.clearTimeout(ejectTimer)
-  loadArtworkPalette()
 }, { immediate:true })
 
 onBeforeUnmount(() => {
@@ -433,26 +376,155 @@ onBeforeUnmount(() => {
   window.clearTimeout(stallTimer)
   if (liveVideo) releaseVideo(liveVideo)
   liveVideo = null
-  paletteRevision += 1
 })
 </script>
 
 <template>
-  <article class="glu-detail" :class="{ 'movie-store':detailMode === 'movie-store', ejecting }" :style="storeStyle" :aria-label="`${item.title} details`">
+  <StoreDetail
+    v-if="detailMode === 'movie-store'"
+    class="vc-store-detail"
+    :class="{ ejecting }"
+    :item="item"
+    :kicker="`From ${item.primaryGenre}`"
+    :flipped="flipped"
+    @update:flipped="emit('flip')"
+    @close="emit('close')"
+  >
+    <template #controls>
+      <button type="button" class="primary" :disabled="ejecting" :title="resumeLabel || undefined" @click="playMedia"><span aria-hidden="true">▶</span><b>{{ item.resumeSeconds ? 'Resume' : item.watched ? 'Watch again' : 'Play' }}</b></button>
+      <button v-if="item.resumeSeconds" type="button" @click="emit('play-from-start')"><span aria-hidden="true">⏮</span><b>Start over</b></button>
+      <button v-if="item.path && canOpenExternally" type="button" :title="openWithChoice ? 'Open it in another app' : 'Open with your default video app'" @click="emit('open-external', $event.currentTarget as HTMLElement)"><span aria-hidden="true">⧉</span><b>{{ openWithChoice ? 'Open with…' : 'Default app' }}</b></button>
+      <button v-if="item.path && canShowInFolder" type="button" @click="emit('show-in-folder')"><span aria-hidden="true">⌖</span><b>Show media file</b></button>
+    </template>
+
+    <template #behind>
+      <span class="glu-dvd-disc" aria-hidden="true"><i></i></span>
+      <button v-if="item.path" type="button" class="glu-artwork-edit" title="Change artwork" aria-label="Change artwork" @click="emit('edit-artwork')">✎</button>
+    </template>
+
+    <template #front>
+      <span class="glu-detail-title"><strong>{{ item.title }}</strong><small>A GEM VIDEO SELECTION</small></span>
+    </template>
+
+    <template #back>
+      <span v-if="backdropSource" class="glu-sd-backdrop" :style="storeBackdropStyle" aria-hidden="true"></span>
+      <span
+        v-for="(cue, index) in item.previews"
+        :key="`back-${cue.seconds}`"
+        class="glu-store-back-preview"
+        :class="{ playing:activePreview === index }"
+        :style="storePreviewStyle(index)"
+        role="img"
+        :aria-label="`${cue.label} preview at ${formatCue(cue.seconds)}`"
+        @pointerenter.stop="queuePreview(index)"
+        @pointerleave.stop="stopPreview()"
+        @click.stop
+      >
+        <small>{{ activePreview === index ? (previewReady ? 'Playing' : 'Loading…') : cue.label }}</small>
+        <i v-if="activePreview === index" :style="{ transform:`scaleX(${activeProgress(index)})` }" aria-hidden="true"></i>
+      </span>
+      <span class="glu-sd-back-copy">
+        <small>{{ item.genres.join(' · ') }}</small>
+        <strong ref="storeTitle" data-rename-row>{{ item.title }}</strong>
+        <span>{{ item.synopsis }}</span>
+        <b>{{ formatYear(item.year) }} · {{ formatRuntime(item.runtimeMinutes) }} · {{ item.rating }}</b>
+      </span>
+    </template>
+
+    <template #stage>
+      <span
+        v-if="flipped && item.path && previewStreamUrl && !previewError && activeStorePreview"
+        :key="`store-player-${item.id}:${activeStorePreview.index}`"
+        class="glu-store-preview-player"
+        :style="storePreviewStyle(activeStorePreview.index)"
+        aria-hidden="true"
+      >
+        <video
+          :ref="bindPreviewVideo"
+          crossorigin="anonymous"
+          :src="previewStreamUrl"
+          :class="{ ready:previewReady }"
+          muted
+          playsinline
+          preload="metadata"
+          controlslist="nodownload"
+          disablepictureinpicture
+          @loadedmetadata="preparePreview($event, activeStorePreview.cue.seconds, activeStorePreview.index)"
+          @seeked="previewSeeked($event, activeStorePreview.index)"
+          @timeupdate="updatePreviewProgress($event,activeStorePreview.index)"
+          @error="previewFailed"
+          @contextmenu.prevent
+        ></video>
+        <small>{{ previewReady ? 'Playing' : 'Loading…' }}</small>
+        <i :style="{ transform:`scaleX(${activeProgress(activeStorePreview.index)})` }"></i>
+      </span>
+      <div v-if="flipped && item.path" class="glu-sd-edit-tools" aria-label="Edit case details" @click.stop>
+        <button type="button" title="Rename title" aria-label="Rename title" @click="beginTitleRename">T</button>
+        <button type="button" title="Edit genres locally" aria-label="Edit genres locally" @click="beginGenresEdit">G</button>
+        <button type="button" title="Edit synopsis locally" aria-label="Edit synopsis locally" @click="beginSynopsisEdit">¶</button>
+      </div>
+      <form v-if="flipped && editingGenres" class="glu-sd-editor" aria-label="Edit genres" @click.stop @submit.prevent="saveGenres">
+        <label for="glu-store-genres">Genres, separated by commas</label>
+        <input id="glu-store-genres" v-model="genresDraft" autofocus @keydown.esc.stop.prevent="editingGenres = false" />
+        <div><button type="button" @click="editingGenres = false">Cancel</button><button type="submit" class="primary">Save</button></div>
+      </form>
+      <form v-if="flipped && editingSynopsis" class="glu-sd-editor tall" aria-label="Edit synopsis" @click.stop @submit.prevent="saveSynopsis">
+        <label for="glu-store-synopsis">Synopsis</label>
+        <textarea id="glu-store-synopsis" v-model="synopsisDraft" rows="6" autofocus aria-label="Local media description" @keydown.esc.stop.prevent="editingSynopsis = false"></textarea>
+        <div><button type="button" @click="editingSynopsis = false">Cancel</button><button type="submit" class="primary">Save</button></div>
+      </form>
+    </template>
+
+    <template #side>
+      <button v-if="hasTmdbPage" type="button" class="glu-sd-rating" title="Read reviews on TMDB" @click="emit('open-tmdb')">
+        <span class="glu-sd-stars" aria-hidden="true"><i :style="{ width:tmdbRatingPercent }">★★★★★</i>★★★★★</span>
+        <strong>{{ item.tmdbRating ? item.tmdbRating.toFixed(1) : '—' }}<small>/10</small></strong>
+        <span>TMDB rating</span>
+        <em>Read reviews ↗</em>
+      </button>
+      <div v-else class="glu-sd-rating static">
+        <span class="glu-sd-stars" aria-hidden="true">★★★★★</span>
+        <strong>Not rated</strong>
+        <small>Match this title with TMDB to see its rating.</small>
+      </div>
+      <section v-if="item.extras?.length" ref="extrasPanel" class="glu-store-extras-panel" aria-label="Extras">
+        <header>
+          <span>Extras</span>
+          <span v-if="extrasPages > 1" class="glu-store-extras-pager">
+            <button type="button" aria-label="Previous extras" title="Previous" @click="turnExtras(-1)">‹</button>
+            <small :aria-label="`Page ${extrasPage + 1} of ${extrasPages}, ${item.extras.length} extras`">{{ extrasPage + 1 }}/{{ extrasPages }}</small>
+            <button type="button" aria-label="More extras" title="More" @click="turnExtras(1)">›</button>
+          </span>
+          <small v-else>{{ item.extras.length }}</small>
+        </header>
+        <div class="glu-store-extra-tiles" @wheel="onExtrasWheel">
+          <div v-for="extra in pagedExtras" :key="extra.id" class="glu-store-extra">
+            <span class="glu-store-extra-caption" :title="fileName(extra)">{{ extraDisplayName(extra, item.title) }}</span>
+            <div
+              class="glu-store-extra-chip"
+              :class="{ bare:!extraThumbs?.[extra.path ?? ''] }"
+              :style="extraThumbs?.[extra.path ?? ''] ? { backgroundImage:`url(${JSON.stringify(extraThumbs[extra.path ?? ''])})` } : undefined"
+            >
+              <button type="button" class="glu-store-extra-play" :aria-label="`Play ${extraDisplayName(extra, item.title)}`" :title="`Play ${fileName(extra)}`" @click="emit('play-extra', extra)">
+                <span class="glu-store-extra-icon" aria-hidden="true">▶</span>
+                <small>{{ formatRuntime(extra.runtimeMinutes) }}</small>
+              </button>
+              <button v-if="extra.path && canShowInFolder" type="button" class="glu-store-extra-find" :aria-label="`Show ${extraDisplayName(extra, item.title)} in GExplorer`" title="Show in GExplorer" @click="emit('show-extra-in-folder', extra)"><span aria-hidden="true">⌖</span><b>Find</b></button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </template>
+  </StoreDetail>
+
+  <article v-else class="glu-detail" :aria-label="`${item.title} details`">
     <header class="glu-detail-header">
       <button type="button" class="glu-back-icon" aria-label="Back" title="Back" @click="emit('close')"><span aria-hidden="true">←</span></button>
       <span>From {{ item.primaryGenre }}</span>
       <span aria-hidden="true"></span>
     </header>
     <div class="glu-detail-body">
-      <aside v-if="detailMode === 'movie-store'" class="glu-store-controls" aria-label="Media controls">
-        <button type="button" class="primary" :disabled="ejecting" :title="resumeLabel || undefined" @click="playMedia"><span aria-hidden="true">▶</span><b>{{ item.resumeSeconds ? 'Resume' : item.watched ? 'Watch again' : 'Play' }}</b></button>
-        <button v-if="item.resumeSeconds" type="button" @click="emit('play-from-start')"><span aria-hidden="true">⏮</span><b>Start over</b></button>
-        <button v-if="item.path && canOpenExternally" type="button" :title="openWithChoice ? 'Open it in another app' : 'Open with your default video app'" @click="emit('open-external', $event.currentTarget as HTMLElement)"><span aria-hidden="true">⧉</span><b>{{ openWithChoice ? 'Open with…' : 'Default app' }}</b></button>
-        <button v-if="item.path && canShowInFolder" type="button" @click="emit('show-in-folder')"><span aria-hidden="true">⌖</span><b>Show media file</b></button>
-      </aside>
       <div class="glu-detail-case-wrap">
-        <span v-if="detailMode === 'movie-store'" class="glu-dvd-disc" aria-hidden="true"><i></i></span>
         <div class="glu-detail-case-stage">
           <button
             type="button"
@@ -466,132 +538,23 @@ onBeforeUnmount(() => {
               <span class="glu-detail-title"><strong>{{ item.title }}</strong><small>A GEM VIDEO SELECTION</small></span>
             </span>
             <span class="glu-detail-face glu-detail-back">
-              <template v-if="detailMode === 'movie-store'">
-                <span v-if="backdropSource" class="glu-store-backdrop" :style="storeBackdropStyle" aria-hidden="true"></span>
-                <span
-                  v-for="(cue, index) in item.previews"
-                  :key="`back-${cue.seconds}`"
-                  class="glu-store-back-preview"
-                  :class="{ playing:activePreview === index }"
-                  :style="storePreviewStyle(index)"
-                  role="img"
-                  :aria-label="`${cue.label} preview at ${formatCue(cue.seconds)}`"
-                  @pointerenter.stop="queuePreview(index)"
-                  @pointerleave.stop="stopPreview()"
-                  @click.stop
-                >
-                  <small>{{ activePreview === index ? (previewReady ? 'Playing' : 'Loading…') : cue.label }}</small>
-                  <i v-if="activePreview === index" :style="{ transform:`scaleX(${activeProgress(index)})` }" aria-hidden="true"></i>
-                </span>
-                <span class="glu-store-back-copy">
-                  <small>{{ item.genres.join(' · ') }}</small>
-                  <strong ref="storeTitle" data-rename-row>{{ item.title }}</strong>
-                  <span>{{ item.synopsis }}</span>
-                  <b>{{ formatYear(item.year) }} · {{ formatRuntime(item.runtimeMinutes) }} · {{ item.rating }}</b>
-                </span>
-              </template>
-              <template v-else>
-                <span class="glu-back-kicker">{{ item.genres.join(' · ') }}</span>
-                <strong>{{ item.title }}</strong>
-                <span>{{ item.synopsis }}</span>
-                <small>{{ formatYear(item.year) }} · {{ formatRuntime(item.runtimeMinutes) }} · {{ item.rating }}</small>
-                <i aria-hidden="true"></i>
-              </template>
+              <span class="glu-back-kicker">{{ item.genres.join(' · ') }}</span>
+              <strong>{{ item.title }}</strong>
+              <span>{{ item.synopsis }}</span>
+              <small>{{ formatYear(item.year) }} · {{ formatRuntime(item.runtimeMinutes) }} · {{ item.rating }}</small>
+              <i aria-hidden="true"></i>
             </span>
           </button>
-          <span
-            v-if="detailMode === 'movie-store' && flipped && item.path && previewStreamUrl && !previewError && activeStorePreview"
-            :key="`store-player-${item.id}:${activeStorePreview.index}`"
-            class="glu-store-preview-player"
-            :style="storePreviewStyle(activeStorePreview.index)"
-            aria-hidden="true"
-          >
-            <video
-              :ref="bindPreviewVideo"
-              crossorigin="anonymous"
-              :src="previewStreamUrl"
-              :class="{ ready:previewReady }"
-              muted
-              playsinline
-              preload="metadata"
-              controlslist="nodownload"
-              disablepictureinpicture
-              @loadedmetadata="preparePreview($event, activeStorePreview.cue.seconds, activeStorePreview.index)"
-              @seeked="previewSeeked($event, activeStorePreview.index)"
-              @timeupdate="updatePreviewProgress($event,activeStorePreview.index)"
-              @error="previewFailed"
-              @contextmenu.prevent
-            ></video>
-            <small>{{ previewReady ? 'Playing' : 'Loading…' }}</small>
-            <i :style="{ transform:`scaleX(${activeProgress(activeStorePreview.index)})` }"></i>
-          </span>
-          <div v-if="detailMode === 'movie-store' && flipped && item.path" class="glu-store-edit-tools" aria-label="Edit case details" @click.stop>
-            <button type="button" title="Rename title" aria-label="Rename title" @click="beginTitleRename">T</button>
-            <button type="button" title="Edit genres locally" aria-label="Edit genres locally" @click="beginGenresEdit">G</button>
-            <button type="button" title="Edit synopsis locally" aria-label="Edit synopsis locally" @click="beginSynopsisEdit">¶</button>
-          </div>
-          <form v-if="detailMode === 'movie-store' && flipped && editingGenres" class="glu-store-editor" aria-label="Edit genres" @click.stop @submit.prevent="saveGenres">
-            <label for="glu-store-genres">Genres</label>
-            <input id="glu-store-genres" v-model="genresDraft" autofocus aria-label="Genres separated by commas" @keydown.escape.prevent="editingGenres = false" />
-            <div><button type="submit" class="primary">Save</button><button type="button" @click="editingGenres = false">Cancel</button></div>
-          </form>
-          <form v-if="detailMode === 'movie-store' && flipped && editingSynopsis" class="glu-store-editor glu-store-synopsis-editor" aria-label="Edit synopsis" @click.stop @submit.prevent="saveSynopsis">
-            <label for="glu-store-synopsis">Synopsis</label>
-            <textarea id="glu-store-synopsis" v-model="synopsisDraft" rows="6" autofocus aria-label="Local media description" @keydown.escape.prevent="editingSynopsis = false"></textarea>
-            <div><button type="submit" class="primary">Save</button><button type="button" @click="editingSynopsis = false">Cancel</button></div>
-          </form>
         </div>
         <button v-if="item.path" type="button" class="glu-artwork-edit" title="Change artwork" aria-label="Change artwork" @click="emit('edit-artwork')">✎</button>
-        <button v-if="detailMode !== 'movie-store'" type="button" class="glu-turn" @click="emit('flip')">{{ flipped ? 'Show front' : 'Turn case over' }}</button>
+        <button type="button" class="glu-turn" @click="emit('flip')">{{ flipped ? 'Show front' : 'Turn case over' }}</button>
       </div>
-
-      <aside v-if="detailMode === 'movie-store'" ref="storeRating" class="glu-store-rating" aria-label="TMDB rating">
-        <button v-if="hasTmdbPage" type="button" title="Read reviews on TMDB" @click="emit('open-tmdb')">
-          <span class="glu-rating-stars" aria-hidden="true"><i :style="{ width:tmdbRatingPercent }">★★★★★</i>★★★★★</span>
-          <strong>{{ item.tmdbRating ? item.tmdbRating.toFixed(1) : '—' }}<small>/10</small></strong>
-          <span>TMDB rating</span>
-          <em>Read reviews ↗</em>
-        </button>
-        <div v-else class="glu-store-rating-static">
-          <span class="glu-rating-stars" aria-hidden="true">★★★★★</span>
-          <strong>Not rated</strong>
-          <small>Match this title with TMDB to see its rating.</small>
-        </div>
-        <section v-if="item.extras?.length" class="glu-store-extras-panel" aria-label="Extras">
-          <header>
-            <span>Extras</span>
-            <span v-if="extrasPages > 1" class="glu-store-extras-pager">
-              <button type="button" aria-label="Previous extras" title="Previous" @click="turnExtras(-1)">‹</button>
-              <small :aria-label="`Page ${extrasPage + 1} of ${extrasPages}, ${item.extras.length} extras`">{{ extrasPage + 1 }}/{{ extrasPages }}</small>
-              <button type="button" aria-label="More extras" title="More" @click="turnExtras(1)">›</button>
-            </span>
-            <small v-else>{{ item.extras.length }}</small>
-          </header>
-          <div class="glu-store-extra-tiles" @wheel="onExtrasWheel">
-            <div v-for="extra in pagedExtras" :key="extra.id" class="glu-store-extra">
-              <span class="glu-store-extra-caption" :title="fileName(extra)">{{ extraDisplayName(extra, item.title) }}</span>
-              <div
-                class="glu-store-extra-chip"
-                :class="{ bare:!extraThumbs?.[extra.path ?? ''] }"
-                :style="extraThumbs?.[extra.path ?? ''] ? { backgroundImage:`url(${JSON.stringify(extraThumbs[extra.path ?? ''])})` } : undefined"
-              >
-                <button type="button" class="glu-store-extra-play" :aria-label="`Play ${extraDisplayName(extra, item.title)}`" :title="`Play ${fileName(extra)}`" @click="emit('play-extra', extra)">
-                  <span class="glu-store-extra-icon" aria-hidden="true">▶</span>
-                  <small>{{ formatRuntime(extra.runtimeMinutes) }}</small>
-                </button>
-                <button v-if="extra.path && canShowInFolder" type="button" class="glu-store-extra-find" :aria-label="`Show ${extraDisplayName(extra, item.title)} in GExplorer`" title="Show in GExplorer" @click="emit('show-extra-in-folder', extra)"><span aria-hidden="true">⌖</span><b>Find</b></button>
-              </div>
-            </div>
-          </div>
-        </section>
-      </aside>
-
-      <div v-if="detailMode !== 'movie-store'" class="glu-detail-copy">
+      <div class="glu-detail-copy">
         <p class="glu-eyebrow">{{ item.seriesTitle ? `${item.seriesTitle} · Season ${item.seasonNumber}` : item.primaryGenre }} · {{ formatYear(item.year) }}</p>
         <h1>{{ item.title }}</h1>
         <p class="glu-meta">{{ formatRuntime(item.runtimeMinutes) }} <span>•</span> {{ item.rating }} <template v-if="item.tmdbRating"><span>•</span> ★ {{ item.tmdbRating.toFixed(1) }}</template> <template v-if="item.watched"><span>•</span> ✓ Watched</template> <span v-if="item.resolution">•</span> {{ item.resolution }} <span>•</span> {{ item.genres.join(', ') }} <button v-if="item.path" type="button" class="glu-edit-icon" title="Edit genres locally" aria-label="Edit genres locally" @click="beginGenresEdit">✎</button></p>
         <div v-if="editingGenres" class="glu-local-editor glu-genre-editor">
-          <input v-model="genresDraft" aria-label="Genres separated by commas" @keydown.enter.prevent="saveGenres" @keydown.escape.prevent="editingGenres = false" />
+          <input v-model="genresDraft" aria-label="Genres separated by commas" @keydown.enter.prevent="saveGenres" @keydown.escape.stop.prevent="editingGenres = false" />
           <button type="button" class="primary" @click="saveGenres">Save</button><button type="button" @click="editingGenres = false">Cancel</button>
         </div>
         <div v-if="!editingSynopsis" class="glu-synopsis-row">
@@ -599,7 +562,7 @@ onBeforeUnmount(() => {
           <button v-if="item.path" type="button" class="glu-edit-icon" title="Edit description locally" aria-label="Edit description locally" @click="beginSynopsisEdit">✎</button>
         </div>
         <div v-else class="glu-local-editor glu-synopsis-editor">
-          <textarea v-model="synopsisDraft" rows="5" aria-label="Local media description" @keydown.escape.prevent="editingSynopsis = false"></textarea>
+          <textarea v-model="synopsisDraft" rows="5" aria-label="Local media description" @keydown.escape.stop.prevent="editingSynopsis = false"></textarea>
           <div><button type="button" class="primary" @click="saveSynopsis">Save</button><button type="button" @click="editingSynopsis = false">Cancel</button></div>
         </div>
         <p v-if="item.metadataSource === 'tmdb'" class="glu-metadata-credit">{{ item.localMetadataOverride ? 'Base metadata supplied by TMDB · local edits applied.' : 'Metadata supplied by TMDB.' }}</p>

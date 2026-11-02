@@ -1,9 +1,9 @@
-import type { LibraryItem } from './types'
+import type { MovieItem } from './movie-types'
 
 export type SeasonFilter = 'all' | number
 
 /** Uses scanned metadata first, then common episode and season-folder forms. */
-export function inferredSeasonNumber(item: LibraryItem): number | undefined {
+export function inferredSeasonNumber(item: MovieItem): number | undefined {
   if (Number.isInteger(item.seasonNumber) && (item.seasonNumber ?? -1) >= 0) return item.seasonNumber
   const value = `${item.title}\n${item.path ?? ''}`
   const tagged = value.match(/(?:^|[\\/\s._-])(?:season[\s._-]*|s)(\d{1,3})(?=$|[\\/\s._-]|e\d)/i)
@@ -11,14 +11,14 @@ export function inferredSeasonNumber(item: LibraryItem): number | undefined {
   return tagged ? Number(tagged[1]) : undefined
 }
 
-export function seasonsFor(items: LibraryItem[]): number[] {
+export function seasonsFor(items: MovieItem[]): number[] {
   return [...new Set(items.flatMap(item => {
     const season = inferredSeasonNumber(item)
     return season === undefined ? [] : [season]
   }))].sort((a,b) => a - b)
 }
 
-export function itemsForSeason(items: LibraryItem[], season: SeasonFilter): LibraryItem[] {
+export function itemsForSeason(items: MovieItem[], season: SeasonFilter): MovieItem[] {
   return season === 'all' ? items : items.filter(item => inferredSeasonNumber(item) === season)
 }
 

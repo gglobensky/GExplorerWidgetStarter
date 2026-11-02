@@ -4,7 +4,7 @@
 // recursive scan (no cap since 2026-10-26), what the previous scans saw ('scan-history': New arrivals), and the
 // lifecycle cache that spares a remount from scanning again.
 import { ref } from 'vue'
-import type { LibraryItem } from '../../shared/library-ui'
+import type { MovieItem } from './movie-types'
 import { copyItems, errorText, type LibraryContext } from './context'
 import { bundleMovieExtras, createScannedLibrary } from './media'
 import { loadScanHistory, mediaPathKey, mergeScanHistory, saveScanHistory } from './scan-history'
@@ -56,7 +56,7 @@ export function useLibraryScan(ctx: LibraryContext, covers: Covers, edits: Metad
   }
 
   /** The library's items as the user sees them: custom cover and local edits on top. */
-  function decorate(item: LibraryItem): LibraryItem {
+  function decorate(item: MovieItem): MovieItem {
     const local = edits.apply(item)
     const artwork = covers.customArtwork(item.path)
     return artwork ? { ...local, artwork } : local

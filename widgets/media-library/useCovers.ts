@@ -5,7 +5,8 @@
 // custom > TMDB poster > sidecar image beside the video > the OS's video thumbnail.
 import { ref } from 'vue'
 import type { MediaImage, MediaImageOptions } from 'gexplorer/widgets'
-import type { LibraryArtwork, LibraryItem } from '../../shared/library-ui'
+import type { LibraryArtwork } from '@shared/library-ui'
+import type { MovieItem } from './movie-types'
 import { errorText, type LibraryContext, type Progress } from './context'
 import { preferredCoverSource } from './media'
 import type { ScannedVideo } from './scanner'
@@ -50,7 +51,7 @@ export function useCovers(ctx: LibraryContext) {
   const remoteArtworkPaths = new Set<string>()
   const openRequests = new Set<string>()
 
-  function setItems(map: (item: LibraryItem) => LibraryItem) {
+  function setItems(map: (item: MovieItem) => MovieItem) {
     items.value = items.value.map(map)
   }
 
@@ -104,7 +105,7 @@ export function useCovers(ctx: LibraryContext) {
   }
 
   /** The thumbnail of the title just opened, when the scan's pass has not reached it yet. */
-  async function ensureOpenArtwork(item: LibraryItem) {
+  async function ensureOpenArtwork(item: MovieItem) {
     if (!item.path || item.artwork.src || !sdk?.mediaImageCreate || openRequests.has(item.path)) return
     const path = item.path
     openRequests.add(path)
@@ -175,7 +176,7 @@ export function useCovers(ctx: LibraryContext) {
     ctx.sync()
   }
 
-  async function hydrateTmdb(list: LibraryItem[], revision: number): Promise<{ imported:number; failed:number }> {
+  async function hydrateTmdb(list: MovieItem[], revision: number): Promise<{ imported:number; failed:number }> {
     if (!sdk?.mediaImageCreate || revision !== ctx.revision()) return { imported:0, failed:0 }
     const create = sdk.mediaImageCreate
     type Job = { id:string; path?:string; kind:'poster'|'still'; url:string; options:MediaImageOptions }
@@ -238,7 +239,7 @@ export function useCovers(ctx: LibraryContext) {
     return { imported, failed }
   }
 
-  async function replace(item: LibraryItem, image: MediaImage, focus = { x:50, y:50 }) {
+  async function replace(item: MovieItem, image: MediaImage, focus = { x:50, y:50 }) {
     if (!item.path) return
     const path = item.path
     const previous = savedCoverAssetId(customCovers.value[path])
@@ -250,7 +251,7 @@ export function useCovers(ctx: LibraryContext) {
   }
 
   /** Back to the artwork the library finds by itself (TMDB poster, sidecar or thumbnail). */
-  async function removeCustom(item: LibraryItem) {
+  async function removeCustom(item: MovieItem) {
     if (!item.path || !customCovers.value[item.path]) return
     const path = item.path
     const previous = savedCoverAssetId(customCovers.value[path])
@@ -269,7 +270,7 @@ export function useCovers(ctx: LibraryContext) {
     ctx.sync()
   }
 
-  async function useTmdbPoster(item: LibraryItem) {
+  async function useTmdbPoster(item: MovieItem) {
     if (!item.path || !item.tmdbPosterPath) return
     if (customCovers.value[item.path]) {
       await removeCustom(item)
@@ -283,7 +284,7 @@ export function useCovers(ctx: LibraryContext) {
   }
 
   /** Asks for an image file and makes it this title's cover. Resolves true when the cover changed. */
-  async function chooseFile(item: LibraryItem, startIn?: string): Promise<boolean> {
+  async function chooseFile(item: MovieItem, startIn?: string): Promise<boolean> {
     const ui = sdk?.ui?.()
     if (!item.path || !ui?.openFiles || !sdk?.mediaImageCreate || coverBusy.value) return false
     const paths = await ui.openFiles({

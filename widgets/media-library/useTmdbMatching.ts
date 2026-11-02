@@ -3,10 +3,14 @@
 // Optional TMDB metadata: the token (kept by GEM Shell as a protected secret: this widget only
 // names it), matching the whole library or one title, and the matched records kept by media path
 // in the 'tmdb-metadata' document so later scans restore them without a request.
-import { ref } from 'vue'
-import type { WidgetSecrets } from 'gexplorer/widgets'
-import type { LibraryItem } from '../../shared/library-ui'
-import { errorText, type LibraryContext } from './context'
+// 0.12.0: a run is a background job (entry.ts `jobs.tmdb`, its card TmdbCard.vue): it goes on while the Video Club is
+// off screen, and the card's Stop ends it after the batch it's on (what was matched is kept; the rest at the next
+// scan or "Refresh matches"). Its state and progress are lifecycle cells: back on screen, the Video Club shows the run
+// in progress (no second one starts) and takes each batch's matches from the scan cache as they come.
+import { ref, watch, type Ref } from 'vue'
+import type { WidgetJob, WidgetSecrets } from 'gexplorer/widgets'
+import type { MovieItem } from './movie-types'
+import { copyItems, errorText, type LibraryContext } from './context'
 import type { Covers } from './useCovers'
 import type { MetadataEdits } from './useMetadataEdits'
 import { bundleMovieExtras, flattenLibraryExtras } from './media'
@@ -33,6 +37,9 @@ type SecretStatus = Awaited<ReturnType<WidgetSecrets['status']>>
 export type TmdbState = 'idle' | 'matching' | 'ready' | 'error'
 
 const TMDB_METADATA_STORE = 'tmdb-metadata'
+export const TMDB_JOB = 'tmdb'
+export const TMDB_STATE_CELL = 'media-library.tmdb-state'
+export const TMDB_PROGRESS_CELL = 'media-library.tmdb-progress'
 /** 2: series in folders ("Season 1, Episode 01", "Show Season One (1999)", "Ep 05", show extras). */
 const PARSER_VERSION = 2
 /** Titles matched, then saved, at a time: an interrupted run keeps what it matched. */
@@ -50,8 +57,16 @@ export function useTmdbMatching(ctx: LibraryContext, covers: Covers, edits: Meta
   const secret = ref<SecretStatus>({ set:false })
   const secretBusy = ref(false)
   const queryBusy = ref(false)
-  const state = ref<TmdbState>('idle')
-  const progress = ref<TmdbProgress | null>(null)
+  // Transient (0.14.1): a run doesn't outlive GEM Shell (a "matching" saved for the next start would block every new one)
+  const cell = <T,>(key: string, initial: T): Ref<T> => ctx.life?.persistRef<T>(key, initial, { transient: true }) ?? ref(initial) as Ref<T>
+  const state = cell<TmdbState>(TMDB_STATE_CELL, 'idle')
+  const progress = cell<TmdbProgress | null>(TMDB_PROGRESS_CELL, null)
+  /** This copy runs the matching (another mount's run, still going in its job: its batches come through the scan cache). */
+  let ownRun = false
+  watch(ctx.scanShelf, cached => {
+    if (ownRun || state.value !== 'matching' || !cached || cached.sourceKey !== ctx.sourceKey()) return
+    items.value = copyItems(cached.items)
+  })
   const message = ref('')
 
   async function load() {
@@ -98,7 +113,7 @@ export function useTmdbMatching(ctx: LibraryContext, covers: Covers, edits: Meta
   }
 
   /** Remembers which paths matched and which TMDB did not recognize. */
-  function noteResults(list: LibraryItem[]) {
+  function noteResults(list: MovieItem[]) {
     for (const item of list) {
       if (!item.path || !item.tmdbMatchAttempted) continue
       if (item.tmdbId != null) misses.delete(item.path)
@@ -107,7 +122,7 @@ export function useTmdbMatching(ctx: LibraryContext, covers: Covers, edits: Meta
   }
 
   /** Scanned items TMDB already failed to recognize are marked as looked up. */
-  function markMisses(list: LibraryItem[]): LibraryItem[] {
+  function markMisses(list: MovieItem[]): MovieItem[] {
     return misses.size ? list.map(item => item.path && !item.tmdbMatchAttempted && misses.has(item.path) ? { ...item, tmdbMatchAttempted:true } : item) : list
   }
 
@@ -125,7 +140,7 @@ export function useTmdbMatching(ctx: LibraryContext, covers: Covers, edits: Meta
   }
 
   /** The item as the provider sees it: earlier matches applied, the user's edits left out. */
-  function providerBase(item: LibraryItem): LibraryItem {
+  function providerBase(item: MovieItem): MovieItem {
     const withoutLocalFlag = item.localMetadataOverride ? { ...item, localMetadataOverride:false } : item
     return item.path ? applyPersistedTmdbMetadata(withoutLocalFlag, records.value[item.path]) : withoutLocalFlag
   }
@@ -137,38 +152,52 @@ export function useTmdbMatching(ctx: LibraryContext, covers: Covers, edits: Meta
    * too) before the next starts. One paced session for the whole run (see tmdb.ts). Resolves with
    * the totals, or null when a newer scan replaced the library meanwhile.
    */
-  async function matchInBatches(list: LibraryItem[], revision: number): Promise<{ matched:number; unmatched:number; failed:number; images:number } | null> {
+  async function matchInBatches(list: MovieItem[], revision: number): Promise<{ matched:number; unmatched:number; failed:number; images:number } | null> {
     if (!sdk) return null
     const session = createTmdbSession(sdk)
     const totals = { matched:0, unmatched:0, failed:0, images:0 }
-    const stale = () => revision !== ctx.revision()
-    for (let start = 0; start < list.length; start += MATCH_BATCH) {
-      const batch = list.slice(start, start + MATCH_BATCH)
-      const result = await enrichWithTmdb(sdk, batch.map(providerBase), next => {
-        progress.value = { completed:start + next.completed, total:list.length, title:next.title }
-      }, session, stale)
-      if (stale()) return null
-      const byId = new Map(result.items.map(item => [item.id, item]))
-      const next = { ...records.value }
-      for (const item of result.items) {
-        const metadata = persistedTmdbMetadata(item)
-        if (item.path && metadata) next[item.path] = metadata
+    // The job (0.12.0): keeps the run going off screen; its card's Stop ends it (the run stops after its batch)
+    let job: WidgetJob | null = null
+    try { job = sdk.jobs?.().ensure(TMDB_JOB, { title:`TMDB matches · 0 of ${list.length.toLocaleString()}` }) ?? null } catch (error) { console.warn('[Media Library] no background job for TMDB matching', error) }
+    // A newer scan replaced the library: this run's results are dropped. Stopped from the card: kept, then it ends.
+    const superseded = () => revision !== ctx.revision()
+    const stopped = () => !!job && !job.alive
+    const stale = () => superseded() || stopped()
+    ownRun = true
+    try {
+      for (let start = 0; start < list.length; start += MATCH_BATCH) {
+        const batch = list.slice(start, start + MATCH_BATCH)
+        const result = await enrichWithTmdb(sdk, batch.map(providerBase), next => {
+          progress.value = { completed:start + next.completed, total:list.length, title:next.title }
+          job?.update({ title:`TMDB matches · ${(start + next.completed).toLocaleString()} of ${list.length.toLocaleString()}` })
+        }, session, stale)
+        if (superseded()) return null
+        const byId = new Map(result.items.map(item => [item.id, item]))
+        const next = { ...records.value }
+        for (const item of result.items) {
+          const metadata = persistedTmdbMetadata(item)
+          if (item.path && metadata) next[item.path] = metadata
+        }
+        records.value = next
+        noteResults(result.items)
+        items.value = bundleMovieExtras(flattenLibraryExtras(items.value).map(item => byId.has(item.id) ? edits.apply(byId.get(item.id)!) : item))
+        await persist()
+        totals.matched += result.matched
+        totals.unmatched += result.unmatched
+        totals.failed += result.failed
+        ctx.sync()
+        const artwork = await covers.hydrateTmdb(result.items, revision)
+        if (superseded()) return null
+        totals.images += artwork.imported
+        if (stopped()) { console.info('[Media Library] TMDB matching stopped from its card.'); break }
       }
-      records.value = next
-      noteResults(result.items)
-      items.value = bundleMovieExtras(flattenLibraryExtras(items.value).map(item => byId.has(item.id) ? edits.apply(byId.get(item.id)!) : item))
-      await persist()
-      totals.matched += result.matched
-      totals.unmatched += result.unmatched
-      totals.failed += result.failed
-      ctx.sync()
-      const artwork = await covers.hydrateTmdb(result.items, revision)
-      if (stale()) return null
-      totals.images += artwork.imported
+      const stats = session.stats()
+      console.info(`[Media Library] TMDB run: ${list.length} titles, ${stats.requests} requests, ${stats.retries} retried.`)
+      return totals
+    } finally {
+      ownRun = false
+      job?.end()
     }
-    const stats = session.stats()
-    console.info(`[Media Library] TMDB run: ${list.length} titles, ${stats.requests} requests, ${stats.retries} retried.`)
-    return totals
   }
 
   function summary(totals: { matched:number; unmatched:number; failed:number; images:number }, fresh: boolean): string {
@@ -188,7 +217,7 @@ export function useTmdbMatching(ctx: LibraryContext, covers: Covers, edits: Meta
     message.value = ''
     try {
       const totals = await matchInBatches(flattenLibraryExtras(items.value), revision)
-      if (!totals) return false
+      if (!totals) { state.value = 'idle'; return false }
       state.value = 'ready'
       message.value = summary(totals, false)
       if (!options.quiet) ctx.snack('tmdb', `TMDB matched ${plural(totals.matched, 'title')}.`, 4000)
@@ -216,7 +245,7 @@ export function useTmdbMatching(ctx: LibraryContext, covers: Covers, edits: Meta
     message.value = ''
     try {
       const totals = await matchInBatches(fresh, revision)
-      if (!totals) return 0
+      if (!totals) { state.value = 'idle'; return 0 }
       state.value = 'ready'
       message.value = summary(totals, true)
       if (totals.matched) ctx.snack('tmdb', `TMDB matched ${plural(totals.matched, 'new title')}.`, 4000)
@@ -232,7 +261,7 @@ export function useTmdbMatching(ctx: LibraryContext, covers: Covers, edits: Meta
   }
 
   /** Looks one title up (the candidates are logged to the console for diagnosis). */
-  async function matchOne(item: LibraryItem, preferArtwork = false) {
+  async function matchOne(item: MovieItem, preferArtwork = false) {
     if (!sdk?.networkFetch || !secret.value.set || queryBusy.value) return
     const revision = ctx.revision()
     queryBusy.value = true

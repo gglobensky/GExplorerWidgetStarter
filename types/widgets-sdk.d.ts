@@ -72,6 +72,28 @@ declare module 'gexplorer/widgets' {
          */
         geolocate?: () => Promise<GeoCity>
         /**
+         * 2026-11-01 ('AppLinks' declared, with `links`): an installed app's links (steam://rungameid/620...).
+         *   const r = await sdk.appLinks!().open('steam://rungameid/620')   // straight from a click or key press
+         * open: only right after the user's own click or key press in this widget; only a link starting with one
+         * of the prefixes declared for its scheme; the user is asked once per scheme (the shell's consent dialog,
+         * naming the app). Some schemes are never opened (http(s), file, ms-*, search-ms...: openUrl / openPath).
+         * available(scheme): an app on this computer opens that declared scheme's links (no prompt, nothing opened).
+         */
+        appLinks?: () => WidgetAppLinks
+        /**
+         * 2026-11-01 ('Apps' declared): the programs installed on this computer, read-only, and starting a Microsoft
+         * Store app (an Xbox game) by its id.
+         *   const r = await sdk.installedApps!().list()                 // asks the user once
+         *   if (r.ok) for (const app of r.apps) console.log(app.name, app.publisher, app.installLocation)
+         *   await sdk.installedApps!().launch('Microsoft.4297127D64EC6_8wekyb3d8bbwe!Minecraft')   // from a click
+         * list: the desktop programs (Windows' uninstall entries: system components and updates left out), cached
+         * 2 minutes ({ refresh: true }: now). A folder in it gives no file access: ask for Read as for any folder.
+         * Store apps aren't listed yet: find the ones you know (a game's MicrosoftGame.config) and launch them.
+         * launch: only right after the user's own click or key press in this widget; the user is asked once per app,
+         * with the name Windows shows for it; 'not-installed' when Windows doesn't know that app id.
+         */
+        installedApps?: () => WidgetInstalledApps
+        /**
          * 2026-10-30: the values of the settings this widget declares (entry.ts `settings`), which the user sets on its
          * page in GEM Shell's Settings (drawn by the shell). One set for every copy of the widget. Only for widgets
          * declaring settings. Same object on every call.
@@ -120,6 +142,11 @@ declare module 'gexplorer/widgets' {
          * E_ACCESS_DENIED, E_NEEDS_ELEVATION, E_ELEVATION_DECLINED or E_READ_FAILED.
          */
         fsReadText?: (path: string, opts?: { maxBytes?: number }) => Promise<{ text: string; encoding: string }>
+        /**
+         * 2026-11-01: a path with folder variables made a real one ("%PROGRAMDATA%\\Epic", "%APPDATA%\\CurseForge",
+         * "~/x" on Linux): the known folder variables only. As given when there are none. Read capability.
+         */
+        expandPath?: (text: string) => Promise<string>
         /**
          * Paged listing of a folder (sorted and filtered by the backend) or of a
          * VFS path. Starts loading at once; close() it (useListing does) when done.
@@ -308,6 +335,10 @@ declare module 'gexplorer/widgets' {
          *   { type: 'file', path }         an image file (JPEG, PNG, GIF, BMP, TIFF), read as this widget
          *   { type: 'thumbnail', path }    the OS's thumbnail of any file: a video's frame, a photo,
          *                                  an album's cover (size: the box asked of the OS, ≤ 1024)
+         *   { type: 'icon', path | appId } (2026-11-02) a program's icon (its .exe, a shortcut, an .ico) or a
+         *                                  Store app's (appId: after sdk.installedApps was allowed), always
+         *                                  PNG with its transparency, its empty margin trimmed (size ≤ 256;
+         *                                  an icon only drawn small comes back small: see width / height)
          *   { type: 'bytes', data }        e.g. a frame of a <video crossorigin="anonymous"> playing a
          *                                  mintStreamHttp URL, drawn to a canvas, canvas.toBlob()
          *   { type: 'url', url, headers? } an https image (a poster), fetched by the host: needs the
@@ -318,7 +349,8 @@ declare module 'gexplorer/widgets' {
          * storage 'cache' (default): this widget's own 500 MB room (2026-10-27; other widgets never
          * push its images out), its least recently shown going first beyond it, and anything unused
          * for 30 days. When an <img> fails to load, make it again. A thumbnail of an unchanged file
-         * (same path, size, date, options) comes from the cache, across sessions. 'persistent': kept until deleted, within the
+         * (same path, size, date, options) comes from the cache, across sessions; so does an image made from an
+         * unchanged file (2026-11-01). 'persistent': kept until deleted, within the
          * widget's room: 200 MB, more if entry.ts asks for it (`storage: { assets: { mb, reason } }`,
          * up to 10240) and the user agrees (asked once, the first time it is needed).
          * Rejects with an Error whose `code` is: E_NOT_FOUND, E_IS_FOLDER, E_NOT_IMAGE, E_FORMAT
@@ -532,6 +564,10 @@ declare module 'gexplorer/widgets' {
         | 'Location'
         /** 2026-10-30: the user's city (sdk.geolocate), never this computer's position. */
         | 'Geolocation'
+        /** 2026-11-01: an installed app's links (sdk.appLinks), declared with `links: AppLinkDecl[]`. */
+        | 'AppLinks'
+        /** 2026-11-01: the installed programs (sdk.installedApps): the list, and starting a Store app. */
+        | 'Apps'
 
     /** sdk.geolocate()'s answer: a city and the CITY's coordinates. */
     export type GeoCity = {
@@ -550,6 +586,66 @@ declare module 'gexplorer/widgets' {
      */
     export type GeolocateErrorCode = 'no-gesture' | 'declined' | 'os-off' | 'unavailable' | 'timeout' | 'error'
 
+    /**
+     * entry.ts, 2026-11-01: { cap: 'AppLinks', reason: '…', links: AppLinkDecl[] }. scheme: lower-case letters,
+     * digits, + . - ; prefixes: the links the widget opens start with one of these ("steam://rungameid/"), so it
+     * can't use the app's other links; label: the app's name in the consent dialog and Settings ▸ Permissions.
+     */
+    /**
+     * launch (2026-11-02): the app has a launcher command in GEM Shell (today only 'battlenet'): appLinks().launch(scheme,
+     * code) starts its game through the app's own program (Battle.net.exe --exec="launch <code>"), the same permission
+     * as its links.
+     */
+    export type AppLinkDecl = { scheme: string; prefixes: string[]; label?: string; launch?: boolean }
+    /**
+     * Why sdk.appLinks().open() didn't open: no-gesture (not right after a click or key press in the widget),
+     * not-declared (no declared prefix fits), declined (the user said no, or revoked it), not-registered (no app
+     * on this computer opens the scheme: the app isn't installed), bad-argument (not a usable link), failed.
+     */
+    export type AppLinkReason = 'no-gesture' | 'not-declared' | 'declined' | 'not-registered' | 'bad-argument' | 'failed'
+    export type AppLinkResult = { ok: true } | { ok: false; reason: AppLinkReason; error?: string }
+    export interface WidgetAppLinks {
+        open(uri: string): Promise<AppLinkResult>
+        available(scheme: string): Promise<boolean>
+        /**
+         * 2026-11-02 (older GEM Shells: absent): starts a game through a store's own program, for a store with no link
+         * that does (Battle.net: battlenet:// only opens its page). scheme declared with launch: true; code: the store's
+         * launch code (Battle.net: 2 to 8 letters or digits, "Pro", "WoW", "Fen"). Same rules as open().
+         */
+        launch?(scheme: string, code: string): Promise<AppLinkResult>
+    }
+
+    /** One program of sdk.installedApps().list() (a desktop program's uninstall entry). */
+    export type InstalledApp = {
+        /** Stable: 'win32:<hive>:<uninstall key name>', or 'store:<app id>'. */
+        id: string
+        /** 'desktop': an uninstall entry; 'store' (2026-11-01): a packaged app (a Store app, an Xbox game). */
+        kind: 'desktop' | 'store'
+        /** A Store app's id ("<package family name>!<app id>"), what launch() takes; its folder is installLocation. */
+        appId?: string
+        name: string
+        publisher?: string
+        version?: string
+        installLocation?: string
+        /** yyyy-mm-dd */
+        installDate?: string
+        sizeKb?: number
+        /** The program (or icon file) the entry names, an .exe or .ico path, without its ",0". */
+        displayIcon?: string
+        /** The entry's key name ('Uplay Install 635', 'Steam App 620'), never a registry path. */
+        uninstallKey: string
+    }
+    /**
+     * Why sdk.installedApps() refused: no-gesture (launch, not right after a click or key press in the widget),
+     * declined (the user said no), not-installed (no such Store app), bad-argument (not an app id: "<package
+     * family name>!<app id>"), unsupported (not on this system yet: Linux), failed.
+     */
+    export type InstalledAppsReason = 'no-gesture' | 'declined' | 'not-installed' | 'bad-argument' | 'unsupported' | 'failed'
+    export interface WidgetInstalledApps {
+        list(opts?: { refresh?: boolean }): Promise<{ ok: true; apps: InstalledApp[] } | { ok: false; reason: InstalledAppsReason; error?: string }>
+        launch(appId: string): Promise<{ ok: true } | { ok: false; reason: InstalledAppsReason; error?: string }>
+    }
+
     // ── Widget settings (entry.ts `settings`, 2026-10-30) ─────────────────
     // Declared fields; GEM Shell draws them on the widget's page in Settings, checks and stores the values (one set
     // per widget type), and hands them over through sdk.settings().
@@ -566,8 +662,19 @@ declare module 'gexplorer/widgets' {
         | (WidgetSettingBase & { type: 'color'; default?: string })
         | (WidgetSettingBase & { type: 'list'; item?: 'text' | 'path'; kind?: 'folder' | 'file' | 'any'; maxItems?: number; default?: string[] })
         | (WidgetSettingBase & { type: 'keyValue'; keyLabel?: string; valueLabel?: string; maxItems?: number; default?: Array<{ key: string; value: string }> })
-        /** A button on the widget's page: runs the handler of every open instance (sdk.settings().onAction(key, fn)). */
-        | (WidgetSettingBase & { type: 'action'; buttonLabel?: string })
+        /**
+         * A button on the widget's page: runs the handler of every open instance (sdk.settings().onAction(key, fn)).
+         * whenClosed 'queue' (2026-11-01): with no instance open, the button asks for it; the first instance that
+         * opens runs it once, a moment after it registers the handler (a request older than 3 days is dropped).
+         */
+        | (WidgetSettingBase & { type: 'action'; buttonLabel?: string; whenClosed?: 'queue' })
+        /**
+         * One of the widget's secrets (2026-11-01; sdk.secrets(): they belong to the widget type, every instance
+         * uses them). GEM Shell's page shows whether it is saved, and enters (its own box), replaces or forgets it,
+         * with no instance open. name and hosts as in secrets().prompt. It has no value in `values`: when the user
+         * saves or forgets it there, the instances hear onChange(values, <this field's key>).
+         */
+        | (WidgetSettingBase & { type: 'secret'; name: string; hosts: string[]; kind?: 'value' | 'client-credentials'; tokenUrl?: string })
     /** entry.ts `settings`. */
     export type WidgetSettingsDecl = {
         fields: WidgetSettingField[]
@@ -588,8 +695,11 @@ declare module 'gexplorer/widgets' {
         readonly ready: Promise<void>
         /** After the user changed one (key) or several (null: a reset). Returns: stop listening. */
         onChange(fn: (values: Readonly<Record<string, WidgetSettingValue>>, key: string | null) => void): () => void
-        /** The handler of an action field; the button is enabled while an instance has one. Returns: remove it. */
-        onAction(key: string, fn: () => void | Promise<void>): () => void
+        /**
+         * The handler of an action field; the button is enabled while an instance has one. Returns: remove it.
+         * It may answer { message } (2026-11-01): shown under the button on the settings page ("Looking up 24 games").
+         */
+        onAction(key: string, fn: () => void | { message?: string } | Promise<void | { message?: string }>): () => void
     }
 
     // ── FS types ───────────────────────────────────────────────────────────
@@ -1689,6 +1799,12 @@ declare module 'gexplorer/widgets' {
     export type PersistOptions<T> = {
         /** Called with the current value when the owner is destroyed (close a listing, free a handle…). */
         dispose?: (value: T) => void
+        /**
+         * Never written to disk when GEM Shell puts the widget away (hibernation): kept in memory while GEM Shell runs,
+         * gone after a restart. For what is big (a widget may save 8 MB for the next start), already in the widget's
+         * own documents, only true while it runs (a job's progress), or private. Default false.
+         */
+        transient?: boolean
     }
     export type HydratePolicy = 'always' | 'once' | 'never'
     export interface LifecycleWorkerHandle {
@@ -1722,7 +1838,7 @@ declare module 'gexplorer/widgets' {
         /** The same Ref instance across unmount/remount until the owner is destroyed. */
         persistRef<T>(key: string, initial: T | (() => T), opts?: PersistOptions<T>): Ref<T>
         /** The same shallow-reactive object across unmount/remount. */
-        persistReactive<T extends object>(key: string, initial: T | (() => T)): T
+        persistReactive<T extends object>(key: string, initial: T | (() => T), opts?: { transient?: boolean }): T
         cell<T>(key: string, initial: T | (() => T), opts?: PersistOptions<T>): Ref<T>
         defineCells<T extends Record<string, any>>(shape: T): { [K in keyof T]: Ref<T[K]> }
         group<T extends Record<string, any>>(ns: string, shape: T): { [K in keyof T]: Ref<T[K]> }
@@ -1736,8 +1852,12 @@ declare module 'gexplorer/widgets' {
     }
 
     // ── Secrets (sdk.secrets()) ───────────────────────────────────────────
-    /** A header value naming one of the widget's secrets; format holds one {} (default '{}'). */
-    export type SecretRef = { secret: string; format?: string }
+    /**
+     * A header value naming one of the widget's secrets; format holds one {} (default '{}').
+     * part (2026-11-01): a client-credentials secret's client id ('clientId') or the access token GEM Shell got
+     * for it ('token'); the client secret itself is never sent but to the token address.
+     */
+    export type SecretRef = { secret: string; format?: string; part?: 'clientId' | 'token' }
 
     export type SecretPromptOptions = {
         /** The secret's name for this widget: lowercase letters, digits, . _ - (64 at most). */
@@ -1751,13 +1871,21 @@ declare module 'gexplorer/widgets' {
          *  safest place: snackbars and tooltips wait while it is open, and entry pauses while
          *  anything covers it. */
         container?: HTMLElement
+        /**
+         * 'client-credentials' (2026-11-01): an app's client id and client secret (Twitch's, for IGDB). GEM Shell
+         * asks for both, checks them at tokenUrl (OAuth client_credentials) before saving, and gets the access
+         * tokens itself, a new one at expiry or after a 401. Requests name the parts (SecretRef part).
+         */
+        kind?: 'value' | 'client-credentials'
+        /** With kind 'client-credentials': where they are traded for tokens (https, fixed when asked). */
+        tokenUrl?: string
     }
 
     export interface WidgetSecrets {
         /** Asks the user; resolves when they save or close it (or the widget leaves the screen). */
         prompt(opts: SecretPromptOptions): Promise<{ saved: boolean }>
         /** hint: the value's last 4 characters (none for values under 8 characters). */
-        status(name: string): Promise<{ set: boolean; hint?: string; hosts?: string[]; label?: string; updatedAt?: number }>
+        status(name: string): Promise<{ set: boolean; hint?: string; hosts?: string[]; label?: string; updatedAt?: number; kind?: 'value' | 'client-credentials'; tokenHeld?: boolean }>
         delete(name: string): Promise<boolean>
     }
 
@@ -1765,6 +1893,7 @@ declare module 'gexplorer/widgets' {
     export type MediaImageSource =
         | { type: 'file'; path: string }
         | { type: 'thumbnail'; path: string; size?: number }
+        | { type: 'icon'; path?: string; appId?: string; size?: number }
         | { type: 'bytes'; data: Blob | ArrayBuffer | Uint8Array }
         | { type: 'url'; url: string; headers?: Record<string, string | SecretRef> }
 

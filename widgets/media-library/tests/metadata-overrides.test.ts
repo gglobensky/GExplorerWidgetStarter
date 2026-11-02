@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import type { LibraryItem } from '../../../shared/library-ui/types.ts'
+import type { MovieItem } from '../movie-types.ts'
 import { applyMetadataOverride, loadMetadataOverrides, saveMetadataOverrides } from '../metadata-overrides.ts'
 
-const item:LibraryItem = {
+const item:MovieItem = {
   id:'antz', title:'Antz', year:1998, runtimeMinutes:83, rating:'PG', primaryGenre:'Animation', genres:['Animation'],
   synopsis:'TMDB description', artwork:{ src:'', x:0, y:0 }, previews:[], addedRank:1, path:'D:\\Movies\\Antz.mkv',
 }

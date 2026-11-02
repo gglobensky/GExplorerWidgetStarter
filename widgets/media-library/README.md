@@ -2,6 +2,79 @@
 
 GEM Video Club establishes the shared GEM Library UI and video-store shelf experience without requiring Shell changes. With no source folder selected it shows an empty shelf of DVD cases, the middle one asking for a media folder. Once folders are selected, it scans real local video files through the public widget SDK.
 
+## What's new in 0.17.0 (2026-11-02)
+
+- Labels on the department shelves (library-ui 3.6.0, `shelf-labels.ts`): under each case, TMDB's rating ("★ 7.8"),
+  else its running time ("1 h 58"); the shelf's range ("A – D", or the years sorted by release); a handwritten
+  staff-pick card on the best rated (7.5 and up) of a department. Pictures in skins too (library-ui 3.7.0).
+
+## What's new in 0.16.0 (2026-11-02)
+
+- Skins of your own (library-ui 3.5.0): ⚙ ▸ Display ▸ Store lists the looks (Late show first) and yours: duplicate
+  one, edit it beside the shelves, export it as a `.gemskin` file, load one. Kept in
+  `configWrite('media-library-skins')` for every Video Club; each copy still shows its own look. New permission:
+  **Write**, only for the file you pick in the save dialog.
+
+## What's new in 0.15.0 (2026-11-02)
+
+- The arrow keys move along the shelves: the case (or, in the showroom, the rack) you're on is pulled out, Enter
+  opens it (key mapper commands "Previous case", "Next case", "Case above", "Case below": Left, Right, Up, Down by
+  default). While a movie plays, Left / Right go back / forward 10 seconds (the key mapper takes the arrows for the
+  Video Club, so the player gets them from it).
+
+## What's new in 0.14.1 (2026-11-02)
+
+- The neon sign's tube lettering is Tilt Neon (OFL; its license with the credits). The flicker when it appears is on
+  purpose: a tube coming on.
+- TMDB matching's state and progress are kept in memory only (`transient` cells): a run still going when GEM Shell
+  closed no longer stays "matching" after the restart (it kept any new run from starting).
+
+## What's new in 0.14.0 (2026-11-02)
+
+- The Video Club's logo: a neon tube sign, "Video Club" in pink with GEM (and OPEN LATE on the showroom) in cyan,
+  flickering on when it appears (`NeonSign.vue`), in the top bar and on the showroom.
+  The tube lettering is meant to be the font Tilt Neon (OFL); until `assets/TiltNeon.ttf` is added (and its
+  `@font-face` in media-library.css, named "Tilt Neon Video Club"), a rounded system font with the same glow.
+- The empty club shows a membership card (`MemberCard.vue`): GEM, member No. 0001 since this year.
+- Opening a title in the Video Club look: its case slides off the shelf into the open page, growing to its size, and
+  the page appears around it; closing puts it back (library-ui 3.3.0's `useBoxFlight`, the Game Shop's).
+
+## What's new in 0.13.0 (2026-11-02)
+
+- A new store look, "Late show" (library-ui 3.0.0 skins): plum walls with light pooling from above, wooden racks
+  with lit signs, the racks standing on a confetti carpet, warm neon colours. ⚙ ▸ Display ▸ Store: Late show (the
+  default), Software aisle (the Game Shop's) or Classic (as before). Each Video Club keeps its own. The racks
+  themselves (uprights, thick shelves, label strips) come next.
+
+## What's new in 0.12.0 (2026-11-02)
+
+- TMDB matching goes on when you leave the Video Club: it runs as a background job, with a card in GEM Shell's
+  operations tray (the title it's on, "120 of 1,400"). Stop there keeps what was matched; the rest is matched at the
+  next scan or with "Refresh matches". Back in the Video Club, the run in progress shows where it is and its matches
+  come in as each batch ends (no second run starts over it).
+
+## What's new in 0.11.1 (2026-11-01)
+
+- The racks fill a tall widget: each shows as many rows as its height holds (3 to 10, library-ui 2.8.0), with no row
+  cut off; the last row of movies says how many more there are.
+- A big genre or series department draws only the rows in view (library-ui 2.7.1), as the Game Shop's "All games".
+
+## What's new in 0.11.0 (2026-11-01)
+
+The Video Club and the GEM Game Shop now share one store page, one ⚙ menu and the same top-bar lists (`library-ui` 2.5.0). It should look as before; what you may notice:
+- **The opened movie (Video Club look)** is library-ui's `StoreDetail`, the page the Game Shop's was made from. Scene previews still play on the back of the case, the extras still sit under the rating, the disc still slides out on Play, and ✎, T, G and ¶ are where they were.
+- **Esc in the genres or synopsis editor** closes the editor only, not the whole page (both looks).
+- **The ⚙ menu** is library-ui's `LibraryMenu`, with the same Display and Library tabs. "Media sources" is now called **Media folders**, with a line saying they're this Video Club's own: another Video Club on the hub can show other folders.
+- **Genres and Sort** are library-ui's `glu-picker`, the Game Shop's.
+- The Classic details page doesn't change.
+
+## What's new in 0.10.2 (2026-10-31)
+
+Nothing to see: the Video Club looks and behaves as in 0.10.1. Under the hood it now shares `library-ui` 2.0.0 with the coming Game Library (`shared/library-ui/README.md`):
+- the movie fields (`MovieItem`, `movie-types.ts`), `seasons.ts`, the detail page (`LibraryDetail.vue`) and its styles (`library-movie.css`) moved here from the library;
+- the showroom is the library's store floor (`LibraryFloor`), wrapped by `StoreFloor.vue` (wordmark, series racks, season filter, counts); the Classic shelves are `ClubShelf.vue` over the library's `MediaShelf`; the watched and progress marks are `CaseMarks.vue`;
+- every import of the library is by name (`@shared/library-ui`).
+
 ## What's new in 0.10.1 (2026-10-27)
 
 - **Extras folders, whatever their name** (`Extras`, `Featurettes`, `Special Features`, `Bonus Disc`, `Season 3 Extras`, `DVD Extras`…; not `Specials`, a show's season 0, and not a folder with a year): every video inside belongs to the folder above the outermost extras folder. It is never a show, never a movie of its own, and **never asked of TMDB**. 0.10.0 matched Tucker & Dale's featurettes as the movie itself (their names contain its title, and the new folder fallback searched "Tucker and Dale vs Evil" for *Outakes*), and took `Extras\Season 3 Extras` for a season of a show called "Extras".

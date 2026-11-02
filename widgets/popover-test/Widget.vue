@@ -14,6 +14,15 @@ const status = ref('')
 const dragging = ref(false)
 const isDragging = () => dragging.value
 
+// During a drag: hovering "Open menu" opens it (as Favorites opens a folder pill's menu when a favorite is dragged over it).
+let btnTimer: number | null = null
+let menuOpen = false
+function onBtnEnter() {
+  if (!dragging.value || menuOpen) return
+  btnTimer = window.setTimeout(() => openMenu(false), 450)
+}
+function onBtnLeave() { if (btnTimer !== null) { clearTimeout(btnTimer); btnTimer = null } }
+
 function openMenu(styled: boolean) {
   const anchor = styled ? styledBtn.value : menuBtn.value
   if (!anchor || !ui) return
@@ -25,7 +34,9 @@ function openMenu(styled: boolean) {
     style: styled
       ? { background: '#1d2b1d', color: '#c8f7c8', borderColor: '#4caf50', borderWidth: 2, radius: 14, shadow: 'large', padding: 6 }
       : undefined,
+    onClose: () => { menuOpen = false },
   })
+  menuOpen = !!p
   status.value = p ? `Level 1 opened${styled ? ' (styled)' : ''}` : 'Refused (see the console)'
 }
 
@@ -61,7 +72,7 @@ function onUp() {
 <template>
   <div class="pt">
     <div class="row">
-      <button ref="menuBtn" type="button" @click="openMenu(false)">Open menu</button>
+      <button ref="menuBtn" type="button" @click="openMenu(false)" @pointerenter="onBtnEnter" @pointerleave="onBtnLeave">Open menu</button>
       <button ref="styledBtn" type="button" @click="openMenu(true)">Open styled menu</button>
       <span class="chip" @pointerdown="onChipDown">★ Drag me</span>
     </div>

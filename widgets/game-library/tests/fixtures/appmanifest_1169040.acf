@@ -1,0 +1,41 @@
+"AppState"
+{
+	"appid"		"1169040"
+	"universe"		"1"
+	"LauncherPath"		"C:\\Program Files (x86)\\Steam\\steam.exe"
+	"name"		"Necesse"
+	"StateFlags"		"4"
+	"installdir"		"Necesse"
+	"LastUpdated"		"1791706234"
+	"LastPlayed"		"1746592054"
+	"SizeOnDisk"		"522557799"
+	"StagingSize"		"0"
+	"buildid"		"24926468"
+	"LastOwner"		"0"
+	"DownloadType"		"1"
+	"UpdateResult"		"0"
+	"BytesToDownload"		"54000384"
+	"BytesDownloaded"		"54000384"
+	"BytesToStage"		"510303531"
+	"BytesStaged"		"510303531"
+	"TargetBuildID"		"24926468"
+	"AutoUpdateBehavior"		"0"
+	"AllowOtherDownloadsWhileRunning"		"0"
+	"ScheduledAutoUpdate"		"0"
+	"InstalledDepots"
+	{
+		"1169043"
+		{
+			"manifest"		"8397054891140541811"
+			"size"		"522557799"
+		}
+	}
+	"UserConfig"
+	{
+		"language"		"english"
+	}
+	"MountedConfig"
+	{
+		"language"		"english"
+	}
+}

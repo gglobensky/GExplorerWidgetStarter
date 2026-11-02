@@ -1,0 +1,24 @@
+{
+	"FormatVersion": 0,
+	"bIsIncompleteInstall": false,
+	"LaunchExecutable": "Base/Binaries/Win64EOS/Civ6_Launcher.exe",
+	"InstallLocation": "C:/Program Files/Epic Games/SidMeiersCivilizationVI",
+	"AppName": "Kinglet",
+	"CatalogNamespace": "cd14dcaa4f3443f19f7169a980559c62",
+	"CatalogItemId": "42ac1ee840304cb1807172a9b47dc8e3",
+	"MainGameAppName": "Kinglet",
+	"MainGameCatalogNamespace": "cd14dcaa4f3443f19f7169a980559c62",
+	"MainGameCatalogItemId": "42ac1ee840304cb1807172a9b47dc8e3",
+	"AppCategories": [
+		"public",
+		"games",
+		"applications"
+	],
+	"DisplayName": "Sid Meier's Civilization VI",
+	"bIsApplication": true,
+	"bIsExecutable": true,
+	"bRequiresAuth": true,
+	"InstallSize": 19668360225,
+	"MandatoryAppFolderName": "SidMeiersCivilizationVI",
+	"AppVersionString": "1.0.12.951533_nebraska_launcher_removal_Kinglet"
+}

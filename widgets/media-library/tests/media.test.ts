@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { bundleMovieExtras, createMovieLibrary, createScannedLibrary, flattenLibraryExtras, inferGenre, movieSearchTitles, parseMovieFilename, parseSeriesEpisode, preferredCoverSource, shelvesFor, showroomRowsFor, showroomTitleCount } from '../media.ts'
 import { chooseCover, scanVideoSources, videoMime } from '../scanner.ts'
-import { inferredSeasonNumber, itemsForSeason, seasonLabel, seasonsFor } from '../../../shared/library-ui/seasons.ts'
+import { inferredSeasonNumber, itemsForSeason, seasonLabel, seasonsFor } from '../seasons.ts'
 
 const movies = createMovieLibrary(['atlas-a','atlas-b'])
 
@@ -91,6 +91,19 @@ test('keeps each series on dedicated showroom shelf rows', () => {
     { label:'Gem Show', total:3, ids:['ep-1','ep-2'] },
   ])
   assert.equal(showroomTitleCount(items,'Science Fiction'),5)
+})
+
+test('keeps as many showroom rows as the rack holds, the last one counting the rest', () => {
+  const items = [
+    ...['a','b','c','d','e'].map(id => ({ ...movies[0], id:`movie-${id}`, title:`Movie ${id.toUpperCase()}` })),
+    { ...movies[0], id:'ep-1', title:'S01E01', seriesTitle:'Gem Show', seasonNumber:1, episodeNumber:1 },
+  ]
+  const rows = showroomRowsFor(items,'Science Fiction',2,'title',2)
+  assert.deepEqual(rows.map(row => ({ total:row.total, ids:row.items.map(item => item.id) })), [
+    { total:2, ids:['movie-a','movie-b'] },
+    { total:3, ids:['movie-c','movie-d'] },
+  ])
+  assert.equal(showroomRowsFor(items,'Science Fiction',2,'title',10).length, 4)
 })
 
 test('shows only locally discovered items from the latest scan as new arrivals', () => {

@@ -13,11 +13,11 @@
 import { inject, onBeforeUnmount, ref, watch } from 'vue'
 import type { MediaTracks, VideoHandle, WidgetSdk } from 'gexplorer/widgets'
 import { audioTrackLabel, subtitleTrackLabel } from './track-labels'
-import type { LibraryItem } from '../../shared/library-ui'
+import type { MovieItem } from './movie-types'
 import { trace } from './context'
 
 const props = defineProps<{
-  item: LibraryItem | null
+  item: MovieItem | null
   url: string | null
   loading: boolean
   coverBusy: boolean
@@ -39,7 +39,7 @@ const emit = defineEmits<{
   (e:'focus-save', focus:{ x:number; y:number }):void
   (e:'focus-cancel'):void
   /** Where playback is in `item`; final: it paused, ended or closed. */
-  (e:'progress', item:LibraryItem, positionMs:number, durationMs:number, final:boolean):void
+  (e:'progress', item:MovieItem, positionMs:number, durationMs:number, final:boolean):void
   (e:'play-next'):void
   /** The <video> now playing (null: released): the widget's background sound follows it. */
   (e:'video', element:HTMLVideoElement | null):void
@@ -66,7 +66,7 @@ const subtitleTrack = ref<number | null>(null)
 const converting = ref(false)
 let offTracks: (() => void) | null = null
 /** The item the bound <video> plays (the props may already name the next one when it is released). */
-let videoItem: LibraryItem | null = null
+let videoItem: MovieItem | null = null
 let lastReport = 0
 let upNextTimer: number | undefined
 

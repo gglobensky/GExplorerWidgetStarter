@@ -5,10 +5,10 @@
 // for an older scan drop its result.
 import { ref, type Ref } from 'vue'
 import type { WidgetLifecycle, WidgetSdk } from 'gexplorer/widgets'
-import type { LibraryItem } from '../../shared/library-ui'
+import type { MovieItem } from './movie-types'
 import type { ScannedVideo } from './scanner'
 
-export type ScanShelf = { sourceKey:string; videos:ScannedVideo[]; items:LibraryItem[]; warnings:string[]; truncated:boolean }
+export type ScanShelf = { sourceKey:string; videos:ScannedVideo[]; items:MovieItem[]; warnings:string[]; truncated:boolean }
 export type Progress = { completed:number; total:number }
 export type LibraryMode = 'shelf' | 'store'
 export type DetailMode = 'classic' | 'movie-store'
@@ -21,7 +21,7 @@ export type LibraryContext = {
   /** This placement's owner id: sources and scan history are kept per owner. */
   owner: string
   /** The scanned local library (empty while the sample collection shows). */
-  items: Ref<LibraryItem[]>
+  items: Ref<MovieItem[]>
   sources: Ref<string[]>
   /** The last completed scan, kept by the lifecycle: remounting with the same sources does not scan again. */
   scanShelf: Ref<ScanShelf | null>
@@ -44,7 +44,7 @@ export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-export function copyItems(items: LibraryItem[]): LibraryItem[] {
+export function copyItems(items: MovieItem[]): MovieItem[] {
   return items.map(item => ({
     ...item,
     genres:[...item.genres],
@@ -56,7 +56,7 @@ export function copyItems(items: LibraryItem[]): LibraryItem[] {
 
 export function createLibraryContext(sdk: WidgetSdk | undefined, owner: string, initialSources: string[]): LibraryContext {
   const life = sdk?.lifecycle?.()
-  const items = ref<LibraryItem[]>([])
+  const items = ref<MovieItem[]>([])
   const sources = ref<string[]>([...initialSources])
   const scanShelf = life?.persistRef<ScanShelf | null>('media-library.scan-shelf',null) ?? ref<ScanShelf | null>(null)
   let revision = 0

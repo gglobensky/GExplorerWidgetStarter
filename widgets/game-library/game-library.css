@@ -1,0 +1,181 @@
+/* GEM Game Shop (0.2.0, 2026-10-31). The shared library's look (library-ui: boxes, shelves, the store floor) plus
+   the shop's frame: a 90s computer store, teal and magenta neon instead of the Video Club's amber. Classes: gl-*. */
+.game-library { --glu-accent:var(--skin-accent, #3fd0c9); --glu-warm:var(--skin-warm, #e05bb4); --glu-box-side:#7a5a34; position:relative; display:flex; flex-direction:column; width:100%; height:100%; min-width:0; min-height:0; overflow:hidden; border-radius:12px; container-type:size; background:radial-gradient(ellipse at 85% -20%,#e05bb41f,transparent 40%),radial-gradient(ellipse at -10% 20%,#3fd0c91a,transparent 42%),var(--glu-bg); }
+.game-library.sidebar { height:100vh; }
+
+/* The top bar */
+.gl-topbar { position:sticky; z-index:9; top:0; display:grid; flex:0 0 auto; grid-template-columns:minmax(150px,1fr) minmax(170px,340px) minmax(120px,1fr); gap:16px; align-items:center; min-height:58px; padding:9px 16px; border-bottom:1px solid #ffffff13; background:var(--skin-bar, linear-gradient(#141c26f5,#0f151df0)); box-shadow:0 8px 18px #0005; }
+.gl-nav { display:flex; align-items:center; gap:6px; min-width:0; }
+.gl-brand { display:grid; flex:0 0 auto; margin-left:4px; line-height:1; transform:skew(-6deg); }
+.gl-brand i { color:var(--glu-warm); font:800 7px/1 Impact,"Arial Black",sans-serif; font-style:normal; letter-spacing:.3em; }
+.gl-brand b { color:#bff6f2; font:400 13px/1 Impact,"Arial Black",sans-serif; letter-spacing:.06em; white-space:nowrap; text-shadow:1px 2px #05080b,0 0 10px #3fd0c955; }
+.gl-icon-button { display:grid; width:31px; height:31px; flex:0 0 31px; padding:0; border:1px solid #ffffff16; border-radius:6px; color:var(--glu-fg); background:#0b1117a8; cursor:pointer; place-items:center; font-size:14px; }
+.gl-icon-button:hover:not(:disabled),.gl-icon-button:focus-visible { border-color:color-mix(in srgb,var(--glu-accent) 55%,var(--glu-border)); color:var(--glu-accent); outline:0; }
+.gl-icon-button:disabled { opacity:.35; cursor:default; }
+.gl-search { display:grid; grid-template-columns:20px minmax(0,1fr) 20px; align-items:center; min-width:0; height:34px; padding:0 7px; border:1px solid color-mix(in srgb,var(--glu-border) 75%,transparent); border-radius:7px; background:#0b1117c9; }
+.gl-search:focus-within { border-color:var(--glu-accent); box-shadow:0 0 0 1px var(--glu-accent); }
+.gl-search>span { color:var(--glu-muted); font-size:18px; }
+.gl-search input { width:100%; min-width:0; padding:5px 3px; border:0; outline:0; color:var(--glu-fg); background:transparent; font-size:12px; }
+.gl-search input::placeholder { color:var(--glu-muted); }
+.gl-search button { padding:0; border:0; color:var(--glu-muted); background:transparent; cursor:pointer; font-size:17px; }
+.gl-tools { display:flex; justify-self:end; align-items:center; gap:7px; }
+.gl-activity { display:flex; flex:0 0 auto; align-items:center; gap:7px; min-height:22px; padding:3px 16px; color:var(--glu-muted); background:#0b1117; font-size:10px; }
+.gl-activity>span { color:var(--glu-accent); animation:gl-spin 900ms linear infinite; }
+
+/* The shop */
+.gl-browse { flex:1; min-height:0; overflow-y:auto; padding:12px 17px 34px; overscroll-behavior:contain; scrollbar-width:thin; scrollbar-color:#536473 transparent; }
+.gl-browse>.glu-shelf+.glu-shelf { margin-top:18px; }
+.gl-wordmark { display:flex; align-items:baseline; justify-content:center; gap:.25em; color:#bff6f2; font:400 clamp(22px,4cqw,40px)/1 Impact,"Arial Black",sans-serif!important; letter-spacing:.02em; text-shadow:2px 3px #05080b,0 0 22px #3fd0c955; transform:skew(-6deg); }
+.gl-wordmark span { color:var(--glu-warm); font-size:.45em; letter-spacing:.2em; }
+/* 0.18.0: the floppy logo (ShopLogo.vue) in the top bar and on the showroom's sign */
+.gl-brand-logo { flex:0 0 auto; margin-left:6px; }
+.gl-wordmark-logo { margin:2px 0 0; line-height:0; }
+.gl-empty { display:grid; place-items:center; align-content:center; height:100%; padding:0 18px; color:var(--glu-muted); text-align:center; }
+.gl-empty>span { margin-bottom:10px; color:var(--glu-accent); font-size:33px; }
+.gl-empty strong { color:var(--glu-fg); font-size:15px; }
+.gl-empty p { max-width:420px; margin:4px 0 13px; font-size:11px; line-height:1.45; }
+.gl-empty button { padding:6px 10px; border:1px solid var(--glu-border); border-radius:5px; background:var(--glu-panel); cursor:pointer; font-size:11px; }
+.gl-empty .gl-warnings { margin-top:12px; color:var(--glu-warm); font-size:9px; }
+
+/* On a box: stickers, Play, the printed title of a box without art */
+.gl-stickers { position:absolute; z-index:4; right:4px; bottom:4px; left:4px; display:flex; flex-wrap:wrap; gap:3px; pointer-events:none; }
+.gl-sticker { display:inline-block; padding:2px 4px 1px; border-radius:2px; color:#fff; background:#333; box-shadow:0 1px 2px #0009; font:800 6px/1.2 "Segoe UI",sans-serif; letter-spacing:.08em; }
+.gl-sticker-steam { color:#c7d5e0; background:linear-gradient(#1b2838,#0e1620); }
+.gl-sticker-epic { color:#fff; background:#2a2a2a; }
+.gl-sticker-gog { color:#fff; background:linear-gradient(#86328a,#5c1f60); }
+.gl-sticker-manual { color:#071116; background:var(--glu-accent); }
+.gl-sticker-rockstar { color:#111; background:linear-gradient(#ffd34a,#f0a91c); }
+.gl-sticker-ea { color:#fff; background:linear-gradient(#ff4747,#c81e2c); }
+.gl-sticker-ubisoft { color:#fff; background:linear-gradient(#2b6ee8,#173f9c); }
+.gl-sticker-battlenet { color:#fff; background:linear-gradient(#1aa3ff,#0b5fa8); }
+.gl-sticker-xbox { color:#fff; background:linear-gradient(#22a03a,#0e6b22); }
+.gl-sticker-curseforge { color:#fff; background:linear-gradient(#f16436,#b9411b); }
+.gl-play { position:absolute; z-index:5; top:50%; left:50%; display:grid; width:42px; height:42px; margin:-21px 0 0 -21px; padding-left:3px; border:2px solid #fff; border-radius:50%; color:#fff; background:color-mix(in srgb,var(--glu-warm) 82%,#000); box-shadow:0 6px 16px #000a,0 0 0 4px #00000040; cursor:pointer; place-items:center; font-size:15px; opacity:0; transform:scale(.8); transition:opacity 140ms ease,transform 140ms ease; }
+.glu-case:hover .gl-play,.glu-case:focus-visible .gl-play,.glu-case:focus-within .gl-play { opacity:1; transform:scale(1); }
+.gl-play:hover { background:var(--glu-warm); transform:scale(1.08)!important; }
+.gl-box-print { position:absolute; z-index:3; inset:12% 10% 22%; display:grid; place-items:center; text-align:center; }
+.gl-box-print b { display:-webkit-box; overflow:hidden; color:#f3e3c4; font:400 15px/1.05 Impact,"Arial Black",sans-serif; letter-spacing:.02em; text-shadow:1px 2px #0008; -webkit-box-orient:vertical; -webkit-line-clamp:4; }
+.gl-box-print.large b { font-size:clamp(22px,4cqw,34px); }
+
+.gl-box-print img { max-width:100%; max-height:100%; object-fit:contain; filter:drop-shadow(0 4px 10px #000c); }
+
+/* A game, opened (0.5.0): library-ui's store detail (glu-sd-*); what only games add */
+.gl-store-detail .glu-sd-face { border-radius:2px; }
+.gl-store-detail .glu-sd-front::before { width:7px; }
+.gl-store-detail.launching .glu-sd-case:not(.flipped) { animation:gl-box-nudge 900ms ease-out; }
+.gl-steam-says { font-size:11px; font-weight:800; letter-spacing:.02em; line-height:1.2; }
+.gl-steam-says.positive { color:#66c0f4; }
+.gl-steam-says.mixed { color:#d6b26b; }
+.gl-steam-says.negative { color:#e0714f; }
+small.gl-steam-says { font-size:9px; font-weight:700; }
+@container (max-width:700px) { .gl-steam-says { font-size:8px; } small.gl-steam-says { font-size:7px; } }
+.gl-sd-stores { display:grid; gap:6px; margin:0; padding:0; list-style:none; }
+.gl-sd-stores li { display:flex; flex-wrap:wrap; align-items:center; gap:5px; padding:6px; border:1px solid #ffffff14; border-radius:7px; background:#080c0fc0; }
+.gl-sd-stores li.main { border-color:color-mix(in srgb,var(--store-accent) 55%,transparent); }
+.gl-sd-stores li.off { opacity:.55; }
+.gl-sd-stores .gl-sticker { padding:3px 6px 2px; font-size:8px; }
+.gl-sd-stores button { min-width:26px; height:24px; margin-left:auto; padding:0 7px; border:1px solid #ffffff1c; border-radius:5px; color:var(--store-text); background:#ffffff0a; cursor:pointer; font-size:10px; }
+.gl-sd-stores button.gl-sd-use { flex:1 0 100%; margin-left:0; font-size:9px; }
+.gl-sd-stores button:hover,.gl-sd-stores button:focus-visible { border-color:var(--store-accent); color:var(--store-accent); outline:0; }
+.gl-activity-note { color:var(--glu-fg); background:#1a1210; }
+.gl-activity-note>span { color:var(--glu-warm); animation:none; font-weight:800; }
+.gl-activity-note button, .gl-activity>button { margin-left:auto; padding:2px 8px; border:1px solid #fff3; border-radius:4px; color:inherit; background:transparent; cursor:pointer; font-size:10px; }
+.gl-activity-count { margin-left:4px; opacity:.7; }
+.gl-shot-big { position:absolute; z-index:20; inset:0; display:grid; place-items:center; align-content:center; gap:8px; padding:24px; background:#000e; cursor:zoom-out; animation:gl-detail-in 160ms ease-out both; outline:0; }
+.gl-shot-big img { max-width:100%; max-height:calc(100% - 24px); border-radius:3px; box-shadow:0 20px 50px #000; }
+.gl-shot-big small { color:#fffa; font-size:10px; }
+
+/* The launch (0.3.0): the box lifts and glows, a disc rises out of it, spinning, and fades while the store starts the
+   game. On the shelf the disc rises through the box's art (the shell clips it); in an opened game it slides out of
+   the box's side. About 0.9 s, started with the click; reduced motion: none. */
+.gl-disc { display:block; aspect-ratio:1; border-radius:50%; background:radial-gradient(circle,#0b0f13 0 8%,#c9d1d8 8.5% 12%,#8e99a3 12.5% 17%,transparent 17.5%),conic-gradient(from 20deg,#e8edf1,#9aa6b1,#f6e9ff,#a8f0ea,#c7ccd2,#ffe9c2,#e8edf1); box-shadow:0 4px 14px #000a,inset 0 0 0 1px #ffffff55; }
+/* 0.11.1: "Find its details…" (LinkGame.vue): a box linked by hand to IGDB's game */
+.gl-link-scrim { position:absolute; z-index:40; inset:0; display:grid; padding:16px; background:#03060acc; place-items:center; }
+.gl-link { display:flex; width:min(560px,100%); max-height:100%; min-height:0; flex-direction:column; gap:8px; padding:12px 14px; border:1px solid color-mix(in srgb,var(--glu-accent) 40%,var(--glu-border)); border-radius:10px; color:var(--glu-fg); background:linear-gradient(145deg,#1d2731,#11181f); box-shadow:0 24px 60px #000d; }
+.gl-link>header { display:grid; grid-template-columns:1fr auto; align-items:baseline; column-gap:8px; }
+.gl-link>header b { font-size:13px; }
+.gl-link>header small { grid-column:1; grid-row:2; overflow:hidden; color:var(--glu-muted); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+.gl-link-x { grid-column:2; grid-row:1 / span 2; width:28px; height:28px; border:0; border-radius:6px; color:var(--glu-muted); background:transparent; cursor:pointer; font-size:18px; }
+.gl-link-x:hover { color:var(--glu-fg); background:#ffffff10; }
+.gl-link-search { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:6px; }
+.gl-link-search input,.gl-link-search select { min-width:0; height:30px; padding:0 8px; border:1px solid #ffffff22; border-radius:6px; color:var(--glu-fg); background:#0a1016; font:inherit; font-size:11px; }
+.gl-link-search option { background:var(--glu-panel); }
+.gl-link button { font:inherit; }
+.gl-link-search button,.gl-link>footer button { height:30px; padding:0 12px; border:1px solid #ffffff22; border-radius:6px; color:var(--glu-fg); background:#ffffff0a; cursor:pointer; font-size:11px; }
+.gl-link-search button.primary { border-color:var(--glu-accent); color:#071116; background:var(--glu-accent); font-weight:700; }
+.gl-link button:disabled { opacity:.5; cursor:default; }
+.gl-link-status { min-height:14px; margin:0; color:var(--glu-muted); font-size:10px; }
+.gl-link-status.warn { color:var(--glu-warm); }
+.gl-link-results { display:grid; min-height:0; margin:0; padding:0; overflow:auto; list-style:none; gap:4px; scrollbar-width:thin; }
+.gl-link-results button { display:grid; grid-template-columns:44px minmax(0,1fr) auto; gap:10px; align-items:center; width:100%; padding:5px 8px 5px 5px; border:1px solid transparent; border-radius:7px; color:var(--glu-fg); background:#ffffff06; cursor:pointer; text-align:left; }
+.gl-link-results button:hover,.gl-link-results button:focus-visible { border-color:color-mix(in srgb,var(--glu-accent) 55%,transparent); outline:0; background:#ffffff0d; }
+.gl-link-results button.linked { border-color:var(--glu-accent); }
+.gl-link-cover { display:grid; width:44px; height:59px; border-radius:3px; background:#0a1016 center/cover no-repeat; box-shadow:0 2px 6px #0008; place-items:center; }
+.gl-link-cover i { color:var(--glu-muted); font-size:16px; font-style:normal; }
+.gl-link-text { display:flex; min-width:0; flex-direction:column; gap:2px; }
+.gl-link-text b { overflow:hidden; font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+.gl-link-text small { overflow:hidden; color:var(--glu-muted); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+.gl-link-text .gl-link-rating { color:#f4c74e; }
+.gl-link-mark { padding:2px 6px; border-radius:9px; color:#071116; background:var(--glu-accent); font-size:9px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; }
+.gl-link>footer { display:flex; gap:6px; align-items:center; }
+.gl-link>footer span { flex:1; }
+.gl-link>footer .quiet { border-color:transparent; color:var(--glu-muted); background:transparent; }
+
+/* 0.11.0: IGDB's rating box: how many ratings */
+.glu-sd-rating>.gl-igdb-count { color:color-mix(in srgb,var(--store-text) 58%,transparent); font-size:8px; }
+
+/* 0.10.1: the time box under the rating: the hours, and the clerk's line for them (playtime-quips.ts) */
+.gl-sd-time { display:flex; flex-direction:column; align-items:center; gap:4px; padding:10px 10px 12px; border:1px solid color-mix(in srgb,var(--store-text) 22%,transparent); border-radius:10px; background:#0b1115b8; text-align:center; }
+.gl-sd-time>strong { font:700 clamp(20px,2.2vw,28px)/1 Georgia,serif; }
+.gl-sd-time>span { color:color-mix(in srgb,var(--store-text) 68%,transparent); font-size:9px; font-weight:750; letter-spacing:.13em; text-transform:uppercase; }
+.gl-sd-time>em { margin-top:3px; color:color-mix(in srgb,var(--store-text) 88%,var(--store-accent)); font:italic clamp(9px,.95vw,11px)/1.35 Georgia,serif; }
+@container (max-width:700px) {
+  .gl-sd-time { padding:7px 4px; }
+  .gl-sd-time>strong { font-size:17px; }
+  .gl-sd-time>span { font-size:7px; }
+  .gl-sd-time>em { display:none; }
+}
+/* 0.10.0: a game owned and not installed, still in its shrink-wrap: a sheen of plastic over the box, a sticker */
+.gl-wrap { position:absolute; z-index:4; inset:0; overflow:hidden; border-radius:inherit; pointer-events:none; background:linear-gradient(115deg,#ffffff00 18%,#ffffff2e 27%,#ffffff00 36%,#ffffff00 58%,#ffffff1f 66%,#ffffff00 74%),linear-gradient(180deg,#d8e6ee1c,#0a10141f); box-shadow:inset 0 0 0 1px #ffffff40,inset 0 0 18px #ffffff14; }
+.gl-wrap::after { content:""; position:absolute; inset:0; opacity:.5; background:repeating-linear-gradient(28deg,#ffffff00 0 11px,#ffffff10 12px,#ffffff00 14px); }
+.gl-wrap-sticker { position:absolute; top:9%; right:-30%; left:-30%; padding:3px 0; color:#16110a; background:linear-gradient(180deg,#ffe58a,#f2c34a); box-shadow:0 2px 6px #0007; font-size:clamp(6px,1.1cqw,9px); font-weight:800; letter-spacing:.14em; text-align:center; text-transform:uppercase; transform:rotate(-12deg); }
+.glu-case:has(.gl-wrap) .glu-case-art,.glu-case:has(.gl-wrap) .glu-artwork { filter:saturate(.72) brightness(.9); }
+.gl-launching { position:absolute; z-index:6; inset:0; overflow:hidden; pointer-events:none; }
+.gl-launching .gl-disc { position:absolute; left:14%; width:72%; bottom:-80%; animation:gl-disc-rise 900ms cubic-bezier(.2,.8,.25,1) forwards; }
+.glu-case:has(.gl-launching) .glu-case-body { transform:translateY(-10px) scale(1.05); }
+.glu-case:has(.gl-launching) .glu-case-shell { box-shadow:0 0 0 2px var(--glu-warm),0 0 26px color-mix(in srgb,var(--glu-warm) 55%,transparent),0 14px 24px #000b; }
+.glu-case:has(.gl-launching) .gl-play { opacity:0; }
+.gl-detail-disc { position:absolute; z-index:1; top:22%; left:12%; width:76%; opacity:0; pointer-events:none; }
+.gl-detail-disc.out { animation:gl-disc-out 900ms cubic-bezier(.2,.8,.25,1) forwards; }
+@keyframes gl-disc-rise { 0% { bottom:-80%; transform:rotate(0); opacity:1; } 60% { bottom:16%; transform:rotate(200deg); opacity:1; } 100% { bottom:22%; transform:rotate(320deg); opacity:0; } }
+@keyframes gl-disc-out { 0% { opacity:1; transform:translateX(0) rotate(0); } 65% { opacity:1; transform:translateX(62%) rotate(240deg); } 100% { opacity:0; transform:translateX(70%) rotate(330deg); } }
+@keyframes gl-box-nudge { 30% { transform:translateX(-4%) rotate(-1.5deg); } 100% { transform:none; } }
+@keyframes gl-spin { to { transform:rotate(360deg); } }
+@keyframes gl-detail-in { from { opacity:0; transform:translateY(8px); } }
+
+@container (max-width:640px) {
+  .gl-topbar { grid-template-columns:1fr auto; gap:8px; padding:9px 12px; }
+  .gl-search { grid-column:1/-1; grid-row:2; }
+}
+/* Narrow (0.7.0, as the Video Club's): the lists take the row's width under the brand and the search */
+@container (max-width:520px) {
+  .gl-topbar { grid-template-columns:1fr; gap:7px; padding:10px 12px; }
+  .gl-search { grid-column:auto; grid-row:auto; }
+  .gl-tools { width:100%; justify-self:stretch; }
+  .gl-tools .glu-picker { flex:1; min-width:0; }
+}
+.game-library.sidebar .gl-topbar { grid-template-columns:1fr; gap:7px; padding:10px; }
+.game-library.sidebar .gl-search { grid-column:auto; grid-row:auto; }
+.game-library.sidebar .gl-tools { width:100%; justify-self:stretch; }
+.game-library.sidebar .gl-tools .glu-picker { flex:1; min-width:0; }
+@container (max-width:420px) {
+  .gl-brand, .gl-brand-logo { display:none; }
+  .gl-browse { padding:9px 10px 26px; --glu-bleed-x:10px; --glu-bleed-b:26px; }
+}
+@media (prefers-reduced-motion:reduce) {
+  .gl-activity>span,.gl-shot-big,.gl-store-detail.launching .glu-sd-case { animation:none; }
+  .gl-play { transition:none; }
+  .gl-launching,.gl-detail-disc { display:none; }
+}
+/* 0.23.0: a badge in a box's corner (a modpack's: Minecraft's own icon) */
+.gl-badge { position:absolute; z-index:4; top:6px; left:6px; width:26%; max-width:44px; aspect-ratio:1; object-fit:contain; filter:drop-shadow(0 2px 3px #000c) drop-shadow(0 0 1px #000); pointer-events:none; }

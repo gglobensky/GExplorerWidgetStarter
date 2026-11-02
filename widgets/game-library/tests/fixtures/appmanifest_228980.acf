@@ -1,0 +1,79 @@
+"AppState"
+{
+	"appid"		"228980"
+	"universe"		"1"
+	"LauncherPath"		"C:\\Program Files (x86)\\Steam\\steam.exe"
+	"name"		"Steamworks Common Redistributables"
+	"StateFlags"		"4"
+	"installdir"		"Steamworks Shared"
+	"LastUpdated"		"1784250514"
+	"LastPlayed"		"0"
+	"SizeOnDisk"		"381946796"
+	"StagingSize"		"0"
+	"buildid"		"24098430"
+	"LastOwner"		"0"
+	"DownloadType"		"0"
+	"AutoUpdateBehavior"		"0"
+	"AllowOtherDownloadsWhileRunning"		"0"
+	"ScheduledAutoUpdate"		"1784959642"
+	"InstalledDepots"
+	{
+		"228983"
+		{
+			"manifest"		"8124929965194586177"
+			"size"		"19265607"
+		}
+		"228984"
+		{
+			"manifest"		"2547553897526095397"
+			"size"		"13742505"
+		}
+		"228985"
+		{
+			"manifest"		"3966345552745568756"
+			"size"		"13699237"
+		}
+		"228988"
+		{
+			"manifest"		"6645201662696499616"
+			"size"		"29212173"
+		}
+		"228989"
+		{
+			"manifest"		"5753583882400741046"
+			"size"		"25674515"
+		}
+		"228990"
+		{
+			"manifest"		"1829726630299308803"
+			"size"		"102931551"
+		}
+		"229007"
+		{
+			"manifest"		"4477590687906973371"
+			"size"		"117381405"
+		}
+		"229033"
+		{
+			"manifest"		"2059065101492814639"
+			"size"		"60039803"
+		}
+	}
+	"InstallScripts"
+	{
+		"228983"		"_CommonRedist\\vcredist\\2010\\installscript.vdf"
+		"228984"		"_CommonRedist\\vcredist\\2012\\installscript.vdf"
+		"228985"		"_CommonRedist\\vcredist\\2013\\installscript.vdf"
+		"228988"		"_CommonRedist\\vcredist\\2019\\installscript.vdf"
+		"228989"		"_CommonRedist\\vcredist\\2022\\installscript.vdf"
+		"228990"		"_CommonRedist\\DirectX\\Jun2010\\installscript.vdf"
+		"229007"		"_CommonRedist\\DotNet\\4.8\\installscript.vdf"
+		"229033"		"_CommonRedist\\PhysX\\9.14.0702\\installscript.vdf"
+	}
+	"UserConfig"
+	{
+	}
+	"MountedConfig"
+	{
+	}
+}

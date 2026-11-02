@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import type { LibraryItem } from '../../../shared/library-ui/types.ts'
+import type { MovieItem } from '../movie-types.ts'
 import { useBackgroundPlayback } from '../useBackgroundPlayback.ts'
 
 class FakeMedia extends EventTarget {
@@ -33,7 +33,7 @@ function setup() {
   return { element, jobs, reports, make }
 }
 
-const movie = { id:'m', title:'Heat', path:'D:\\Heat.mkv', year:1995, runtimeMinutes:170, rating:'', primaryGenre:'Crime', genres:['Crime'], synopsis:'', artwork:{ src:'', x:0, y:0 }, previews:[], addedRank:0 } as LibraryItem
+const movie = { id:'m', title:'Heat', path:'D:\\Heat.mkv', year:1995, runtimeMinutes:170, rating:'', primaryGenre:'Crime', genres:['Crime'], synopsis:'', artwork:{ src:'', x:0, y:0 }, previews:[], addedRank:0 } as MovieItem
 const URL = 'http://127.0.0.1:1/fs/t'
 const tick = () => new Promise(resolve => setTimeout(resolve, 5))
 /** The video starts playing; the muted element joins once it has (armDelayMs). */

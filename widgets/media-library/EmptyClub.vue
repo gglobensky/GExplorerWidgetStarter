@@ -3,6 +3,8 @@
 //
 // The library before it has any folder: a shelf of empty DVD cases, the middle one asking for a
 // media folder (it replaces the old sample collection and its illustrated posters).
+import MemberCard from './MemberCard.vue'
+
 defineProps<{ canAdd: boolean }>()
 const emit = defineEmits<{ (e:'add-source'):void }>()
 const CASES = 5
@@ -11,7 +13,7 @@ const CASES = 5
 <template>
   <section class="media-empty-club" aria-label="Your video club is empty">
     <header>
-      <h1 class="media-video-club-wordmark"><span>GEM</span><strong>VIDEO CLUB</strong></h1>
+      <h1 class="media-empty-club-title"><MemberCard /></h1>
       <p>Your shelves are empty for now.</p>
     </header>
     <div class="media-empty-club-shelf">

@@ -1,0 +1,24 @@
+{
+	"FormatVersion": 0,
+	"bIsIncompleteInstall": false,
+	"LaunchExecutable": "DeadIsland.exe",
+	"InstallLocation": "D:\\Games\\DeadIsland2",
+	"AppName": "Crow",
+	"CatalogNamespace": "236c74b4cd2e4e3099cbe2ebdc9686fd",
+	"CatalogItemId": "75a5bee8052f4e2498094b2faaea8c11",
+	"MainGameAppName": "Crow",
+	"MainGameCatalogNamespace": "236c74b4cd2e4e3099cbe2ebdc9686fd",
+	"MainGameCatalogItemId": "75a5bee8052f4e2498094b2faaea8c11",
+	"AppCategories": [
+		"public",
+		"games",
+		"applications"
+	],
+	"DisplayName": "Dead Island 2",
+	"bIsApplication": true,
+	"bIsExecutable": true,
+	"bRequiresAuth": true,
+	"InstallSize": 67140311793,
+	"MandatoryAppFolderName": "DeadIsland2",
+	"AppVersionString": "1.1231387.0.1"
+}

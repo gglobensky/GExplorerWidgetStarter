@@ -1,5 +1,5 @@
 import type { WidgetSdk } from 'gexplorer/widgets'
-import type { LibraryItem } from '../../shared/library-ui'
+import type { MovieItem } from './movie-types'
 
 type SearchResult = {
   id: number
@@ -34,14 +34,14 @@ type SeasonResponse = {
 
 export type TmdbProgress = { completed:number; total:number; title:string }
 /** failed: still failing after their retries; not marked as looked up, so the next run tries them again. */
-export type TmdbEnrichment = { items:LibraryItem[]; matched:number; unmatched:number; failed:number }
+export type TmdbEnrichment = { items:MovieItem[]; matched:number; unmatched:number; failed:number }
 export type TmdbDiagnosticAttempt = {
   request: { method:'GET'; url:string; body:null; query:Record<string,string> }
   responseBody: SearchResponse
   chosen?: SearchResult
   validation: { requestedTitle:string; requestedYear:number; resultYear:number; normalizedTitleMatch:boolean; yearMatches:boolean }
 }
-export type PersistedTmdbMetadata = Pick<LibraryItem,
+export type PersistedTmdbMetadata = Pick<MovieItem,
   'title'|'year'|'runtimeMinutes'|'rating'|'primaryGenre'|'genres'|'synopsis'|'metadataSource'|
   'tmdbId'|'tmdbType'|'tmdbPosterPath'|'tmdbStillPath'|'tmdbRating'|'tmdbCollectionId'|'tmdbCollectionName'
 >
@@ -70,13 +70,13 @@ export function tmdbImageUrl(path: string | undefined, size: 'w500'|'w780' = 'w5
   return `${IMAGE_API}/${size}${clean}`
 }
 
-export function tmdbReviewsUrl(item: Pick<LibraryItem,'tmdbId'|'tmdbType'>): string | undefined {
+export function tmdbReviewsUrl(item: Pick<MovieItem,'tmdbId'|'tmdbType'>): string | undefined {
   if (!Number.isInteger(item.tmdbId) || Number(item.tmdbId) <= 0) return undefined
   const type = item.tmdbType === 'tv' ? 'tv' : item.tmdbType === 'movie' ? 'movie' : undefined
   return type ? `https://www.themoviedb.org/${type}/${item.tmdbId}/reviews` : undefined
 }
 
-export function persistedTmdbMetadata(item: LibraryItem): PersistedTmdbMetadata | undefined {
+export function persistedTmdbMetadata(item: MovieItem): PersistedTmdbMetadata | undefined {
   if (item.metadataSource !== 'tmdb' || item.tmdbId == null) return undefined
   const {
     title,year,runtimeMinutes,rating,primaryGenre,genres,synopsis,metadataSource,
@@ -89,14 +89,14 @@ export function persistedTmdbMetadata(item: LibraryItem): PersistedTmdbMetadata 
   }
 }
 
-export function applyPersistedTmdbMetadata(item: LibraryItem, metadata: PersistedTmdbMetadata | undefined): LibraryItem {
+export function applyPersistedTmdbMetadata(item: MovieItem, metadata: PersistedTmdbMetadata | undefined): MovieItem {
   return metadata ? { ...item, ...metadata, genres:[...metadata.genres], tmdbMatchAttempted:true } : item
 }
 
 export function restorePersistedTmdbMetadata(
-  items: LibraryItem[],
+  items: MovieItem[],
   records: Record<string,PersistedTmdbMetadata>,
-): { items:LibraryItem[]; restored:number } {
+): { items:MovieItem[]; restored:number } {
   let restored = 0
   return {
     items:items.map(item => {
@@ -146,7 +146,7 @@ function bestResult(results: SearchResult[], title: string, year: number): Searc
   return best && best.titleScore >= 45 ? best.result : undefined
 }
 
-function searchTitles(item: LibraryItem, primary: string): string[] {
+function searchTitles(item: MovieItem, primary: string): string[] {
   return [primary,...(item.metadataSearchTitles ?? [])]
     .map(title => title.trim())
     .filter((title,index,all) => !!title && all.findIndex(candidate => normalized(candidate) === normalized(title)) === index)
@@ -166,7 +166,7 @@ async function search(
   return undefined
 }
 
-export async function diagnoseTmdbItem(sdk: WidgetSdk, item: LibraryItem): Promise<TmdbDiagnosticAttempt[]> {
+export async function diagnoseTmdbItem(sdk: WidgetSdk, item: MovieItem): Promise<TmdbDiagnosticAttempt[]> {
   const session = createTmdbSession(sdk)
   const type = item.mediaKind === 'episode' ? 'tv' : 'movie'
   const primary = type === 'tv' && item.seriesTitle ? item.seriesTitle : item.title
@@ -333,7 +333,7 @@ async function movieDetails(session: TmdbSession, id: number): Promise<MovieDeta
   }
 }
 
-function applyCommon(item: LibraryItem, result: SearchResult, genreMap: Map<number,string>): LibraryItem {
+function applyCommon(item: MovieItem, result: SearchResult, genreMap: Map<number,string>): MovieItem {
   const foundGenres = (result.genre_ids ?? []).flatMap(id => genreMap.get(id) ? [genreMap.get(id)!] : [])
   const resultYear = yearOf(result.release_date || result.first_air_date)
   return {
@@ -391,7 +391,7 @@ function seasonTag(seasonNumber: number, episodeNumber: number): string {
 }
 
 /** One title: matched, or returned as it was with tmdbMatchAttempted. */
-async function enrichOne(session: TmdbSession, item: LibraryItem): Promise<{ item:LibraryItem; matched:boolean }> {
+async function enrichOne(session: TmdbSession, item: MovieItem): Promise<{ item:MovieItem; matched:boolean }> {
   // Extras are never matched: TMDB would name them after their movie (or after a show called "Extras").
   if (item.extraOf) return { item:{ ...item, tmdbMatchAttempted:true }, matched:false }
   if (item.mediaKind === 'episode' && item.seriesTitle) {
@@ -448,7 +448,7 @@ async function enrichOne(session: TmdbSession, item: LibraryItem): Promise<{ ite
 
 export async function enrichWithTmdb(
   sdk: WidgetSdk,
-  items: LibraryItem[],
+  items: MovieItem[],
   onProgress: (progress:TmdbProgress) => void = () => {},
   session: TmdbSession = createTmdbSession(sdk),
   isCancelled: () => boolean = () => false,
@@ -457,7 +457,7 @@ export async function enrichWithTmdb(
   // URL asks for access, or both can queue separate permission questions.
   if (items.some(item => item.mediaKind !== 'episode' || !item.seriesTitle)) await genres(session,'movie')
   if (items.some(item => item.mediaKind === 'episode' && item.seriesTitle)) await genres(session,'tv')
-  const enriched:LibraryItem[] = new Array(items.length)
+  const enriched:MovieItem[] = new Array(items.length)
   let matched = 0
   let failed = 0
   let completed = 0

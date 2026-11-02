@@ -1,13 +1,15 @@
 import Widget from './Widget.vue'
 import { VIDEO_EXTENSIONS } from './scanner'
 import AudioCard from './AudioCard.vue'
+import TmdbCard from './TmdbCard.vue'
 import bungeeLicense from './assets/Bungee-OFL.txt?raw'
+import tiltNeonLicense from './assets/OFL.txt?raw'
 import tmdbLogo from './assets/tmdb-logo.png?inline'
 
 export default {
   api:'1.0',
   id:'media-library',
-  version:'0.10.1',
+  version:'0.17.0',
   license:'PolyForm-Noncommercial-1.0.0',
   Component:Widget,
   displayName:'GEM Video Club',
@@ -15,17 +17,19 @@ export default {
   category:'media',
   icon:'film',
   contexts:{
-    grid:{ minSize:{ cols:3, rows:3 }, defaultSize:{ cols:8, rows:6 } },
+    grid:{ minSize:{ cols:3, rows:5 }, defaultSize:{ cols:8, rows:6 } },   // 3×5 at least (Guillaume, 2026-10-31)
     // scroll 'self' (2026-10-26): the shell gives the row a maximum (half the sidebar, or the height the user
     // drags) and the Video Club fills it, scrolling its own shelves. With the default ('host': as tall as the
     // content) the library measured 0 px tall (its size containment, for its cqh units): a blank grey box.
     sidebar:{ minHeight:260, scroll:'self' },
   },
-  defaults:{ data:{ selectedId:'', sources:[] }, view:{ atmosphere:true, displayMode:'video-club', sortMode:'title', backgroundSound:true } },
+  defaults:{ data:{ selectedId:'', sources:[] }, view:{ atmosphere:true, skin:'late-show', displayMode:'video-club', sortMode:'title', backgroundSound:true } },
   // The movie's sound going on while the library is off screen (useBackgroundPlayback.ts): its card
   // shows in the operations tray meanwhile; Stop there ends it.
   jobs:{
     background:{ card:AudioCard },
+    // 0.12.0: TMDB matching goes on off screen (useTmdbMatching.ts); Stop on its card keeps what's matched
+    tmdb:{ card:TmdbCard },
   },
   // Run while the library has your focus (Widget.vue's onCommand).
   commands:[
@@ -34,6 +38,11 @@ export default {
     { id:'flip', name:'Turn the case over', keys:['F'], description:'Shows the back of the open case (synopsis and scene previews), or its front again.' },
     { id:'watched', name:'Mark as watched / unwatched', keys:['W'], description:'Marks the open or selected title as watched, or clears its watched mark and progress.' },
     { id:'rescan', name:'Scan the media folders again', keys:['F5'], description:'Looks for new and removed videos in your media folders (and matches new titles with TMDB when it is connected).' },
+    // 0.15.0: moving along the shelves (library-ui boxNav.ts); while a movie plays, Left / Right seek 10 s
+    { id:'box-left', name:'Previous case', keys:['Left'], description:'Moves to the case (or the rack) on the left; the case you are on is pulled out, Enter opens it. While a movie plays: back 10 seconds.' },
+    { id:'box-right', name:'Next case', keys:['Right'], description:'Moves to the case (or the rack) on the right. While a movie plays: forward 10 seconds.' },
+    { id:'box-up', name:'Case above', keys:['Up'], description:'Moves to the case on the shelf above.' },
+    { id:'box-down', name:'Case below', keys:['Down'], description:'Moves to the case on the shelf below.' },
   ],
   // Right-click menus (Widget.vue: sdk.ui().contextMenu, onMenuItem). A title's file is its subject:
   // other widgets' actions and your own commands work on it.
@@ -72,6 +81,8 @@ export default {
   },
   capabilities:[
     { cap:'Read', reason:'Lets you choose and scan one or more local media folders.' },
+    // 0.16.0: exporting a skin (⚙ ▸ Display ▸ Store ▸ Export…): only the file the user picks in GEM Shell's save dialog
+    { cap:'Write', reason:'Saves the skins you export (a .gemskin file, to share a look) to the file you choose.' },
     { cap:'Media', reason:'Reads local video metadata, extracts scene stills, and streams videos for playback and motion previews.' },
     { cap:'Network', reason:'Optionally matches local movies and episodes with TMDB metadata when you provide a token.' },
   ],
@@ -91,6 +102,12 @@ export default {
       license:'OFL-1.1',
       url:'https://github.com/google/fonts/tree/main/ofl/bungee',
       text:bungeeLicense,
+    },
+    {
+      name:'Tilt Neon',
+      license:'OFL-1.1',
+      url:'https://github.com/googlefonts/Tilt-Fonts',
+      text:tiltNeonLicense,
     },
   ],
 }

@@ -3,7 +3,7 @@
 // What the opened title's "look inside" needs: four scene stills decoded by GEM Shell's ffmpeg
 // service (cached image assets) and one stream URL the hover previews play from.
 import { ref } from 'vue'
-import type { LibraryItem } from '../../shared/library-ui'
+import type { MovieItem } from './movie-types'
 import { errorText, type LibraryContext } from './context'
 import { videoMime } from './scanner'
 
@@ -26,7 +26,7 @@ export function usePreviewMedia(ctx: LibraryContext) {
   }
 
   /** A stream URL for the opened title; `stillOpen` says whether it is still the one shown. */
-  async function ensureStream(item: LibraryItem, stillOpen: (id: string) => boolean) {
+  async function ensureStream(item: MovieItem, stillOpen: (id: string) => boolean) {
     if (!item.path || !sdk?.mintStreamHttp || stream.value?.itemId === item.id) return
     const revision = ++streamRevision
     try {
@@ -37,7 +37,7 @@ export function usePreviewMedia(ctx: LibraryContext) {
     }
   }
 
-  function ensureFrames(item: LibraryItem): Promise<void> {
+  function ensureFrames(item: MovieItem): Promise<void> {
     if (!item.path || !sdk?.mediaVideoFramesCreate || !item.previews.length) return Promise.resolve()
     const path = item.path
     const existing = frames.value[path]
@@ -78,7 +78,7 @@ export function usePreviewMedia(ctx: LibraryContext) {
    * A sharp picture of each extra, once per path: a frame decoded by GEM Shell's ffmpeg a fifth of
    * the way in (square, cached), else the OS thumbnail (often small: blurry on a chip).
    */
-  function ensureExtraThumbs(item: LibraryItem) {
+  function ensureExtraThumbs(item: MovieItem) {
     if (!sdk?.mediaImageCreate) return
     const createImage = sdk.mediaImageCreate
     const createFrames = sdk.mediaVideoFramesCreate

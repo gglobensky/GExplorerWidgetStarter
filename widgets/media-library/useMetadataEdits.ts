@@ -3,7 +3,7 @@
 // The user's own title / synopsis / genre edits, kept by media path above whatever a provider
 // (TMDB) or the scan supplied (metadata-overrides.ts holds the document format).
 import { ref } from 'vue'
-import type { LibraryItem } from '../../shared/library-ui'
+import type { MovieItem } from './movie-types'
 import type { LibraryContext } from './context'
 import { applyMetadataOverride, loadMetadataOverrides, saveMetadataOverrides, type MediaMetadataOverride } from './metadata-overrides'
 
@@ -20,11 +20,11 @@ export function useMetadataEdits(ctx: LibraryContext) {
   }
 
   /** The item with the user's edits for its path applied. */
-  function apply(item: LibraryItem): LibraryItem {
+  function apply(item: MovieItem): MovieItem {
     return item.path ? applyMetadataOverride(item, overrides.value[item.path]) : item
   }
 
-  async function update(targets: LibraryItem[], patch: MediaMetadataOverride) {
+  async function update(targets: MovieItem[], patch: MediaMetadataOverride) {
     const paths = new Set(targets.flatMap(item => item.path ? [item.path] : []))
     if (!paths.size) return
     const next = { ...overrides.value }
@@ -43,7 +43,7 @@ export function useMetadataEdits(ctx: LibraryContext) {
   }
 
   /** Genres of an episode: asks whether they apply to that episode or to the whole series. */
-  async function updateGenres(item: LibraryItem, genres: string[]) {
+  async function updateGenres(item: MovieItem, genres: string[]) {
     const seriesItems = item.seriesTitle
       ? items.value.filter(candidate => candidate.seriesTitle === item.seriesTitle && candidate.path)
       : []

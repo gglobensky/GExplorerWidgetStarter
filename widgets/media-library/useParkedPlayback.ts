@@ -17,7 +17,7 @@
 // URLs are compared through element.src, not its attribute: when GEM Shell converts a stream while it
 // plays (phases 3-4), the element's real source is internal and `src` still answers the widget's URL.
 import type { VideoHandle, VideoReleaseReason } from 'gexplorer/widgets'
-import type { LibraryItem } from '../../shared/library-ui'
+import type { MovieItem } from './movie-types'
 import type { LibraryContext } from './context'
 
 export const BACKGROUND_JOB = 'background'
@@ -29,7 +29,7 @@ export type BackgroundMode = 'off' | 'sound' | 'picture'
 
 /** What plays (plain data: a lifecycle cell, read by the widget remounting and by the job's card). */
 export type ParkedSession = {
-  item: LibraryItem
+  item: MovieItem
   url: string
   positionMs: number
   durationMs: number
@@ -42,8 +42,8 @@ export type ParkedSession = {
 
 /** What to reopen when the widget comes back. live: the same video, still alive (maybe playing). */
 export type ParkedReturn =
-  | { live:true; item:LibraryItem; url:string; handle:VideoHandle }
-  | { live:false; item:LibraryItem; positionMs:number }
+  | { live:true; item:MovieItem; url:string; handle:VideoHandle }
+  | { live:false; item:MovieItem; positionMs:number }
 
 const REPORT_EVERY_MS = 5000
 
@@ -56,18 +56,18 @@ function trace(step: string, detail?: unknown) {
 }
 
 /** Minimal copy of an item for the cell (no extras: they could be many). */
-function sessionItem(item: LibraryItem): LibraryItem {
+function sessionItem(item: MovieItem): MovieItem {
   const { extras: _extras, ...rest } = item
   return { ...rest, genres:[...item.genres], previews:item.previews.map(cue => ({ ...cue })), artwork:{ ...item.artwork } }
 }
 
-function titleOf(item: LibraryItem): string {
+function titleOf(item: MovieItem): string {
   return item.seriesTitle ? `${item.seriesTitle} · ${item.title}` : item.title
 }
 
 export function useParkedPlayback(
   ctx: Pick<LibraryContext, 'sdk' | 'life'>,
-  onPosition: (item: LibraryItem, positionMs: number, durationMs: number, final: boolean) => void,
+  onPosition: (item: MovieItem, positionMs: number, durationMs: number, final: boolean) => void,
   background: () => BackgroundMode,
 ) {
   const { sdk, life } = ctx
@@ -173,7 +173,7 @@ export function useParkedPlayback(
   }
 
   /** The player plays `item` from `url`: the shell's video for it (the same element as before, if any). */
-  function start(item: LibraryItem, url: string): VideoHandle | null {
+  function start(item: MovieItem, url: string): VideoHandle | null {
     if (!video) return null
     const handle = video.acquire({ key:MOVIE_VIDEO_KEY, decodeWhileParked:false })
     if (handle.element.src !== url) handle.element.pause()   // the previous title, until the player sets the new one

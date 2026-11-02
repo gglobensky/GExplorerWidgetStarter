@@ -1,0 +1,23 @@
+{
+	"FormatVersion": 0,
+	"bIsIncompleteInstall": false,
+	"LaunchExecutable": "2KLauncher/LauncherPatcher.exe",
+	"InstallLocation": "D:\\EpicLibrary\\BioshockRemastered",
+	"AppName": "bc2c95c6ff564a16b26644f1d3ac3c55",
+	"CatalogNamespace": "e9e3ee13329f434f94105e6ec63435e0",
+	"CatalogItemId": "c7934d31d2ed473cb4b000c24e049927",
+	"MainGameAppName": "bc2c95c6ff564a16b26644f1d3ac3c55",
+	"MainGameCatalogNamespace": "e9e3ee13329f434f94105e6ec63435e0",
+	"MainGameCatalogItemId": "c7934d31d2ed473cb4b000c24e049927",
+	"AppCategories": [
+		"games",
+		"applications"
+	],
+	"DisplayName": "BioShock Remastered",
+	"bIsApplication": true,
+	"bIsExecutable": true,
+	"bRequiresAuth": true,
+	"InstallSize": 22543745163,
+	"MandatoryAppFolderName": "BioshockRemastered",
+	"AppVersionString": "1.0.0_BN-187_CL-17677"
+}

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import type { LibraryItem } from '../../../shared/library-ui/types.ts'
+import type { MovieItem } from '../movie-types.ts'
 import { continueWatching, createScannedLibrary, nextEpisode } from '../media.ts'
 import {
   applyWatchRecord, isWatched, loadWatchProgress, nextRecord, pruneRecords, resumeSeconds, saveWatchProgress, WATCH_PROGRESS_STORE,
@@ -40,7 +40,7 @@ test('applies progress, resume point and watched mark to local items only', () =
   assert.equal(applyWatchRecord({ ...item, path:undefined }, { positionMs:1, durationMs:2, updatedAt:3 }).lastWatchedAt, undefined)
 })
 
-function episode(id: string, season: number, number: number, extra: Partial<LibraryItem> = {}): LibraryItem {
+function episode(id: string, season: number, number: number, extra: Partial<MovieItem> = {}): MovieItem {
   return {
     id, title:`S0${season}E0${number}`, year:2020, runtimeMinutes:40, rating:'LOCAL', primaryGenre:'Drama', genres:['Drama'],
     synopsis:'', artwork:{ src:'', x:0, y:0 }, previews:[], addedRank:0, path:`D:\\Show\\${id}.mkv`,

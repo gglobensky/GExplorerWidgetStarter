@@ -3,7 +3,7 @@
 // Where the user stopped in each local video ('watch-progress' document, by media path):
 // what Resume, Continue watching and the watched mark are made from.
 import type { WidgetSdk } from 'gexplorer/widgets'
-import type { LibraryItem } from '../../shared/library-ui'
+import type { MovieItem } from './movie-types'
 
 export const WATCH_PROGRESS_STORE = 'watch-progress'
 /** Records kept: the most recently watched ones. */
@@ -53,7 +53,7 @@ export function resumeSeconds(record: WatchRecord | undefined): number {
 }
 
 /** The item with its watch state: progress (0..1) when resumable, watched, lastWatchedAt. */
-export function applyWatchRecord(item: LibraryItem, record: WatchRecord | undefined): LibraryItem {
+export function applyWatchRecord(item: MovieItem, record: WatchRecord | undefined): MovieItem {
   if (!record || !item.path) return item
   const resume = resumeSeconds(record)
   return {

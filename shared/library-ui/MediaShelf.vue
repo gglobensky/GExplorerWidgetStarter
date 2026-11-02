@@ -1,27 +1,30 @@
-<script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+<script setup lang="ts" generic="T extends LibraryItem">
+// A titled shelf of boxes that scrolls sideways (2.0.0, 2026-10-31): the classic layout. Generic over the item; what
+// a widget adds goes in slots: `tools` (beside the A–Z jump: the Video Club's season filter) and `marks` (on each
+// box, see LibraryCase). The items are shown as given: a widget filtering them (a season) passes the filtered list
+// and calls resetPosition() after the change.
+import { computed, nextTick, ref } from 'vue'
 import { useScrollHints } from 'gexplorer/widgets'
 import LibraryCase from './LibraryCase.vue'
-import { itemsForSeason, seasonLabel, seasonsFor, type SeasonFilter } from './seasons'
-import type { LibraryItem } from './types'
+import type { LibraryCaseVariant, LibraryItem } from './types'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   title: string
   shelfId: string
   note?: string
-  items: LibraryItem[]
+  items: T[]
   selectedId?: string
+  variant?: LibraryCaseVariant
+  /** The line under each box's title (see LibraryCase). */
+  caption?: (item: T) => string
+}>(), { variant: 'dvd' })
+const emit = defineEmits<{ (e: 'open', item: T): void; (e: 'menu', item: T, event: MouseEvent): void }>()
+defineSlots<{
+  tools?: () => any
+  marks?: (props: { item: T }) => any
 }>()
-const emit = defineEmits<{ (e: 'open', item: LibraryItem): void; (e: 'menu', item: LibraryItem, event: MouseEvent): void }>()
 const rail = ref<HTMLElement | null>(null)
 const letter = ref('')
-const season = ref<SeasonFilter>('all')
-const isSeriesShelf = computed(() => props.shelfId.startsWith('series-'))
-const seasons = computed(() => isSeriesShelf.value ? seasonsFor(props.items) : [])
-const visibleItems = computed(() => itemsForSeason(props.items,season.value))
-const visibleNote = computed(() => season.value === 'all'
-  ? props.note
-  : `${seasonLabel(season.value)} · ${visibleItems.value.length} ${visibleItems.value.length === 1 ? 'episode' : 'episodes'}`)
 const {
   hasOverflow:overflow,
   atStart,
@@ -30,7 +33,7 @@ const {
 } = useScrollHints({
   scrollEl:rail,
   axis:'x',
-  deps:() => `${season.value}:${visibleItems.value.map(item => item.id).join('|')}`,
+  deps:() => props.items.map(item => item.id).join('|'),
   eps:2,
   wheel:'transpose',
   pageRatio:.78,
@@ -43,18 +46,15 @@ function titleInitial(item: LibraryItem) {
   return /[A-Z]/.test(first) ? first : '#'
 }
 
-const letters = computed(() => Array.from(new Set(visibleItems.value.map(titleInitial))).sort())
+const letters = computed(() => Array.from(new Set(props.items.map(titleInitial))).sort())
 
-watch(() => props.shelfId, () => { season.value = 'all' })
-watch(seasons, options => {
-  if (season.value !== 'all' && !options.includes(season.value)) season.value = 'all'
-})
-
-async function changeSeason() {
+/** Back to the start of the shelf, the A–Z jump cleared (after the widget changed what the shelf shows). */
+async function resetPosition() {
   letter.value = ''
   await nextTick()
   rail.value?.scrollTo({ left:0, behavior:'smooth' })
 }
+defineExpose({ resetPosition })
 
 function jumpToLetter() {
   const el = rail.value
@@ -67,15 +67,9 @@ function jumpToLetter() {
 <template>
   <section class="glu-shelf" :data-shelf-id="shelfId" :aria-label="title">
     <header class="glu-shelf-heading">
-      <div><h2>{{ title }}</h2><p v-if="visibleNote">{{ visibleNote }}</p></div>
+      <div><h2>{{ title }}</h2><p v-if="note">{{ note }}</p></div>
       <div class="glu-shelf-tools">
-        <label v-if="isSeriesShelf && seasons.length" class="glu-season-filter">
-          <span>Season</span>
-          <select v-model="season" :aria-label="`Filter ${title} by season`" @change="changeSeason">
-            <option value="all">All seasons</option>
-            <option v-for="option in seasons" :key="option" :value="option">{{ seasonLabel(option) }}</option>
-          </select>
-        </label>
+        <slot name="tools" />
         <label class="glu-alpha-jump">
           <span>A–Z</span>
           <select v-model="letter" :aria-label="`Jump through ${title} by title`" @change="jumpToLetter">
@@ -92,14 +86,18 @@ function jumpToLetter() {
     <div class="glu-shelf-stage">
       <div ref="rail" class="glu-shelf-rail">
         <LibraryCase
-          v-for="item in visibleItems"
+          v-for="item in items"
           :key="item.id"
           :item="item"
+          :variant="variant"
+          :caption="caption"
           :selected="selectedId === item.id"
           :data-title-initial="titleInitial(item)"
           @open="emit('open', $event)"
           @menu="(item, event) => emit('menu', item, event)"
-        />
+        >
+          <template v-if="$slots.marks" #marks="{ item: boxed }"><slot name="marks" :item="boxed" /></template>
+        </LibraryCase>
       </div>
       <div class="glu-shelf-edge" aria-hidden="true"></div>
     </div>

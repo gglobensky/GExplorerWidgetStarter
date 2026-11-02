@@ -158,6 +158,64 @@ try {
 - The user is asked first (the shell's consent dialog); errors carry a `code`: `no-gesture`, `declined`, `os-off`,
   `unavailable`, `timeout`, `error`.
 
+## The installed programs (`Apps`)
+
+Declare `Apps` (GEM Shell, 2026-11-01) to read the list of programs installed on this computer, and to start a
+Microsoft Store app (an Xbox game):
+
+```ts
+capabilities: [{ cap: 'Apps', reason: 'Finds the games installed by Rockstar, the EA app, Ubisoft and Battle.net, and starts Xbox games.' }]
+```
+
+```ts
+const r = await sdk.installedApps!().list()                 // the user is asked once
+if (r.ok) for (const app of r.apps) console.log(app.name, app.publisher, app.installLocation, app.displayIcon)
+await sdk.installedApps!().launch('Microsoft.4297127D64EC6_8wekyb3d8bbwe!Minecraft')   // from a click
+```
+
+- **The list** is what Windows' "Installed apps" page shows for desktop programs (the uninstall entries), with
+  system components and updates left out. GEM Shell keeps it for 2 minutes; `{ refresh: true }` reads it again.
+- **It gives no file access.** To read a program's folder, ask for Read as for any other folder.
+- **Store apps aren't listed yet.** Find the ones you know (an Xbox game's `MicrosoftGame.config` names its package
+  and its app), compute the package family name, and call `launch('<family name>!<app id>')`.
+- **`launch`:** only right after the user's own click or key press in your widget. The user is asked once per app,
+  with the name Windows shows for it. You get `not-installed` when Windows doesn't know that app.
+- **Results:** `{ ok: true, … }` or `{ ok: false, reason: 'no-gesture' | 'declined' | 'not-installed' | 'bad-argument' |
+  'unsupported' | 'failed' }`. Linux is `unsupported` for now.
+
+## An app's links (steam://, uplay://…)
+
+Declare `AppLinks` with the links your widget opens (GEM Shell, 2026-11-01), then call `sdk.appLinks().open()` from a
+click or a key press:
+
+```ts
+capabilities: [
+  { cap: 'AppLinks', reason: 'Starts your games through the store apps that own them.',
+    links: [
+      { scheme: 'steam', prefixes: ['steam://rungameid/', 'steam://store/'], label: 'Steam' },
+      { scheme: 'com.epicgames.launcher', prefixes: ['com.epicgames.launcher://apps/'], label: 'Epic Games' },
+    ] },
+]
+```
+
+```ts
+const r = await sdk.appLinks!().open('steam://rungameid/620')
+if (!r.ok && r.reason === 'not-registered') { /* Steam isn't installed */ }
+const hasEpic = await sdk.appLinks!().available('com.epicgames.launcher')   // no prompt, nothing opened
+```
+
+- **Only the prefixes you declare.** A link must start with one of its scheme's `prefixes` (`not-declared`
+  otherwise): your widget can't use an app's other links.
+- **Asked once per scheme.** The first link of a scheme opens GEM Shell's consent dialog, naming the app ("Let Game
+  Shop open Steam links?"). The user sees and removes it in Settings ▸ Security ▸ Permissions.
+- **Only right after the user's own click or key press in your widget** (`no-gesture` otherwise, in the security log).
+- **Never these:** `http(s)` (`openUrl`, which asks every time), `file`, `javascript`, `data`, `shell`, `search-ms`,
+  the `ms-…` handlers (`ms-msdt`, `ms-settings`, Office…), GEM Shell's own. A declaration naming one is left out.
+- **The app must be installed:** `not-registered` when no app opens the scheme (Windows' registered URL
+  protocols). On Linux every link is `not-registered` for now.
+- Results: `{ ok: true }` or `{ ok: false, reason: 'no-gesture' | 'not-declared' | 'declined' | 'not-registered' |
+  'bad-argument' | 'failed', error? }`.
+
 ## Settings
 
 Declare fields in `entry.ts` (GEM Shell, 2026-10-30): GEM Shell draws them on your widget's page in Settings (its

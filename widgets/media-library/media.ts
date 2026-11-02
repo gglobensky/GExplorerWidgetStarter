@@ -1,7 +1,8 @@
-import type { LibraryArtwork, LibraryItem, LibraryShelf } from '../../shared/library-ui/types'
+import type { LibraryArtwork } from '@shared/library-ui'
+import type { MovieItem, MovieShelf } from './movie-types'
 import type { ScannedVideo } from './scanner'
 
-type MovieSeed = Omit<LibraryItem, 'artwork' | 'previews'>
+type MovieSeed = Omit<MovieItem, 'artwork' | 'previews'>
 
 export type CoverSource = 'custom' | 'tmdb' | 'sidecar' | 'thumbnail'
 
@@ -34,7 +35,7 @@ const seeds: MovieSeed[] = [
 const cueNames = ['Opening', 'Turning point', 'The journey', 'Final act']
 const cueTones = ['-16deg', '8deg', '24deg', '-32deg']
 
-export function createMovieLibrary(atlases: [string, string]): LibraryItem[] {
+export function createMovieLibrary(atlases: [string, string]): MovieItem[] {
   return seeds.map((seed, index) => {
     const local = index % 6
     const artwork: LibraryArtwork = {
@@ -67,11 +68,11 @@ export function sortableTitle(title: string): string {
   return title.replace(/^(?:the|a|an)\s+/i, '')
 }
 
-function byTitle(a: LibraryItem, b: LibraryItem): number {
+function byTitle(a: MovieItem, b: MovieItem): number {
   return sortableTitle(a.title).localeCompare(sortableTitle(b.title), undefined, { numeric:true, sensitivity:'base' })
 }
 
-function byRelease(a: LibraryItem, b: LibraryItem): number {
+function byRelease(a: MovieItem, b: MovieItem): number {
   const ay = a.year > 1800 ? a.year : Number.MAX_SAFE_INTEGER
   const by = b.year > 1800 ? b.year : Number.MAX_SAFE_INTEGER
   return ay - by || byTitle(a,b)
@@ -81,12 +82,12 @@ function byRelease(a: LibraryItem, b: LibraryItem): number {
  * Orders titles. 'collection': by title, but the movies of one TMDB collection stay together, in
  * release order, where the first of them (by title) would be.
  */
-export function sortItems(items: LibraryItem[], mode: SortMode = 'title'): LibraryItem[] {
+export function sortItems(items: MovieItem[], mode: SortMode = 'title'): MovieItem[] {
   if (mode === 'release') return items.slice().sort(byRelease)
   if (mode === 'added') return items.slice().sort((a,b) => b.addedRank - a.addedRank || byTitle(a,b))
   const titled = items.slice().sort(byTitle)
   if (mode !== 'collection') return titled
-  const groups = new Map<number,LibraryItem[]>()
+  const groups = new Map<number,MovieItem[]>()
   for (const item of titled) {
     if (item.tmdbCollectionId == null) continue
     const group = groups.get(item.tmdbCollectionId) ?? []
@@ -104,8 +105,8 @@ export function sortItems(items: LibraryItem[], mode: SortMode = 'title'): Libra
 }
 
 /** Movies of the collections the library holds two or more of, each collection together in release order. */
-export function collectionItems(items: LibraryItem[]): { items:LibraryItem[]; collections:number; groups:Array<{ id:string; title:string; items:LibraryItem[] }> } {
-  const groups = new Map<number,LibraryItem[]>()
+export function collectionItems(items: MovieItem[]): { items:MovieItem[]; collections:number; groups:Array<{ id:string; title:string; items:MovieItem[] }> } {
+  const groups = new Map<number,MovieItem[]>()
   for (const item of items) {
     if (item.tmdbCollectionId == null || item.mediaKind === 'episode') continue
     const group = groups.get(item.tmdbCollectionId) ?? []
@@ -119,7 +120,7 @@ export function collectionItems(items: LibraryItem[]): { items:LibraryItem[]; co
   return { items:sets.flat(), collections:sets.length, groups:named }
 }
 
-export function shelvesFor(items: LibraryItem[], query = '', sort: SortMode = 'title'): LibraryShelf[] {
+export function shelvesFor(items: MovieItem[], query = '', sort: SortMode = 'title'): MovieShelf[] {
   const term = query.trim().toLocaleLowerCase()
   if (term) {
     const found = sortItems(items.filter(item => [item.title, item.seriesTitle, item.tmdbCollectionName, item.year, ...item.genres].join(' ').toLocaleLowerCase().includes(term)), sort)
@@ -128,7 +129,7 @@ export function shelvesFor(items: LibraryItem[], query = '', sort: SortMode = 't
   const localCollection = items.some(item => !!item.path)
   const arrivals = (localCollection ? items.filter(item => item.newArrival) : items)
     .slice().sort((a,b) => b.addedRank-a.addedRank).slice(0,12)
-  const shelves: LibraryShelf[] = [
+  const shelves: MovieShelf[] = [
     { id:'continue', title:'Continue watching', note:'Your place is waiting', items:continueWatching(items) },
     ...(arrivals.length ? [{ id:'recent', title:'New arrivals', note:'Added since the last scan', items:arrivals }] : []),
   ]
@@ -162,7 +163,7 @@ export function shelvesFor(items: LibraryItem[], query = '', sort: SortMode = 't
 }
 
 /** A series' episodes in season, then episode order. */
-export function seriesEpisodes(items: LibraryItem[], seriesTitle: string): LibraryItem[] {
+export function seriesEpisodes(items: MovieItem[], seriesTitle: string): MovieItem[] {
   const key = seriesTitle.toLocaleLowerCase()
   return items
     .filter(item => item.seriesTitle?.toLocaleLowerCase() === key)
@@ -172,7 +173,7 @@ export function seriesEpisodes(items: LibraryItem[], seriesTitle: string): Libra
 }
 
 /** The episode after this one in its series, if the library has it. */
-export function nextEpisode(items: LibraryItem[], item: LibraryItem): LibraryItem | undefined {
+export function nextEpisode(items: MovieItem[], item: MovieItem): MovieItem | undefined {
   if (!item.seriesTitle) return undefined
   const episodes = seriesEpisodes(items, item.seriesTitle)
   const index = episodes.findIndex(candidate => candidate.id === item.id)
@@ -183,11 +184,11 @@ export function nextEpisode(items: LibraryItem[], item: LibraryItem): LibraryIte
  * Continue watching, most recent first: titles stopped part way, and for a series whose latest
  * played episode was finished, its next episode. One entry per series.
  */
-export function continueWatching(items: LibraryItem[], max = 20): LibraryItem[] {
-  const result: LibraryItem[] = []
+export function continueWatching(items: MovieItem[], max = 20): MovieItem[] {
+  const result: MovieItem[] = []
   const added = new Set<string>()
   const seriesSeen = new Set<string>()
-  const add = (item: LibraryItem) => {
+  const add = (item: MovieItem) => {
     if (added.has(item.id)) return
     added.add(item.id)
     result.push(item)
@@ -214,18 +215,22 @@ export type ShowroomRackRow = {
   /** What the label's count counts (default 'episode': a series' row). */
   unit?: 'episode' | 'movie'
   total: number
-  items: LibraryItem[]
+  items: MovieItem[]
 }
 
-export function showroomTitleCount(items: LibraryItem[], genre: string): number {
+export function showroomTitleCount(items: MovieItem[], genre: string): number {
   return items.filter(item => item.primaryGenre === genre).length
 }
 
-export function showroomRowsFor(items: LibraryItem[], genre: string, capacity = 6, sort: SortMode = 'title'): ShowroomRackRow[] {
+/**
+ * A genre rack's rows: its movies, then one row per series. maxRows (library-ui 2.8.0: as many as the rack's height
+ * holds): the rows past it are left out, the last movie row counting every movie from it on ("+N more").
+ */
+export function showroomRowsFor(items: MovieItem[], genre: string, capacity = 6, sort: SortMode = 'title', maxRows = Infinity): ShowroomRackRow[] {
   const rowCapacity = Math.max(1,Math.floor(capacity))
   const matching = items.filter(item => item.primaryGenre === genre)
   const movies = sortItems(matching.filter(item => !item.seriesTitle), sort)
-  const series = new Map<string,LibraryItem[]>()
+  const series = new Map<string,MovieItem[]>()
   for (const item of matching) {
     if (!item.seriesTitle) continue
     const episodes = series.get(item.seriesTitle) ?? []
@@ -243,14 +248,22 @@ export function showroomRowsFor(items: LibraryItem[], genre: string, capacity = 
       || a.title.localeCompare(b.title,undefined,{ numeric:true }))
     rows.push({ id:`series-${slug(title)}`, label:title, total:episodes.length, items:episodes.slice(0,rowCapacity) })
   }
-  return rows
+  const limit = Math.max(1, Math.floor(maxRows))
+  if (rows.length <= limit) return rows
+  const kept = rows.slice(0, limit)
+  const last = kept[kept.length - 1]
+  if (last.id.startsWith('titles-')) {
+    const from = Number(last.id.slice('titles-'.length)) * rowCapacity
+    kept[kept.length - 1] = { ...last, total:movies.length - from }
+  }
+  return kept
 }
 
 function slug(value: string): string {
   return value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 }
 
-function episodeOrder(item: LibraryItem): { season:number; episode:number } {
+function episodeOrder(item: MovieItem): { season:number; episode:number } {
   const tagged = item.title.match(/\bS(\d{1,3})E(\d{1,4})\b/i)
   const season = item.seasonNumber ?? (tagged ? Number(tagged[1]) : Number.MAX_SAFE_INTEGER)
   return {
@@ -260,7 +273,7 @@ function episodeOrder(item: LibraryItem): { season:number; episode:number } {
   }
 }
 
-function seriesGenreCard(items: LibraryItem[], seriesTitle: string, genre: string): LibraryItem {
+function seriesGenreCard(items: MovieItem[], seriesTitle: string, genre: string): MovieItem {
   const representative = items.find(item => item.artwork.src) ?? items[0]
   return {
     ...representative,
@@ -565,7 +578,7 @@ export function createScannedLibrary(
   videos: ScannedVideo[],
   _atlases: [string, string],
   coverUrls: Map<string, string>,
-): LibraryItem[] {
+): MovieItem[] {
   const newest = videos.slice().sort((a,b) => (a.modifiedAt ?? 0) - (b.modifiedAt ?? 0))
   const ranks = new Map(newest.map((video, index) => [video.path, index + 1]))
   // Videos per folder named "01 - …": three or more make bare numbers episodes there.
@@ -658,7 +671,7 @@ function folderSearchTitles(video: ScannedVideo): string[] {
  * Videos named as extras ("Making of", "-trailer") lying loose in a show's folder, beside its
  * seasons, belong to the show's folder like an Extras folder's would.
  */
-function attachSeriesExtras(items: LibraryItem[], showFolders: Map<string,{ seriesTitle:string; names:string[]; year:number }>): LibraryItem[] {
+function attachSeriesExtras(items: MovieItem[], showFolders: Map<string,{ seriesTitle:string; names:string[]; year:number }>): MovieItem[] {
   if (!showFolders.size) return items
   return items.map(item => {
     if (item.mediaKind === 'episode' || item.extraOf || !item.path || !looksLikeExtra(item)) return item
@@ -703,7 +716,7 @@ function comparableName(value: string): string {
   return value.normalize('NFKD').replace(/\p{Diacritic}/gu,'').toLocaleLowerCase().replace(/[^a-z0-9]+/g,' ').trim()
 }
 
-function looksLikeMovieFolder(directory: string, movie: LibraryItem): boolean {
+function looksLikeMovieFolder(directory: string, movie: MovieItem): boolean {
   const folder = comparableName(directory.split('\\').pop() ?? '')
   const title = comparableName(movie.title)
   return !!folder && !!title && (folder.includes(title) || title.includes(folder))
@@ -721,22 +734,22 @@ function fileStem(path: string): string {
   return (path.split(/[\\/]/).pop() ?? '').replace(/\.[^.]+$/, '')
 }
 
-export function looksLikeExtra(item: LibraryItem): boolean {
+export function looksLikeExtra(item: MovieItem): boolean {
   return EXTRA_WORDS.test(item.title) || (!!item.path && EXTRA_SUFFIX.test(fileStem(item.path)))
 }
 
 /** "Heat - Behind the Scenes" names "Heat": the movie's whole title, as words, inside a longer name. */
-function namesMovie(item: LibraryItem, movie: LibraryItem): boolean {
+function namesMovie(item: MovieItem, movie: MovieItem): boolean {
   const name = ` ${comparableName(item.path ? fileStem(item.path) : item.title)} `
   const title = comparableName(movie.title)
   return !!title && name.trim() !== title && name.includes(` ${title} `)
 }
 
-export function flattenLibraryExtras(items: LibraryItem[]): LibraryItem[] {
-  const flattened:LibraryItem[] = []
+export function flattenLibraryExtras(items: MovieItem[]): MovieItem[] {
+  const flattened:MovieItem[] = []
   // One extras folder can be shared by many titles (a show's episodes): each extra once.
   const seen = new Set<string>()
-  const append = (item:LibraryItem) => {
+  const append = (item:MovieItem) => {
     const { extras, ...standalone } = item
     if (seen.has(standalone.id)) return
     seen.add(standalone.id)
@@ -756,17 +769,17 @@ export function flattenLibraryExtras(items: LibraryItem[]): LibraryItem[] {
  *   movie or sit in the movie's own folder.
  * The movie of a folder: the one TMDB identified there, else its only video not named as an extra.
  */
-export function bundleMovieExtras(items: LibraryItem[]): LibraryItem[] {
+export function bundleMovieExtras(items: MovieItem[]): MovieItem[] {
   const all = flattenLibraryExtras(items)
   // Extras folders first: each extra goes to every movie and episode inside the folder its extras
   // folder belongs to (a show's Extras: every episode, and the movie beside the seasons).
-  const owned = new Map<string,LibraryItem[]>()
+  const owned = new Map<string,MovieItem[]>()
   for (const item of all) {
     if (!item.extraOf) continue
     const key = normalizedPath(item.extraOf)
     owned.set(key, [...(owned.get(key) ?? []), item])
   }
-  const shared = new Map<string,LibraryItem[]>()
+  const shared = new Map<string,MovieItem[]>()
   const sharedIds = new Set<string>()
   if (owned.size) {
     for (const [owner, extras] of owned) {
@@ -778,7 +791,7 @@ export function bundleMovieExtras(items: LibraryItem[]): LibraryItem[] {
     }
   }
   const flat = all.filter(item => !sharedIds.has(item.id))
-  type Member = { item:LibraryItem; inExtrasFolder:boolean }
+  type Member = { item:MovieItem; inExtrasFolder:boolean }
   const folders = new Map<string,Member[]>()
   for (const item of flat) {
     if (!item.path || item.mediaKind === 'episode') continue
@@ -790,7 +803,7 @@ export function bundleMovieExtras(items: LibraryItem[]): LibraryItem[] {
     folders.set(owner,group)
   }
 
-  const extrasByMovie = new Map<string,LibraryItem[]>()
+  const extrasByMovie = new Map<string,MovieItem[]>()
   const bundledIds = new Set<string>()
   for (const [directory,group] of folders) {
     const beside = group.filter(member => !member.inExtrasFolder).map(member => member.item)

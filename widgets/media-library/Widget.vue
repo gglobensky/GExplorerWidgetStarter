@@ -8,12 +8,16 @@
 // preview stream), useWatchProgress (Resume, Continue watching, watched marks).
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { MediaImage, VideoHandle, WidgetMenuItemMessage, WidgetSdk } from 'gexplorer/widgets'
-import { LibraryDetail, MediaShelf, type LibraryItem } from '../../shared/library-ui'
+import type { MovieItem } from './movie-types'
+import LibraryDetail from './LibraryDetail.vue'
+import ClubShelf from './ClubShelf.vue'
+import { boxDirectionOf, moveBoxFocus, SkinEditor, skinClass, skinStyle, useBoxFlight, useSkins } from '@shared/library-ui'
 import { createLibraryContext, errorText, trace, type DetailMode, type DisplayMode, type LibraryMode } from './context'
 import { flattenLibraryExtras, nextEpisode, shelvesFor, SORT_MODES, type SortMode } from './media'
 import PlayerOverlay from './PlayerOverlay.vue'
 import { videoMime } from './scanner'
 import SettingsMenu from './SettingsMenu.vue'
+import NeonSign from './NeonSign.vue'
 import StoreFloor from './StoreFloor.vue'
 import EmptyClub from './EmptyClub.vue'
 import { TMDB_SECRET_HOSTS, tmdbReviewsUrl } from './tmdb'
@@ -29,7 +33,7 @@ import { useParkedPlayback, type BackgroundMode } from './useParkedPlayback'
 type MediaLibraryConfig = {
   data?: { selectedId?: string; sources?: string[]; customCovers?: Record<string,CoverPreference> }
   /** libraryMode / detailMode: before displayMode (2026-10-25), read once to pick it. */
-  view?: { atmosphere?: boolean; displayMode?: DisplayMode; sortMode?: SortMode; backgroundSound?: boolean; background?: BackgroundMode; libraryMode?: string; detailMode?: string }
+  view?: { atmosphere?: boolean; skin?: string; displayMode?: DisplayMode; sortMode?: SortMode; backgroundSound?: boolean; background?: BackgroundMode; libraryMode?: string; detailMode?: string }
 }
 const props = defineProps<{
   sourceId?: string
@@ -46,7 +50,7 @@ const tmdb = useTmdbMatching(ctx, covers, edits)
 const previews = usePreviewMedia(ctx)
 const scan = useLibraryScan(ctx, covers, edits, tmdb)
 const watchProgress = useWatchProgress(ctx)
-const notePosition = (item: LibraryItem, positionMs: number, durationMs: number, final: boolean) => watchProgress.note(item, positionMs, durationMs, final)
+const notePosition = (item: MovieItem, positionMs: number, durationMs: number, final: boolean) => watchProgress.note(item, positionMs, durationMs, final)
 const background = useBackgroundPlayback(ctx, notePosition)
 const { items:scannedMovies, sources, life } = ctx
 
@@ -79,10 +83,13 @@ const shelfFocusId = ref<string | null>(null)
 const storeShelfId = ref<string | null>(null)
 const storeShelfHistory = ref<string[]>([])
 const openId = ref<string | null>(null)
+/** 0.14.0: the widget's surface, for library-ui's box flight (a case slides off the shelf into the open page). */
+const surface = ref<HTMLElement | null>(null)
+const { notePick } = useBoxFlight(surface, openId, { shelves: '.media-library-browse' })
 const flipped = ref(false)
 const activePreview = ref<number | null>(null)
 const browse = ref<HTMLElement | null>(null)
-const player = ref<{ item:LibraryItem; url:string; mimeType?:string; startAt:number; autoplay:boolean; handle?:VideoHandle | null } | null>(null)
+const player = ref<{ item:MovieItem; url:string; mimeType?:string; startAt:number; autoplay:boolean; handle?:VideoHandle | null } | null>(null)
 const playerView = ref<InstanceType<typeof PlayerOverlay> | null>(null)
 /**
  * While the library is off screen: 'sound' (default), 'picture' (the tray card shows the video: GEM
@@ -105,7 +112,7 @@ let playerVideo: HTMLVideoElement | null = null
 const playerLoading = ref(false)
 /** "Opening <title>…" while the file is checked, before the player opens (2026-10-26). */
 const preparingTitle = ref<string | null>(null)
-const coverFocusDraft = ref<{ item:LibraryItem; image:MediaImage } | null>(null)
+const coverFocusDraft = ref<{ item:MovieItem; image:MediaImage } | null>(null)
 let playRevision = 0
 
 const scansRealFolders = computed(() => sources.value.length > 0 && !!sdk?.openListing)
@@ -161,7 +168,7 @@ watch(() => props.config?.data?.sources, value => {
   sources.value = next
   void scan.scan(true)
 })
-watch(scannedMovies, (list: LibraryItem[]) => {
+watch(scannedMovies, (list: MovieItem[]) => {
   if (list.length && !list.some(item => item.id === selectedId.value)) selectedId.value = list[0].id
 })
 watch(() => props.config?.view?.displayMode, value => { if (value) displayMode.value = displayModeOf(props.config?.view) })
@@ -251,6 +258,21 @@ async function jumpToGenre() {
   browse.value?.querySelector<HTMLElement>(`[data-shelf-id="${genreJump.value}"]`)?.scrollIntoView({ behavior:'smooth', block:'start' })
 }
 
+/**
+ * 0.13.0: this copy's store look (a library-ui skin; Late show by default). 0.16.0: with the user's own skins (useSkins:
+ * duplicated, edited, loaded from and saved to .gemskin files), kept in 'media-library-skins' for every Video Club;
+ * which one each copy shows stays its own (its view).
+ */
+const skins = useSkins(sdk, { doc:'media-library-skins', first:'late-show', notify:text => ctx.snack('skins', text, 5000) })
+const skinId = life?.persistRef<string>('media-library.skin', props.config?.view?.skin ?? 'late-show') ?? ref<string>(props.config?.view?.skin ?? 'late-show')
+watch(() => props.config?.view?.skin, value => { if (value) skinId.value = value })
+/** What the copy shows: the skin being edited, else its own. */
+const skin = computed(() => skins.draft.value ?? skins.find(skinId.value))
+function setSkin(id: string) {
+  skinId.value = skins.find(id).id
+  saveView({ skin:skinId.value })
+}
+
 function setDisplayMode(mode: DisplayMode) {
   displayMode.value = mode
   shelfFocusId.value = null
@@ -271,7 +293,7 @@ function setSortMode(mode: SortMode) {
 
 // ── The opened title ────────────────────────────────────────────────────────
 
-function open(item: LibraryItem) {
+function open(item: MovieItem) {
   if (item.targetShelfId) {
     if (libraryMode.value === 'store') void focusStoreShelf(item.targetShelfId)
     else void revealShelf(item.targetShelfId)
@@ -302,7 +324,7 @@ function directoryOf(path: string): string {
 }
 
 // The file itself, selected in a GExplorer pane (sdk.reveal: a click here is the user's own gesture).
-function showMediaFile(item: LibraryItem) {
+function showMediaFile(item: MovieItem) {
   if (item.path) void sdk?.reveal?.(item.path)
 }
 
@@ -310,14 +332,14 @@ function showMediaFile(item: LibraryItem) {
 const uiOpenWith = typeof sdk?.ui?.().openWith === 'function'
 
 /** The file in another app: the shell's Open with list under the button, else (older shells) the default app. */
-function openElsewhere(item: LibraryItem, anchor?: HTMLElement) {
+function openElsewhere(item: MovieItem, anchor?: HTMLElement) {
   if (!item.path) return
   const ui = sdk?.ui?.()
   if (ui?.openWith && anchor) void ui.openWith(item.path, anchor)
   else void sdk?.openPath?.(item.path)
 }
 
-function openTmdbReviews(item: LibraryItem) {
+function openTmdbReviews(item: MovieItem) {
   const url = tmdbReviewsUrl(item)
   if (url) void sdk?.openUrl?.(url, { title:`${item.title} reviews on TMDB` })
 }
@@ -334,7 +356,7 @@ function updateGenres(value: string[]) {
   if (openItem.value) void edits.updateGenres(openItem.value, value)
 }
 
-async function manageArtwork(item: LibraryItem) {
+async function manageArtwork(item: MovieItem) {
   const ui = sdk?.ui?.()
   if (!item.path || !ui) return
   const result = await ui.messageBox({
@@ -373,7 +395,7 @@ const PROBE_TIMEOUT_MS = 8000
  * Asks GEM Shell how the file can play here (sdk.mediaProbe): when its picture or sound can't be
  * decoded on this machine, offers the system's player instead. True: go on with the embedded player.
  */
-async function checkPlayable(item: LibraryItem): Promise<boolean> {
+async function checkPlayable(item: MovieItem): Promise<boolean> {
   const path = item.path
   if (!path || !sdk?.mediaProbe || playAnyway.has(path)) return true
   let timer: number | undefined
@@ -414,7 +436,7 @@ async function checkPlayable(item: LibraryItem): Promise<boolean> {
  * Plays a title, from where the user stopped unless `fromStart`. `startAt` (seconds) and `paused`:
  * the movie the library was playing when it left the screen.
  */
-async function play(item: LibraryItem, options: { fromStart?: boolean; startAt?: number; paused?: boolean; checked?: boolean } = {}) {
+async function play(item: MovieItem, options: { fromStart?: boolean; startAt?: number; paused?: boolean; checked?: boolean } = {}) {
   emit('event', { type:'media-library:play', payload:{ id:item.id, title:item.title } })
   if (!item.path) {
     ctx.snack('sample', `${item.title} is sample media in this design milestone.`, 3500)
@@ -531,7 +553,7 @@ watch(keepPlaying, on => {
   else background.release()
 })
 
-function playerProgress(item: LibraryItem, positionMs: number, durationMs: number, final: boolean) {
+function playerProgress(item: MovieItem, positionMs: number, durationMs: number, final: boolean) {
   watchProgress.note(item, positionMs, durationMs, final)
 }
 
@@ -566,12 +588,12 @@ async function removeSource(path: string) {
 
 // ── Menus and commands (entry.ts menuContexts / menus / commands) ───────────
 
-function itemById(id: string): LibraryItem | undefined {
+function itemById(id: string): MovieItem | undefined {
   return flattenLibraryExtras(libraryItems.value).find(item => item.id === id)
 }
 
 /** Right-click on a case: the title's menu (its file is the subject: other widgets' actions work on it). */
-function onCaseMenu(item: LibraryItem, event: MouseEvent) {
+function onCaseMenu(item: MovieItem, event: MouseEvent) {
   if (item.targetShelfId) return   // a series card leads to its shelf: nothing to act on
   selectedId.value = item.id
   void sdk?.ui?.().contextMenu(event, { context:'media.title', ref:item.id, selection:item.path ? [item.path] : [], widgetConfig:props.config })
@@ -617,6 +639,18 @@ function onCommand(id: string) {
     case 'flip': if (openItem.value && !player.value) flipped.value = !flipped.value; break
     case 'watched': if (target?.path) void watchProgress.setWatched([target], !target.watched); break
     case 'rescan': if (sources.value.length) void scanAndMatch(); break
+    default: {
+      // 0.15.0: the arrows. The key mapper gives them to the Video Club, so the player gets them from here: 10 s
+      // back / forward while a movie plays (the video's own arrow keys don't reach it any more)
+      const dir = boxDirectionOf(id)
+      if (!dir) break
+      if (player.value) {
+        const video = surface.value?.querySelector<HTMLVideoElement>('video')
+        if (video && (dir === 'left' || dir === 'right') && Number.isFinite(video.currentTime)) {
+          video.currentTime = Math.max(0, Math.min(Number.isFinite(video.duration) ? video.duration : Infinity, video.currentTime + (dir === 'left' ? -10 : 10)))
+        }
+      } else if (!openItem.value) moveBoxFocus(browse.value, dir)
+    }
   }
 }
 
@@ -627,7 +661,7 @@ function onCommand(id: string) {
 const sameFile = (a: string, b: string) => a.replace(/\//g, '\\').toLowerCase() === b.replace(/\//g, '\\').toLowerCase()
 
 /** A file the library doesn't hold (another folder, or the scan isn't loaded yet): a bare title. */
-function itemForFile(path: string): LibraryItem {
+function itemForFile(path: string): MovieItem {
   const name = path.split(/[\\/]/).pop() || path
   return {
     id:`file:${path}`, title:name.replace(/\.[^.]+$/, '') || name, year:0, runtimeMinutes:0, rating:'', primaryGenre:'',
@@ -714,27 +748,30 @@ onBeforeUnmount(() => {
 
 <template>
   <section
+    ref="surface"
     class="media-library gem-library-surface"
-    :class="{ sidebar: placement?.context === 'sidebar', atmosphere: config?.view?.atmosphere !== false }"
+    :class="[{ sidebar: placement?.context === 'sidebar', atmosphere: config?.view?.atmosphere !== false }, skinClass(skin)]"
+    :style="skinStyle(skin)"
     aria-label="GEM Video Club"
     @keydown="keydown"
   >
+    <SkinEditor :skins="skins" />
     <header class="media-library-topbar">
       <nav class="media-library-navigation" aria-label="Library navigation">
         <button type="button" :disabled="!canNavigateBack" aria-label="Go back" title="Back" @click="navigateBack"><span aria-hidden="true">←</span></button>
         <button type="button" aria-label="Go to library home" title="Home" @click="returnHome"><span aria-hidden="true">⌂</span></button>
-        <span class="media-library-brand-logo" aria-label="GEM Video Club"><i>GEM</i><b>VIDEO CLUB</b></span>
+        <NeonSign class="media-library-brand-neon" />
       </nav>
       <div class="media-library-search" role="search"><span aria-hidden="true">⌕</span><input ref="searchInput" v-model="query" type="text" inputmode="search" enterkeyhint="search" autocomplete="off" :spellcheck="false" placeholder="Find a movie or genre" aria-label="Find a movie or genre" /><button v-if="query" type="button" aria-label="Clear search" @click="query = ''">×</button></div>
       <div class="media-library-tools">
-        <label class="media-library-genres">
+        <label class="glu-picker" :title="libraryMode === 'store' ? 'Go to a rack' : 'Go to a shelf'">
           <span aria-hidden="true">▦</span>
           <select v-model="genreJump" aria-label="Jump to a genre" @change="jumpToGenre">
             <option value="">Genres</option>
             <option v-for="genre in genres" :key="genre" :value="genre.toLocaleLowerCase().split(' ').join('-')">{{ genre }}</option>
           </select>
         </label>
-        <label class="media-library-genres media-library-sort" title="Sort titles">
+        <label class="glu-picker" title="Sort titles">
           <span aria-hidden="true">⇅</span>
           <select :value="sortMode" aria-label="Sort titles" @change="setSortMode(($event.target as HTMLSelectElement).value as SortMode)">
             <option v-for="mode in SORT_MODES" :key="mode.id" :value="mode.id">{{ mode.label }}</option>
@@ -742,6 +779,8 @@ onBeforeUnmount(() => {
         </label>
         <SettingsMenu
           :display-mode="displayMode"
+          :skin="skin.id"
+          :skins="skins"
           :background-mode="backgroundMode"
           :can-show-picture="parked.available"
           :sources="sources"
@@ -755,6 +794,7 @@ onBeforeUnmount(() => {
           :tmdb-artwork-progress="covers.tmdbArtworkProgress.value"
           :tmdb="tmdbPanel"
           @display-mode="setDisplayMode"
+          @skin="setSkin"
           @background-mode="setBackgroundMode"
           @add-source="addSource"
           @remove-source="removeSource"
@@ -770,7 +810,7 @@ onBeforeUnmount(() => {
       <i v-if="activity.ratio != null" :style="{ width:`${activity.ratio * 100}%` }" aria-hidden="true"></i>
     </div>
 
-    <main ref="browse" class="media-library-browse" @wheel.stop @contextmenu="onLibraryMenu">
+    <main ref="browse" class="media-library-browse" @wheel.stop @click.capture="notePick" @contextmenu="onLibraryMenu">
       <EmptyClub v-if="!sources.length" :can-add="!!sdk?.ui" @add-source="addSource" />
       <div v-else-if="scan.state.value === 'scanning' && !libraryItems.length" class="media-library-empty media-library-scanning"><span>◌</span><strong>Stocking the shelves</strong><p>{{ scan.progress.value?.phase === 'metadata' ? 'Reading movie details' : `Searching ${sourceLabel(scan.progress.value?.current || '')}` }} · {{ scan.progress.value?.videos ?? 0 }} found</p></div>
       <div v-else-if="!shelves.length" class="media-library-empty"><span>⌕</span><strong>{{ query ? 'No movie found' : scan.state.value === 'error' ? 'Could not scan the library' : 'No videos found' }}</strong><p>{{ query ? 'Try a title, year, or genre.' : scan.error.value || 'Add another folder or scan again.' }}</p><button v-if="query" type="button" @click="query = ''">Clear search</button><button v-else-if="sources.length" type="button" @click="scanAndMatch">Scan again</button></div>
@@ -786,7 +826,7 @@ onBeforeUnmount(() => {
         @open="open"
         @menu="onCaseMenu"
       />
-      <MediaShelf
+      <ClubShelf
         v-else
         v-for="shelf in shelves"
         :key="shelf.id"

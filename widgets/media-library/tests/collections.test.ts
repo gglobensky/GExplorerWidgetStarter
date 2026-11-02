@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import type { LibraryItem } from '../../../shared/library-ui/types.ts'
+import type { MovieItem } from '../movie-types.ts'
 import { bundleMovieExtras, collectionItems, shelvesFor, sortItems } from '../media.ts'
 import { enrichWithTmdb, persistedTmdbMetadata } from '../tmdb.ts'
 
-function movie(id: string, title: string, year: number, extra: Partial<LibraryItem> = {}): LibraryItem {
+function movie(id: string, title: string, year: number, extra: Partial<MovieItem> = {}): MovieItem {
   return {
     id, title, year, runtimeMinutes:110, rating:'LOCAL', primaryGenre:'Science Fiction', genres:['Science Fiction'], synopsis:'',
     artwork:{ src:'', x:0, y:0 }, previews:[], addedRank:0, path:`D:\\Movies\\${title}.mkv`, sourceRoot:'D:\\Movies', mediaKind:'movie', ...extra,
