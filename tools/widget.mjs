@@ -366,6 +366,10 @@ async function preview(type, port) {
         clearScreen: false,
         plugins: [sharedLibraries({ root: ROOT, who: type, warn: (m) => log(`${type}: ${m}`) }), vue()],
         resolve: { alias: { 'gexplorer/widgets': shim } },
+        // Vite otherwise discovers every preview HTML file below the repository root and scans
+        // them all through this widget's SDK shim. A preview shim deliberately belongs to one
+        // widget, so dependencies must be discovered from that preview only.
+        optimizeDeps: { entries: [html] },
         server: { host: '127.0.0.1', port: port ?? 5173, strictPort: port != null },
     })
     await server.listen()

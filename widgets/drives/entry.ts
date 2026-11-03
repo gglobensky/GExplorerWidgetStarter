@@ -3,7 +3,7 @@ import Widget from './Widget.vue'
 export default {
   api: '1.0',
   id: 'drives',
-  version: '0.5.0',
+  version: '0.6.0',
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
   
@@ -14,7 +14,11 @@ export default {
       defaultSize: { cols: 4, rows: 2 }
     },
     sidebar: {
-      minHeight: 150
+      minHeight: 96
+    },
+    toolbar: {
+      // A useful starting width; the toolbar still lets the user make it flexible or resize it.
+      width: 280
     }
   },
   
@@ -27,6 +31,21 @@ export default {
       showFsType: true,
       showCapacity: true,
     }
+  },
+
+  settings: {
+    fields: [
+      {
+        key: 'colorByUsage',
+        type: 'toggle',
+        label: 'Colour bars by space used',
+        default: true,
+        hint: 'Uses green normally, amber above 75% used, and red above 90%. Turn this off to use the shell accent colour.',
+      },
+    ],
+    groups: [
+      { title: 'Display', keys: ['colorByUsage'] },
+    ],
   },
   
   capabilities: [

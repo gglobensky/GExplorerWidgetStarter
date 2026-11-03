@@ -715,11 +715,11 @@ declare module 'gexplorer/widgets' {
 
     export type DriveStats = {
         root: string
-        name: string
-        fsType: string
-        kind: string
-        total?: number
-        free?: number
+        ready: boolean
+        total: number
+        free: number
+        used: number
+        error?: string
     }
 
     // ── Rename types ───────────────────────────────────────────────────────
