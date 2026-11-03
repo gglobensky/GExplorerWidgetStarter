@@ -346,6 +346,11 @@ What a widget does with keys (the key mapper, 2026-10-24):
   the hovered folder). Find what is hovered in `onCommand` (`el.querySelector('[data-x]:hover')`).
 - **Defaults:** at most 2 keys per command. A key the shell's own commands use (Ctrl+W, Ctrl+T,
   Alt+←...) is refused as a default: the user may still bind it to your command.
+- **Mouse gestures are listed too (2026-11-02).** What your widget does with the mouse (Alt-drag to draw,
+  a right-drag to erase) isn't a command, but the user should find it where the keys are. Declare it:
+  `gestures: [{ id, name, description, input: 'Alt+Drag' }]` (`WidgetGestureDecl`). It shows in Keyboard
+  shortcuts and the cheat sheet with a mouse mark, and can be starred. It isn't rebindable and GEM Shell
+  never runs it: your code reads the pointer, whose modifiers stay real.
 - **Buttons show their keys.** A button that does what a command does: `v-gex-command="'play-pause'"`
   (no `@click`). A click runs `onCommand('play-pause')`, as the key does, and the tooltip shows the
   command's name, its description and the keys the user chose; it follows their changes. Give your own

@@ -1194,6 +1194,36 @@ declare module 'gexplorer/widgets' {
     export function useSortable(options: any): any
     export function useScrollHints(options: any): any
 
+    // ── Grid layout: the hubs' own engine (NEW 2026-11-02, GEM Corkboard) ───
+    // The layout maths GEM Shell uses to push widgets aside on a hub, for a widget laying its own things
+    // out on a grid of cells (the Corkboard's stacks). Pure functions: rectangles in, rectangles out,
+    // nothing mutated, nothing kept. The pointer gesture, the pixels and the drawing stay yours:
+    //   const snap = gridSnapshot(stacks.map(s => ({ id: s.id, rect: s.rect })))
+    //   const next = gridDrag(snap, columns, draggedId, { col, row })   // every item, none overlapping
+    //   const grown = gridResize(snap, columns, id, 'se', 1, 1, { maxCols: 2, maxRows: 2 }) // or null
+    //   const spot = gridFirstFree(snap, columns, 1, 1, pageFirstRow)
+    // Rows grow downward as needed: a widget showing pages reads rows past a page as the next ones.
+    // A rect that isn't whole cells (negative, a zero span, fractions) throws.
+    export type GridRect = { col: number; row: number; colSpan: number; rowSpan: number }
+    export type GridItem = { id: string; rect: GridRect }
+    export type GridSnapshot = { byId: Map<string, GridRect>; order: string[] }
+    export type GridHandle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
+    export type GridSizeLimits = { minCols?: number; minRows?: number; maxCols?: number; maxRows?: number }
+    /** Items as a snapshot (copies), ordered top → bottom, then left → right. */
+    export function gridSnapshot(items: readonly GridItem[]): GridSnapshot
+    /**
+     * `id` dropped with its top-left on `cell`: it lands there (kept within the columns), the items it covers
+     * are pushed along `intent`'s lane ('h', default: the same row, then the rows below; 'v': the same column),
+     * chain reactions resolved. Every item is in the result.
+     */
+    export function gridDrag(snap: GridSnapshot, columns: number, id: string, cell: { col: number; row: number },
+        opts?: { intent?: 'h' | 'v'; maxBottomRow?: number }): Map<string, GridRect>
+    /** Resizing `id` from `handle` by whole cells, within `limits`: the new layout, others pushed aside; null when the size can't change. */
+    export function gridResize(snap: GridSnapshot, columns: number, id: string, handle: GridHandle, dCols: number, dRows: number,
+        limits?: GridSizeLimits, opts?: { intent?: 'h' | 'v' }): Map<string, GridRect> | null
+    /** The first free spot for a new colSpan × rowSpan item, rows top → bottom from `fromRow`, cells left → right. */
+    export function gridFirstFree(snap: GridSnapshot, columns: number, colSpan?: number, rowSpan?: number, fromRow?: number): GridRect
+
     // ── Listings ───────────────────────────────────────────────────────────
     // A ListingSource is the row source behind any list-shaped widget. Get one
     // from sdk.openListing (folders, Read cap), createMemoryListing (your own
@@ -2943,6 +2973,24 @@ declare module 'gexplorer/widgets' {
          * focused one's, only while the mouse moved in the last seconds.
          */
         when?: 'hovered'
+    }
+
+    /**
+     * NEW (2026-11-02): one of the manifest's mouse gestures: entry.ts
+     * `gestures: [{ id: 'scribble', name: 'Scribble on a note', description: '...', input: 'Alt+Drag' }]`.
+     * What your widget does with the mouse, listed beside your commands in Keyboard shortcuts and the cheat
+     * sheet (F1, "Works here"), where the user can star it. Never bound to a key and never run by GEM Shell:
+     * your widget reads the pointer itself, as before.
+     *   id: letters, digits, . _ - ; not one of your commands' ids. name and description: required (plain text).
+     *   input: up to three of Ctrl / Alt / Shift, then one of Click, DoubleClick, RightClick, MiddleClick, Drag,
+     *   RightDrag, Wheel, LongPress ('Alt+Drag', 'RightDrag', 'Shift+Click'); shown as "Alt + drag".
+     * At most 40. Pointer events keep their real modifiers (only keyboard events hide shortcut combos).
+     */
+    export type WidgetGestureDecl = {
+        id: string
+        name: string
+        description: string
+        input: string
     }
 
     /** <gex-scroll-area>'s ref (the template ref of the component; see Shared UI components below). */
