@@ -194,7 +194,7 @@ function panel() {
             onFlag: (f: any) => desk.toggleFlag(s, f),
             onDue: (v: string | null) => desk.setDue(s, v),
             onNumbered: (on: boolean) => { s.numbered = on; if (on) s.notes.forEach(id => { const n = desk.d.value.notes[id]; if (n && !n.num) n.num = s.nextNum++ }); desk.save() },
-            onExport: () => sh.menus.handle('export-stack', 'corkboard.stack', s.id),
+            onExport: () => sh.menus.handle('save-stack-file', 'corkboard.stack', s.id),
             onDelete: () => sh.menus.handle('delete-stack', 'corkboard.stack', s.id),
         },
     })

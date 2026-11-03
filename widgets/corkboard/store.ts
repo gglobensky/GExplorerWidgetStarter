@@ -130,6 +130,11 @@ export function createDesk(sdk: WidgetSdk, sourceId: string) {
         const { cols, rows } = geo.value
         const taken = new Set<string>()
         for (const [k, r] of rects) if (k !== id) for (let y = r.row; y < r.row + r.rowSpan; y++) for (let x = r.col; x < r.col + r.colSpan; x++) taken.add(x + ',' + y)
+        // 0.2.3: what is placed freely (Alt, or snapping off) covers the cells under it too (a 1 × 1 card at x, y)
+        for (const [k, f] of layoutNow().free) {
+            if (k === id || f.page !== to) continue
+            for (let y = Math.floor(f.y); y < Math.ceil(f.y + 1); y++) for (let x = Math.floor(f.x); x < Math.ceil(f.x + 1); x++) taken.add(x + ',' + (to * rows + y))
+        }
         const sizes = [[want.colSpan, want.rowSpan], [want.colSpan, 1], [1, want.rowSpan], [1, 1]]
             .filter(([c, r], i, a) => c <= cols && r <= rows && a.findIndex(o => o[0] === c && o[1] === r) === i)
         for (const [cs, rs] of sizes)
@@ -432,7 +437,7 @@ export function createDesk(sdk: WidgetSdk, sourceId: string) {
             const opts = { width: 1600, format: 'png' as const, storage: 'persistent' as const }
             const img = typeof data === 'object' && 'path' in data
                 ? await sdk.mediaImageCreate({ type: 'file', path: data.path }, opts)   // chosen in GEM Shell's file dialog
-                : await sdk.mediaImageCreate({ type: 'bytes', data: typeof data === 'string' ? await (await fetch(data)).blob() : data }, opts)
+                : await sdk.mediaImageCreate({ type: 'bytes', data: typeof data === 'string' ? dataUrlBlob(data) : data }, opts)
             return { asset: img.assetId, url: img.url, w: img.width, h: img.height }
         } catch (err: any) {
             console.warn('[corkboard] picture refused', err)
@@ -513,6 +518,20 @@ export function createDesk(sdk: WidgetSdk, sourceId: string) {
 
 /** A document read back: the fields this version knows, with safe defaults (an older or hand-edited one). */
 import { fitWidths } from './table'
+/**
+ * 0.2.4: a data: URL's bytes, decoded here. fetch(data:) is a connection GEM Shell's page policy refuses ("Blocked:
+ * something tried to load a connection from data"): the pictures of a board file opened on another computer
+ * never arrived.
+ */
+function dataUrlBlob(url: string): Blob {
+    const m = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(url)
+    if (!m) throw new Error('not a data URL')
+    const type = m[1] || 'application/octet-stream'
+    if (!m[2]) return new Blob([decodeURIComponent(m[3])], { type })
+    const bin = atob(m[3]), bytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+    return new Blob([bytes], { type })
+}
 function normalize(doc: DeskData): DeskData {
     const base = emptyDesk()
     const o: DeskData = { ...base, ...doc }

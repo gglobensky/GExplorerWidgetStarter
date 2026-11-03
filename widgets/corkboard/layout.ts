@@ -118,7 +118,35 @@ export function dragPreview(rects: Map<string, GridRect>, cols: number, rows: nu
     const pageTop = Math.floor(Math.max(0, cell.row) / rows) * rows
     const row = clamp(cell.row, pageTop, pageTop + rows - me.rowSpan)
     const out = gridDrag(gridSnapshot([...rects].map(([i, rect]) => ({ id: i, rect }))), cols, id, { col: cell.col, row })
-    return settlePages(out, cols, rows)
+    return keepOnPages(rects, settlePages(out, cols, rows), cols, rows, id)
+}
+/**
+ * 0.2.4: an item the drag pushed off its page comes back to a free spot of that page when there is one: the
+ * dragged item's old place first (two 1 × 1 trade places, as Guillaume expected), else the page's first free
+ * spot. The hub engine pushes down a lane, and at a page's bottom that meant the next page (a picture under a
+ * note sent to page 2).
+ */
+function keepOnPages(before: Map<string, GridRect>, out: Map<string, GridRect>, cols: number, rows: number, dragged: string): Map<string, GridRect> {
+    const origin = before.get(dragged)
+    for (const [k, r] of [...out]) {
+        const b = before.get(k)
+        if (k === dragged || !b || pageOf(r, rows) === pageOf(b, rows)) continue
+        const occ = new Set<string>()
+        for (const [o, rr] of out) if (o !== k) occupy(occ, rr)
+        const page = pageOf(b, rows)
+        let spot: GridRect | null = null
+        if (origin && pageOf(origin, rows) === page) {
+            const t = { col: origin.col, row: origin.row, colSpan: b.colSpan, rowSpan: b.rowSpan }
+            if (fits(occ, t, cols, rows)) spot = t
+        }
+        for (let row = page * rows; !spot && row + b.rowSpan <= (page + 1) * rows; row++)
+            for (let col = 0; col + b.colSpan <= cols; col++) {
+                const t = { col, row, colSpan: b.colSpan, rowSpan: b.rowSpan }
+                if (fits(occ, t, cols, rows)) { spot = t; break }
+            }
+        if (spot) out.set(k, spot)
+    }
+    return out
 }
 
 /**

@@ -49,9 +49,7 @@ export const MENU_ITEMS = [
     { id: 'prev-page', label: 'Previous page', icon: '‹', contexts: B, hideWhen: ['one-page'] },
     { id: 'back-to-board', label: 'Back to the board', icon: '↩', contexts: B, hideWhen: ['not-in-group'] },
     { id: 'board.sep2', type: 'separator', contexts: B },
-    { id: 'import', label: 'Import a stack or a board…', icon: '⤓', contexts: B },
     { id: 'open-file', label: 'Open a Corkboard file…', icon: '📂', contexts: B },
-    { id: 'export-board', label: 'Export this board…', icon: '⤒', contexts: B },
     { id: 'save-board-file', label: 'Save this board as a file…', icon: '💾', contexts: B },
     // a stack
     { id: 'open', label: 'Open', icon: '📖', contexts: [...S, ...G] },
@@ -64,7 +62,7 @@ export const MENU_ITEMS = [
     { id: 'move-page', type: 'submenu', label: 'Move to page', icon: '⇥', contexts: [...S, ...G, ...P] },
     { id: 'move-board', type: 'submenu', label: 'Move to board', icon: '⇄', contexts: S, hideWhen: ['one-board'] },
     { id: 'stack.sep2', type: 'separator', contexts: S },
-    { id: 'export-stack', label: 'Export stack…', icon: '⤒', contexts: S },
+    { id: 'save-stack-file', label: 'Save as a file…', icon: '💾', contexts: S },
     { id: 'delete-stack', label: 'Delete stack…', icon: '🗑', contexts: S },
     // a group
     { id: 'edit-group', label: 'Rename or set the due date…', icon: '✎', contexts: G },
@@ -128,14 +126,13 @@ export type MenuActions = {
     pickPhoto(at: { col: number; row: number } | null): void
     captionPhoto(p: Photo): void
     deletePhoto(p: Photo): void
-    importCopy(): void
     /** 0.2.2: the board as a .gembrd file; a .gembrd / .gemstk file opened. */
     saveBoardFile(): void
     openFile(): void
     /** 0.2.2: an item to page `to` of the view (the page count: a new page). */
     moveToPage(it: Stack | Group | Photo, to: number): void
-    exportBoard(): void
-    exportStack(s: Stack): void
+    /** 0.2.3: a stack as a .gemstk file (the Export dialog went). */
+    saveStackFile(s: Stack): void
     deleteStack(s: Stack): void
     editGroup(g: Group): void
     deleteGroup(g: Group): void
@@ -303,14 +300,12 @@ export function createMenus(sdk: WidgetSdk, desk: Desk, act: MenuActions) {
             case 'next-page': return act.flipPage(1)
             case 'prev-page': return act.flipPage(-1)
             case 'back-to-board': return void desk.leaveGroup()
-            case 'import': return act.importCopy()
             case 'open-file': return act.openFile()
             case 'save-board-file': return act.saveBoardFile()
             case 'page': {
                 const it = s ?? g ?? p; if (!it) return
                 return act.moveToPage(it, tail === 'new' ? act.pages() : Number(tail))
             }
-            case 'export-board': return act.exportBoard()
             case 'open':
                 if (s) desk.openStack(s.id); else if (g) desk.openGroup(g.id)
                 return
@@ -326,7 +321,7 @@ export function createMenus(sdk: WidgetSdk, desk: Desk, act: MenuActions) {
                 return
             case 'leave-group': { const it = s ?? p; if (it) desk.leaveGroupWith(it); return }
             case 'toboard': { const b = desk.d.value.boards.find(x => x.id === tail); if (s && b) desk.moveStackToBoard(s, b); return }
-            case 'export-stack': if (s) act.exportStack(s); return
+            case 'save-stack-file': if (s) act.saveStackFile(s); return
             case 'delete-stack': if (s) act.deleteStack(s); return
             case 'edit-group': if (g) act.editGroup(g); return
             case 'pin': if (g) desk.setPin(g, tail as PinColor); return

@@ -73,8 +73,8 @@
             <span v-else class="cb-pnum-txt">{{ page + 1 }} / {{ pageCount }}</span>
             <button class="cb-parr" type="button" aria-label="Next page" :disabled="page >= pageCount - 1" @click="flip(1)">›</button>
         </div>
-        <div class="cb-edge l" :class="{ on: edge < 0 }"></div>
-        <div class="cb-edge r" :class="{ on: edge > 0 }"></div>
+        <div class="cb-edge l" :class="{ on: edge < 0 }" :style="{ '--edge-ms': EDGE_MS + 'ms' }"></div>
+        <div class="cb-edge r" :class="{ on: edge > 0 }" :style="{ '--edge-ms': EDGE_MS + 'ms' }"></div>
         <div v-if="hint" class="cb-deskhint" :class="{ drag: !!drag }" v-html="hint"></div>
     </div>
 </template>
@@ -240,6 +240,8 @@ type Drag = {
 }
 const drag = ref<Drag | null>(null)
 const edge = ref(0)
+/** How long a stack is held against an edge before the page turns (the edge's bar fills meanwhile). */
+const EDGE_MS = 1100
 
 function down(e: PointerEvent, it: Item) {
     if (e.button !== 0) return
@@ -252,7 +254,10 @@ function down(e: PointerEvent, it: Item) {
     const st: Drag = { id: it.id, moved: false, x: r0.left - b0.left, y: r0.top - b0.top, w: r0.width, h: r0.height, mode: null, target: null, dot: null }
     const mySpan = base.get(it.id) ?? { col: 0, row: 0, colSpan: 1, rowSpan: 1 }
 
+    /** The last pointer move: the page turned under a still pointer, the drop goes on the new page. */
+    let lastMove: PointerEvent | null = null
     const mv = (ev: PointerEvent) => {
+        lastMove = ev
         if (!st.moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 5) return
         if (!st.moved) { st.moved = true; drag.value = { ...st } }
         const b = boardEl.value!.getBoundingClientRect()
@@ -282,11 +287,14 @@ function down(e: PointerEvent, it: Item) {
         } else if (free) { st.mode = 'free'; preview.value = null }
         else pushAt(ev)
         if (!dotEl) { lastDot = null; if (dotT) { clearTimeout(dotT); dotT = null } }
-        // the edges: hold to change page
-        const side = ev.clientX < b.left + 28 ? -1 : ev.clientX > b.right - 28 ? 1 : 0
+        // the edges: push the stack well past one and hold it there to change page (0.2.4: harder, Guillaume: a
+        // third of the card past the edge, or the pointer at the very edge, for EDGE_MS)
+        const overL = -st.x, overR = st.x + st.w - b.width, far = st.w * 0.33
+        const side = overL > far || ev.clientX < b.left + 10 ? -1 : overR > far || ev.clientX > b.right - 10 ? 1 : 0
+        const was = edge.value
         edge.value = side < 0 && page.value > 0 ? -1 : side > 0 ? 1 : 0
-        if (edge.value && !edgeT) edgeT = setTimeout(() => { edgeT = null; const np = clamp(page.value + edge.value, 0, pageCount.value); if (np !== page.value) desk.setPage(np) }, 650)
-        if (!edge.value && edgeT) { clearTimeout(edgeT); edgeT = null }
+        if (edge.value !== was && edgeT) { clearTimeout(edgeT); edgeT = null }
+        if (edge.value && !edgeT) edgeT = setTimeout(() => { edgeT = null; const np = clamp(page.value + edge.value, 0, pageCount.value); if (np !== page.value) desk.setPage(np); edge.value = 0; if (lastMove) mv(lastMove) }, EDGE_MS)
         drag.value = { ...st }
     }
     const pushAt = (ev: PointerEvent) => {

@@ -2,6 +2,15 @@
 
 Sticky notes on a cork board, for the GEM Shell grid (a quarter of the screen or less) and the sidebar.
 
+**0.2.4 (2026-11-03):**
+- **Pictures in a board file opened on another computer arrive.** A copy's pictures were read with `fetch(data:…)`, a connection GEM Shell's page policy blocks ("Blocked: … a connection from data"); the data is decoded in the widget now. Notes' pictures in a copy had the same fault.
+- **Dragging doesn't send things to another page.** The hub engine pushes what's under a dragged item down its column, and at a page's bottom that is the next page (a picture under a note went to page 2). Anything the drag would push off its page now goes to a free spot of the same page: the dragged item's old place first, so two 1 × 1 trade places either way. Only when the page has no room does it go on.
+- **Turning the page while dragging is harder:** a third of the card pushed past the edge (or the pointer right at it), held for 1.1 s (was 0.65 s, near the edge); the edge fills as it counts. The drop then lands on the new page even if the pointer didn't move.
+
+**0.2.3 (2026-11-03):**
+- **The Export and Import dialogs are gone** (a copy as text to paste: files do it better). A board: Boards ▾ or the board's right-click ▸ *Save this board as a file…*; a stack: its right-click or ⋯ ▸ *Save as a file…*. Markdown is the second type in the save dialog. Opening: *Open a board file…* (Boards ▾), *Open a Corkboard file…* (the board's right-click), *Open a board or stack file…* (⋯). A copy pasted on a board is still added, as before. `dialogs/CopyDialog.vue` is no longer used: delete it.
+- **Move to page minds what is placed freely.** A picture or a stack placed off the grid (Alt, or snapping off) covers the cells under it, so a stack moved there no longer lands on it.
+
 **0.2.2 (2026-11-02):**
 - **A board as a file.** Boards ▾ ▸ *Save this board as a file…* (or the *Save as a file…* button in Export) writes a `.gembrd` file where you choose, with GEM Shell's save dialog; a stack exported the same way is a `.gemstk`, and Markdown a `.md`. *Open a board file…* (Boards ▾, the board's right-click, or *Open a file…* in Import) opens GEM Shell's file dialog filtered to `.gembrd` / `.gemstk` and adds it as a separate copy, as a pasted copy does. The file is the same JSON as a Corkboard copy; its pictures go in as WebP when that's smaller, since a Corkboard opens files up to 8 MB (a larger one is saved only after a warning). New capabilities: **Read** and **Write** (GEM Shell asks once).
 - **Move to page** (right-click a stack, a group or a pinned picture): any page of the view, or a new one. It keeps its size when there's room, shrinks to fit when there isn't (2 × 2 → 2 × 1 → 1 × 2 → 1 × 1). When it can't fit even 1 × 1: if making some of the larger items there 1 × 1 would make room (the largest first, as few as needed), it asks before doing it; otherwise it says the page is full and moves nothing. Undo in the snackbar.
@@ -73,7 +82,7 @@ It needs two shell parts, both in `PhotinoVue1/CORKBOARD-SHELL-ADDITIONS.md`:
 - **Tables (0.2.0):** a simple grid in a note, no formulas; see 0.2.0 above.
 - **Pictures on the board (0.2.0):** pinned prints, opened large to view and draw; see 0.2.0 above.
 - **Copies:**
-  - Export a stack or a board as a Corkboard copy (pictures inlined) or as Markdown;
+  - Save a stack or a board as a file (`.gemstk`, `.gembrd`: pictures inlined) or as Markdown (0.2.3: the Export dialog went);
   - paste a copy onto any board, in any copy of the widget, to add it as a **separate duplicate** (not kept in sync).
 - **Hints:** the footer and the board show the 1–2 keys or gestures that matter where you are, with your own keys (`sdk.keys()`). Each goes once used three times. ⋯ ▸ Key hints turns them off.
 
@@ -86,7 +95,7 @@ It needs two shell parts, both in `PhotinoVue1/CORKBOARD-SHELL-ADDITIONS.md`:
   - GEM Shell's (`ui.contextMenu`), for the board, a stack, a group, a note's text, a drawing, a tab, a table, a pinned picture (0.2.0: eight contexts);
   - live lists (flags, due dates, colours, groups, boards, stacks, pens) are declared submenus;
   - `menuStates` grey or hide what doesn't apply.
-- **Dialogs:** board, group, due date, export and import are GEM Shell popovers; deletions use `ui.confirm`; Undo is in the snackbar.
+- **Dialogs:** board, group and due date are GEM Shell popovers; files use GEM Shell's file dialogs (0.2.3); deletions use `ui.confirm`; Undo is in the snackbar.
 
 ## Data
 - **Where:** `configRead` / `configWrite('desk-<sourceId>')`, a `DeskData` with `schema: 1` (model.ts).
@@ -139,9 +148,9 @@ It needs two shell parts, both in `PhotinoVue1/CORKBOARD-SHELL-ADDITIONS.md`:
 - [ ] Gestures (part B): Keyboard shortcuts ▸ GEM Corkboard lists the six with the 🖱 chip, and starring one shows it on F1's sheet. (A bad input, e.g. `'Win+Drag'` in commands.ts, is refused with a `[keys]` line; not worth testing on its own, Guillaume.)
 - [ ] Right-click everywhere (board, stack, group, text, drawing, tab): the items and submenus, and Settings › Context Menu lists the six contexts.
 - [ ] Paste a screenshot into a note, draw on it, right-drag to erase. Close GEM Shell, reopen: still there.
-- [ ] Export a stack, paste the copy onto another board or another Corkboard copy: a separate duplicate, pictures included.
+- [ ] Save a stack as a file, open it in another Corkboard copy: a separate duplicate, pictures included.
 - [ ] Sidebar: the dock goes along the top, the tabs show numbers.
-- [ ] 0.2.0: your migrated notes are all there after the update (nothing to do; a backup export first doesn't hurt).
+- [ ] 0.2.0: your migrated notes are all there after the update (nothing to do; saving the board as a file first doesn't hurt).
 - [ ] Alt+T (or *Table*): type, Tab across, Enter down; Enter on an empty last row leaves; right-click a cell for rows / columns. Keyboard shortcuts lists *Insert a table*.
 - [ ] Copy a few cells in Excel / Google Sheets, paste on an empty line: a table.
 - [ ] Paste a photo on the board, or drop a file from Explorer: a print. Click it, draw, zoom, caption; Esc. Close GEM Shell, reopen: still there with its ink.

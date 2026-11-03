@@ -52,7 +52,6 @@ import StackView from './StackView.vue'
 import PhotoView from './PhotoView.vue'
 import BoardDialog from './dialogs/BoardDialog.vue'
 import GroupDialog from './dialogs/GroupDialog.vue'
-import CopyDialog from './dialogs/CopyDialog.vue'
 import DueDialog from './dialogs/DueDialog.vue'
 import { createDesk, type PictureSource } from './store'
 import { SHARED, type Shared } from './shared'
@@ -181,17 +180,9 @@ function groupDialog(o: { group?: Group; stack?: Stack; want?: { col: number; ro
 function dueDialog(t: Stack | Group) {
     center(DueDialog, `Due date for “${t.name}”`, { due: t.due, onSave: (v: string | null) => desk.setDue(t, v) })
 }
-async function exportDialog(kind: CopyFileKind, name: string, json: (inline: InlinePicture) => Promise<string>, md: () => string) {
-    center(CopyDialog, `Export “${name}”`, {
-        mode: 'export', json: await json(desk.inlinePicture), markdown: md(), fileExt: FILE_KINDS[kind].ext,
-        onSave: (fmt: 'json' | 'md') => saveCopyFile(kind, name, json, md, fmt),
-    })
-}
-function importDialog() {
-    center(CopyDialog, 'Import', { mode: 'import', onImport: (text: string) => importText(text), onOpenFile: openCopyFile })
-}
 
 // ── Files (0.2.2): a board as a .gembrd file, a stack as a .gemstk file, opened by another Corkboard ──
+// 0.2.3: the only way out (the Export dialog, a copy as text, went: Guillaume). Markdown is a type in the save dialog.
 type CopyFileKind = 'board' | 'stack'
 const FILE_KINDS: Record<CopyFileKind, { ext: string; label: string }> = {
     board: { ext: 'gembrd', label: 'GEM Corkboard board' },
@@ -200,14 +191,18 @@ const FILE_KINDS: Record<CopyFileKind, { ext: string; label: string }> = {
 /** What fsReadText opens at most: a larger file couldn't be opened again. */
 const FILE_MAX = 8 * 1024 * 1024
 const fileName = (s: string) => (s.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Corkboard').slice(0, 80)
-/** Saves a copy where the user picks (GEM Shell's save dialog); pictures go in as WebP when that's smaller. */
-async function saveCopyFile(kind: CopyFileKind, name: string, json: (inline: InlinePicture) => Promise<string>, md: () => string, fmt: 'json' | 'md' = 'json') {
-    const ext = fmt === 'md' ? 'md' : FILE_KINDS[kind].ext
+/**
+ * Saves a copy where the user picks (GEM Shell's save dialog): a Corkboard file, or Markdown when the user picks
+ * that type (the name ends in .md). Pictures go in as WebP when that's smaller.
+ */
+async function saveCopyFile(kind: CopyFileKind, name: string, json: (inline: InlinePicture) => Promise<string>, md: () => string) {
+    const ext = FILE_KINDS[kind].ext
     const path = await ui.saveFile({
         title: `Save “${name}”`, suggestedName: fileName(name) + '.' + ext,
-        filters: [fmt === 'md' ? { label: 'Markdown', extensions: ['md'] } : { label: FILE_KINDS[kind].label, extensions: [ext] }],
+        filters: [{ label: FILE_KINDS[kind].label, extensions: [ext] }, { label: 'Markdown (text only)', extensions: ['md'] }],
     })
     if (!path) return
+    const fmt = /\.md$/i.test(path) ? 'md' : 'json'
     const text = fmt === 'md' ? md() : await json(u => desk.inlinePicture(u, true))
     const bytes = new Blob([text]).size
     if (fmt === 'json' && bytes > FILE_MAX) {
@@ -232,6 +227,7 @@ async function openCopyFile(): Promise<boolean> {
     try { const { text } = await sdk.fsReadText(path, { maxBytes: FILE_MAX }); return await importText(text) }
     catch (err: any) { desk.told(err?.code === 'E_TOO_LARGE' ? 'That file is over 8 MB: too large to open.' : "That file couldn't be read."); return false }
 }
+const saveStackFile = (s: Stack) => void saveCopyFile('stack', s.name, inline => exportStack(desk.d.value, s, inline), () => stackMarkdown(desk.d.value, s))
 const saveBoardFile = () => { const b = board.value; void saveCopyFile('board', b.title || 'Untitled board', inline => exportBoard(desk.d.value, b, inline), () => boardMarkdown(desk.d.value, b)) }
 
 /** 0.2.2: an item of the view to another page; when there's no room even small, offers to shrink the others there. */
@@ -280,9 +276,7 @@ shared.menus = createMenus(sdk, desk, {
     pickPhoto: at => void pickPhotos(at),
     captionPhoto: p => void captionAsk(p),
     deletePhoto: p => void deletePhotoAsk(p),
-    importCopy: importDialog,
-    exportBoard: () => { const b = board.value; void exportDialog('board', b.title || 'Untitled board', inline => exportBoard(desk.d.value, b, inline), () => boardMarkdown(desk.d.value, b)) },
-    exportStack: s => void exportDialog('stack', s.name, inline => exportStack(desk.d.value, s, inline), () => stackMarkdown(desk.d.value, s)),
+    saveStackFile,
     saveBoardFile,
     openFile: () => void openCopyFile(),
     moveToPage: (it, to) => void moveToPage(it, to),
@@ -313,7 +307,6 @@ async function boardMenu() {
         }),
         { id: 'new', label: 'New board…' },
         { id: 'edit', label: 'Rename or recolour this board…' },
-        { id: 'export', label: 'Export this board…' },
         { id: 'save-file', label: 'Save this board as a file…' },
         { id: 'open-file', label: 'Open a board file…' },
         { id: 'delete', label: 'Delete this board…', disabled: d.boards.length < 2, title: d.boards.length < 2 ? 'Keep at least one board' : undefined },
@@ -323,7 +316,6 @@ async function boardMenu() {
     if (id.startsWith('board.')) desk.switchBoard(id.slice(6))
     else if (id === 'new') newBoard()
     else if (id === 'edit') editBoardDialog()
-    else if (id === 'export') shared.menus.handle('export-board', 'corkboard.board')
     else if (id === 'save-file') saveBoardFile()
     else if (id === 'open-file') void openCopyFile()
     else if (id === 'delete') void deleteBoardAsk()
@@ -335,12 +327,12 @@ async function appMenu() {
         { id: 'pen', label: `${d.penMode ? '✓ ' : ''}Pen mode`, title: 'A pen draws anywhere on a note; touch scrolls; the mouse types.' },
         { id: 'hints', label: `${d.hints ? '✓ ' : ''}Key hints`, title: 'Small reminders of the keys and gestures where you are; each goes once you have used it a few times.' },
         { id: 'keys', label: 'Keyboard shortcuts and gestures…' },
-        { id: 'import', label: 'Import a stack or a board…' },
+        { id: 'open-file', label: 'Open a board or stack file…' },
     ])
     if (id === 'pen') { d.penMode = !d.penMode; desk.save() }
     else if (id === 'hints') { d.hints = !d.hints; desk.save() }
     else if (id === 'keys') void sdk.navigate?.('sys:keyboard', { newTab: true })
-    else if (id === 'import') importDialog()
+    else if (id === 'open-file') void openCopyFile()
 }
 function toggleSnap() {
     desk.d.value.snap = !desk.d.value.snap; desk.save()

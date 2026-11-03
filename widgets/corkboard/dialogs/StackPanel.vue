@@ -31,7 +31,7 @@
             <input :value="due ?? ''" type="date" aria-label="Due date" @change="setDue(($event.target as HTMLInputElement).value || null)" />
         </div>
         <hr />
-        <button class="cb-mi" type="button" @click="onExport(); close()">Export stack…</button>
+        <button class="cb-mi" type="button" @click="onExport(); close()">Save as a file…</button>
         <button class="cb-mi danger" type="button" @click="onDelete(); close()">Delete stack…</button>
     </div>
 </template>

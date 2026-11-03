@@ -133,6 +133,9 @@
 .cb-edge.l { left: 0; background: linear-gradient(to right, color-mix(in oklab, var(--cb-accent) 35%, transparent), transparent); }
 .cb-edge.r { right: 0; background: linear-gradient(to left, color-mix(in oklab, var(--cb-accent) 35%, transparent), transparent); }
 .cb-edge.on { opacity: 1; }
+/* 0.2.4: the edge fills while the stack is held there; the page turns when it's full */
+.cb-edge::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: color-mix(in oklab, var(--cb-accent) 55%, transparent); }
+.cb-edge.on::after { height: 100%; transition: height var(--edge-ms, 1100ms) linear; }
 
 /* an open stack */
 .cb-focus { position: absolute; inset: 0; display: flex; }
