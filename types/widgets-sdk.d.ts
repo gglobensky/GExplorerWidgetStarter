@@ -74,9 +74,10 @@ declare module 'gexplorer/widgets' {
         /**
          * 2026-11-01 ('AppLinks' declared, with `links`): an installed app's links (steam://rungameid/620...).
          *   const r = await sdk.appLinks!().open('steam://rungameid/620')   // straight from a click or key press
-         * open: only right after the user's own click or key press in this widget; only a link starting with one
-         * of the prefixes declared for its scheme; the user is asked once per scheme (the shell's consent dialog,
-         * naming the app). Some schemes are never opened (http(s), file, ms-*, search-ms...: openUrl / openPath).
+         * open: only right after the user's own click or key press in this widget; only a link matching one of
+         * the TEMPLATES declared for its scheme (GEM Shell 2026-11-03: "steam://rungameid/{id}", nothing added after
+         * the id); the user is asked once per scheme and set of templates (the shell's consent dialog, naming the
+         * app and listing them). Some schemes are never opened (http(s), file, ms-*, search-ms...: openUrl / openPath).
          * available(scheme): an app on this computer opens that declared scheme's links (no prompt, nothing opened).
          */
         appLinks?: () => WidgetAppLinks
@@ -403,6 +404,10 @@ declare module 'gexplorer/widgets' {
          * An http(s) request made by the host for this widget (its network permission is asked once).
          * Only public internet addresses: this computer, the local network and cloud metadata addresses
          * are refused (error 'E_PRIVATE_ADDRESS: ...'). At most 3 redirects, 30 s.
+         * An answer that isn't 2xx REJECTS (it never resolves with ok: false): the Error's message is
+         * "HTTP <status>: <statusText>" (or the refusal's reason), and since GEM Shell 2026-11-03 it carries
+         * `status` and `statusText` too (0 / '' when no answer came: refused, offline, timed out):
+         *   try { const r = await sdk.networkFetch!(url) } catch (e: any) { if (e.status === 404) ... }
          */
         networkFetch?: (
             url: string,
@@ -588,15 +593,20 @@ declare module 'gexplorer/widgets' {
 
     /**
      * entry.ts, 2026-11-01: { cap: 'AppLinks', reason: '…', links: AppLinkDecl[] }. scheme: lower-case letters,
-     * digits, + . - ; prefixes: the links the widget opens start with one of these ("steam://rungameid/"), so it
-     * can't use the app's other links; label: the app's name in the consent dialog and Settings ▸ Permissions.
+     * digits, + . - ; label: the app's name in the consent dialog and Settings ▸ Permissions.
+     * templates (GEM Shell 2026-11-03): the exact shapes of the links the widget opens, at most 8 per scheme, 200
+     * characters each: literal text, and {id} for one id (1 to 128 of A-Z a-z 0-9 . _ : - or %3A; no / ? & # = +):
+     *   ['steam://rungameid/{id}', 'com.epicgames.launcher://apps/{id}?action=launch&silent=true']
+     * A link must match one whole: nothing can be added after the id (launch arguments, other commands). The backend
+     * checks it too, against the templates the user approved. prefixes (2026-11-01, deprecated): each read as
+     * "<prefix>{id}", with a console warning.
      */
     /**
      * launch (2026-11-02): the app has a launcher command in GEM Shell (today only 'battlenet'): appLinks().launch(scheme,
      * code) starts its game through the app's own program (Battle.net.exe --exec="launch <code>"), the same permission
      * as its links.
      */
-    export type AppLinkDecl = { scheme: string; prefixes: string[]; label?: string; launch?: boolean }
+    export type AppLinkDecl = { scheme: string; templates?: string[]; /** @deprecated templates */ prefixes?: string[]; label?: string; launch?: boolean }
     /**
      * Why sdk.appLinks().open() didn't open: no-gesture (not right after a click or key press in the widget),
      * not-declared (no declared prefix fits), declined (the user said no, or revoked it), not-registered (no app

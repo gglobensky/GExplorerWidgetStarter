@@ -192,8 +192,8 @@ click or a key press:
 capabilities: [
   { cap: 'AppLinks', reason: 'Starts your games through the store apps that own them.',
     links: [
-      { scheme: 'steam', prefixes: ['steam://rungameid/', 'steam://store/'], label: 'Steam' },
-      { scheme: 'com.epicgames.launcher', prefixes: ['com.epicgames.launcher://apps/'], label: 'Epic Games' },
+      { scheme: 'steam', templates: ['steam://rungameid/{id}', 'steam://store/{id}'], label: 'Steam' },
+      { scheme: 'com.epicgames.launcher', templates: ['com.epicgames.launcher://apps/{id}?action=launch&silent=true'], label: 'Epic Games' },
     ] },
 ]
 ```
@@ -204,10 +204,15 @@ if (!r.ok && r.reason === 'not-registered') { /* Steam isn't installed */ }
 const hasEpic = await sdk.appLinks!().available('com.epicgames.launcher')   // no prompt, nothing opened
 ```
 
-- **Only the prefixes you declare.** A link must start with one of its scheme's `prefixes` (`not-declared`
-  otherwise): your widget can't use an app's other links.
-- **Asked once per scheme.** The first link of a scheme opens GEM Shell's consent dialog, naming the app ("Let Game
-  Shop open Steam links?"). The user sees and removes it in Settings ▸ Security ▸ Permissions.
+- **Only the templates you declare** (GEM Shell 2026-11-03). A link must match one of its scheme's `templates` whole
+  (`not-declared` otherwise): literal text, and `{id}` for one id (1 to 128 of `A-Z a-z 0-9 . _ : -` or `%3A`, an
+  encoded `:`; no other `%`, no `/ ? & # = +`). Nothing can be added after the id: `steam://rungameid/620//-novid` (launch arguments) doesn't match
+  `steam://rungameid/{id}`. At most 8 per scheme. GEM Shell's backend checks it too, against the templates the user
+  approved. The old `prefixes` still load, each read as `<prefix>{id}`, with a console warning.
+- **Asked once per scheme and set of templates.** The first link of a scheme opens GEM Shell's consent dialog, naming
+  the app and listing the kinds of links ("Let Game Shop open Steam links: steam://rungameid/…, steam://store/…?").
+  A new version declaring other templates asks again. The user sees and removes it in Settings ▸ Security ▸
+  Permissions.
 - **Only right after the user's own click or key press in your widget** (`no-gesture` otherwise, in the security log).
 - **Never these:** `http(s)` (`openUrl`, which asks every time), `file`, `javascript`, `data`, `shell`, `search-ms`,
   the `ms-…` handlers (`ms-msdt`, `ms-settings`, Office…), GEM Shell's own. A declaration naming one is left out.

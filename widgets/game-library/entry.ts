@@ -15,7 +15,7 @@ import { LOOKUP_JOB } from './online/lookup-job'
 export default {
   api: '1.0',
   id: 'game-library',
-  version: '0.23.0',
+  version: '0.23.1',
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
   displayName: 'GEM Game Shop',
@@ -87,13 +87,17 @@ export default {
       cap: 'AppLinks',
       reason: 'Starts your Steam, Epic, Ubisoft and Battle.net games through their stores\' apps, the way their own Play buttons do.',
       links: [
+        // 0.23.1 (GEM Shell 2026-11-03): link TEMPLATES, the exact links built in stores/*.ts ({id}: one id, nothing
+        // may follow it). The user is asked once more per store (the grant now lists them).
         // steam://install/ (0.10.1): Steam's install window, for the games owned and not installed
-        { scheme: 'steam', prefixes: ['steam://rungameid/', 'steam://store/', 'steam://install/'], label: 'Steam' },
-        { scheme: 'com.epicgames.launcher', prefixes: ['com.epicgames.launcher://apps/'], label: 'Epic Games' },
-        { scheme: 'uplay', prefixes: ['uplay://launch/'], label: 'Ubisoft Connect' },
+        { scheme: 'steam', templates: ['steam://rungameid/{id}', 'steam://store/{id}', 'steam://install/{id}'], label: 'Steam' },
+        // stores/epic.ts: apps/<namespace>:<item>:<app>, to launch or to install
+        { scheme: 'com.epicgames.launcher', templates: ['com.epicgames.launcher://apps/{id}?action=launch&silent=true', 'com.epicgames.launcher://apps/{id}?action=install'], label: 'Epic Games' },
+        // stores/launchers.ts ubisoftLaunchUri
+        { scheme: 'uplay', templates: ['uplay://launch/{id}/0'], label: 'Ubisoft Connect' },
         // 0.16.0: Battle.net starts a game by its launch code (GEM Shell's launcher command, launch: true); its links
-        // open the game's page (the last way, when the command isn't there)
-        { scheme: 'battlenet', prefixes: ['battlenet://'], label: 'Battle.net', launch: true },
+        // open the game's page (the last way, when the command isn't there: stores/battlenet.ts battlenetPageUri)
+        { scheme: 'battlenet', templates: ['battlenet://{id}'], label: 'Battle.net', launch: true },
       ],
     },
     { cap: 'Apps', reason: "Finds the games Rockstar, the EA app, Ubisoft Connect and Battle.net installed (they list them only among Windows' installed programs), and starts Xbox games." },
