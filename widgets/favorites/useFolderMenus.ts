@@ -1,12 +1,12 @@
 // /src/widgets/favorites/useFolderMenus.ts
-import { ref, computed } from 'vue'
-import type { FavoriteTreeNode } from 'gexplorer/widgets'
+import { ref, markRaw } from 'vue'
+import type { FavoriteTreeFolder } from 'gexplorer/widgets'
 import type { OpenMenu, MenuRow } from './favorites.model'
 import { buildMenuRows, menuRowId } from './favorites.model'
 
 export type UseFolderMenusOptions = {
   isSidebar: () => boolean
-  findFolderNodeById: (id: string | null) => FavoriteTreeNode | null
+  findFolderNodeById: (id: string | null) => FavoriteTreeFolder | null
   isRootFolder: (folderId: string) => boolean
   openFavorite: (fav: { locations: string[]; label?: string }, event?: MouseEvent) => void | Promise<unknown>
   rowEls: Map<string, HTMLElement>
@@ -46,10 +46,15 @@ export function useFolderMenus(opts: UseFolderMenusOptions) {
     return openMenus.value.some(m => m.folderId === folderId)
   }
 
+  /** 0.3.0: the element a level opens next to (GEM Shell's popover anchor), never made reactive. */
+  const anchorOf = (el: HTMLElement | null | undefined) => (el ? markRaw(el) : null)
+  /** A menu row's own element (its <li>), the anchor of the level it opens. */
+  const rowElementOf = (el: Element | null | undefined) => anchorOf((el?.closest?.('li') as HTMLElement | null) ?? (el as HTMLElement | null))
+
   /**
    * Open a folder dropdown (user click on folder pill)
    */
-  function openFolderDropdown(folder: FavoriteTreeNode, event: MouseEvent) {
+  function openFolderDropdown(folder: FavoriteTreeFolder, event: MouseEvent) {
     const anchor = event.currentTarget as HTMLElement | null
     const rect = anchor?.getBoundingClientRect()
 
@@ -84,6 +89,7 @@ export function useFolderMenus(opts: UseFolderMenusOptions) {
         rows,
         top,
         left,
+        anchor: anchorOf(anchor),
       },
     ]
   }
@@ -91,7 +97,7 @@ export function useFolderMenus(opts: UseFolderMenusOptions) {
   /**
    * Open a folder dropdown from drag hover (auto-expand on hover)
    */
-  function openFolderDropdownFromDrag(folder: FavoriteTreeNode, anchor: HTMLElement | null) {
+  function openFolderDropdownFromDrag(folder: FavoriteTreeFolder, anchor: HTMLElement | null) {
     const rect = anchor?.getBoundingClientRect()
     const rows = buildMenuRows(folder.children)
 
@@ -113,6 +119,7 @@ export function useFolderMenus(opts: UseFolderMenusOptions) {
           rows,
           top,
           left,
+          anchor: anchorOf(anchor),
         },
       ]
       return
@@ -135,6 +142,7 @@ export function useFolderMenus(opts: UseFolderMenusOptions) {
           rows,
           top,
           left,
+          anchor: anchorOf(anchor),
         },
       ]
       return
@@ -144,6 +152,9 @@ export function useFolderMenus(opts: UseFolderMenusOptions) {
     const top = rect ? rect.top : parentMenu?.top ?? 80
     const left = rect ? rect.right + 8 : (parentMenu?.left ?? 80) + 220
 
+    // Already open there: nothing to do (a drag lingering on the row)
+    if (openMenus.value[level + 1]?.folderId === folder.id) return
+
     const next = openMenus.value.slice(0, level + 1)
     next[level + 1] = {
       folderId: folder.id,
@@ -151,9 +162,36 @@ export function useFolderMenus(opts: UseFolderMenusOptions) {
       rows,
       top,
       left,
+      anchor: rowElementOf(anchor),
     }
 
     openMenus.value = next
+  }
+
+  /**
+   * 0.3.0: a folder row hovered in level <level> (FolderMenu.vue, after a short delay): its folder opens as the next
+   * level, replacing what was there (GEM Shell closes a hover level once the pointer leaves it and its parent).
+   */
+  function openFolderLevelOnHover(row: MenuRow, el: HTMLElement, level: number) {
+    if (row.type !== 'folder') return
+    if (openMenus.value[level + 1]?.folderId === row.id) return
+    const folder = findFolderNodeById(row.id)
+    if (!folder || !openMenus.value[level]) return
+    const next = openMenus.value.slice(0, level + 1)
+    next[level + 1] = {
+      folderId: folder.id,
+      label: folder.label,
+      rows: buildMenuRows(folder.children),
+      top: 0,
+      left: 0,
+      anchor: rowElementOf(el),
+    }
+    openMenus.value = next
+  }
+
+  /** 0.3.0: the levels under <level> close (a favorite of that level hovered: its sibling folder's level goes). */
+  function closeLevelsAfter(level: number) {
+    if (openMenus.value.length > level + 1) openMenus.value = openMenus.value.slice(0, level + 1)
   }
 
   /**
@@ -180,6 +218,9 @@ export function useFolderMenus(opts: UseFolderMenusOptions) {
 
       const rows = buildMenuRows(folder.children)
 
+      // 0.3.0: already open from this row (a hover opened it): a click keeps it
+      if (openMenus.value[level + 1]?.folderId === folder.id) return
+
       const next = openMenus.value.slice(0, level + 1)
       next[level + 1] = {
         folderId: folder.id,
@@ -187,6 +228,7 @@ export function useFolderMenus(opts: UseFolderMenusOptions) {
         rows,
         top,
         left,
+        anchor: rowElementOf(anchor),
       }
       openMenus.value = next
       return
@@ -283,6 +325,8 @@ export function useFolderMenus(opts: UseFolderMenusOptions) {
     // Methods
     openFolderDropdown,
     openFolderDropdownFromDrag,
+    openFolderLevelOnHover,
+    closeLevelsAfter,
     closeFolderMenu,
     handleFolderMenuClick,
     refreshOpenMenusFromTree,

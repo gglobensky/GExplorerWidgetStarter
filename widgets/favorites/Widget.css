@@ -469,12 +469,6 @@
   transform: rotate(180deg);
 }
 
-/* Toolbar-specific menu positioning (opens downward) */
-.favorites-toolbar .fav-menu {
-  top: calc(100% + 4px); /* Position below the button */
-  left: 0;
-  transform-origin: top left;
-}
 
 /* Better hover states for toolbar */
 .favorites-toolbar .fav-pill:hover {
@@ -504,29 +498,7 @@
 }
 
 
-/* Folders menu overlay */
-.fav-menu-backdrop {
-  position: fixed;
-  inset: 0;
-  pointer-events: auto; /* so outside clicks are captured */
-  z-index: 10001;
-}
-
-.fav-menu {
-  position: absolute;
-  pointer-events: auto;
-  min-width: 220px;
-  max-width: 320px;
-
-  /* Let it grow until it hits the window edge, with a small margin */
-  max-height: calc(100vh - 32px);
-  overflow: auto;
-
-  background: rgba(10, 10, 10, 0.98);
-  border-radius: 8px;
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.7);
-  padding: 6px 0;
-}
+/* 0.3.0: the folder menus are GEM Shell's popovers; their styles are in FolderMenu.vue (no backdrop, no layer of its own). */
 
 
 .fav-menu-title {
@@ -599,10 +571,6 @@
   overflow: hidden;
 }
 
-.gex-fav-ghost {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-  border-radius: 4px;
-}
 
 .favorites-list,
 .favorites-toolbar {

@@ -1,5 +1,6 @@
 import type {
   FavoriteTreeItem,
+  FavoriteTreeFolder,
   FavoriteTreeNode,
 } from 'gexplorer/widgets'
 
@@ -18,11 +19,16 @@ export type OpenMenu = {
   rows: MenuRow[]
   top: number
   left: number
+  /**
+   * 0.3.0: the element this level opens next to (a folder pill or row; a row of the level above): GEM Shell's popover
+   * is anchored there (useFolderPopovers.ts). top / left are kept for older callers and no longer place anything.
+   */
+  anchor?: HTMLElement | null
 }
 
 // A "root row" in the sidebar list: either a folder node or a root-level item favorite
 export type RootRow =
-  | { kind: 'folder'; node: FavoriteTreeNode }
+  | { kind: 'folder'; node: FavoriteTreeFolder }
   | { kind: 'item'; entry: FavoriteTreeItem }
 
 export type RootRowId = string

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, inject, watch, type Ref } from 'vue'
+import { ref, computed, nextTick, inject, watch, onBeforeUnmount } from 'vue'
 import type { WidgetSdk, WidgetMenuItemMessage } from 'gexplorer/widgets'
 import { 
   useScrollHints, 
@@ -14,13 +14,16 @@ import { useDragVisuals } from './useDragVisuals'
 import { useFolderMenus } from './useFolderMenus'
 import { useFavoritesDialog } from './useFavoritesDialog'
 import { useFavoritesSortable } from './useFavoritesSortable'
+// 0.3.0 (GEM Shell E5c-2): the folder dropdowns are GEM Shell's popovers (one per level, hover sub-levels)
+import { useFolderPopovers } from './useFolderPopovers'
+import FolderMenu from './FolderMenu.vue'
+import type { FolderMenuCtx } from './useFolderPopovers'
 
 import { rowId, placeTooltip, guessLabelFromPath } from "./favorites.model"
 
 const sdk = inject<WidgetSdk>('widgetSdk')
-// The host's overlay layer for this widget: the folder menus and the add dialog teleport there (not body), so a
-// click in them is this widget's own (sdk.navigate's gesture rule).
-const overlay = inject<Ref<HTMLElement | null>>('widgetOverlay', ref(null))
+// 0.3.0: nothing is drawn in the host's overlay layer any more (the folder menus are GEM Shell's popovers, the drag
+// ghost GEM Shell's): this widget draws inside its own box only (README "Drawing outside your box").
 
 // Standard widget props shape (same pattern as Items)
 const props = defineProps<{
@@ -123,6 +126,8 @@ const {
   isFolderMenuOpen,
   openFolderDropdown,
   openFolderDropdownFromDrag,
+  openFolderLevelOnHover,
+  closeLevelsAfter,
   closeFolderMenu,
   handleFolderMenuClick,
   refreshOpenMenusFromTree,
@@ -138,24 +143,7 @@ const {
 
 const dropTargetFolderId = computed(() => getDropTargetFolderId(dragVisuals.lastDropIntent.value))
 
-// Intercept backdrop clicks to handle drag-just-ended swallowing
-function handleMenuBackdropClick() {
-  console.log('[DEBUG] handleMenuBackdropClick called', { 
-    dragJustEnded: sortable.isDragJustEnded(),
-    openMenusCount: openMenus.value.length,
-    timestamp: performance.now()
-  })
-  
-  // Swallow the first click after a drag/drop so the menu doesn't close
-  if (sortable.isDragJustEnded()) {
-    sortable.resetDragJustEnded()
-    console.log('[DEBUG] Swallowed backdrop click (dragJustEnded was true)')
-    return
-  }
-  
-  console.log('[DEBUG] Closing folder menu from backdrop click')
-  closeFolderMenu()
-}
+// 0.3.0: a click outside the menus closes them (GEM Shell's popover rule); a drop inside one is a click inside it.
 
 // Open folder menus follow the tree whenever it's read again (2026-10-23: a sub-folder renamed in
 // its dropdown kept its old name until reopened: the host's change refresh skipped the menus)
@@ -198,7 +186,8 @@ const dragVisuals = useDragVisuals({
   rowEls,
   findFolderNodeById,
   openFolderDropdownFromDrag,
-  ghostHost: () => overlay.value,   // 0.2.4: the ghost in the widget's overlay layer (not document.body)
+  // 0.3.0: GEM Shell's ghost (ui.dragGhost), at the pointer anywhere in the window
+  dragGhost: (o) => sdk?.ui?.().dragGhost?.(o) ?? null,
 })
 
 // --- Sortable (useFavoritesSortable) -----------------------------------------
@@ -219,6 +208,44 @@ const sortable = useFavoritesSortable({
   teardownDragVisuals: dragVisuals.teardownDragVisuals,
   clearHoverTimer: dragVisuals.clearHoverTimer,
 })
+
+// --- Folder popovers (0.3.0) -------------------------------------------------
+const menuCtx: FolderMenuCtx = {
+  openMenus,
+  dropTargetFolderId,
+  isDragging: () => !!sortable.sortableState.value.isDragging,
+  paneCount,
+  favTip,
+  onRowClick: (row, e, level) => handleFolderMenuClick(row, e, level),
+  onFolderHover: (row, el, level) => openFolderLevelOnHover(row, el, level),
+  onItemHover: (level) => closeLevelsAfter(level),
+  onDropdownMenu: (folderId, e) => onDropdownMenu(folderId, e),
+  onFavoriteMenu: (id, e) => onFavoriteMenu(id, e),
+  onFolderNodeMenu: (id, e) => onFolderNodeMenu(id, e),
+  removeFolder: (id) => { void handleRemoveFolder(id) },
+  removeFavorite: (id) => { void handleRemoveFavorite(id) },
+  startMenuRowDrag: (row, folderId, e) => sortable.startMenuRowDrag(row, folderId, e),
+  setMenuContainerRef: (menu, el) => setMenuContainerRef(menu, el),
+  setMenuRowRef: (row, el) => setMenuRowRef(row, el),
+}
+const folderPopovers = useFolderPopovers({
+  ui: () => sdk?.ui?.() as any,
+  openMenus,
+  isSidebar: () => isSidebar.value,
+  component: FolderMenu,
+  ctx: menuCtx,
+})
+onBeforeUnmount(() => folderPopovers.dispose())
+
+/** 0.3.0: an element in the open folder menus (GEM Shell's popovers: their containers are known by folder). */
+function inMenus(sel: string): HTMLElement | null {
+  for (const el of menuContainers.values()) {
+    const hit = el.querySelector<HTMLElement>(sel)
+    if (hit) return hit
+  }
+  return null
+}
+const inMenuContainer = (el: Element) => [...menuContainers.values()].some(c => c.contains(el))
 
 // --- Scroll Hints ------------------------------------------------------------
 const {
@@ -394,7 +421,7 @@ function onFolderNodeMenu(id: string, e: MouseEvent) {
 function folderButton(id: string): HTMLElement | null {
   if (menuFolder?.id === id && menuFolder.el.isConnected) return menuFolder.el
   const sel = `[data-fav-folder="${CSS.escape(id)}"]`
-  return rootEl.value?.querySelector<HTMLElement>(sel) ?? overlay.value?.querySelector<HTMLElement>(sel) ?? null
+  return rootEl.value?.querySelector<HTMLElement>(sel) ?? inMenus(sel)
 }
 
 /** Rename a folder in place: a box over its label (the shell's rename overlay). */
@@ -422,7 +449,7 @@ async function renameFolderInPlace(id: string) {
 /** NEW (0.2.2): the element of favorite <id> on screen (list row, pill, open dropdown row), or null. */
 function itemButton(id: string): HTMLElement | null {
   const sel = `[data-fav-item="${CSS.escape(id)}"]`
-  return rootEl.value?.querySelector<HTMLElement>(sel) ?? overlay.value?.querySelector<HTMLElement>(sel) ?? null
+  return rootEl.value?.querySelector<HTMLElement>(sel) ?? inMenus(sel)
 }
 
 /** NEW (0.2.2): rename a favorite in place (its label), as a folder; a prompt when it isn't on screen. */
@@ -474,9 +501,9 @@ async function onMenuItem(m: WidgetMenuItemMessage) {
 function onCommand(id: string) {
   if (id !== 'rename') return
   const sel = '[data-fav-folder]:hover, [data-fav-item]:hover'
-  const hovered = rootEl.value?.querySelector<HTMLElement>(sel) ?? overlay.value?.querySelector<HTMLElement>(sel) ?? null
+  const hovered = rootEl.value?.querySelector<HTMLElement>(sel) ?? inMenus(sel)
   const focused = (document.activeElement as HTMLElement | null)?.closest?.<HTMLElement>('[data-fav-folder], [data-fav-item]') ?? null
-  const target = hovered ?? (focused && (rootEl.value?.contains(focused) || overlay.value?.contains(focused)) ? focused : null)
+  const target = hovered ?? (focused && (rootEl.value?.contains(focused) || inMenuContainer(focused)) ? focused : null)
   if (target?.dataset.favFolder) void renameFolderInPlace(target.dataset.favFolder)
   else if (target?.dataset.favItem) void renameItemInPlace(target.dataset.favItem)
 }
@@ -760,108 +787,7 @@ defineExpose({ onWidgetAction, onMenuItem, onCommand })
     </template>
 
 
-  <!-- Folders menu overlay (stacked menus) -->
-<teleport :to="overlay || 'body'">
-  <div
-    v-if="openMenus.length"
-    class="fav-menu-backdrop"
-    @click.self="handleMenuBackdropClick"
-  >
-    <div
-      v-for="(menu, level) in openMenus"
-      :key="menu.folderId ?? 'root-' + level"
-      class="fav-menu"
-      :style="{
-        top: menu.top + 'px',
-        left: menu.left + 'px',
-      }"
-      @click.stop
-      @contextmenu.prevent.stop="onDropdownMenu(menu.folderId, $event)"
-      :ref="el => setMenuContainerRef(menu, el as HTMLElement | null)"
-    >
-
-      <div class="fav-menu-title">
-        {{ menu.label || 'Folder' }}
-      </div>
-
-      <div
-        v-if="!menu.rows.length"
-        class="fav-menu-empty"
-        :class="{
-          'is-drop-target':
-            dropTargetFolderId === ('folder:' + (menu.folderId ?? '')),
-        }"
-      >
-        No entries
-      </div>
-
-
-      <ul v-else class="fav-menu-list">
-        <li
-          v-for="row in menu.rows"
-          :key="row.id"
-          class="fav-menu-row"
-          :class="{ 'is-folder': row.type === 'folder' }"
-          :ref="el => setMenuRowRef(row, el as HTMLElement | null)"
-        >
-          <button
-            type="button"
-            class="fav-menu-btn"
-            :data-fav-folder="row.type === 'folder' ? row.id : undefined"
-            :data-fav-item="row.type === 'item' ? row.id : undefined"
-            data-rename-row
-            @pointerdown.stop="sortable.startMenuRowDrag(row, menu.folderId ?? '', $event as PointerEvent)"
-            @click="handleFolderMenuClick(row, $event, level)"
-            @contextmenu.prevent.stop="row.type === 'item' ? onFavoriteMenu(row.id, $event) : onFolderNodeMenu(row.id, $event)"
-            :title="row.type === 'item' ? favTip(row.label, row.locations) : row.label"
-          >
-            <span class="fav-menu-label">
-              <span
-                class="fav-menu-indent"
-                :style="{ width: row.depth * 12 + 'px' }"
-              />
-              <span class="fav-menu-icon">
-                <span v-if="row.type === 'folder'">📁</span>
-                <span v-else :class="{ 'fav-icon--multi': paneCount(row.locations) > 1 }">★<span v-if="paneCount(row.locations) > 1" class="fav-pane-count">{{ paneCount(row.locations) }}</span></span>
-              </span>
-              <span class="fav-menu-text">
-                {{ row.label }}
-              </span>
-            </span>
-          </button>
-
-          <!-- NEW: inline delete actions -->
-          <div class="fav-menu-row-actions">
-            <!-- Delete folder -->
-            <button
-              v-if="row.type === 'folder'"
-              type="button"
-              class="icon-btn danger fav-menu-delete-btn"
-              @pointerdown.stop
-              @click.stop="handleRemoveFolder(row.id)"
-              title="Delete folder and nested favorites"
-            >
-              ✕
-            </button>
-
-            <!-- Delete item -->
-            <button
-              v-else
-              type="button"
-              class="icon-btn danger fav-menu-delete-btn"
-              @pointerdown.stop
-              @click.stop="handleRemoveFavorite(row.id)"
-              title="Remove favorite"
-            >
-              ✕
-            </button>
-          </div>
-        </li>
-      </ul>
-
-    </div>
-  </div>
-</teleport>
+  <!-- 0.3.0: the folder menus are GEM Shell's popovers (FolderMenu.vue, useFolderPopovers.ts) -->
 
 
   </div>

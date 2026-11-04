@@ -4,7 +4,10 @@ import Widget from './Widget.vue'
 export default {
   api: '1.0',
   id: 'favorites',
-  version: '0.2.4',   // 0.2.4 (GEM Shell E5, 2026-10-31): the drag ghost in the widget's overlay layer, not document.body
+  // 0.3.0 (GEM Shell E5c-2, 2026-11-03): the folder menus are GEM Shell's popovers (a level per folder, sub-folders
+  // opening on hover, never over their parent), the drag ghost GEM Shell's (ui.dragGhost): nothing drawn outside the
+  // widget's box any more. 0.2.4: the drag ghost in the widget's overlay layer, not document.body.
+  version: '0.3.0',
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
 

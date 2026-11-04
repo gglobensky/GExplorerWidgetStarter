@@ -1042,8 +1042,42 @@ declare module 'gexplorer/widgets' {
 
     // ── Sortable / Selection ───────────────────────────────────────────────
 
-    export type CreateSortableOptions = Record<string, any>
+    // CHANGED (GEM Shell 2026-11-03): the sortable's types as the shell has them (widgets/sortable/index.ts, engine.ts);
+    // they were loose stand-ins, and DropIntent was wrong (a string where the shell gives { targetId, placement }).
+    export type SortableId = string | number
+    export type SortableOrientation = 'vertical' | 'horizontal'
+    export type CreateSortableOptions<T = any> = {
+        identity: (item: T) => SortableId
+        getRef?: (item: T) => HTMLElement | null
+        orientation?: SortableOrientation | (() => SortableOrientation)
+        dragThresholdPx?: number
+        scrollContainer?: HTMLElement | (() => HTMLElement | null) | null
+        containerClassOnDrag?: string
+        rowSelector?: string
+        rowIdAttr?: string
+        autoScroll?: { marginPx?: number; maxSpeedPxPerSec?: number }
+        globalCursor?: string
+        /** Items that accept a drop "inside" (folders). */
+        isContainer?: (item: T) => boolean
+        onDragStart?: (item: T, startX: number, startY: number) => void
+        onPreview?: (intent: DropIntent | null, blocked: boolean, clientX: number, clientY: number) => void
+        onCommit?: (ordered: T[], intent: DropIntent) => void
+        onBlocked?: (item: T, intent: DropIntent | null, clientX: number, clientY: number) => void
+        /** GEM Shell's drag ghost for the dragged item (colours and text). */
+        ghost?: { describe: (item: T) => { bg: string; border: string; color: string; label: string; subLabel?: string } }
+        onUpdate?: () => void
+    }
     export type SortableHandle = Record<string, any>
+    /** useSortable's options: the sortable's, and `container` (a ref to the scroll container) instead of scrollContainer. */
+    export type UseSortableOptions<T = any> = Omit<CreateSortableOptions<T>, 'onUpdate'> & { container?: Ref<HTMLElement | null> }
+    export type UseSortableReturn<T = any> = {
+        /** The list to draw: during a drag, a live preview of the move. */
+        displayList: Readonly<Ref<T[]>>
+        isDragging: Readonly<Ref<boolean>>
+        draggingId: Readonly<Ref<SortableId | null>>
+        /** From @pointerdown on a row: its index in displayList. */
+        startDrag(displayIdx: number, event: PointerEvent | MouseEvent): void
+    }
     export type ItemsAdapter = Record<string, any>
     export type Mods = Record<string, any>
     // ── Marquee ────────────────────────────────────────────────────────────
@@ -1111,7 +1145,9 @@ declare module 'gexplorer/widgets' {
         destroy(): void
     }
 
-    export type DropIntent = 'before' | 'after' | 'into'
+    /** Where a dragged item would land, relative to the item under the pointer (CHANGED GEM Shell 2026-11-03: as the shell gives it). */
+    export type DropPlacement = 'before' | 'after' | 'inside'
+    export type DropIntent = { targetId: SortableId; placement: DropPlacement }
 
     export type SelectionEngine = {
         destroy: () => void
@@ -1200,8 +1236,8 @@ declare module 'gexplorer/widgets' {
 
     // ── Free utilities and composables ─────────────────────────────────────
 
-    export function createLinearSortable(options: CreateSortableOptions): SortableHandle
-    export function useSortable(options: any): any
+    export function createLinearSortable<T>(items: T[], options: CreateSortableOptions<T>): SortableHandle
+    export function useSortable<T>(source: Ref<T[]>, options: UseSortableOptions<T>): UseSortableReturn<T>
     export function useScrollHints(options: any): any
 
     // ── Grid layout: the hubs' own engine (NEW 2026-11-02, GEM Corkboard) ───
@@ -1727,7 +1763,22 @@ declare module 'gexplorer/widgets' {
         options?: UseListingOptions
     ): UseListingReturn
     export function useSnapResize(options: any): any
-    export function createDragTrigger(options: any): any
+    /**
+     * A pointerdown handler that calls `start` once the pointer moved past `thresholdPx` (default 4) with the
+     * button held (CHANGED GEM Shell 2026-11-03: the signature as the shell has it).
+     */
+    export function createDragTrigger(
+        start: (downEvt: PointerEvent | MouseEvent) => void,
+        opts?: {
+            thresholdPx?: number
+            /** Primary button only (mouse). Default true. */
+            primaryOnly?: boolean
+            /** Where a drag may not start: selectors / classes (default: buttons, inputs, links...). */
+            gate?: { denySelectors?: string[]; allowSelectors?: string[]; denyClass?: string; allowClass?: string; includeDefaultInteractive?: boolean }
+            /** Swallow the click that follows a drag. Default true. */
+            suppressClickAfterDrag?: boolean
+        },
+    ): (downEvt: PointerEvent | MouseEvent) => void
 
     export function createSelectionEngine(
         options: any,

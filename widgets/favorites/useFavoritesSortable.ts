@@ -31,6 +31,8 @@ export type UseFavoritesSortableOptions = {
     handleDragHover: (intent: DropIntent | null) => void
     teardownDragVisuals: () => void
     clearHoverTimer: () => void
+    /** The drop intent the visuals keep (Widget.vue passes it; read through handleDragHover). */
+    lastDropIntent?: Ref<DropIntent | null>
 }
 
 export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {

@@ -4,7 +4,7 @@
 // CHANGED 2026-10-22: one source, the tree (the flat list and the config "entries" fallback are gone), and
 // one refresh.
 import { ref, onMounted, inject } from 'vue'
-import type { FavoriteTreeNode, WidgetSdk } from 'gexplorer/widgets'
+import type { FavoriteTreeFolder, FavoriteTreeNode, WidgetSdk } from 'gexplorer/widgets'
 import { buildRootRows, type RootRow } from './favorites.model'
 
 export function useFavoritesData() {
@@ -39,15 +39,8 @@ export function useFavoritesData() {
     }
   }
 
-  /**
-   * Find a folder node by ID in the tree
-   *
-   * TODO(types): return FavoriteTreeFolder | null (narrowed on kind === 'folder') and type
-   * useFolderMenus' findFolderNodeById / openFolderDropdownFromDrag with it: useFolderMenus.ts
-   * reads .children on a plain FavoriteTreeNode in four places, a type error since the starter's
-   * types match the shell's favorites tree (2026-10-15). Runtime is fine: only folders get there.
-   */
-  function findFolderNodeById(id: string | null): FavoriteTreeNode | null {
+  /** A folder by ID in the tree (a folder only: its children are there). */
+  function findFolderNodeById(id: string | null): FavoriteTreeFolder | null {
     if (!id) return null
     const stack: FavoriteTreeNode[] = [...fullTree.value]
 
