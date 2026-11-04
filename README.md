@@ -389,8 +389,11 @@ What GEM Shell does at run time:
 - **Your box contains you.** Nothing you render paints outside it; `position: fixed` inside it is
   relative to your box, not the window.
 - **Your overlay layer** (`inject('widgetOverlay')`, where a `<Teleport>` of yours lands) draws under
-  every shell dialog; from E5c it is clipped to your box plus 24 px, and a `<Teleport>` lands there
-  (or in a GEM Shell target inside your box, like the pane header slot) whatever its `to` says.
+  every shell dialog and is clipped to your box plus 24 px (never over the title bar): what you put
+  there paints and takes clicks there only. A `<Teleport>` of yours lands there whatever its `to`
+  says, unless `to` is an element of your own (your box, a GEM Shell slot inside it like the pane
+  header, your layer, your popovers). In your popover's content (`openPopover`) it stays where it
+  is, in the popover, unless it targets one of those.
 - **Refused** (nothing happens, a line in the security log and a notice naming your widget): your
   code inserting into the page's `<body>` / `<html>` (`appendChild`, `append`, `insertAdjacentHTML`,
   `innerHTML`...), `document.write`, a modal `<dialog>` (`showModal`), a popover (`showPopover`).
@@ -448,6 +451,7 @@ styles (and the shared libraries it imports) for these:
 | `page-keys` | error | a key / input listener on `window` or `document` (`addEventListener`, `onkeydown = ...`) |
 | `teleport` | warning | `<Teleport to=...>` |
 | `fixed` | warning | `position: fixed` |
+| `vue-app` | warning | `createApp()`, `createSSRApp()`: a second Vue app |
 | `shadow` | warning | `attachShadow()` |
 
 An **error stops the build**. Change the code, or, for a case you can explain (the repo's review

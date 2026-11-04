@@ -12,8 +12,11 @@
 //     page-keys   a keydown / keyup / keypress / input / beforeinput listener on window or document: it only sees
 //                 the keys typed in the widget's own box
 //   WARNINGS (built; listed for the review)
-//     teleport    <Teleport to=…>: from GEM Shell E5c it lands in the widget's overlay layer (its box + 24 px)
+//     teleport    <Teleport to=…>: it lands in the widget's overlay layer (its box + 24 px), or stays where it is in a
+//                 popover, unless `to` is an element of the widget's own
 //     fixed       position: fixed: relative to the widget's box (GEM Shell contains it), or the window in its overlay layer
+//     vue-app     createApp() / createSSRApp(): a second Vue app, outside the widget's tree (no SDK, its Teleports not
+//                 sent to the overlay layer)
 //     shadow      attachShadow(): a shadow root (GEM Shell's styles and checks see less of it)
 //
 // ALLOWING A RULE (a reviewed case): widgets/<type>/review.allow.json
@@ -65,14 +68,20 @@ export const RULES = [
     {
         id: 'teleport', level: 'warning',
         test: /<Teleport\b[^>]*\bto\s*=/i,
-        what: 'teleports: from GEM Shell E5c it lands in your overlay layer (your box + 24 px) or a GEM Shell target inside your box, whatever `to` says',
+        what: 'teleports: GEM Shell sends it to your overlay layer (your box + 24 px; in a popover of yours: it stays in the popover) unless `to` is an element of yours (your box, the pane header slot, your layer, your popovers)',
         fix: 'for menus and panels outside your box, use sdk.ui().menu or sdk.ui().openPopover',
     },
     {
         id: 'fixed', level: 'warning',
         test: /position\s*:\s*fixed\b|\.position\s*=\s*['"`]fixed['"`]/,
-        what: 'position: fixed: inside your box it is relative to your box (GEM Shell contains it); in your overlay layer, to the window (clipped to your box + 24 px from E5c)',
+        what: 'position: fixed: inside your box it is relative to your box (GEM Shell contains it); in your overlay layer, to the window (clipped to your box + 24 px)',
         fix: 'inside your box, position: absolute says the same, clearly; outside it, sdk.ui().openPopover',
+    },
+    {
+        id: 'vue-app', level: 'warning',
+        test: /\bcreate(SSR)?App\s*\(/,
+        what: 'makes a second Vue app: outside your widget\'s tree (inject(\'widgetSdk\') does not reach it, its Teleports are not sent to your overlay layer)',
+        fix: 'render your components in your widget (a v-if, a <component :is>); outside your box, sdk.ui().openPopover',
     },
     {
         id: 'shadow', level: 'warning',
