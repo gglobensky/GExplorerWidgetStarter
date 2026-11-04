@@ -125,18 +125,36 @@ export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
     // Hit tests everything — root rows, menu rows, and folder containers.
     // Used by the menu row raw pointer loop.
     function resolveIntent(clientX: number, clientY: number): DropIntent | null {
-        // Root rows
+        // Root rows (the bar or the list: not the open menus' rows). CHANGED (0.3.2): along the bar's own axis (a
+        // toolbar runs left to right: before / after by x, as its sortable does), and a drop in the bar's empty space
+        // goes next to the nearest favorite (the end of the bar: after the last), so a favorite carried out of a menu
+        // can be put back on the bar anywhere.
+        const horizontal = layout() !== 'list'
+        const bar = horizontal ? toolbarEl.value : listEl.value
+        let nearest: { id: RootRowId; dist: number; after: boolean } | null = null
         for (const [id, el] of rowEls) {
-            if (id.startsWith('menu:')) continue
+            if (inOpenMenu(el)) continue
             const r = el.getBoundingClientRect()
             if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
-                const rel = (clientY - r.top) / (r.height || 1)
+                const rel = horizontal ? (clientX - r.left) / (r.width || 1) : (clientY - r.top) / (r.height || 1)
                 if (id.startsWith('folder:')) {
                     if (rel < 0.3) return { targetId: id, placement: 'before' }
                     if (rel > 0.7) return { targetId: id, placement: 'after' }
                     return { targetId: id, placement: 'inside' }
                 }
                 return { targetId: id, placement: rel < 0.5 ? 'before' : 'after' }
+            }
+            if (bar?.contains(el)) {
+                const mid = horizontal ? (r.left + r.right) / 2 : (r.top + r.bottom) / 2
+                const at = horizontal ? clientX : clientY
+                const dist = Math.abs(at - mid)
+                if (!nearest || dist < nearest.dist) nearest = { id, dist, after: at > mid }
+            }
+        }
+        if (nearest && bar) {
+            const b = bar.getBoundingClientRect()
+            if (clientX >= b.left && clientX <= b.right && clientY >= b.top && clientY <= b.bottom) {
+                return { targetId: nearest.id, placement: nearest.after ? 'after' : 'before' }
             }
         }
         // Menu rows

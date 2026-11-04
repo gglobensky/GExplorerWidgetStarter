@@ -4,11 +4,12 @@ import Widget from './Widget.vue'
 export default {
   api: '1.0',
   id: 'favorites',
+  // 0.3.2: a favorite carried out of a menu drops anywhere on the bar (its empty space too; before / after along the bar).
   // 0.3.1: a favorite dragged over a sub-folder in an open menu opens it, and drops there (a drag from the bar too).
   // 0.3.0 (GEM Shell E5c-2, 2026-11-03): the folder menus are GEM Shell's popovers (a level per folder, sub-folders
   // opening on hover, never over their parent), the drag ghost GEM Shell's (ui.dragGhost): nothing drawn outside the
   // widget's box any more.
-  version: '0.3.1',
+  version: '0.3.2',
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
 
