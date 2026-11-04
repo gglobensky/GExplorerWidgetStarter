@@ -71,9 +71,16 @@ export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
 
     // ── Shared hit test helpers ───────────────────────────────────────────
 
+    // CHANGED (0.3.1): a menu row is a row inside an open folder menu (its container): their ids are folder: / item: like
+    // the bar's, so the old 'menu:' test never matched and a drag from the bar never saw the menus' rows.
+    function inOpenMenu(el: HTMLElement): boolean {
+        for (const c of menuContainers.values()) if (c.contains(el)) return true
+        return false
+    }
+
     function hitTestMenuRow(clientX: number, clientY: number): RootRowId | null {
         for (const [id, el] of rowEls) {
-            if (!id.startsWith('menu:')) continue
+            if (!inOpenMenu(el)) continue
             const r = el.getBoundingClientRect()
             if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
                 return id
@@ -81,6 +88,29 @@ export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
         }
         return null
     }
+
+    /** 0.3.1: where a drop on a menu row goes: a folder's middle third is inside it (and opens it after a moment). */
+    function menuRowIntent(id: RootRowId, clientY: number): DropIntent | null {
+        const el = rowEls.get(id)
+        if (!el) return null
+        const r = el.getBoundingClientRect()
+        const rel = (clientY - r.top) / (r.height || 1)
+        if (id.startsWith('folder:')) {
+            if (rel < 0.3) return { targetId: id, placement: 'before' }
+            if (rel > 0.7) return { targetId: id, placement: 'after' }
+            return { targetId: id, placement: 'inside' }
+        }
+        return { targetId: id, placement: rel < 0.5 ? 'before' : 'after' }
+    }
+
+    /** 0.3.1: the pointer is over an open menu: the drop goes there, whatever the bar's sortable projects. */
+    function menuIntentAt(clientX: number, clientY: number): DropIntent | null {
+        const menuRow = hitTestMenuRow(clientX, clientY)
+        if (menuRow) return menuRowIntent(menuRow, clientY)
+        const folderId = hitTestMenuContainer(clientX, clientY)
+        return folderId ? { targetId: `folder:${folderId}` as RootRowId, placement: 'inside' } : null
+    }
+    let lastMenuIntent: DropIntent | null = null
 
     function hitTestMenuContainer(clientX: number, clientY: number): string | null {
         for (const [folderId, el] of menuContainers) {
@@ -111,12 +141,7 @@ export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
         }
         // Menu rows
         const menuRow = hitTestMenuRow(clientX, clientY)
-        if (menuRow) {
-            const el = rowEls.get(menuRow)!
-            const r = el.getBoundingClientRect()
-            const rel = (clientY - r.top) / (r.height || 1)
-            return { targetId: menuRow, placement: rel < 0.5 ? 'before' : 'after' }
-        }
+        if (menuRow) return menuRowIntent(menuRow, clientY)
         // Empty folder containers
         const folderId = hitTestMenuContainer(clientX, clientY)
         if (folderId) return { targetId: `folder:${folderId}` as RootRowId, placement: 'inside' }
@@ -165,24 +190,10 @@ export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
 
         onPreview(intent, blocked, clientX, clientY) {
             updateGhostPosition({ clientX, clientY } as PointerEvent)
-            let effectiveIntent = intent
-            if (!intent || blocked) {
-                const menuRow = hitTestMenuRow(clientX, clientY)
-                if (menuRow) {
-                    const el = rowEls.get(menuRow)
-                    if (el) {
-                        const r = el.getBoundingClientRect()
-                        const rel = (clientY - r.top) / (r.height || 1)
-                        effectiveIntent = { targetId: menuRow, placement: rel < 0.5 ? 'before' : 'after' }
-                    }
-                } else {
-                    const folderId = hitTestMenuContainer(clientX, clientY)
-                    if (folderId) {
-                        effectiveIntent = { targetId: `folder:${folderId}` as RootRowId, placement: 'inside' }
-                    }
-                }
-            }
-            updateInsertBar(effectiveIntent, blocked)
+            // CHANGED (0.3.1): over an open menu, its rows decide (a sub-folder opens when hovered), not the bar's projection
+            lastMenuIntent = menuIntentAt(clientX, clientY)
+            const effectiveIntent = lastMenuIntent ?? intent
+            updateInsertBar(effectiveIntent, lastMenuIntent ? false : blocked)
             handleDragHover(effectiveIntent)
         },
 
@@ -194,7 +205,10 @@ export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
             clearHoverTimer()
             sortableState.value.isDragging = false
             sortableState.value.draggingId = null
-            void applyMove(dragging, String(intent.targetId) as RootRowId, intent.placement as any)
+            // 0.3.1: dropped over an open menu: there
+            const target = lastMenuIntent ?? intent
+            lastMenuIntent = null
+            void applyMove(dragging, String(target.targetId) as RootRowId, target.placement)
         },
 
         onBlocked(row, intent, clientX, clientY) {
@@ -205,21 +219,12 @@ export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
             sortableState.value.isDragging = false
             sortableState.value.draggingId = null
 
+            // 0.3.1: over an open menu first (its rows, a folder's middle: inside), then the bar's intent
+            const inMenu = menuIntentAt(clientX, clientY)
+            lastMenuIntent = null
+            if (inMenu) { void applyMove(dragging, String(inMenu.targetId) as RootRowId, inMenu.placement); return }
             if (intent && (intent.placement === 'inside' || intent.placement === 'before' || intent.placement === 'after')) {
                 void applyMove(dragging, String(intent.targetId) as RootRowId, intent.placement)
-                return
-            }
-            const menuRow = hitTestMenuRow(clientX, clientY)
-            if (menuRow) {
-                const el = rowEls.get(menuRow)
-                const r = el?.getBoundingClientRect()
-                const placement = r ? ((clientY - r.top) / (r.height || 1) < 0.5 ? 'before' : 'after') : 'after'
-                void applyMove(dragging, menuRow, placement)
-                return
-            }
-            const folderId = hitTestMenuContainer(clientX, clientY)
-            if (folderId) {
-                void applyMove(dragging, `folder:${folderId}` as RootRowId, 'inside')
                 return
             }
             dragJustEnded = true
