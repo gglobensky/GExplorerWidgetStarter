@@ -3111,6 +3111,23 @@ declare module 'gexplorer/widgets' {
 //     (else the shell scrolls the whole widget): it is as tall as its content, up to the
 //     user's maximum, and only its scroll areas shrink.
 //
+//   <gex-scroll-area axis="x" fill>                        (NEW 2026-11-03: sideways)
+//     <button v-for="t in items" class="pill">…</button>
+//   </gex-scroll-area>
+//     Its children side by side (a flex row: --gsa-gap between them, --gsa-align for their
+//     vertical alignment, center), a thin strip left and right while they don't fit (a
+//     chevron when that way can scroll, a click scrolls a page; a line at the end); the
+//     mouse wheel scrolls it sideways. `fill` takes the room left in a flex row. The height
+//     props (max-height, min-rows, min-height) are the vertical area's only.
+//     edges="overlay" (either axis): the edges float over the content, mid-height (sideways)
+//     or mid-width, instead of taking room beside it (faded at the end, not hidden). Restyle
+//     them through --gsa-overlay-w / -h / -radius / -bg / -bg-hover, or draw them yourself:
+//       <template #before="{ disabled, scroll }"><button :disabled="disabled" @click="scroll">‹</button></template>
+//       <template #after="{ disabled, scroll }"><button :disabled="disabled" @click="scroll">›</button></template>
+//     (shown while it overflows; before = left / top, after = right / bottom).
+//     :page-ratio (0.8) and :min-page-step (px, 80): how far a click scrolls.
+//     The ref's el is the scrolling element: center an item with el.scrollTo({ left, behavior }).
+//
 //   <gex-video-surface :video="handle" />
 //     Shows a video of sdk.video() (2026-10-25): fills its place, the video contained and
 //     letterboxed in black. Mounting moves the shell's <video> in; unmounting moves it back
@@ -3126,6 +3143,8 @@ declare module 'vue' {
         }>
         'gex-scroll-area': import('vue').DefineComponent<{
             enabled?: boolean; fill?: boolean; maxHeight?: number; minRows?: number; minHeight?: number
+            // NEW (2026-11-03): sideways, floating edges, the page step
+            axis?: 'y' | 'x'; edges?: 'strip' | 'overlay'; pageRatio?: number; minPageStep?: number
         }>
         'gex-video-surface': import('vue').DefineComponent<{
             video: import('gexplorer/widgets').VideoHandle | null | undefined
