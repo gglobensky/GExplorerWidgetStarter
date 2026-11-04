@@ -3124,7 +3124,9 @@ declare module 'gexplorer/widgets' {
 //     them through --gsa-overlay-w / -h / -radius / -bg / -bg-hover, or draw them yourself:
 //       <template #before="{ disabled, scroll }"><button :disabled="disabled" @click="scroll">‹</button></template>
 //       <template #after="{ disabled, scroll }"><button :disabled="disabled" @click="scroll">›</button></template>
-//     (shown while it overflows; before = left / top, after = right / bottom).
+//     (shown while it overflows; before = left / top, after = right / bottom; `active`: a drag is held over it).
+//     Dragging (a button held, or an HTML drag such as files) and resting on an edge for a moment scrolls that
+//     way, faster the longer it stays (2026-11-04); your own #before / #after edges get it too.
 //     :page-ratio (0.8) and :min-page-step (px, 80): how far a click scrolls.
 //     The ref's el is the scrolling element: center an item with el.scrollTo({ left, behavior }).
 //
