@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, inject, watch, onBeforeUnmount } from 'vue'
 import type { WidgetSdk, WidgetMenuItemMessage } from 'gexplorer/widgets'
-import { 
-  useScrollHints, 
-  useSnapResize,
+import {
   FavoritesConfig,
-  createDragTrigger,
   startRename,
+  type GexScrollAreaRef,
 } from 'gexplorer/widgets'
 
 import { useFavoritesData } from './useFavoritesData'
@@ -71,7 +69,9 @@ const hostVars = computed(() => ({
 
 // --- DOM Refs ----------------------------------------------------------------
 const rootEl = ref<HTMLElement | null>(null)
-const sidebarStripEl = ref<HTMLElement | null>(null)
+// 0.3.3: the list and the bar scroll in GEM Shell's <gex-scroll-area> (its ref's el is what scrolls)
+const listArea = ref<GexScrollAreaRef | null>(null)
+const toolbarArea = ref<GexScrollAreaRef | null>(null)
 const toolbarEl = ref<HTMLElement | null>(null)
 const listEl = ref<HTMLElement | null>(null)
 
@@ -195,6 +195,8 @@ const sortable = useFavoritesSortable({
   layout: () => layout.value,
   listEl,
   toolbarEl,
+  // 0.3.3: what scrolls while dragging near an edge: the scroll area around the list or the bar
+  scrollEl: () => (layout.value === 'list' ? listArea.value?.el : toolbarArea.value?.el) ?? null,
   rootRows,
   openMenus,
   rowEls,
@@ -247,62 +249,10 @@ function inMenus(sel: string): HTMLElement | null {
 }
 const inMenuContainer = (el: Element) => [...menuContainers.values()].some(c => c.contains(el))
 
-// --- Scroll Hints ------------------------------------------------------------
-const {
-  hasOverflow: listHasOverflow,
-  atStart: listAtTop,
-  atEnd: listAtBottom,
-  scrollByPage: listScrollByPage,
-} = useScrollHints({
-  scrollEl: sidebarStripEl,
-  axis: 'y',
-  deps: () => displayRootRows.value.length,
-  minPageStep: 60,
-})
-
-const {
-  hasOverflow: toolbarHasOverflow,
-  atStart: toolbarAtStart,
-  atEnd: toolbarAtEnd,
-  scrollByPage: toolbarScrollByPage,
-} = useScrollHints({
-  scrollEl: toolbarEl,
-  axis: 'x',
-  deps: () => displayRootRows.value.length,
-  minPageStep: 80,
-  wheel: 'transpose',
-})
-
-// --- Snap Resize (sidebar only) ----------------------------------------------
-const { style: sidebarListStyle, onResizeDown: onSidebarListResizeDown } =
-  useSnapResize({
-    targetEl: sidebarStripEl,
-    containerEl: rootEl,
-    itemCount: computed(() => displayRootRows.value.length),
-    stepPx: 26,
-    minSteps: 2,
-    maxSteps: 20,
-    paddingPx: 16,
-  })
-
-const onSidebarHandlePointerDown = createDragTrigger(
-  (e) => {
-    // Drag -> resize
-    onSidebarListResizeDown(e)
-  },
-  {
-    thresholdPx: 4,
-    gate: { includeDefaultInteractive: false },
-    suppressClickAfterDrag: true,
-  },
-)
-
-function onSidebarHandleClick() {
-  // Click -> scroll down (only when it makes sense)
-  if (listHasOverflow.value && !listAtBottom.value) {
-    listScrollByPage(1)
-  }
-}
+// --- Scrolling ---------------------------------------------------------------
+// 0.3.3 (GEM Shell Session N): the list (sidebar) and the bar (toolbar, grid) scroll in GEM Shell's
+// <gex-scroll-area>: its strips, the wheel turned sideways on the bar. The list's own scroller, its up strip and its
+// bottom handle (drag to resize, click to scroll) are gone: the sidebar row's min / max sizes it (Edit Layout).
 
 // --- Menu actions (entry.ts actions: other widgets' file menus, a tab's menu) -------------------
 // 2026-10-22 (claude/places-navigation-design.md):
@@ -551,29 +501,14 @@ defineExpose({ onWidgetAction, onMenuItem, onCommand })
         No favorites yet
       </div>
 
-      <!-- Vertical list mode with scroll hints -->
-      <div
+      <!-- Vertical list (0.3.3: GEM Shell's scroll area: ▲ / ▼ strips, at least two rows shown) -->
+      <gex-scroll-area
         v-if="displayRootRows.length"
-        class="favorites-list-shell"
+        ref="listArea"
+        class="favorites-list-area"
+        :min-height="52"
+        :min-page-step="60"
       >
-        <!-- Top hint (scroll up) -->
-        <button
-          v-if="listHasOverflow && !listAtTop"
-          type="button"
-          class="fav-scroll-strip fav-scroll-strip--up"
-          @click="listScrollByPage(-1)"
-          title="Scroll up"
-          aria-label="Scroll up"
-        >
-          <svg viewBox="0 0 10 6" aria-hidden="true"><path d="M1 5l4-4 4 4" /></svg>
-        </button>
-
-        <!-- Scrollable list wrapper -->
-        <div
-          class="favorites-list-wrapper"
-          ref="sidebarStripEl"
-          :style="sidebarListStyle"
-        >
           <ul class="favorites-list" :class="{ dense }" ref="listEl">
             <li
               v-for="row in displayRootRows"
@@ -641,17 +576,7 @@ defineExpose({ onWidgetAction, onMenuItem, onCommand })
               </div>
             </li>
           </ul>
-        </div>
-
-        <!-- Bottom resize handle (drag to resize or click to scroll) -->
-        <div
-          class="fav-list-resize-handle"
-          @pointerdown="onSidebarHandlePointerDown"
-          @click.stop="onSidebarHandleClick"
-        >
-          <div class="handle-line"></div>
-        </div>
-      </div>
+      </gex-scroll-area>
     </template>
 
     <!-- Toolbar mode -->
@@ -669,23 +594,11 @@ defineExpose({ onWidgetAction, onMenuItem, onCommand })
           >
             <svg class="fav-add-star" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 1.8l2.5 5.2 5.7.8-4.1 4 1 5.6L10 14.7l-5.1 2.7 1-5.6-4.1-4 5.7-.8z" /><path class="fav-add-plus" d="M10 7.4v5.2M7.4 10h5.2" /></svg>
           </button>
-
-          <!-- 0.2.0: thin strips, only when the favorites don't fit -->
-          <button
-            v-if="toolbarHasOverflow"
-            type="button"
-            class="fav-scroll-strip fav-scroll-strip--left"
-            title="Scroll left"
-            aria-label="Scroll left"
-            :disabled="editMode || toolbarAtStart"
-            @click.stop="toolbarScrollByPage(-1)"
-          >
-            <svg viewBox="0 0 6 10" aria-hidden="true"><path d="M5 1L1 5l4 4" /></svg>
-          </button>
         </div>
 
-        <!-- CENTER: scrollable content -->
-        <div class="favorites-toolbar-wrapper">
+        <!-- The bar (0.3.3: GEM Shell's sideways scroll area: its strips while the favorites don't fit, the wheel
+             scrolls it sideways) -->
+        <gex-scroll-area ref="toolbarArea" axis="x" fill class="favorites-toolbar-area" :min-page-step="80">
           <div
             class="favorites-toolbar"
             :class="{ dense }"
@@ -766,22 +679,7 @@ defineExpose({ onWidgetAction, onMenuItem, onCommand })
               </div>
             </template>
           </div>
-        </div>
-
-        <!-- RIGHT gutter: stable scroll (never overlaps X) -->
-        <div class="fav-toolbar-gutter right">
-          <button
-            v-if="toolbarHasOverflow"
-            type="button"
-            class="fav-scroll-strip fav-scroll-strip--right"
-            title="Scroll right"
-            aria-label="Scroll right"
-            :disabled="editMode || toolbarAtEnd"
-            @click.stop="toolbarScrollByPage(1)"
-          >
-            <svg viewBox="0 0 6 10" aria-hidden="true"><path d="M1 1l4 4-4 4" /></svg>
-          </button>
-        </div>
+        </gex-scroll-area>
       </div>
 
     </template>

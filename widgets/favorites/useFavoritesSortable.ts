@@ -19,6 +19,8 @@ export type UseFavoritesSortableOptions = {
     layout: () => 'list' | 'toolbar'
     listEl: Ref<HTMLElement | null>
     toolbarEl: Ref<HTMLElement | null>
+    /** 0.3.3: the element that scrolls (the list's or the bar's scroll area); none: listEl / toolbarEl. */
+    scrollEl?: () => HTMLElement | null
     rootRows: Ref<RootRow[]>
     openMenus: Ref<OpenMenu[]>
     rowEls: Map<RootRowId, HTMLElement>
@@ -191,7 +193,7 @@ export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
         identity: row => rowId(row),
         orientation: () => layout() === 'list' ? 'vertical' : 'horizontal',
         dragThresholdPx: 4,
-        scrollContainer: () => layout() === 'list' ? listEl.value : toolbarEl.value,
+        scrollContainer: () => opts.scrollEl?.() ?? (layout() === 'list' ? listEl.value : toolbarEl.value),
         containerClassOnDrag: 'gex-fav-dragging',
         rowSelector: '[data-fav-row-id]',
         rowIdAttr: 'data-fav-row-id',

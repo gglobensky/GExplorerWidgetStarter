@@ -148,65 +148,10 @@
   border-bottom: 1px dashed rgba(255, 255, 255, 0.4);
 }
 
-.fav-list-resize-handle {
-  height: 18px;
-  margin-top: 6px;
-  cursor: ns-resize;
-  background: linear-gradient(to bottom, transparent, rgba(255,255,255,0.10), transparent);
-  border-radius: 6px;
-  display: grid;
-  place-items: center;
-}
-
-
-.fav-list-resize-handle .handle-line {
-  width: 36px;
-  height: 3px;
-  border-radius: 2px;
-  background: rgba(255,255,255,0.28);
-}
-
-.fav-list-resize-handle .chev {
-  opacity: 0.7;
-  font-size: 12px;
-  line-height: 1;
-}
-
-.fav-list-resize-handle::before {
-  content: '';
-  display: block;
-  margin: 1px auto 0;
-  width: 40%;
-  height: 2px;
-  border-radius: 999px;
-  opacity: 0.35;
-  background: rgba(255, 255, 255, 0.7);
-}
-
-
 
 /* Vertical list mode: shell anchors overlays (top hint) */
-.favorites-list-shell {
-  position: relative;
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
 
-/* Vertical list mode: outer wrapper handles scroll + height */
-.favorites-list-wrapper {
-  flex: 1 1 auto;
-  min-height: 0;      /* critical in column flex layouts */
-  overflow-y: auto;   /* <-- the missing piece */
-  overflow-x: hidden;
-  scrollbar-width: none;
-}
-.favorites-list-wrapper::-webkit-scrollbar {
-  width: 0;
-  height: 0;                      /* Chrome/Edge */
-}
-/* Inner list just stacks rows */
+/* The list just stacks rows */
 .favorites-list {
   list-style: none;
   margin: 0;
@@ -314,15 +259,20 @@
 }
 
 /* make the scroll container take the wrapper’s width */
+/* 0.3.3: the bar's row inside GEM Shell's sideways scroll area (which scrolls it): as wide as its pills, at least
+   the area's width (a drop on its empty end lands after the last one) */
 .favorites-toolbar {
-  width: 100%;
-  overflow-x: auto;     /* <-- REQUIRED */
-  overflow-y: hidden;
-  scrollbar-width: none;
+  flex: 0 0 auto;
+  width: max-content;
+  min-width: 100%;
 }
-.favorites-toolbar::-webkit-scrollbar {
-  width: 0;
-  height: 0;                   /* Chrome/Edge */
+.favorites-toolbar-area {
+  height: 100%;
+  --gsa-align: stretch;
+}
+/* 0.3.3: the sidebar's list in GEM Shell's scroll area: as tall as its rows, shrinking when the row is short */
+.favorites-list-area {
+  flex: 0 1 auto;
 }
 
 /* viewport wrapper to host overlay arrows */
@@ -372,12 +322,6 @@
   border-color: rgba(255,255,255,0.22);
 }
 
-/* viewport is already display:flex; the wrapper MUST flex + shrink */
-.favorites-toolbar-wrapper {
-  flex: 1 1 auto;
-  min-width: 0;        /* critical for flex children to shrink */
-  overflow: hidden;    /* prevents inner scrollbars from leaking */
-}
 
 /* Thin vertical grip on the right for width resizing */
 .fav-toolbar-resize-handle {
@@ -643,9 +587,6 @@
   padding-right: 4px;
 }
 
-.fav-toolbar-gutter.right {
-  padding-left: 4px;
-}
 
 /* ── 0.2.0 (2026-10-28) ─────────────────────────────────────────────── */
 
@@ -691,58 +632,6 @@
   cursor: default;
 }
 
-/* Scroll strips: thin, flat, only when the favorites don't fit; dimmed at the end they reached */
-.fav-scroll-strip {
-  flex: none;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 0;
-  border-radius: 3px;
-  background: color-mix(in srgb, currentColor 6%, transparent);
-  color: inherit;
-  cursor: pointer;
-  opacity: 0.75;
-}
-.fav-scroll-strip svg {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.5;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.fav-scroll-strip:hover:not(:disabled) {
-  opacity: 1;
-  background: color-mix(in srgb, currentColor 14%, transparent);
-}
-.fav-scroll-strip:disabled {
-  opacity: 0.18;
-  cursor: default;
-}
-.fav-scroll-strip--left,
-.fav-scroll-strip--right {
-  width: 10px;
-  align-self: stretch;
-  margin: 3px 0;
-}
-.fav-scroll-strip--left svg,
-.fav-scroll-strip--right svg {
-  width: 5px;
-  height: 9px;
-}
-.fav-scroll-strip--up {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 6;
-  height: 10px;
-  background: color-mix(in srgb, var(--fav-bg, #141414) 70%, currentColor 10%);
-}
-.fav-scroll-strip--up svg {
-  width: 9px;
-  height: 5px;
-}
 
 /* A favorite opening 2-4 folders side by side: the count on its star */
 .fav-icon--multi {
