@@ -3085,6 +3085,12 @@ declare module 'gexplorer/widgets' {
          * that may own things); null / absent: anyone (an elevated GEM Shell) or not known. Others: "needs admin".
          */
         ownerChoices?: string[] | null
+        /**
+         * H4c-6: one line per person or group, from THEIR OWN rows that apply to the item (not their groups'): level,
+         * their real access; fromFolder, what its folder gives them (null: nothing); setHere, the item has rows of its
+         * own for them; lowered, one of those denies part of what they'd have. Older GEM Shell: absent.
+         */
+        people?: { who: FsPrincipal; level: PermissionLevel; fromFolder: PermissionLevel | null; setHere: boolean; lowered: boolean }[]
     }
 
     /** GEM Shell 2026-11-05 (H4c): sdk.fsSetPermissions()'s change. entries: the EXPLICIT rows as wanted (they replace them). */
@@ -3093,6 +3099,12 @@ declare module 'gexplorer/widgets' {
         ownerId?: string
         inherit?: boolean
         unixMode?: number
+        /**
+         * H4c-6: per person, their real access as wanted (null: their own rows go, the folder's apply again): GEM
+         * Shell writes the rows it takes (Windows: an allowed row, a denied row for what the folder gives beyond it,
+         * every right denied for 'none'). Applied after `entries`.
+         */
+        people?: { principalId: string; level: Exclude<PermissionLevel, 'special'> | null }[]
     }
 
     /** GEM Shell 2026-11-05: sdk.ui().openWindow's options. */

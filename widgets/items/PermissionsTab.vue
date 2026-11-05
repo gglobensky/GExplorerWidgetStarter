@@ -14,18 +14,40 @@
 // 0.13.2 (H4c-5): People lists allowed rows and "No access" rows (Windows writes "No access" as a row denying
 // everything: infoNote says so when it happens); Advanced → Denied lists the partly denied rows. An inherited row
 // this item's "No access" overrules is struck through.
+// 0.14.0 (H4c-6): ONE LINE PER PERSON (the draft's `lines`, from GEM Shell's `people`): their real access, where it
+// comes from (its folder / here / lowered here / No access here), every line editable (the folder's too: GEM Shell
+// writes the rows it takes); × puts their access back to the folder's. "Add or edit…": someone already listed is
+// focused and flashed. Older GEM Shell (no `people`): the rows, read-only.
 import { computed, ref, watch, nextTick } from 'vue'
-import type { PermissionLevel } from 'gexplorer/widgets'
+import type { PermissionLevel, FsPrincipal } from 'gexplorer/widgets'
 import { LEVELS, LEVEL_WORDS, APPLIES_TO, type PermissionsDraft, type PermRow } from './permissionsDraft'
 import PrincipalPicker from './PrincipalPicker.vue'
 
 const props = defineProps<{ d: PermissionsDraft; isDir: boolean }>()
 const {
   perms, loadError, loading, busy, checking, editNote, infoNote, failedPart, rev, view, canEdit, features,
-  allowRows, denyRows, peopleRows, deniedRows, inheritedPeople, inheritedDenied, shownLevel, deniedHere,
+  allowRows, denyRows, deniedRows, inheritedDenied, hasPeople, lines, focusId, inherited,
   owner, inherit, mode, modeDirty, modeValid, picker,
-  openPicker, setLevel, setAppliesTo, removeRow, setInherit, commitMode, undoOwner,
+  openPicker, setLevel, setPerson, resetPerson, setAppliesTo, removeRow, setInherit, commitMode, undoOwner,
 } = props.d
+
+// 0.14.0: the line the picker found takes the focus (after the picker's own focus return), flashed a moment
+const flashId = ref<string | null>(null)
+watch(focusId, id => {
+  if (!id) return
+  void nextTick(() => {
+    const el = root.value?.querySelector<HTMLElement>(`[data-pid="${CSS.escape(id)}"]`)
+    el?.scrollIntoView({ block: 'nearest' })
+    el?.focus({ preventScroll: true })
+    flashId.value = id
+    setTimeout(() => { if (flashId.value === id) flashId.value = null }, 1500)
+    focusId.value = null
+  })
+})
+const PERSON_LEVELS = LEVELS
+function onPerson(who: FsPrincipal, ev: Event): void {
+  void setPerson(who, (ev.target as HTMLSelectElement).value as PermissionLevel)
+}
 
 const root = ref<HTMLElement | null>(null)
 // The picker closed (picked, Cancel, Escape): the focus comes back here, so the next Escape reaches the window
@@ -108,33 +130,41 @@ const readOnlyWhy = computed(() => {
         <h3>Who may use it</h3>
         <div class="ipt-list">
           <table class="ipw-acl ipt-acl">
-            <tbody>
-              <tr v-for="r in peopleRows" :key="r.key" :class="{ deny: r.deny }">
-                <td :title="r.who.id">{{ r.who.name }}</td>
+            <tbody v-if="hasPeople">
+              <tr v-for="l in lines" :key="`${l.who.id}:${rev}`"
+                  :class="{ deny: l.level === 'none', 'ipt-changed-row': l.changed, 'ipt-flash': flashId === l.who.id, 'ipt-removed': l.removed }">
+                <td :title="l.who.id">
+                  {{ l.who.name }}
+                  <span v-if="l.source" class="ipt-src">{{ l.source }}</span>
+                </td>
                 <td class="ipt-level">
-                  <select v-if="canEdit" :value="shownLevel(r)" :disabled="rowsLocked" @change="onLevel(r, $event)">
-                    <option v-for="l in levelsFor(r)" :key="l.id" :value="l.id" :title="l.hint">{{ l.label }}</option>
+                  <select v-if="canEdit && !l.removed" :value="l.level" :data-pid="l.who.id" :disabled="rowsLocked" @change="onPerson(l.who, $event)">
+                    <option v-for="lv in PERSON_LEVELS" :key="lv.id" :value="lv.id" :title="lv.hint">{{ lv.label }}</option>
+                    <option v-if="l.level === 'special'" value="special" disabled>Special (kept until changed)</option>
                   </select>
-                  <span v-else>{{ LEVEL_WORDS[shownLevel(r)] }}</span>
+                  <span v-else>{{ LEVEL_WORDS[l.level] }}</span>
                 </td>
                 <td class="ipt-x">
-                  <button v-if="canEdit && features?.addPrincipals" type="button" class="ipt-del" :disabled="rowsLocked"
-                          :title="`Remove ${r.who.name}`" @click="removeRow(r)">×</button>
+                  <button v-if="canEdit && l.removable" type="button" class="ipt-del" :disabled="rowsLocked"
+                          :title="l.fromFolder ? `Back to what its folder gives ${l.who.name} (${LEVEL_WORDS[l.fromFolder]})` : `Remove ${l.who.name}`"
+                          @click="resetPerson(l.who)">×</button>
                 </td>
               </tr>
-              <tr v-for="(e, i) in inheritedPeople" :key="`i${i}`" class="ipt-inh"
-                  :class="{ deny: e.deny, 'ipt-over': !e.deny && deniedHere(e.who.id) }">
-                <td :title="e.who.id">{{ e.who.name }}</td>
-                <td :title="!e.deny && deniedHere(e.who.id) ? 'Overruled by No access here' : undefined">{{ LEVEL_WORDS[shownLevel(e)] }}</td>
-                <td class="ipw-muted" title="Its folder's: change it there">inherited</td>
+              <tr v-if="!lines.length"><td colspan="3" class="ipw-muted">No one.</td></tr>
+            </tbody>
+            <!-- Older GEM Shell (no one-line-per-person model): the rows, read-only -->
+            <tbody v-else>
+              <tr v-for="r in allowRows" :key="r.key"><td :title="r.who.id">{{ r.who.name }}</td><td>{{ LEVEL_WORDS[r.level] }}</td><td></td></tr>
+              <tr v-for="(e, i) in inherited.filter(x => !x.deny)" :key="`i${i}`" class="ipt-inh">
+                <td :title="e.who.id">{{ e.who.name }}</td><td>{{ LEVEL_WORDS[e.level] }}</td><td class="ipw-muted">inherited</td>
               </tr>
-              <tr v-if="!peopleRows.length && !inheritedPeople.length"><td colspan="3" class="ipw-muted">No one.</td></tr>
             </tbody>
           </table>
         </div>
-        <div v-if="canEdit && features?.addPrincipals" class="ipt-bar">
-          <button type="button" class="ipw-btn" :disabled="rowsLocked" @click="openPicker('allow')">Add a person or group…</button>
+        <div v-if="canEdit && hasPeople && features?.addPrincipals" class="ipt-bar">
+          <button type="button" class="ipw-btn" :disabled="rowsLocked" @click="openPicker('allow')">Add or edit a person or group…</button>
         </div>
+        <p v-if="!hasPeople && canEdit" class="ipw-muted">Editing who may use it needs a newer GEM Shell.</p>
         <p v-if="anyDeny" class="ipw-note">Some access is denied: <button type="button" class="ipt-link" @click="showView('advanced')">see Advanced</button>.</p>
         <p v-if="modeDirty" class="ipw-note">The mode typed under Advanced is saved instead of these rows.</p>
         <p v-if="infoNote" class="ipt-info">{{ infoNote }}</p>
@@ -243,7 +273,11 @@ const readOnlyWhy = computed(() => {
 .ipt-acl .ipt-level { width: 1%; }
 .ipt-acl .ipt-x { width: 1%; text-align: right; }
 .ipt-inh td { opacity: .7; }
-.ipt-over td:nth-child(2) { text-decoration: line-through; }
+.ipt-src { margin-left: 6px; color: color-mix(in oklab, var(--fg, #e8e8e8) 50%, transparent); font-size: 10px; }
+.ipt-changed-row td:first-child { font-weight: 600; }
+.ipt-removed td { text-decoration: line-through; opacity: .6; }
+.ipt-flash td { background: color-mix(in oklab, var(--accent, #4ea1ff) 22%, transparent); transition: background .3s; }
+@media (prefers-reduced-motion: reduce) { .ipt-flash td { transition: none; } }
 .ipt-info { padding: 4px 6px; border-left: 2px solid var(--accent, #4ea1ff); background: color-mix(in oklab, var(--accent, #4ea1ff) 10%, transparent); font-size: 11px; }
 .ipt select, .ipt-mode input {
   padding: 1px 4px; border: 1px solid var(--items-border, #ffffff24); border-radius: 4px;

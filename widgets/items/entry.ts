@@ -19,7 +19,9 @@ const ARRANGES = [
 export default {
     api:     '1.0',
     id:      'items',
-    version: '0.13.2',   // 0.13.2 (2026-11-05, GEM Shell H4c-5): "No access" means no access on Windows too (written as a row
+    version: '0.14.0',   // 0.14.0 (2026-11-05, GEM Shell H4c-6): one line per person, every line editable (GEM Shell writes
+                         // the rows: lowered here, No access); "Add or edit" focuses someone already listed
+                         // 0.13.2 (2026-11-05, GEM Shell H4c-5): "No access" means no access on Windows too (written as a row
                          // denying everything, said once); partly denied rows under Advanced
                          // 0.13.1 (2026-11-05, GEM Shell H4c-4): Permissions without scrollbars (People / Advanced views, the
                          // picker in the tab's place, short lists scroll), GEM Shell's risk question when a choice is

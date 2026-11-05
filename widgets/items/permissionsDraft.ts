@@ -11,6 +11,12 @@
 // this item's), so an allowed row at "No access" took nothing away: there, "No access" is written as a DENIED row
 // with every right (a denied right wins), shown under People as "No access" (infoNote says so once); a partly
 // denied row (Read, Read & run, Read & write) stays under Advanced. Linux: no bits, as before.
+// 0.14.0 (H4c-6): ONE LINE PER PERSON (GEM Shell's model `people`): each person's real access and where it comes
+// from (its folder, here, lowered here). Every line is editable, the folder's too: the level chosen becomes their
+// real access, and GEM Shell writes the rows it takes (`people` in the change: an allowed row, a denied row for what
+// the folder gives beyond it, every right denied for No access; × puts them back to the folder's). The picker adds
+// or EDITS: a person already listed is focused, never listed twice. Advanced keeps the raw rows (partly denied,
+// where each applies). An older GEM Shell (no `people`): the lines are read-only.
 //   rows       the item's EXPLICIT rows (allow and deny), as wanted: sent whole (they replace the explicit ones)
 //   owner      a new owner (Windows; the picker in owner mode; ownerChoices: who may own it without admin rights)
 //   inherit    inheritance from the folder on / off (Windows)
@@ -62,7 +68,10 @@ const normMode = (m: string | null | undefined) => (m ?? '').trim().padStart(4, 
 let nextKey = 1
 
 /** What one choice may be undone to (0.13.1). */
-type State = { rows: PermRow[]; owner: FsPrincipal | null; inherit: boolean | null; mode: string }
+type State = {
+  rows: PermRow[]; owner: FsPrincipal | null; inherit: boolean | null; mode: string
+  wanted: Record<string, Exclude<PermissionLevel, 'special'> | null>; added: FsPrincipal[]
+}
 
 export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null, isDirOf: () => boolean) {
   const perms = ref<FsPermissions | null>(null)
@@ -83,6 +92,12 @@ export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null,
 
   const rows = ref<PermRow[]>([])
   let savedRows = '[]'
+  /** 0.14.0: per person (id), their level as wanted (null: back to the folder's); absent: unchanged. */
+  const wanted = ref<Record<string, Exclude<PermissionLevel, 'special'> | null>>({})
+  /** 0.14.0: people added here (not in the model yet). */
+  const added = ref<FsPrincipal[]>([])
+  /** 0.14.0: the line the picker found (its level control takes the focus). */
+  const focusId = ref<string | null>(null)
   const owner = ref<FsPrincipal | null>(null)
   const inherit = ref<boolean | null>(null)
   const mode = ref('')
@@ -99,16 +114,49 @@ export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null,
   const denyRows = computed(() => rows.value.filter(r => r.deny))
   /** 0.13.2: a row denying everything is "No access" (Windows' way to write it). */
   const isNoAccess = (r: { deny: boolean; level: PermissionLevel }) => r.deny && r.level === 'full'
-  /** People: allowed rows and "No access" rows. */
-  const peopleRows = computed(() => rows.value.filter(r => !r.deny || isNoAccess(r)))
   /** Advanced: the partly denied rows. */
   const deniedRows = computed(() => rows.value.filter(r => r.deny && !isNoAccess(r)))
-  const inheritedPeople = computed(() => inherited.value.filter(e => !e.deny || isNoAccess(e)))
   const inheritedDenied = computed(() => inherited.value.filter(e => e.deny && !isNoAccess(e)))
-  /** The level a People line shows. */
-  const shownLevel = (r: { deny: boolean; level: PermissionLevel }): PermissionLevel => isNoAccess(r) ? 'none' : r.level
-  /** An inherited row this item's own "No access" overrules (shown struck through). */
-  const deniedHere = (principalId: string) => rows.value.some(r => isNoAccess(r) && r.who.id === principalId)
+
+  // ── One line per person (0.14.0) ───────────────────────────────────────────────
+  const hasPeople = computed(() => Array.isArray(perms.value?.people))
+  const RANK: Partial<Record<PermissionLevel, number>> = { none: 0, read: 1, readRun: 2, readWrite: 3, full: 4 }
+  /** Where a line's access comes from, in words. */
+  function sourceOf(level: PermissionLevel, fromFolder: PermissionLevel | null, here: boolean, lowered: boolean): string {
+    if (!here) return fromFolder ? 'from its folder' : ''
+    if (level === 'none') return 'No access here'
+    if (lowered) return 'lowered here'
+    if (fromFolder && level === fromFolder) return 'from its folder'
+    if (fromFolder && (RANK[level] ?? 0) < (RANK[fromFolder] ?? 0)) return 'lowered here'
+    return 'here'
+  }
+  type PersonLine = {
+    who: FsPrincipal; level: PermissionLevel; fromFolder: PermissionLevel | null
+    source: string; changed: boolean; removable: boolean; removed: boolean
+  }
+  const lines = computed<PersonLine[]>(() => {
+    const out: PersonLine[] = []
+    const base = perms.value?.people ?? []
+    for (const p of base) {
+      const w = wanted.value[p.who.id]
+      if (w === undefined) {
+        out.push({ who: p.who, level: p.level, fromFolder: p.fromFolder, source: sourceOf(p.level, p.fromFolder, p.setHere, p.lowered),
+          changed: false, removable: p.setHere && !features.value?.unixBits, removed: false })
+      } else if (w === null) {
+        const lvl = p.fromFolder ?? 'none'
+        out.push({ who: p.who, level: lvl, fromFolder: p.fromFolder, source: p.fromFolder ? 'from its folder' : 'removed',
+          changed: true, removable: false, removed: !p.fromFolder })
+      } else {
+        out.push({ who: p.who, level: w, fromFolder: p.fromFolder, source: sourceOf(w, p.fromFolder, w !== p.fromFolder, false),
+          changed: true, removable: !features.value?.unixBits, removed: false })
+      }
+    }
+    for (const who of added.value) {
+      const w = wanted.value[who.id] ?? 'read'
+      out.push({ who, level: w, fromFolder: null, source: 'here', changed: true, removable: true, removed: false })
+    }
+    return out
+  })
 
   const snapshot = (list: PermRow[]) => JSON.stringify(list.map(r => [r.who.id, r.level, r.deny, r.appliesTo, r.rights, r.inheritanceFlags, r.propagationFlags]))
   const rowsDirty = computed(() => snapshot(rows.value) !== savedRows)
@@ -116,7 +164,8 @@ export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null,
   const inheritDirty = computed(() => inherit.value !== null && inherit.value !== perms.value?.inherits)
   const modeDirty = computed(() => !!features.value?.unixBits && normMode(mode.value) !== normMode(perms.value?.unixMode))
   const modeValid = computed(() => MODE_RE.test(mode.value.trim()))
-  const dirty = computed(() => rowsDirty.value || ownerDirty.value || inheritDirty.value || modeDirty.value)
+  const peopleDirty = computed(() => Object.keys(wanted.value).length > 0 || added.value.length > 0)
+  const dirty = computed(() => rowsDirty.value || ownerDirty.value || inheritDirty.value || modeDirty.value || peopleDirty.value)
 
   /** Whether making <id> the owner needs administrator rights (Windows; null ownerChoices: no one does). */
   function ownerNeedsAdmin(id: string): boolean {
@@ -131,6 +180,9 @@ export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null,
       rights: e.rights, inheritanceFlags: e.inheritanceFlags, propagationFlags: e.propagationFlags, orig: e.level,
     }))
     savedRows = snapshot(rows.value)
+    wanted.value = {}
+    added.value = []
+    focusId.value = null
     owner.value = null
     inherit.value = null
     mode.value = modeCommitted = p?.unixMode ?? ''
@@ -171,6 +223,13 @@ export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null,
         rights: r.rights, inheritanceFlags: r.inheritanceFlags, propagationFlags: r.propagationFlags,
       }))
     }
+    // 0.14.0: per person (after the rows: it wins for them); a typed mode wins over both
+    if (!modeDirty.value && peopleDirty.value) {
+      const people: NonNullable<FsPermissionsChange['people']> = []
+      for (const [principalId, level] of Object.entries(wanted.value)) people.push({ principalId, level })
+      for (const who of added.value) if (!(who.id in wanted.value)) people.push({ principalId: who.id, level: 'read' })
+      change.people = people
+    }
     if (ownerDirty.value) change.ownerId = owner.value!.id
     if (inheritDirty.value) change.inherit = inherit.value!
     return change
@@ -178,13 +237,16 @@ export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null,
 
   // ── Editing: every choice goes through edit() (0.13.1) ─────────────────────────────
   function capture(): State {
-    return { rows: rows.value.map(r => ({ ...r })), owner: owner.value, inherit: inherit.value, mode: modeCommitted }
+    return { rows: rows.value.map(r => ({ ...r })), owner: owner.value, inherit: inherit.value, mode: modeCommitted,
+      wanted: { ...wanted.value }, added: [...added.value] }
   }
   function restore(s: State): void {
     rows.value = s.rows.map(r => ({ ...r, key: nextKey++ }))   // new keys: the selects are drawn again
     owner.value = s.owner
     inherit.value = s.inherit
     mode.value = modeCommitted = s.mode
+    wanted.value = { ...s.wanted }
+    added.value = [...s.added]
     rev.value++
   }
 
@@ -211,25 +273,37 @@ export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null,
     }
   }
 
+  /** Advanced: a raw row's level (a partly denied one). */
   function setLevel(row: PermRow, level: PermissionLevel): Promise<void> {
+    return edit(() => { const r = rows.value.find(x => x.key === row.key); if (r) r.level = level })
+  }
+
+  /** 0.14.0: a person's real access as wanted; GEM Shell writes what it takes (said once on Windows). */
+  function setPerson(who: FsPrincipal, level: PermissionLevel): Promise<void> {
+    if (level === 'special') return Promise.resolve()
     return edit(() => {
-      const i = rows.value.findIndex(x => x.key === row.key)
-      if (i < 0) return
-      const r = rows.value[i]
-      if (features.value?.deny) {
-        // 0.13.2 (Windows): "No access" ⇄ a row denying everything
-        if (isNoAccess(r)) {
-          if (level !== 'none') rows.value.splice(i, 1, { ...r, key: nextKey++, deny: false, level, rights: 0, orig: 'none' })
-          return
-        }
-        if (!r.deny && level === 'none') {
-          if (rows.value.some(x => isNoAccess(x) && x.who.id === r.who.id)) rows.value.splice(i, 1)
-          else rows.value.splice(i, 1, { ...r, key: nextKey++, deny: true, level: 'full', rights: 0, orig: 'none' })
-          infoNote.value = `"No access" for ${r.who.name}: Windows adds up what its folder, groups and this item allow, so GEM Shell writes it as a denied row (every right denied: a denied right wins over any allowed one).`
-          return
-        }
+      const base = perms.value?.people?.find(p => p.who.id === who.id)
+      if (base && base.level === level && !base.lowered) {
+        const next = { ...wanted.value }; delete next[who.id]; wanted.value = next   // back to what it is
+      } else {
+        wanted.value = { ...wanted.value, [who.id]: level }
       }
-      r.level = level
+      if (!features.value?.deny) return
+      const folder = base?.fromFolder ?? null
+      if (level === 'none') infoNote.value = `"No access" for ${who.name}: Windows adds up what its folder, its groups and this item allow, so GEM Shell writes it as a row denying every right (a denied right wins).`
+      else if (folder && (RANK[level] ?? 0) < (RANK[folder] ?? 0)) infoNote.value = `Its folder gives ${who.name} ${LEVEL_WORDS[folder]}: GEM Shell denies the difference here, so ${LEVEL_WORDS[level]} is what they get (a denied row, listed under Advanced once saved).`
+    })
+  }
+
+  /** 0.14.0: × on a line: their own rows go (the folder's apply again); someone just added goes away. */
+  function resetPerson(who: FsPrincipal): Promise<void> {
+    return edit(() => {
+      if (added.value.some(a => a.id === who.id)) {
+        added.value = added.value.filter(a => a.id !== who.id)
+        const next = { ...wanted.value }; delete next[who.id]; wanted.value = next
+      } else {
+        wanted.value = { ...wanted.value, [who.id]: null }
+      }
     })
   }
   function setAppliesTo(row: PermRow, appliesTo: string): Promise<void> {
@@ -316,8 +390,15 @@ export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null,
       return
     }
     const deny = m === 'deny'
-    const listed = deny ? deniedRows.value : peopleRows.value
-    if (listed.some(r => r.who.id === who.id)) { pickerNote.value = `${who.name} is already listed.`; return }
+    if (!deny) {
+      // 0.14.0: add OR EDIT: someone listed is focused (never listed twice)
+      closePicker()
+      if (lines.value.some(l => l.who.id === who.id)) { focusId.value = who.id; return }
+      void edit(() => { added.value = [...added.value, who] })
+      focusId.value = who.id
+      return
+    }
+    if (deniedRows.value.some(r => r.who.id === who.id)) { pickerNote.value = `${who.name} is already listed.`; return }
     closePicker()
     void edit(() => {
       rows.value = [...rows.value, {
@@ -381,8 +462,8 @@ export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null,
 
   return {
     perms, loadError, loading, busy, checking, editNote, infoNote, failedPart, rev, view, canRead, canEdit, features,
-    rows, inherited, allowRows, denyRows, peopleRows, deniedRows, inheritedPeople, inheritedDenied, shownLevel, deniedHere, owner, inherit, mode, modeDirty, modeValid, dirty, ownerNeedsAdmin,
-    load, setLevel, setAppliesTo, removeRow, setInherit, commitMode, undoOwner,
+    rows, inherited, allowRows, denyRows, deniedRows, inheritedDenied, hasPeople, lines, focusId, owner, inherit, mode, modeDirty, modeValid, dirty, ownerNeedsAdmin,
+    load, setLevel, setPerson, resetPerson, setAppliesTo, removeRow, setInherit, commitMode, undoOwner,
     picker, query, found, searching, unreachable, pickerNote, openPicker, closePicker, pick, useTyped,
     save, discard,
   }
