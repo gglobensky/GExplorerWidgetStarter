@@ -223,6 +223,21 @@ declare module 'gexplorer/widgets' {
          */
         fsWriteText?: (path: string, text: string, opts?: { overwrite?: boolean; bom?: boolean }) => Promise<void>
         /**
+         * NEW (GEM Shell 2026-11-05). Write cap. Writes a whole binary file (a picture you saved): a Uint8Array, an
+         * ArrayBuffer or a Blob (canvas.toBlob), at most 256 MB. overwrite false (the default): fails when the file
+         * exists. The grant asked is for the file itself (a file picked in ui().saveFile, or handed to a picture
+         * editor, is granted alone: no prompt). Rejects on failure.
+         */
+        fsWriteBytes?: (path: string, data: Uint8Array | ArrayBuffer | Blob, opts?: { overwrite?: boolean }) => Promise<void>
+        /**
+         * NEW (GEM Shell 2026-11-05). Read cap. A whole file's bytes as a Blob (`type`: its MIME type). maxBytes:
+         * default 64 MB, at most 256 MB (rejects, code E_TOO_LARGE). A file in a protected folder asks for
+         * administrator rights there once. A picture to show: `URL.createObjectURL(blob)` (GEM Shell's pages show
+         * blob: and data: pictures, not a loopback stream's); your canvas stays readable. Rejects with an Error
+         * whose `code` says why (E_NOT_FOUND, E_IS_FOLDER, E_TOO_LARGE, E_ACCESS_DENIED...).
+         */
+        fsReadBytes?: (path: string, opts?: { maxBytes?: number; type?: string }) => Promise<Blob>
+        /**
          * Copy / move files and folders. `to` is the full destination path of each
          * item (folder + name), never just the folder. Nothing is replaced: a taken
          * name gets a new one from the app naming pattern ("a (2).txt"); a copy onto
@@ -303,6 +318,12 @@ declare module 'gexplorer/widgets' {
          * time, and close when it unmounts. Same object on every call.
          */
         ui?: () => WidgetUi
+        /**
+         * NEW (GEM Shell 2026-11-05). Your own window, when GEM Shell runs your widget in one (the window context: a
+         * picture editor opened by "Edit picture", `role: 'picture-editor'`); null anywhere else. README "A picture
+         * editor". Same object on every call.
+         */
+        window?: () => WidgetWindow | null
         /**
          * NEW (2026-10-28): the keys of this widget's own commands (entry.ts commands, by their short id), for
          * text that isn't a button's tooltip: a canvas, a status line, "press Space to...". Buttons use
@@ -480,6 +501,12 @@ declare module 'gexplorer/widgets' {
          * reading every path on the clipboard does (the consent dialog).
          */
         clipboardGetFiles?: (opts?: { pathsLimit?: number; inFolder?: string; under?: string[] }) => Promise<ClipboardState>
+        /**
+         * NEW (GEM Shell 2026-11-05). Clipboard cap. Puts a picture (PNG bytes) on the clipboard, replacing what was
+         * there: every program can paste it. Only right after the user's own click or key press in your widget
+         * (a command's key counts): rejects otherwise, and the security log notes it. At most 256 MB.
+         */
+        clipboardSetImage?: (png: Uint8Array | ArrayBuffer | Blob) => Promise<void>
         /**
          * Clipboard + Write caps. Pastes the OS clipboard into targetDir (copy, or
          * move after a cut), any count, as one backend job: progress dialog,
@@ -2238,7 +2265,59 @@ declare module 'gexplorer/widgets' {
      * grid, marked as not the default. Other values are ignored (with a console warning).
      */
     export type WidgetRoleDeclaration = {
-        role?: 'explorer'
+        /**
+         * NEW (GEM Shell 2026-11-05): `'picture-editor'`: GEM Shell's picture editor. It runs in a window of its own
+         * (placement.context 'window', sdk.window()), opened by "Edit picture" with ONE picture handed to it; never
+         * offered for a hub's grid, the sidebar or the toolbar (for now). README "A picture editor".
+         */
+        role?: 'explorer' | 'picture-editor'
+    }
+
+    /** NEW (GEM Shell 2026-11-05): what GEM Shell handed your window (sdk.window().opened). */
+    export type WidgetWindowOpen = {
+        kind: 'file'
+        /**
+         * The file's full path. Your widget may read it and write it (that file only: no folder, no file beside it)
+         * as long as GEM Shell runs: the user handed it ("Edit picture"). Save anything else through ui().saveFile.
+         */
+        path: string
+        /** Its name. */
+        name: string
+        /** Writing it needs administrator rights: fsWriteBytes asks (the consent dialog, then your helper). */
+        needsElevation: boolean
+    }
+
+    /** NEW (GEM Shell 2026-11-05): your changes, for the window GEM Shell frames (setDraft). */
+    export type WidgetWindowDraft = {
+        /** Something changed (read refs: GEM Shell follows it). */
+        dirty: () => boolean
+        /** Saves; throw to keep the changes (the window stays open, your message shown). */
+        save: () => Promise<void> | void
+        /** Back to what was there. */
+        discard: () => void
+    }
+
+    /** NEW (GEM Shell 2026-11-05): sdk.window(), your own window (the window context). */
+    export type WidgetWindow = {
+        /** What GEM Shell handed you; null: nothing. */
+        readonly opened: Readonly<WidgetWindowOpen> | null
+        /** What you kept (keep) before GEM Shell closed, back when the user chose Resume; null otherwise. */
+        readonly restored: unknown
+        /** The window's title, after your widget's name (which you can't change). 80 characters. */
+        setTitle(title: string): void
+        /**
+         * Your changes. Closing the window with changes asks the user Save / Discard / Stay (Save runs save); Ctrl+S
+         * saves; GEM Shell's own close question counts them. null: none.
+         */
+        setDraft(draft: WidgetWindowDraft | null): void
+        /**
+         * Plain data (JSON, 2 MB at most) to come back with after a restart while changes aren't saved: the user is
+         * offered "Unsaved edit of <title> — Resume / Discard", and Resume opens your window again with it as
+         * `restored`. Kept encrypted. null: nothing kept. Throws when it isn't plain data or is too large.
+         */
+        keep(data: unknown): void
+        /** Closes the window (with changes not saved: the user's question first). true: closed. */
+        close(): Promise<boolean>
     }
 
     /** What sdk.navigate / openPath / openUrl / setView resolve to. */
@@ -2252,7 +2331,8 @@ declare module 'gexplorer/widgets' {
     // outside your box"). inject<Ref<HTMLElement | null>>('widgetOverlay') (the widget's own layer, where a <Teleport>
     // of its lands) draws under every shell dialog and, from E5c, is clipped to the widget's box plus 24 px.
     export type WidgetPlacement = {
-        context: 'grid' | 'sidebar' | 'toolbar' | 'embedded' | 'dialog'
+        /** 'window' (GEM Shell 2026-11-05): a window of your own (sdk.window()). */
+        context: 'grid' | 'sidebar' | 'toolbar' | 'embedded' | 'dialog' | 'window'
         /**
          * The layout chosen in the Layout menu (`config.view.layout`), else the first layout the widget declares
          * for this place, else 'list' (2026-10-31).

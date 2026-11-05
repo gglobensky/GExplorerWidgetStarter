@@ -167,6 +167,29 @@ GEM Shell's picture editor and the Corkboard draw with the same kit (GEM Shell, 
 - **Into the pixels:** `flattenInk(img, strokes, look, { units, crop? })` → a PNG `Blob` (the picture's size, or the crop).
 - Strokes are plain data: freehand `{ c, w, pts, p? }`, shapes `{ k, c, w, a, b }`, text `{ k: 'text', c, size, x, y, text }`.
 
+## A picture editor (`role: 'picture-editor'`)
+
+GEM Shell's picture editor is a widget (GEM Shell 2026-11-05; the official one: `widgets/picture-editor`). A widget
+declaring `role: 'picture-editor'` in its `entry.ts` can be it: "Edit picture" (the file menu, on a PNG, JPEG, BMP or
+WebP) hands it **one picture** and opens it in **a window of its own**. It runs nowhere else for now (no hub, sidebar
+or toolbar), so it declares no `contexts`.
+
+- **The window context.** `props.placement.context` is `'window'`, and `sdk.window()` is your window (null anywhere
+  else): `opened` (`{ kind: 'file', path, name, needsElevation }`), `restored`, `setTitle`, `setDraft`, `keep`, `close`.
+  GEM Shell draws the frame (your name, then your title; Fold, Maximize, Close); you draw inside it.
+- **The picture handed to you** is yours to read and write, **that file only** (not its folder, not a file beside it),
+  while GEM Shell runs. Read it with `sdk.fsReadBytes(opened.path, { type: 'image/png' })` and show
+  `URL.createObjectURL(blob)` (GEM Shell's pages show `blob:` pictures, not the loopback stream's; a `blob:` picture
+  keeps your canvas readable). Write it back with `sdk.fsWriteBytes(path, blob, { overwrite:
+  true })`. A copy goes through `ui().saveFile` (the user's pick is the grant for the new file).
+- **Your changes:** `setDraft({ dirty, save, discard })`. Closing with changes asks the user Save / Discard / Stay;
+  Ctrl+S saves (GEM Shell's key: don't declare it); GEM Shell's close question counts them. `save` throws to keep them.
+- **After a restart:** `keep(data)` (plain JSON, 2 MB) while changes aren't saved. GEM Shell offers "Unsaved edit of
+  <title> — Resume / Discard" at the next start; Resume opens your window again with `restored`. `keep(null)` when
+  nothing is left to keep.
+- **The clipboard:** `sdk.clipboardSetImage(pngBlob)` (Clipboard cap), right after the user's click or key in your
+  widget only.
+
 ## The user's city
 
 Declare `{ cap: 'Geolocation', reason: '…' }` (GEM Shell, 2026-10-30) and call `sdk.geolocate()` from a click or a
