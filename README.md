@@ -505,8 +505,12 @@ itself asks before a risky change (your own access going down, Everyone getting 
 offers "Retry as administrator": `E_CANCELLED` means the user kept them. People and groups:
 `sdk.searchPrincipals(query, forPath)` → `{ items, directoryUnreachable }` (an empty query lists the built-in
 ones; a domain that doesn't answer in time is said, not waited for) and `sdk.resolvePrincipal(name, forPath)`
-for a typed `DOMAIN\name`. Linux shows three rows (owner, group, everyone else) and the mode: UNTESTED until
-GEM Shell's Linux port. GExplorer's Permissions tab (`PermissionsTab.vue`, `permissionsDraft.ts`,
+for a typed `DOMAIN\name`. Ask GEM Shell's risk question when the user MAKES a choice:
+`sdk.confirmPermissionChange(path, wholeDraftChange)` → `false` means "Keep them as they are": undo that last
+choice only (accepted risks aren't asked again at Save). A refused owner fails with `E_INVALID_OWNER` and
+`err.part === 'owner'` (nothing is written); `ownerChoices` lists who may own the item without administrator
+rights (others: tag them "needs admin": Save offers "Retry as administrator"). Linux shows three rows (owner, group,
+everyone else) and the mode: UNTESTED until GEM Shell's Linux port. GExplorer's Permissions tab (`PermissionsTab.vue`, `permissionsDraft.ts`,
 `PrincipalPicker.vue`) is the example: a draft saved by the window's footer with the rest.
 
 **The packaging check.** Every `npm run build` / `watch` first reads your widget's sources and

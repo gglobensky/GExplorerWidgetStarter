@@ -7,40 +7,57 @@
 // Read, Read & run, Read & write, Full control); what only one OS has sits under Advanced (Windows: denied rows,
 // inheritance from the folder, where a folder's row applies; Linux: the mode as digits, UNTESTED).
 // Inherited rows are shown, never edited here (they are its folder's: change them there).
-import { computed } from 'vue'
+// 0.13.1 (H4c-4), so the window needs no scrollbar: People and Advanced are two views (never stacked); the picker
+// takes the tab's place while open; long lists scroll inside themselves (about 6 rows). Closing the picker gives
+// the focus back to the tab (Escape again closes the window). A part the OS refused at Save (the owner) shows why,
+// with its own Undo.
+import { computed, ref, watch, nextTick } from 'vue'
 import type { PermissionLevel } from 'gexplorer/widgets'
 import { LEVELS, LEVEL_WORDS, APPLIES_TO, type PermissionsDraft, type PermRow } from './permissionsDraft'
 import PrincipalPicker from './PrincipalPicker.vue'
 
 const props = defineProps<{ d: PermissionsDraft; isDir: boolean }>()
 const {
-  perms, loadError, loading, busy, canEdit, features, inherited, allowRows, denyRows, owner, inherit, mode,
-  modeDirty, modeValid, picker, openPicker, setLevel, setAppliesTo, removeRow,
+  perms, loadError, loading, busy, checking, editNote, failedPart, rev, view, canEdit, features, inherited,
+  allowRows, denyRows, owner, inherit, mode, modeDirty, modeValid, picker,
+  openPicker, setLevel, setAppliesTo, removeRow, setInherit, commitMode, undoOwner,
 } = props.d
+
+const root = ref<HTMLElement | null>(null)
+// The picker closed (picked, Cancel, Escape): the focus comes back here, so the next Escape reaches the window
+watch(picker, (now, before) => {
+  if (before && !now) void nextTick(() => root.value?.focus({ preventScroll: true }))
+})
 
 const inheritedAllow = computed(() => inherited.value.filter(e => !e.deny))
 const inheritedDeny = computed(() => inherited.value.filter(e => e.deny))
 const anyDeny = computed(() => denyRows.value.length > 0 || inheritedDeny.value.length > 0)
 /** The rows follow a typed mode once it changed (Linux): one or the other is sent. */
-const rowsLocked = computed(() => busy.value || modeDirty.value)
-const showAdvanced = computed(() => !!features.value && (features.value.deny || features.value.inheritance || features.value.unixBits || (props.isDir && canEdit.value)))
+const rowsLocked = computed(() => busy.value || checking.value || modeDirty.value)
+const locked = computed(() => busy.value || checking.value)
+const showAdvanced = computed(() => !!features.value && (features.value.deny || features.value.inheritance || features.value.unixBits))
 const inheritShown = computed(() => inherit.value ?? perms.value?.inherits ?? false)
+// Advanced isn't offered on this drive: People
+watch(showAdvanced, on => { if (!on) view.value = 'people' })
+
+function showView(v: 'people' | 'advanced'): void {
+  view.value = v
+}
 
 function levelsFor(row: PermRow): { id: PermissionLevel; label: string; hint: string }[] {
   return row.orig === 'special' ? [...LEVELS, { id: 'special', label: 'Special', hint: 'A mix of rights none of the words say: kept as it is' }] : LEVELS
 }
 function onLevel(row: PermRow, ev: Event): void {
-  setLevel(row, (ev.target as HTMLSelectElement).value as PermissionLevel)
+  void setLevel(row, (ev.target as HTMLSelectElement).value as PermissionLevel)
 }
 function onApplies(row: PermRow, ev: Event): void {
-  setAppliesTo(row, (ev.target as HTMLSelectElement).value)
+  void setAppliesTo(row, (ev.target as HTMLSelectElement).value)
 }
 function appliesWord(id: string): string {
   return APPLIES_TO.find(a => a.id === id)?.label ?? 'Custom'
 }
 function onInherit(ev: Event): void {
-  const on = (ev.target as HTMLInputElement).checked
-  inherit.value = on === perms.value?.inherits ? null : on
+  void setInherit((ev.target as HTMLInputElement).checked)
 }
 
 const readOnlyWhy = computed(() => {
@@ -51,130 +68,152 @@ const readOnlyWhy = computed(() => {
 </script>
 
 <template>
-  <section class="ipt">
+  <section ref="root" class="ipt" tabindex="-1">
     <p v-if="loading && !perms" class="ipw-note">Reading…</p>
     <p v-else-if="loadError" class="ipw-error">{{ loadError }}</p>
     <p v-else-if="perms && !perms.features.supported" class="ipw-note">This drive doesn't keep permissions (everyone who can use the drive can use its files).</p>
 
+    <!-- The picker takes the tab's place while open -->
+    <PrincipalPicker v-else-if="perms && picker" :d="d" />
+
     <template v-else-if="perms">
-      <dl class="ipw-rows">
-        <dt>Your access</dt>
-        <dd class="ipw-strong">{{ perms.yourAccess ? LEVEL_WORDS[perms.yourAccess] : 'Not known' }}</dd>
-        <dt>Owner</dt>
-        <dd class="ipt-line">
-          <span v-if="owner" class="ipt-changed" :title="owner.id">{{ owner.name }} <span class="ipw-muted">(was {{ perms.owner?.name ?? 'unknown' }})</span></span>
-          <span v-else :title="perms.owner?.id ?? ''">{{ perms.owner?.name ?? 'Unknown' }}</span>
-          <button v-if="canEdit && features?.changeOwner && picker !== 'owner'" type="button" class="ipw-btn" :disabled="busy" @click="openPicker('owner')">Change…</button>
-        </dd>
-        <template v-if="perms.group"><dt>Group</dt><dd>{{ perms.group.name }}</dd></template>
-      </dl>
-      <PrincipalPicker v-if="picker === 'owner'" :d="d" />
-
-      <h3>Who may use it</h3>
-      <table class="ipw-acl ipt-acl">
-        <tbody>
-          <tr v-for="r in allowRows" :key="r.key">
-            <td :title="r.who.id">{{ r.who.name }}</td>
-            <td class="ipt-level">
-              <select v-if="canEdit" :value="r.level" :disabled="rowsLocked" @change="onLevel(r, $event)">
-                <option v-for="l in levelsFor(r)" :key="l.id" :value="l.id" :title="l.hint">{{ l.label }}</option>
-              </select>
-              <span v-else>{{ LEVEL_WORDS[r.level] }}</span>
-            </td>
-            <td class="ipt-x">
-              <button v-if="canEdit && features?.addPrincipals" type="button" class="ipt-del" :disabled="rowsLocked"
-                      :title="`Remove ${r.who.name}`" @click="removeRow(r)">×</button>
-            </td>
-          </tr>
-          <tr v-for="(e, i) in inheritedAllow" :key="`i${i}`" class="ipt-inh">
-            <td :title="e.who.id">{{ e.who.name }}</td>
-            <td>{{ LEVEL_WORDS[e.level] }}</td>
-            <td class="ipw-muted" title="Its folder's: change it there">inherited</td>
-          </tr>
-          <tr v-if="!allowRows.length && !inheritedAllow.length"><td colspan="3" class="ipw-muted">No one.</td></tr>
-        </tbody>
-      </table>
-      <div v-if="canEdit && features?.addPrincipals && picker !== 'allow'" class="ipt-bar">
-        <button type="button" class="ipw-btn" :disabled="rowsLocked" @click="openPicker('allow')">Add a person or group…</button>
+      <div v-if="showAdvanced" class="ipt-views" role="tablist" aria-label="Permissions views">
+        <button type="button" role="tab" class="ipt-view" :class="{ on: view === 'people' }" :aria-selected="view === 'people'" @click="showView('people')">People</button>
+        <button type="button" role="tab" class="ipt-view" :class="{ on: view === 'advanced' }" :aria-selected="view === 'advanced'" @click="showView('advanced')">
+          Advanced<span v-if="anyDeny || modeDirty" class="ipt-dot" aria-hidden="true">•</span>
+        </button>
       </div>
-      <PrincipalPicker v-if="picker === 'allow'" :d="d" />
-      <p v-if="anyDeny" class="ipw-note">Some access is denied: see Advanced.</p>
-      <p v-if="modeDirty" class="ipw-note">The mode typed under Advanced is saved instead of these rows.</p>
 
-      <details v-if="showAdvanced" class="ipt-adv" :open="anyDeny || modeDirty || picker === 'deny'">
-        <summary>Advanced</summary>
+      <!-- ── People ─────────────────────────────────────────────────────── -->
+      <template v-if="view === 'people'">
+        <dl class="ipw-rows">
+          <dt>Your access</dt>
+          <dd class="ipw-strong">{{ perms.yourAccess ? LEVEL_WORDS[perms.yourAccess] : 'Not known' }}</dd>
+          <dt>Owner</dt>
+          <dd class="ipt-line">
+            <span v-if="owner" class="ipt-changed" :title="owner.id">{{ owner.name }} <span class="ipw-muted">(was {{ perms.owner?.name ?? 'unknown' }})</span></span>
+            <span v-else :title="perms.owner?.id ?? ''">{{ perms.owner?.name ?? 'Unknown' }}</span>
+            <button v-if="canEdit && features?.changeOwner" type="button" class="ipw-btn" :disabled="locked" @click="openPicker('owner')">Change…</button>
+          </dd>
+          <template v-if="perms.group"><dt>Group</dt><dd>{{ perms.group.name }}</dd></template>
+        </dl>
+        <p v-if="failedPart === 'owner' && owner" class="ipw-error ipt-line">
+          <span>Windows doesn't let {{ owner.name }} own it here (administrator rights were not used).</span>
+          <button type="button" class="ipw-btn" @click="undoOwner">Undo</button>
+        </p>
 
-        <label v-if="features?.inheritance" class="ipw-check" title="Off: the folder's rows are copied here and no longer follow the folder">
-          <input type="checkbox" :checked="inheritShown" :disabled="!canEdit || busy" @change="onInherit" />
-          Include the permissions of its folder
-        </label>
-
-        <template v-if="features?.deny">
-          <h4>Denied</h4>
+        <h3>Who may use it</h3>
+        <div class="ipt-list">
           <table class="ipw-acl ipt-acl">
             <tbody>
-              <tr v-for="r in denyRows" :key="r.key" class="deny">
+              <tr v-for="r in allowRows" :key="r.key">
                 <td :title="r.who.id">{{ r.who.name }}</td>
                 <td class="ipt-level">
                   <select v-if="canEdit" :value="r.level" :disabled="rowsLocked" @change="onLevel(r, $event)">
-                    <option v-for="l in levelsFor(r).filter(x => x.id !== 'none')" :key="l.id" :value="l.id" :title="l.hint">{{ l.label }}</option>
+                    <option v-for="l in levelsFor(r)" :key="l.id" :value="l.id" :title="l.hint">{{ l.label }}</option>
                   </select>
                   <span v-else>{{ LEVEL_WORDS[r.level] }}</span>
                 </td>
                 <td class="ipt-x">
-                  <button v-if="canEdit" type="button" class="ipt-del" :disabled="rowsLocked" :title="`Remove ${r.who.name}`" @click="removeRow(r)">×</button>
+                  <button v-if="canEdit && features?.addPrincipals" type="button" class="ipt-del" :disabled="rowsLocked"
+                          :title="`Remove ${r.who.name}`" @click="removeRow(r)">×</button>
                 </td>
               </tr>
-              <tr v-for="(e, i) in inheritedDeny" :key="`d${i}`" class="deny ipt-inh">
+              <tr v-for="(e, i) in inheritedAllow" :key="`i${i}`" class="ipt-inh">
                 <td :title="e.who.id">{{ e.who.name }}</td>
                 <td>{{ LEVEL_WORDS[e.level] }}</td>
-                <td class="ipw-muted">inherited</td>
+                <td class="ipw-muted" title="Its folder's: change it there">inherited</td>
               </tr>
-              <tr v-if="!anyDeny"><td colspan="3" class="ipw-muted">No one is denied.</td></tr>
+              <tr v-if="!allowRows.length && !inheritedAllow.length"><td colspan="3" class="ipw-muted">No one.</td></tr>
             </tbody>
           </table>
-          <p class="ipw-muted">A denied right wins over an allowed one.</p>
-          <div v-if="canEdit && picker !== 'deny'" class="ipt-bar">
+        </div>
+        <div v-if="canEdit && features?.addPrincipals" class="ipt-bar">
+          <button type="button" class="ipw-btn" :disabled="rowsLocked" @click="openPicker('allow')">Add a person or group…</button>
+        </div>
+        <p v-if="anyDeny" class="ipw-note">Some access is denied: <button type="button" class="ipt-link" @click="showView('advanced')">see Advanced</button>.</p>
+        <p v-if="modeDirty" class="ipw-note">The mode typed under Advanced is saved instead of these rows.</p>
+      </template>
+
+      <!-- ── Advanced ───────────────────────────────────────────────────── -->
+      <template v-else>
+        <label v-if="features?.inheritance" class="ipw-check" title="Off: the folder's rows are copied here and no longer follow the folder">
+          <input :key="rev" type="checkbox" :checked="inheritShown" :disabled="!canEdit || locked" @change="onInherit" />
+          Include the permissions of its folder
+        </label>
+
+        <template v-if="features?.deny">
+          <h4>Denied <span class="ipw-muted">(a denied right wins over an allowed one)</span></h4>
+          <div class="ipt-list ipt-list--short">
+            <table class="ipw-acl ipt-acl">
+              <tbody>
+                <tr v-for="r in denyRows" :key="r.key" class="deny">
+                  <td :title="r.who.id">{{ r.who.name }}</td>
+                  <td class="ipt-level">
+                    <select v-if="canEdit" :value="r.level" :disabled="rowsLocked" @change="onLevel(r, $event)">
+                      <option v-for="l in levelsFor(r).filter(x => x.id !== 'none')" :key="l.id" :value="l.id" :title="l.hint">{{ l.label }}</option>
+                    </select>
+                    <span v-else>{{ LEVEL_WORDS[r.level] }}</span>
+                  </td>
+                  <td class="ipt-x">
+                    <button v-if="canEdit" type="button" class="ipt-del" :disabled="rowsLocked" :title="`Remove ${r.who.name}`" @click="removeRow(r)">×</button>
+                  </td>
+                </tr>
+                <tr v-for="(e, i) in inheritedDeny" :key="`d${i}`" class="deny ipt-inh">
+                  <td :title="e.who.id">{{ e.who.name }}</td>
+                  <td>{{ LEVEL_WORDS[e.level] }}</td>
+                  <td class="ipw-muted">inherited</td>
+                </tr>
+                <tr v-if="!anyDeny"><td colspan="3" class="ipw-muted">No one is denied.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div v-if="canEdit" class="ipt-bar">
             <button type="button" class="ipw-btn" :disabled="rowsLocked" @click="openPicker('deny')">Deny a person or group…</button>
           </div>
-          <PrincipalPicker v-if="picker === 'deny'" :d="d" />
         </template>
 
-        <template v-if="isDir && canEdit && features?.inheritance && (allowRows.length || denyRows.length)">
+        <template v-if="isDir && features?.inheritance && (allowRows.length || denyRows.length)">
           <h4>Where each row applies</h4>
-          <dl class="ipw-rows">
-            <template v-for="r in [...allowRows, ...denyRows]" :key="`a${r.key}`">
-              <dt :title="r.who.id">{{ r.deny ? 'Denied: ' : '' }}{{ r.who.name }}</dt>
-              <dd>
-                <select :value="r.appliesTo" :disabled="rowsLocked" @change="onApplies(r, $event)">
-                  <option v-for="a in APPLIES_TO" :key="a.id" :value="a.id">{{ a.label }}</option>
-                  <option v-if="r.appliesTo === 'custom'" value="custom">Custom (kept as it is)</option>
-                </select>
-              </dd>
-            </template>
-          </dl>
+          <div v-if="canEdit" class="ipt-list ipt-list--short">
+            <dl class="ipw-rows">
+              <template v-for="r in [...allowRows, ...denyRows]" :key="`a${r.key}`">
+                <dt :title="r.who.id">{{ r.deny ? 'Denied: ' : '' }}{{ r.who.name }}</dt>
+                <dd>
+                  <select :value="r.appliesTo" :disabled="rowsLocked" @change="onApplies(r, $event)">
+                    <option v-for="a in APPLIES_TO" :key="a.id" :value="a.id">{{ a.label }}</option>
+                    <option v-if="r.appliesTo === 'custom'" value="custom">Custom (kept as it is)</option>
+                  </select>
+                </dd>
+              </template>
+            </dl>
+          </div>
+          <p v-else class="ipw-muted">
+            {{ [...allowRows, ...denyRows].map(r => `${r.who.name}: ${appliesWord(r.appliesTo)}`).join('; ') }}
+          </p>
         </template>
-        <p v-else-if="isDir && !canEdit && (allowRows.length || denyRows.length) && features?.inheritance" class="ipw-muted">
-          Applies to: {{ [...allowRows, ...denyRows].map(r => `${r.who.name}: ${appliesWord(r.appliesTo)}`).join('; ') }}
-        </p>
 
         <!-- Linux (UNTESTED until the Linux port): the whole mode as digits, e.g. 0755 -->
         <label v-if="features?.unixBits" class="ipt-mode">
           <span>Mode</span>
-          <input v-model="mode" type="text" inputmode="numeric" maxlength="4" spellcheck="false" :disabled="!canEdit || busy" placeholder="0755" />
+          <input v-model="mode" type="text" inputmode="numeric" maxlength="4" spellcheck="false" :disabled="!canEdit || locked" placeholder="0755"
+                 @change="commitMode" />
           <span v-if="modeDirty && !modeValid" class="ipw-error">3 or 4 digits from 0 to 7</span>
         </label>
-      </details>
+      </template>
 
+      <p v-if="checking" class="ipw-muted">Waiting for your answer…</p>
+      <p v-if="editNote" class="ipw-error">{{ editNote }}</p>
       <p v-if="readOnlyWhy" class="ipw-muted">{{ readOnlyWhy }}</p>
     </template>
   </section>
 </template>
 
 <style scoped>
-.ipt { display: flex; flex-direction: column; gap: 6px; }
+.ipt { display: flex; flex-direction: column; gap: 6px; outline: none; }
 .ipt h3 { margin: 4px 0 0; color: color-mix(in oklab, var(--fg, #e8e8e8) 62%, transparent); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-.ipt h4 { margin: 6px 0 0; color: color-mix(in oklab, var(--fg, #e8e8e8) 55%, transparent); font-size: 11px; font-weight: 600; }
+.ipt h4 { margin: 6px 0 0; color: color-mix(in oklab, var(--fg, #e8e8e8) 70%, transparent); font-size: 11px; font-weight: 600; }
+.ipt h4 .ipw-muted { font-weight: 400; }
 .ipt p { margin: 0; }
 .ipw-note, .ipw-muted { color: color-mix(in oklab, var(--fg, #e8e8e8) 55%, transparent); font-size: 11px; }
 .ipw-error { color: #f87171; font-size: 11px; }
@@ -184,6 +223,15 @@ const readOnlyWhy = computed(() => {
 .ipw-rows dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .ipt-line { display: flex; align-items: center; gap: 6px; }
 .ipt-changed { font-weight: 600; }
+/* People / Advanced */
+.ipt-views { display: inline-flex; align-self: flex-start; padding: 2px; border: 1px solid var(--items-border, #ffffff24); border-radius: 6px; }
+.ipt-view { padding: 2px 10px; border: 0; border-radius: 4px; background: transparent; color: inherit; font-size: 11px; cursor: pointer; opacity: .7; }
+.ipt-view:hover { opacity: 1; }
+.ipt-view.on { opacity: 1; background: color-mix(in oklab, var(--accent, #4ea1ff) 30%, transparent); font-weight: 600; }
+.ipt-dot { margin-left: 4px; color: #fca5a5; }
+/* Lists scroll inside themselves: the window doesn't */
+.ipt-list { max-height: 140px; overflow-y: auto; scrollbar-width: thin; }
+.ipt-list--short { max-height: 104px; }
 .ipw-acl { width: 100%; border-collapse: collapse; font-size: 11px; }
 .ipw-acl td { padding: 2px 6px 2px 0; border-top: 1px solid var(--items-border, #ffffff14); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ipw-acl tr.deny td { color: #fca5a5; }
@@ -199,10 +247,7 @@ const readOnlyWhy = computed(() => {
 }
 .ipt-del:hover:not(:disabled) { opacity: 1; background: color-mix(in oklab, #f87171 25%, transparent); }
 .ipt-bar { display: flex; gap: 6px; }
-.ipt-adv > summary { cursor: pointer; color: color-mix(in oklab, var(--fg, #e8e8e8) 70%, transparent); font-size: 11px; font-weight: 600; margin-top: 4px; }
-.ipt-adv[open] > summary { margin-bottom: 4px; }
-.ipt-adv > :not(summary) + :not(summary) { margin-top: 8px; }
-.ipt-adv > label { display: flex; }
+.ipt-link { padding: 0; border: 0; background: none; color: var(--accent, #4ea1ff); font: inherit; text-decoration: underline; cursor: pointer; }
 .ipw-check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 .ipw-check input { margin: 0; accent-color: var(--accent, #4ea1ff); }
 .ipt-mode { display: flex; align-items: center; gap: 8px; }

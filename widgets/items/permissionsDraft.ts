@@ -2,11 +2,13 @@
 //
 // NEW (0.13.0, GEM Shell 2026-11-05, H4c-3; claude/permissions-design.md): the Properties window's Permissions tab,
 // as a DRAFT kept by PropertiesWindow.vue (so switching tabs keeps it) and drawn by PermissionsTab.vue. Nothing
-// changes before Save (GEM Shell's footer): save() sends ONE fsSetPermissions call, and GEM Shell itself asks before
-// a risky change (your own access going down, Everyone getting write, inheritance off) and offers "Retry as
-// administrator"; this file never decides those.
+// changes before Save (GEM Shell's footer): save() sends ONE fsSetPermissions call ("Retry as administrator" is GEM
+// Shell's).
+// 0.13.1 (H4c-4): GEM Shell's risk question comes WHEN a choice is made (sdk.confirmPermissionChange, with the whole
+// draft): "Keep them as they are" undoes that last choice only, the rest of the draft stays; Save doesn't ask again
+// for what was accepted. A part the OS refused at Save (the owner) is marked (failedPart) with its own Undo.
 //   rows       the item's EXPLICIT rows (allow and deny), as wanted: sent whole (they replace the explicit ones)
-//   owner      a new owner (Windows; the picker in owner mode)
+//   owner      a new owner (Windows; the picker in owner mode; ownerChoices: who may own it without admin rights)
 //   inherit    inheritance from the folder on / off (Windows)
 //   mode       the whole Unix mode typed ("0755"): sent instead of the rows when it changed (Linux, UNTESTED)
 // The same words on every OS: No access / Read / Read & run / Read & write / Full control (Special: none of them,
@@ -28,6 +30,7 @@ export type PermRow = {
 }
 
 export type PickerMode = 'allow' | 'deny' | 'owner'
+export type PermView = 'people' | 'advanced'
 
 export const LEVELS: { id: PermissionLevel; label: string; hint: string }[] = [
   { id: 'none', label: 'No access', hint: 'Removes the row (Windows) / no bits (Unix)' },
@@ -54,17 +57,31 @@ const normMode = (m: string | null | undefined) => (m ?? '').trim().padStart(4, 
 
 let nextKey = 1
 
+/** What one choice may be undone to (0.13.1). */
+type State = { rows: PermRow[]; owner: FsPrincipal | null; inherit: boolean | null; mode: string }
+
 export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null, isDirOf: () => boolean) {
   const perms = ref<FsPermissions | null>(null)
   const loadError = ref<string | null>(null)
   const loading = ref(false)
   const busy = ref(false)
+  /** 0.13.1: GEM Shell is asking about the last choice (the controls wait). */
+  const checking = ref(false)
+  /** 0.13.1: why the last choice was undone without the question (no grant, ...). */
+  const editNote = ref<string | null>(null)
+  /** 0.13.1: the part the OS refused at the last Save ('owner'); nothing was written. */
+  const failedPart = ref<'owner' | null>(null)
+  /** 0.13.1: bumped when a choice is undone, so the controls show the restored values. */
+  const rev = ref(0)
+  const view = ref<PermView>('people')
 
   const rows = ref<PermRow[]>([])
   let savedRows = '[]'
   const owner = ref<FsPrincipal | null>(null)
   const inherit = ref<boolean | null>(null)
   const mode = ref('')
+  /** The mode as last accepted (typing changes `mode`; leaving the field commits it). */
+  let modeCommitted = ''
 
   const canRead = computed(() => !!sdk.fsPermissions)
   /** Older GEM Shell or no Permissions capability: a read-only view. */
@@ -83,6 +100,12 @@ export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null,
   const modeValid = computed(() => MODE_RE.test(mode.value.trim()))
   const dirty = computed(() => rowsDirty.value || ownerDirty.value || inheritDirty.value || modeDirty.value)
 
+  /** Whether making <id> the owner needs administrator rights (Windows; null ownerChoices: no one does). */
+  function ownerNeedsAdmin(id: string): boolean {
+    const choices = perms.value?.ownerChoices
+    return !!choices && !choices.some(c => c.toLowerCase() === id.toLowerCase())
+  }
+
   function reset(): void {
     const p = perms.value
     rows.value = (p?.entries ?? []).filter(e => !e.inherited).map(e => ({
@@ -92,7 +115,10 @@ export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null,
     savedRows = snapshot(rows.value)
     owner.value = null
     inherit.value = null
-    mode.value = p?.unixMode ?? ''
+    mode.value = modeCommitted = p?.unixMode ?? ''
+    editNote.value = null
+    failedPart.value = null
+    rev.value++
     closePicker()
   }
 
@@ -112,25 +138,80 @@ export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null,
     }
   }
 
-  // ── Editing ────────────────────────────────────────────────────────────────
-  function setLevel(row: PermRow, level: PermissionLevel): void {
-    row.level = level
+  // ── The change as sent ───────────────────────────────────────────────────────
+  /** null: the mode typed isn't valid yet. */
+  function buildChange(): FsPermissionsChange | null {
+    const change: FsPermissionsChange = {}
+    if (modeDirty.value) {
+      if (!modeValid.value) return null
+      change.unixMode = parseInt(mode.value.trim(), 8)
+    } else if (rowsDirty.value) {
+      change.entries = rows.value.map(r => ({
+        principalId: r.who.id, level: r.level, deny: r.deny, appliesTo: r.appliesTo,
+        // Special rows (and "custom" applies-to) go back with the OS's own values, untouched
+        rights: r.rights, inheritanceFlags: r.inheritanceFlags, propagationFlags: r.propagationFlags,
+      }))
+    }
+    if (ownerDirty.value) change.ownerId = owner.value!.id
+    if (inheritDirty.value) change.inherit = inherit.value!
+    return change
   }
-  function setAppliesTo(row: PermRow, appliesTo: string): void {
-    row.appliesTo = appliesTo
+
+  // ── Editing: every choice goes through edit() (0.13.1) ─────────────────────────────
+  function capture(): State {
+    return { rows: rows.value.map(r => ({ ...r })), owner: owner.value, inherit: inherit.value, mode: modeCommitted }
   }
-  function removeRow(row: PermRow): void {
-    rows.value = rows.value.filter(r => r.key !== row.key)
+  function restore(s: State): void {
+    rows.value = s.rows.map(r => ({ ...r, key: nextKey++ }))   // new keys: the selects are drawn again
+    owner.value = s.owner
+    inherit.value = s.inherit
+    mode.value = modeCommitted = s.mode
+    rev.value++
   }
-  function addRow(who: FsPrincipal, deny: boolean): 'added' | 'listed' {
-    if (rows.value.some(r => r.who.id === who.id && r.deny === deny)) return 'listed'
-    rows.value = [...rows.value, {
-      key: nextKey++, who, deny,
-      // A new allow row starts low (Read); a new deny row denies everything (what "deny" usually means)
-      level: deny ? 'full' : 'read',
-      appliesTo: isDirOf() ? 'all' : 'this', rights: 0, inheritanceFlags: 0, propagationFlags: 0, orig: 'none',
-    }]
-    return 'added'
+
+  /** Makes one choice, then GEM Shell's question about the draft: kept → that choice is undone, the rest stays. */
+  async function edit(apply: () => void): Promise<void> {
+    if (checking.value || busy.value) return
+    const before = capture()
+    apply()
+    editNote.value = null
+    const path = pathOf()
+    if (!dirty.value || !path || !sdk.confirmPermissionChange) return   // older GEM Shell: asked at Save
+    const change = buildChange()
+    if (!change) return
+    checking.value = true
+    try {
+      if (!(await sdk.confirmPermissionChange(path, change))) restore(before)
+    } catch (err: any) {
+      restore(before)
+      editNote.value = err?.code === 'E_PERMISSION' ? 'The permission to change them was not granted.' : `Couldn't check this change: ${err?.message ?? err}`
+    } finally {
+      checking.value = false
+    }
+  }
+
+  function setLevel(row: PermRow, level: PermissionLevel): Promise<void> {
+    return edit(() => { const r = rows.value.find(x => x.key === row.key); if (r) r.level = level })
+  }
+  function setAppliesTo(row: PermRow, appliesTo: string): Promise<void> {
+    return edit(() => { const r = rows.value.find(x => x.key === row.key); if (r) r.appliesTo = appliesTo })
+  }
+  function removeRow(row: PermRow): Promise<void> {
+    return edit(() => { rows.value = rows.value.filter(r => r.key !== row.key) })
+  }
+  function setInherit(on: boolean): Promise<void> {
+    return edit(() => { inherit.value = on === perms.value?.inherits ? null : on })
+  }
+  /** The mode field was left (Linux): a valid mode is one choice; an invalid one waits (Save says why). */
+  function commitMode(): Promise<void> {
+    if (!modeValid.value || mode.value === modeCommitted) return Promise.resolve()
+    const typed = mode.value
+    mode.value = modeCommitted   // captured as it was, then made again inside edit()
+    return edit(() => { mode.value = modeCommitted = typed })
+  }
+  function undoOwner(): void {
+    owner.value = null
+    failedPart.value = null
   }
 
   // ── The people and groups picker ───────────────────────────────────────────
@@ -188,12 +269,24 @@ export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null,
     const m = picker.value
     if (!m) return
     if (m === 'owner') {
-      owner.value = who.id === perms.value?.owner?.id ? null : who
       closePicker()
+      void edit(() => {
+        owner.value = who.id === perms.value?.owner?.id ? null : who
+        failedPart.value = null
+      })
       return
     }
-    if (addRow(who, m === 'deny') === 'listed') { pickerNote.value = `${who.name} is already listed.`; return }
+    const deny = m === 'deny'
+    if (rows.value.some(r => r.who.id === who.id && r.deny === deny)) { pickerNote.value = `${who.name} is already listed.`; return }
     closePicker()
+    void edit(() => {
+      rows.value = [...rows.value, {
+        key: nextKey++, who, deny,
+        // A new allow row starts low (Read); a new deny row denies everything (what "deny" usually means)
+        level: deny ? 'full' : 'read',
+        appliesTo: isDirOf() ? 'all' : 'this', rights: 0, inheritanceFlags: 0, propagationFlags: 0, orig: 'none',
+      }]
+    })
   }
 
   /** "DOMAIN\name", "AzureAD\name", "Everyone": the name as typed (principals:resolve). */
@@ -222,27 +315,20 @@ export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null,
   async function save(): Promise<void> {
     const path = pathOf()
     if (!dirty.value || !path || !sdk.fsSetPermissions) return
-    const change: FsPermissionsChange = {}
-    if (modeDirty.value) {
-      if (!modeValid.value) throw new Error('the mode must be 3 or 4 digits from 0 to 7 (like 0755).')
-      change.unixMode = parseInt(mode.value.trim(), 8)
-    } else if (rowsDirty.value) {
-      change.entries = rows.value.map(r => ({
-        principalId: r.who.id, level: r.level, deny: r.deny, appliesTo: r.appliesTo,
-        // Special rows (and "custom" applies-to) go back with the OS's own values, untouched
-        rights: r.rights, inheritanceFlags: r.inheritanceFlags, propagationFlags: r.propagationFlags,
-      }))
-    }
-    if (ownerDirty.value) change.ownerId = owner.value!.id
-    if (inheritDirty.value) change.inherit = inherit.value!
+    if (checking.value) throw new Error('answer GEM Shell\'s question about the last change first.')
+    const change = buildChange()
+    if (!change) throw new Error('the mode must be 3 or 4 digits from 0 to 7 (like 0755).')
     busy.value = true
+    failedPart.value = null
     try {
       await sdk.fsSetPermissions(path, change)
     } catch (err: any) {
       const code = err?.code
+      if (err?.part === 'owner') failedPart.value = 'owner'
       throw new Error(
         code === 'E_CANCELLED' ? 'the permissions were kept as they were.'
           : code === 'E_PERMISSION' ? 'the permission was not granted.'
+          : code === 'E_INVALID_OWNER' ? 'Windows doesn\'t let this account own it (see the owner: Undo).'
           : code === 'E_ELEVATION_DECLINED' ? 'administrator rights were not given.'
           : code === 'E_ACCESS_DENIED' ? 'you may not change its permissions.'
           : String(err?.message ?? err))
@@ -253,9 +339,9 @@ export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null,
   }
 
   return {
-    perms, loadError, loading, busy, canRead, canEdit, features,
-    rows, inherited, allowRows, denyRows, owner, inherit, mode, modeDirty, modeValid, dirty,
-    load, setLevel, setAppliesTo, removeRow,
+    perms, loadError, loading, busy, checking, editNote, failedPart, rev, view, canRead, canEdit, features,
+    rows, inherited, allowRows, denyRows, owner, inherit, mode, modeDirty, modeValid, dirty, ownerNeedsAdmin,
+    load, setLevel, setAppliesTo, removeRow, setInherit, commitMode, undoOwner,
     picker, query, found, searching, unreachable, pickerNote, openPicker, closePicker, pick, useTyped,
     save, discard,
   }

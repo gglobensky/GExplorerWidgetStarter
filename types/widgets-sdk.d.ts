@@ -175,7 +175,9 @@ declare module 'gexplorer/widgets' {
          * explicit rows; `ownerId`, `inherit` (Windows), `unixMode` (Linux). The Permissions grant is asked on the
          * item's folder once; GEM Shell asks before a risky change and offers "Retry as administrator". Rejects with
          * an Error whose `code` is E_CANCELLED (the user kept them), E_PERMISSION, E_NOT_FOUND, E_UNSUPPORTED,
-         * E_BAD_REQUEST, E_ACCESS_DENIED, E_ELEVATION_DECLINED or E_FAILED.
+         * E_BAD_REQUEST, E_ACCESS_DENIED, E_INVALID_OWNER (H4c-4: Windows refused the owner, administrator rights
+         * declined or not offered; `part`: 'owner'), E_ELEVATION_DECLINED or E_FAILED. Nothing is written when it
+         * fails (one write). Risks accepted through confirmPermissionChange aren't asked again.
          */
         fsSetPermissions?: (path: string, change: FsPermissionsChange) => Promise<void>
         /**
@@ -186,6 +188,13 @@ declare module 'gexplorer/widgets' {
         searchPrincipals?: (query: string, forPath: string, limit?: number) => Promise<{ items: FsPrincipal[]; directoryUnreachable: boolean }>
         /** GEM Shell 2026-11-05 (H4c). Permissions capability. A typed name ("DOMAIN\\name", "Everyone") as a principal; null: unknown. */
         resolvePrincipal?: (name: string, forPath: string) => Promise<FsPrincipal | null>
+        /**
+         * GEM Shell 2026-11-05 (H4c-4). Permissions capability. GEM Shell's risk question NOW, for a draft the user
+         * just changed (<change>: the whole draft, as fsSetPermissions would get it): true, go on (no risk, or
+         * accepted: Save won't ask again for it); false, the user kept them: undo that LAST choice only. The
+         * Permissions grant is asked first (once). Rejects with an Error whose `code` is E_PERMISSION. Nothing written.
+         */
+        confirmPermissionChange?: (path: string, change: FsPermissionsChange) => Promise<boolean>
         /**
          * 2026-11-01: a path with folder variables made a real one ("%PROGRAMDATA%\\Epic", "%APPDATA%\\CurseForge",
          * "~/x" on Linux): the known folder variables only. As given when there are none. Read capability.
@@ -3071,6 +3080,11 @@ declare module 'gexplorer/widgets' {
         /** Unix: "0755". */
         unixMode: string | null
         features: { supported: boolean; addPrincipals: boolean; deny: boolean; inheritance: boolean; changeOwner: boolean; search: boolean; unixBits: boolean }
+        /**
+         * H4c-4: the ids the user may make the owner WITHOUT administrator rights (Windows: the user and the groups
+         * that may own things); null / absent: anyone (an elevated GEM Shell) or not known. Others: "needs admin".
+         */
+        ownerChoices?: string[] | null
     }
 
     /** GEM Shell 2026-11-05 (H4c): sdk.fsSetPermissions()'s change. entries: the EXPLICIT rows as wanted (they replace them). */

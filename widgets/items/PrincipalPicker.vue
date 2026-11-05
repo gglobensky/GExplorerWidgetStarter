@@ -5,13 +5,16 @@
 // allowed or a denied row). Opened by a click (openPicker): its first search asks for the Permissions grant once
 // and lists the well-known ones (Everyone, Users, Administrators, SYSTEM...); typing searches this computer, then
 // the domain when the PC is joined (it may not answer in time: said, and "DOMAIN\name" still works through
-// "Use the name typed"). Enter: the name typed; Escape: closes the picker only.
+// "Use the name typed"). Enter: the name typed; Escape: closes the picker only (the tab takes the focus back).
+// 0.13.1 (H4c-4): it takes the tab's place while open (the window doesn't grow); choosing an owner, an account
+// Windows lets own it only with administrator rights is tagged "needs admin" (still allowed: Save offers "Retry as
+// administrator").
 import { ref, onMounted } from 'vue'
 import type { FsPrincipal } from 'gexplorer/widgets'
 import type { PermissionsDraft } from './permissionsDraft'
 
 const props = defineProps<{ d: PermissionsDraft }>()
-const { picker, query, found, searching, unreachable, pickerNote, closePicker, pick, useTyped } = props.d
+const { picker, query, found, searching, unreachable, pickerNote, closePicker, pick, useTyped, ownerNeedsAdmin } = props.d
 
 const input = ref<HTMLInputElement | null>(null)
 onMounted(() => input.value?.focus())
@@ -25,18 +28,21 @@ function kindOf(p: FsPrincipal): string {
 </script>
 
 <template>
-  <div class="ipp">
+  <div class="ipp" @keydown.esc.stop.prevent="closePicker">
     <div class="ipp-head">
       <span>{{ picker ? TITLES[picker] : '' }}</span>
       <button type="button" class="ipw-btn" @click="closePicker">Cancel</button>
     </div>
     <input ref="input" v-model="query" class="ipp-input" type="text" spellcheck="false"
            placeholder="Type a name, or DOMAIN\name"
-           @keydown.enter.prevent="useTyped" @keydown.esc.stop.prevent="closePicker" />
+           @keydown.enter.prevent="useTyped" />
     <ul v-if="found.length" class="ipp-list">
       <li v-for="p in found" :key="p.id">
         <button type="button" class="ipp-item" :title="p.id" @click="pick(p)">
-          <span class="ipp-name">{{ p.name }}</span><span class="ipp-kind">{{ kindOf(p) }}</span>
+          <span class="ipp-name">{{ p.name }}</span>
+          <span v-if="picker === 'owner' && ownerNeedsAdmin(p.id)" class="ipp-admin"
+                title="Windows lets this account own it only with administrator rights: Save will offer to retry as administrator">needs admin</span>
+          <span class="ipp-kind">{{ kindOf(p) }}</span>
         </button>
       </li>
     </ul>
@@ -58,7 +64,7 @@ function kindOf(p: FsPrincipal): string {
   padding: 3px 6px; border: 1px solid var(--items-border, #ffffff24); border-radius: 4px;
   background: color-mix(in oklab, var(--fg, #fff) 4%, transparent); color: inherit; font-size: 12px;
 }
-.ipp-list { list-style: none; margin: 0; padding: 0; max-height: 132px; overflow-y: auto; }
+.ipp-list { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; scrollbar-width: thin; }
 .ipp-item {
   display: flex; width: 100%; align-items: baseline; gap: 8px; padding: 3px 6px; border: 0; border-radius: 4px;
   background: transparent; color: inherit; font-size: 12px; text-align: left; cursor: pointer;
@@ -66,6 +72,10 @@ function kindOf(p: FsPrincipal): string {
 .ipp-item:hover, .ipp-item:focus-visible { background: color-mix(in oklab, var(--fg, #fff) 10%, transparent); }
 .ipp-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ipp-kind { flex: 0 0 auto; color: color-mix(in oklab, var(--fg, #e8e8e8) 55%, transparent); font-size: 11px; }
+.ipp-admin {
+  flex: 0 0 auto; padding: 0 5px; border: 1px solid color-mix(in oklab, #fbbf24 60%, transparent); border-radius: 8px;
+  color: #fbbf24; font-size: 10px; line-height: 14px;
+}
 .ipp-typed { align-self: flex-start; }
 .ipw-btn {
   flex: 0 0 auto; padding: 2px 8px; border: 1px solid var(--items-border, #ffffff24); border-radius: 4px;
