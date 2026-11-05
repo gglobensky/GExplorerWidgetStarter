@@ -795,6 +795,14 @@ declare module 'gexplorer/widgets' {
         canPaste: boolean
         /** With inFolder: how many of the clipboard's paths are directly in that folder. */
         matched?: number
+        /**
+         * Another program offers the files without paths (Input Director, an Outlook attachment, a zip folder's
+         * files): `paths` holds their top-level NAMES (never a path to use), the operation is "copy", a read limited
+         * to folders matches none. fsPasteClipboard pastes them as usual.
+         */
+        virtual?: boolean
+        /** With virtual: the program offering them ("Input Director"). */
+        source?: string
     }
 
     // ── DnD types ──────────────────────────────────────────────────────────
