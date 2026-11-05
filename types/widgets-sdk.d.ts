@@ -144,6 +144,27 @@ declare module 'gexplorer/widgets' {
          */
         fsReadText?: (path: string, opts?: { maxBytes?: number }) => Promise<{ text: string; encoding: string }>
         /**
+         * GEM Shell 2026-11-05 (H4b). Read capability. SHA-256 and MD5 of one file (one read for both; ask for one
+         * with sha256 / md5: false), progress as it reads (bytes, total; -1: unknown): { result, cancel() }. result
+         * resolves { sha256?, md5?, stopped } (stopped: cancelled) or rejects with an Error whose `code` is E_NOT_FOUND,
+         * E_IS_FOLDER, E_BUSY (4 at a time per widget), E_ACCESS_DENIED, E_ELEVATION_DECLINED, E_READ_FAILED. A file
+         * in a protected folder asks for administrator rights there once. Older GEM Shell: absent.
+         */
+        fsHash?: (path: string, opts?: { sha256?: boolean; md5?: boolean; onProgress?: (done: number, total: number) => void }) => FsHashRun
+        /**
+         * GEM Shell 2026-11-05 (H4b). Metadata capability. Properties of items, one per path, in order: size, size on
+         * disk, dates, attributes, link; a single path also gets its owner and permissions. Never prompts (a
+         * protected item: `limited`). A folder's size: not yet (the indexer, later: folderSize stays null).
+         */
+        fsProperties?: (paths: string[]) => Promise<FsPropertiesItem[]>
+        /**
+         * GEM Shell 2026-11-05 (H4b). Write capability. Read-only (files) and hidden (Windows) of one item: a Write
+         * grant on it is asked once ("This file" suggested); refused by its own permissions: GEM Shell offers
+         * "Retry as administrator". Rejects with an Error whose `code` is E_PERMISSION, E_NOT_FOUND, E_UNSUPPORTED,
+         * E_ACCESS_DENIED, E_ELEVATION_DECLINED or E_FAILED.
+         */
+        fsSetAttributes?: (path: string, attrs: { readOnly?: boolean; hidden?: boolean }) => Promise<void>
+        /**
          * 2026-11-01: a path with folder variables made a real one ("%PROGRAMDATA%\\Epic", "%APPDATA%\\CurseForge",
          * "~/x" on Linux): the known folder variables only. As given when there are none. Read capability.
          */
@@ -318,16 +339,7 @@ declare module 'gexplorer/widgets' {
          * Duration (ms) and tags of audio / video files, one item per path, in order (fields
          * absent: not known; Windows: the shell's properties; Linux: none yet). Never prompts.
          */
-        mediaInfo?: (paths: string[]) => Promise<Array<{
-            path: string
-            durationMs?: number | null
-            title?: string | null
-            artist?: string | null
-            album?: string | null
-            year?: number | null
-            width?: number | null
-            height?: number | null
-        }>>
+        mediaInfo?: (paths: string[]) => Promise<MediaInfoItem[]>
 
         /**
          * An image asset (2026-10-14): the host decodes, resizes and re-encodes it (JPEG / PNG, no
@@ -2727,6 +2739,33 @@ declare module 'gexplorer/widgets' {
             hover?: boolean
         }): WidgetPopoverHandle | null
         /**
+         * GEM Shell 2026-11-05: your component in a WINDOW GEM Shell frames: its header ("<your widget's name> —
+         * title", which you can't change) is the drag handle and has Fold (into the operations tray: a card with Show
+         * and Close) and Close. It stays until closed, your instance removed, or Escape in it; several at once (8 per
+         * instance); kept on screen, under GEM Shell's dialogs. Opening one: the same rule as openPopover (right
+         * after the user's own click or key in your widget, while on screen). The component gets props.close() and
+         * inject('widgetSdk'); a click in it counts as your widget's own gesture. null: refused. Older GEM Shell:
+         * absent (check `ui.openWindow`).
+         *
+         *   ui.openWindow?.({ component: Details, props: { path }, title: name, width: 420, height: 520 })
+         */
+        openWindow?(opts: WidgetWindowOptions): WidgetWindowHandle | null
+        /**
+         * GEM Shell 2026-11-05: FILE EXPLORERS ONLY (entry.ts role: 'explorer'). GEM Shell's Properties entries (your
+         * file menu, other widgets' file menus) hand the items to your instance, with the user's click as your own
+         * gesture: show them (openWindow), reading them as yourself. The latest call wins; returns the unsubscribe
+         * (call it on unmount). Not an explorer: a warning, nothing happens. Older GEM Shell: absent.
+         */
+        onPropertiesRequest?(fn: (req: WidgetPropertiesRequest) => void): () => void
+        /**
+         * GEM Shell 2026-11-05: shows the Properties of <paths> (1..1000) through GEM Shell, as its menu entries do:
+         * a file explorer draws them (yours, when your widget is one; else the default explorer open). Right after
+         * the user's own click or key in your widget, while on screen. opts.count: how many in all (paths a sample);
+         * opts.folder: <paths> is the folder shown. false: refused, or no explorer open (GEM Shell says so). Older
+         * GEM Shell: absent.
+         */
+        showProperties?(paths: string[], opts?: { count?: number; folder?: boolean }): Promise<boolean>
+        /**
          * GEM Shell 2026-10-31: a drag ghost GEM Shell draws at the pointer, for a drag that leaves your box
          * (your own elements can't be drawn outside it: README "Drawing outside your box"). Only while the user
          * holds the button they pressed in your widget (null otherwise): call it from your drag's start. It
@@ -2898,6 +2937,135 @@ declare module 'gexplorer/widgets' {
          *   ui.contextMenu(e, { context: 'tree.folder', states: narrow ? ['narrow'] : [] })
          */
         states?: string[]
+    }
+
+    /**
+     * sdk.mediaInfo(): what the OS knows of a media file (Windows: the shell's properties; Linux: none yet); absent /
+     * null: not known. GEM Shell 2026-11-05: the stream and photo details too.
+     */
+    export type MediaInfoItem = {
+        path: string
+        durationMs?: number | null
+        title?: string | null
+        artist?: string | null
+        album?: string | null
+        year?: number | null
+        /** A video's frame, else (2026-11-05) an image's size. */
+        width?: number | null
+        height?: number | null
+        /** Bits per second. */
+        videoBitrate?: number | null
+        /** Frames per second. */
+        frameRate?: number | null
+        /** The video's four-character code ('H264', 'HEVC'...). */
+        videoFourCc?: string | null
+        audioBitrate?: number | null
+        audioChannels?: number | null
+        sampleRateHz?: number | null
+        bitDepth?: number | null
+        cameraMake?: string | null
+        cameraModel?: string | null
+        /** Unix ms (UTC). */
+        dateTaken?: number | null
+        exposureSeconds?: number | null
+        fNumber?: number | null
+        iso?: number | null
+        focalLengthMm?: number | null
+    }
+
+    /** GEM Shell 2026-11-05: one item of sdk.fsProperties(). Dates: Unix ms (UTC); null: not known. */
+    export type FsPropertiesItem = {
+        path: string
+        /** false: not there. */
+        exists?: boolean | null
+        isDir?: boolean
+        isLink?: boolean
+        linkTarget?: string | null
+        /** A file's size; null: a folder or not known. */
+        size?: number | null
+        sizeOnDisk?: number | null
+        /** A folder's size and contents come with GEM Shell's indexer (later): always null for now. */
+        folderSize?: number | null
+        created?: number | null
+        modified?: number | null
+        accessed?: number | null
+        attributes?: {
+            readOnly: boolean; hidden: boolean; system: boolean; archive: boolean; compressed: boolean; encrypted: boolean
+            sparse: boolean; offline: boolean; temporary: boolean; notIndexed: boolean; reparse: boolean
+        } | null
+        /** One path asked: its owner and access list (Windows), or its mode ("rwxr-xr-x", elsewhere). */
+        owner?: string | null
+        access?: { who: string; allow: boolean; rights: string; inherited: boolean }[] | null
+        mode?: string | null
+        /** A protected item: only its size and dates (from the administrator helper). */
+        limited?: boolean
+        /** This item could not be read. */
+        error?: string
+        message?: string
+    }
+
+    /** GEM Shell 2026-11-05: sdk.fsHash(). */
+    export type FsHashRun = {
+        readonly result: Promise<{ sha256?: string; md5?: string; stopped: boolean }>
+        cancel(): void
+    }
+
+    /** GEM Shell 2026-11-05: sdk.ui().openWindow's options. */
+    export type WidgetWindowOptions = {
+        component: Component
+        props?: Record<string, unknown>
+        /** After your widget's name in GEM Shell's header (80 characters). */
+        title?: string
+        /** px; kept within 240..960 × 140..900 and GEM Shell's window. Default 380 × 440. */
+        width?: number
+        height?: number
+        /** Opens beside this element of yours (else centred, cascading). */
+        anchor?: HTMLElement
+        /** A corner grip to resize it. Default false. */
+        resizable?: boolean
+        /** Keeps its place (and size, when resizable) across restarts under this key of yours. Default: not kept. */
+        remember?: string
+        onClose?: () => void
+        /**
+         * GEM Shell 2026-11-05: GEM Shell's Discard / Save footer, always shown, for the whole window. Your component
+         * then gets props.setDraft(draft | null): register ONE draft for everything it edits (every tab):
+         *   props.setDraft({ dirty: () => changed.value, save: async () => { ... }, discard: () => { ... } })
+         * dirty is read reactively (read refs in it). save throws to keep the changes (its message shown in the
+         * footer). Closing the window with changes asks Save / Discard / Stay; Ctrl+S saves it; GEM Shell's own close
+         * question counts it. Call props.setDraft(null) on unmount.
+         */
+        saveFooter?: boolean
+    }
+
+    /** GEM Shell 2026-11-05: what a window's content gives props.setDraft (openWindow saveFooter). */
+    export type WidgetWindowDraft = {
+        dirty: () => boolean
+        save: () => Promise<void> | void
+        discard: () => void
+    }
+
+    /** GEM Shell 2026-11-05: what sdk.ui().openWindow returns. */
+    export type WidgetWindowHandle = {
+        close(): void
+        /** Replaces the content's props: pass them all (close is kept). */
+        update(props: Record<string, unknown>): void
+        setTitle(title: string): void
+        /** Into the operations tray (a card: Show / Close). */
+        fold(): void
+        /** Back from the tray, on top. */
+        show(): void
+        readonly folded: boolean
+        readonly open: boolean
+    }
+
+    /** GEM Shell 2026-11-05: what GEM Shell asks an explorer to show (sdk.ui().onPropertiesRequest). */
+    export type WidgetPropertiesRequest = {
+        /** The items (a sample when many: count says how many there are), or the folder shown (folder: true). */
+        paths: string[]
+        count: number
+        folder: boolean
+        /** Asked from another widget's file menu: its name. */
+        from?: string
     }
 
     /** GEM Shell 2026-10-31: what sdk.ui().openPopover returns (also its `parent` option). */

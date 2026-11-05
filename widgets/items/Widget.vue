@@ -63,6 +63,8 @@ import ItemsDetailsLayout from './ItemsDetailsLayout.vue'
 import ItemsPager from './ItemsPager.vue'
 import { useItemsDragDrop } from './useItemsDragDrop'
 import ItemsTypesPanel from './ItemsTypesPanel.vue'
+// 0.12.0 (GEM Shell 2026-11-05, H4b): the Properties window
+import PropertiesWindow from './PropertiesWindow.vue'
 import {
   applyFilterChoice, applySortChoice, chipLabel, effectiveFilter, EMPTY_REGISTRY, filterMenu, filterMenuParts, isFiltering, listingKinds, NO_FILTER,
   quickFilterOf, registryOf, TYPE_GROUPS, TYPES_DOCUMENT, type QuickFilter, type TypeRegistry,
@@ -1247,6 +1249,27 @@ function onRowDblClick({ index }: { index: number }) {
   if (e) void openEntry(e)
 }
 
+// NEW (2026-11-05, "Open where?"): a middle-click on a folder (or a link to one) opens it in a new tab in the
+// background: the shell reads the button from the user's press, as browsers do (Ctrl+double-click too). On a file:
+// nothing. The middle button's autoscroll is kept off the rows.
+function isFolderRow(e: ListingEntry): boolean {
+  return e.Kind === 'dir' || (e.Kind === 'link' && e.LinkTarget === 'dir')
+}
+function rowOf(ev: MouseEvent): ListingEntry | undefined {
+  const row = (ev.target as HTMLElement | null)?.closest('.row[data-path]') as HTMLElement | null
+  return row ? rowAt(Number(row.dataset.index)) : undefined
+}
+function onRowMiddleDown(ev: MouseEvent) {
+  if (ev.button === 1 && rowOf(ev)) ev.preventDefault()
+}
+function onRowMiddleClick(ev: MouseEvent) {
+  if (ev.button !== 1) return
+  const e = rowOf(ev)
+  if (!e || !isFolderRow(e)) return
+  ev.preventDefault()
+  void openEntry(e)
+}
+
 // Capture-phase row pointerdown — fires before the rows' own handlers,
 // starting the drag threshold watch. Left, or right: a right-drag asks at the drop
 // (Move / Copy / Create shortcuts here, 2026-10-17).
@@ -1308,6 +1331,7 @@ function onCommand(id: string) {
   if (id === 'paste') { void pasteFromClipboard(); return }
   if (id === 'new-folder') { void newFolderHere(); return }
   if (id === 'filter') { openFilterMenu(filterChip.value ?? viewAnchor.value); return }
+  if (id === 'properties') { propertiesOfSelection(); return }   // 0.12.0
   const action = COMMAND_ACTIONS[id]
   if (action) runItemsAction(action)
 }
@@ -1612,6 +1636,60 @@ function folderExtensions(): string[] {
   }
   return [...counts].sort((a, b) => b[1] - a[1]).map(([ext]) => ext).slice(0, 24)
 }
+
+/* -----------------------------------------------
+   Properties (0.12.0, GEM Shell 2026-11-05 H4b; claude/properties-window-design.md): GEM Shell's Properties
+   entries (this list's menu, other widgets' file menus) hand them here (ui.onPropertiesRequest), Alt+Enter too
+   (the 'properties' command). The window is ours (PropertiesWindow.vue in ui.openWindow: GEM Shell's frame).
+------------------------------------------------ */
+/** The most items whose facts the window reads (more: counted from these). */
+const PROPERTIES_FULL_MAX = 1000
+
+function openProperties(req: { paths: string[]; count: number; folder: boolean; from?: string }): void {
+  if (!ui.openWindow) {
+    showSnack({ id: 'items-props', text: 'Properties need a newer GEM Shell.', timeoutMs: 5000, dedupe: 'replace' })
+    return
+  }
+  const paths = req.paths.filter(Boolean).slice(0, PROPERTIES_FULL_MAX)
+  if (!paths.length) return
+  const count = Math.max(paths.length, req.count)
+  // This list's own menu showed a sample: the window reads the whole selection (when small enough)
+  const own = !req.from && !req.folder && count > paths.length && count <= PROPERTIES_FULL_MAX && selection.count() === count
+  const title = req.folder || count <= 1 ? (basename(paths[0]) || paths[0]) : `${count.toLocaleString()} items`
+  ui.openWindow({
+    component: PropertiesWindow,
+    props: {
+      paths, count, folder: req.folder, from: req.from,
+      more: own ? async () => (await selection.selectedEntries()).map(e => e.FullPath) : undefined,
+    },
+    title,
+    width: 420,
+    height: 540,
+    // 0.12.1: GEM Shell's Discard / Save footer (the attribute boxes are a draft)
+    saveFooter: true,
+  })
+}
+
+/**
+ * Alt+Enter: the selection's properties, else the folder shown's. CHANGED (0.12.1): through GEM Shell's call
+ * (ui.showProperties: the same route as its menu entries, which hands them back to this list's openProperties).
+ */
+function propertiesOfSelection(): void {
+  const count = selection.count()
+  const ask = (paths: string[], opts: { count?: number; folder?: boolean }) => ui.showProperties
+    ? void ui.showProperties(paths, opts)
+    : openProperties({ paths, count: opts.count ?? paths.length, folder: !!opts.folder })   // older GEM Shell
+  if (count === 0) {
+    const dir = cwd.value || merged.value.rpath || ''
+    if (/^[A-Za-z]:[\\/]|^\\\\|^\//.test(dir)) ask([dir], { folder: true })
+    return
+  }
+  const paths = selectedPathsNow() ?? selection.sample(20, visibleSelectedEntries()).map(s => s.path)
+  ask(paths.slice(0, PROPERTIES_FULL_MAX), { count })   // a sample when many: openProperties reads the rest
+}
+
+// GEM Shell's Properties entries come here (explorers only; older GEM Shell: absent)
+const stopPropertiesRequests = ui.onPropertiesRequest?.(req => openProperties(req))
 
 /** "Edit types…": a panel in the middle of the window (0.7.2: was a popover at the pane's corner). */
 function openTypesEditor() {
@@ -2164,6 +2242,7 @@ on('items:reloadAndRename', async (msg: any) => {
 })
 
 onBeforeUnmount(() => {
+  stopPropertiesRequests?.()   // 0.12.0
   selectionTip?.hide()
   saveView()      // before the selection goes away
   if (iconsRaf) cancelAnimationFrame(iconsRaf)
@@ -2225,6 +2304,8 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand, onMenuI
       @keydown="onKeyDown"
       @pointerdown.capture="onRowPointerDownCapture"
       @pointerdown="onScrollContainerPointerDown"
+      @mousedown="onRowMiddleDown"
+      @auxclick="onRowMiddleClick"
       @pointermove="onSurfacePointerMove"
       @pointerup="onSurfacePointerUp"
       @click.capture="onSurfaceClick"

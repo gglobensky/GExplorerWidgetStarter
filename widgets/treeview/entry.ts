@@ -2,7 +2,7 @@ import Widget from './Widget.vue'
 
 export default {
   // 0.6.0 (GEM Shell D4b, 2026-10-31): hidden / protected folders from sdk.prefs()
-  api: '1.0', id: 'treeview', version: '0.6.0', license: 'PolyForm-Noncommercial-1.0.0', Component: Widget,
+  api: '1.0', id: 'treeview', version: '0.6.1', /* 0.6.1 (2026-11-05): middle-click opens a folder in a new tab */ license: 'PolyForm-Noncommercial-1.0.0', Component: Widget,
   displayName: 'Tree View', description: 'Browse one folder tree at a time, with remembered roots and focused folders.', category: 'navigation', icon: 'folder-tree',
   contexts: {
     sidebar: { minHeight: 180, fillRemaining: true },

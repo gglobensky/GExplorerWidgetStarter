@@ -74,6 +74,8 @@ onBeforeUnmount(clearTimer)
           data-rename-row
           @pointerdown.stop="ctx.startMenuRowDrag(row, menu.folderId ?? '', $event as PointerEvent)"
           @click="ctx.onRowClick(row, $event, level)"
+          @auxclick="e => { if (e.button === 1 && row.type === 'item') ctx.onRowClick(row, e, level) }"
+          @mousedown.middle.prevent
           @contextmenu.prevent.stop="row.type === 'item' ? ctx.onFavoriteMenu(row.id, $event) : ctx.onFolderNodeMenu(row.id, $event)"
           :title="row.type === 'item' ? ctx.favTip(row.label, row.locations) : row.label"
         >

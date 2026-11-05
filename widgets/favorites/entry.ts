@@ -12,7 +12,7 @@ export default {
   // 0.3.0 (GEM Shell E5c-2, 2026-11-03): the folder menus are GEM Shell's popovers (a level per folder, sub-folders
   // opening on hover, never over their parent), the drag ghost GEM Shell's (ui.dragGhost): nothing drawn outside the
   // widget's box any more.
-  version: '0.3.3',
+  version: '0.3.4',   // 0.3.4 (2026-11-05): middle-click opens a favorite in a new tab (GEM Shell's "Open where?")
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
 

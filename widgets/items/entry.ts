@@ -19,7 +19,12 @@ const ARRANGES = [
 export default {
     api:     '1.0',
     id:      'items',
-    version: '0.11.1',   // 0.10.0 (GEM Shell 2026-10-30, M2): useVirtualFlow + a ListFlow; 0.10.1 (M3): Arrange in columns;
+    version: '0.12.1',   // 0.12.1 (2026-11-05, GEM Shell H4b P4): Properties in tabs, attributes saved with GEM Shell's footer
+                         // (Discard / Save), Alt+Enter through ui.showProperties
+                         // 0.12.0 (2026-11-05, GEM Shell H4b): the Properties window (PropertiesWindow.vue, sdk.ui().openWindow),
+                         // GEM Shell's Properties entries handed here (ui.onPropertiesRequest), Alt+Enter
+                         // 0.11.2 (2026-11-05): a middle-click on a folder opens it in a new tab (GEM Shell's "Open where?")
+                         // 0.10.0 (GEM Shell 2026-10-30, M2): useVirtualFlow + a ListFlow; 0.10.1 (M3): Arrange in columns;
                          // 0.11.0 (D4b, 2026-10-31): hidden / protected files from sdk.prefs(); the Layout of a new folder setting
                          // 0.11.1 (2026-10-31): Filter ▸ Sort in the file dialog (Show / Type greyed there)
     license: 'PolyForm-Noncommercial-1.0.0',
@@ -65,6 +70,9 @@ export default {
           description: 'In a paged list (Layout ▸ Paged): opens the pager\'s page number box, to type the page to show.' },
         { id: 'filter', name: 'Filter', keys: ['Ctrl+Shift+F'],
           description: 'Opens the Filter menu: the sort order, folders only or files only, one type of file (Pictures, Videos, your own types…), or clears the filter. Kept per folder.' },
+        // 0.12.0
+        { id: 'properties', name: 'Properties', keys: ['Alt+Enter'],
+          description: 'Shows the properties of the selected files and folders (of the folder shown when nothing is selected) in a window: size, dates, attributes, media details, permissions and checksums. Fold it into the operations tray to keep it for later.' },
     ],
 
     // ── Context declarations ────────────────────────────────────────────────

@@ -80,6 +80,17 @@ Where a widget can be placed comes from its `entry.ts` `contexts`: `grid` (a hub
   place, updated as the user resizes you (in a hub's grid and folder panes, `cols` / `rows` too). Lay yourself
   out from them instead of guessing the row height. They are information, not a control: the user sizes widgets
   by dragging in Edit Layout, and a widget never offers pixel fields for its own size.
+- **Where `sdk.navigate` opens (2026-11-05).** The shell decides, from the user's setting (Settings ▸ Navigation)
+  and the click itself, as browsers do: **Ctrl+click** or **middle-click** a new tab in the background,
+  **Ctrl+Shift+click** a new tab switched to, **Shift+click** the whole tab. The shell reads the modifiers and the
+  button from the user's own press in your widget: you don't pass them, and you can't fake them. Two things are
+  yours: call `sdk.navigate` from a click **and from an `auxclick` with `button === 1`** (the browser never sends a
+  middle-click as `click`), and stop the middle button's autoscroll on what navigates (`@mousedown.middle.prevent`):
+  ```vue
+  <button @click="go(fav)" @auxclick="e => { if (e.button === 1) go(fav) }" @mousedown.middle.prevent>…</button>
+  ```
+  A Ctrl+click on something your widget uses for selecting (Ctrl+click to add to a selection) isn't a navigation:
+  the modifiers only count when `sdk.navigate` follows the press.
 
 ## A path field
 
@@ -438,6 +449,49 @@ const ghost = ui.dragGhost?.({ label: fav.label, icon: '★', offset: { x: 12, y
 Text only (label and sub-label 80 characters, icon 4); `style` takes colours and a radius. It is
 hidden while GEM Shell asks the user something. While the button stays held, your widget's gesture
 lasts (a menu you open by hovering a folder during a long drag is allowed).
+
+**Windows** (GEM Shell 2026-11-05). Something the user keeps open while working elsewhere (details of a
+file, a small tool) goes in a window GEM Shell frames: its header is GEM Shell's ("<your widget's name> —
+title"), the drag handle, with **Fold** (into the operations tray: a card with Show and Close) and **Close**.
+It stays until closed, your instance removed, or Escape in it; several at once (8 per instance); kept on
+screen and under GEM Shell's dialogs. Open one as a popover: right after the user's own click or key in
+your widget, while on screen.
+
+```ts
+const win = ui.openWindow?.({ component: Details, props: { path }, title: name, width: 420, height: 520 })
+// win?.setTitle(...), win?.update({ ...allProps }), win?.fold(), win?.show(), win?.close()
+```
+
+`anchor` (an element of yours) opens it beside that element, else it is centred (cascading). Off by
+default: `resizable: true` (a corner grip) and `remember: '<key>'` (its place, and size when resizable,
+kept across restarts). The component gets `props.close()` and `inject('widgetSdk')`; a click in it counts
+as your widget's own gesture (it may `sdk.reveal`, open a menu...).
+
+**Saving what a window edits.** `saveFooter: true` puts GEM Shell's Discard / Save footer at the bottom,
+always (greyed while nothing changed), for the whole window: register one draft covering everything your
+window edits, every tab, and nothing changes before Save:
+
+```ts
+// in the window's component
+props.setDraft?.({ dirty: () => changed.value, save: async () => { await apply() }, discard: () => reset() })
+onBeforeUnmount(() => props.setDraft?.(null))
+```
+
+`save` throws to keep the changes (the footer shows its message). Closing the window with changes asks
+Save / Discard / Stay; Ctrl+S saves the window that has the focus; GEM Shell's own close question lists it.
+
+**Properties, for file explorers** (GEM Shell 2026-11-05). Any widget shows the Properties of files with
+`ui.showProperties?.(paths, { count?, folder? })` (right after the user's click or key in it): a file explorer
+draws them. GEM Shell's Properties entries (in your file menu, and in other widgets' file menus) go the same
+way. The explorer draws the window: register
+with `ui.onPropertiesRequest?.(req => ...)` (explorers only: `role: 'explorer'`), and unsubscribe on
+unmount. `req`: `{ paths, count, folder, from? }` (a sample of paths when many: `count` says how many;
+`folder`: the folder shown; `from`: the widget whose menu asked). The user's click counts as yours, so
+`openWindow` works right away. The data, read as your widget: `sdk.fsProperties(paths)` (Metadata),
+`sdk.mediaInfo(paths)` (Media: now also bitrates, frame rate, codec, channels, camera, exposure...),
+`sdk.fsHash(path, { onProgress })` → `{ result, cancel() }` (Read), `sdk.fsSetAttributes(path,
+{ readOnly?, hidden? })` (Write). A folder's size isn't read yet: it comes with GEM Shell's indexer. The
+GExplorer's window (`widgets/items/PropertiesWindow.vue`, Alt+Enter) is the example.
 
 **The packaging check.** Every `npm run build` / `watch` first reads your widget's sources and
 styles (and the shared libraries it imports) for these:

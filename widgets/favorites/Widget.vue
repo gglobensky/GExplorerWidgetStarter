@@ -542,6 +542,8 @@ defineExpose({ onWidgetAction, onMenuItem, onCommand })
                 data-rename-row
                 @pointerdown.stop="sortable.startRowDrag(row, $event)"
                 @click="openFavorite(row.entry, $event)"
+                @auxclick="e => { if (e.button === 1) openFavorite(row.entry, e) }"
+                @mousedown.middle.prevent
                 @contextmenu.prevent.stop="onFavoriteMenu(row.entry.id, $event)"
                 :title="favTip(row.entry.label, row.entry.locations)"
               >

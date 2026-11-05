@@ -215,6 +215,8 @@ onBeforeUnmount(() => {
         :aria-label="driveAriaLabel(drive)"
         v-gex-tooltip="driveTooltip(drive)"
         @click="navTo(drive)"
+        @auxclick="e => { if (e.button === 1) navTo(drive) }"
+        @mousedown.middle.prevent
       >
         <span class="drive-heading">
           <span class="drive-label drive-label-full">{{ drive.display }}</span>

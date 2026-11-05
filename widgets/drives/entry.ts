@@ -3,7 +3,7 @@ import Widget from './Widget.vue'
 export default {
   api: '1.0',
   id: 'drives',
-  version: '0.6.0',
+  version: '0.6.1',   // 0.6.1 (2026-11-05): middle-click opens a drive in a new tab
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
   
