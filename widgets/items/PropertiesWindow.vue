@@ -11,12 +11,16 @@
 //   Attributes   read-only (files) and hidden (Windows) as boxes (fsSetAttributes: a Write grant on the item); the
 //                others as plain words
 //   Media        fs:mediaInfo (the OS's properties), plus media:probe's exact streams when ffmpeg is installed
-//   Permissions  the owner and the access list (Windows), or the mode (elsewhere); read-only
+//   Permissions  0.13.0: PermissionsTab.vue, EDITABLE (a draft in permissionsDraft.ts, saved by the same footer):
+//                your access, the owner, who may use it in five words, Advanced (denied rows, inheritance, where
+//                a folder's row applies; Linux: the mode). Older GEM Shell (no fsPermissions): the old read-only list
 //   Checksums    SHA-256 and MD5 on demand (fsHash: progress, Stop), a field to compare one you paste
 // Several items: how many, files / folders, the files' total size, where they are.
 // A folder's size and contents: TODO(indexer), said in the window (never walked here).
 import { ref, reactive, computed, onMounted, onBeforeUnmount, inject } from 'vue'
 import type { WidgetSdk, FsPropertiesItem, MediaInfoItem, MediaProbe, FsHashRun } from 'gexplorer/widgets'
+import { usePermissionsDraft } from './permissionsDraft'
+import PermissionsTab from './PermissionsTab.vue'
 
 const props = defineProps<{
   /** The items (or the folder shown). */
@@ -174,6 +178,22 @@ async function saveAttrs(): Promise<void> {
   }
 }
 
+// ── Permissions (0.13.0): kept here so switching tabs keeps the draft ──────────
+const permsDraft = usePermissionsDraft(sdk, () => single.value ? paths.value[0] ?? null : null, () => !!item.value?.isDir)
+const permsShown = computed(() => permsDraft.canRead.value && (!!permsDraft.perms.value || !!permsDraft.loadError.value))
+const oldPermsShown = computed(() => !permsDraft.canRead.value && !!item.value && !!(item.value.owner || item.value.access?.length || item.value.mode))
+
+// The window's one draft (GEM Shell's footer): the attribute boxes, then the permissions
+const dirty = () => attrDirty.value || permsDraft.dirty.value
+async function saveAll(): Promise<void> {
+  await saveAttrs()
+  await permsDraft.save()
+}
+function discardAll(): void {
+  discardAttrs()
+  permsDraft.discard()
+}
+
 // ── Media ──────────────────────────────────────────────────────────────────────
 const media = ref<MediaInfoItem | null>(null)
 const probe = ref<MediaProbe | null>(null)
@@ -299,14 +319,14 @@ const tabs = computed<{ id: Tab; label: string }[]>(() => {
   const it = item.value
   const out: { id: Tab; label: string }[] = [{ id: 'general', label: 'General' }]
   if (mediaRows.value.length || probeRows.value.length) out.push({ id: 'details', label: 'Details' })
-  if (it && (it.owner || it.access?.length || it.mode)) out.push({ id: 'permissions', label: 'Permissions' })
+  if (it && it.exists !== false && (permsShown.value || oldPermsShown.value)) out.push({ id: 'permissions', label: 'Permissions' })
   if (isFile.value && sdk.fsHash) out.push({ id: 'checksums', label: 'Checksums' })
   return out
 })
 
 onMounted(async () => {
   // 0.12.1: GEM Shell's footer saves / discards this window's changes (every tab's)
-  props.setDraft?.({ dirty: () => attrDirty.value, save: saveAttrs, discard: discardAttrs })
+  props.setDraft?.({ dirty, save: saveAll, discard: discardAll })
   if (props.more && props.count > paths.value.length) {
     try {
       const all = await props.more()
@@ -315,6 +335,7 @@ onMounted(async () => {
   }
   await loadFacts()
   void loadMedia()
+  if (single.value && item.value?.exists !== false) void permsDraft.load()
 })
 
 onBeforeUnmount(() => {
@@ -392,7 +413,8 @@ onBeforeUnmount(() => {
         </template>
       </section>
 
-      <section v-if="tab === 'permissions'">
+      <PermissionsTab v-if="tab === 'permissions' && permsShown" :d="permsDraft" :is-dir="!!item.isDir" />
+      <section v-else-if="tab === 'permissions'">
         <dl class="ipw-rows">
           <template v-if="item.owner"><dt>Owner</dt><dd>{{ item.owner }}</dd></template>
           <template v-if="item.mode"><dt>Mode</dt><dd class="ipw-mono">{{ item.mode }}</dd></template>
@@ -407,7 +429,7 @@ onBeforeUnmount(() => {
             </tr>
           </tbody>
         </table>
-        <p class="ipw-muted">Read-only here: managing permissions comes later.</p>
+        <p class="ipw-muted">Read-only here: this GEM Shell can't change them.</p>
       </section>
 
       <section v-if="tab === 'checksums'">

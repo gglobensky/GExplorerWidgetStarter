@@ -19,7 +19,9 @@ const ARRANGES = [
 export default {
     api:     '1.0',
     id:      'items',
-    version: '0.12.1',   // 0.12.1 (2026-11-05, GEM Shell H4b P4): Properties in tabs, attributes saved with GEM Shell's footer
+    version: '0.13.0',   // 0.13.0 (2026-11-05, GEM Shell H4c): the Permissions tab edits (PermissionsTab.vue: owner, who may
+                         // use it in five words, denied rows, inheritance; Linux's mode, UNTESTED), the Permissions capability
+                         // 0.12.1 (2026-11-05, GEM Shell H4b P4): Properties in tabs, attributes saved with GEM Shell's footer
                          // (Discard / Save), Alt+Enter through ui.showProperties
                          // 0.12.0 (2026-11-05, GEM Shell H4b): the Properties window (PropertiesWindow.vue, sdk.ui().openWindow),
                          // GEM Shell's Properties entries handed here (ui.onPropertiesRequest), Alt+Enter
@@ -221,5 +223,6 @@ export default {
 		{ cap: 'Metadata',  reason: 'Resolves file icons and shortcut targets' },
 		{ cap: 'Clipboard', reason: 'Copies and cuts files to the clipboard' },
 		{ cap: 'Media',     reason: 'Shows thumbnails of pictures, videos and music covers in the Media layout' },
+		{ cap: 'Permissions', reason: 'Changes who may use a file or folder, from its Properties window (asked per item)' },
 	]
 }

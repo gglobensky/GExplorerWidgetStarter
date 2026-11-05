@@ -165,6 +165,28 @@ declare module 'gexplorer/widgets' {
          */
         fsSetAttributes?: (path: string, attrs: { readOnly?: boolean; hidden?: boolean }) => Promise<void>
         /**
+         * GEM Shell 2026-11-05 (H4c). Metadata capability. Who may do what with one item: owner, rows (explicit and
+         * inherited), your own access, what its drive can do (features). Never prompts. Rejects with an Error whose
+         * `code` is E_NOT_FOUND, E_ACCESS_DENIED or E_READ_FAILED. Older GEM Shell: absent.
+         */
+        fsPermissions?: (path: string) => Promise<FsPermissions>
+        /**
+         * GEM Shell 2026-11-05 (H4c). Permissions capability. Changes them in one call: `entries` replace the item's
+         * explicit rows; `ownerId`, `inherit` (Windows), `unixMode` (Linux). The Permissions grant is asked on the
+         * item's folder once; GEM Shell asks before a risky change and offers "Retry as administrator". Rejects with
+         * an Error whose `code` is E_CANCELLED (the user kept them), E_PERMISSION, E_NOT_FOUND, E_UNSUPPORTED,
+         * E_BAD_REQUEST, E_ACCESS_DENIED, E_ELEVATION_DECLINED or E_FAILED.
+         */
+        fsSetPermissions?: (path: string, change: FsPermissionsChange) => Promise<void>
+        /**
+         * GEM Shell 2026-11-05 (H4c). Permissions capability. People and groups whose name holds <query>: the
+         * built-in ones, this computer's, then the domain's when the PC is joined (directoryUnreachable: it didn't
+         * answer in time). An empty query: the built-in ones. The grant is asked on <forPath> the first time.
+         */
+        searchPrincipals?: (query: string, forPath: string, limit?: number) => Promise<{ items: FsPrincipal[]; directoryUnreachable: boolean }>
+        /** GEM Shell 2026-11-05 (H4c). Permissions capability. A typed name ("DOMAIN\\name", "Everyone") as a principal; null: unknown. */
+        resolvePrincipal?: (name: string, forPath: string) => Promise<FsPrincipal | null>
+        /**
          * 2026-11-01: a path with folder variables made a real one ("%PROGRAMDATA%\\Epic", "%APPDATA%\\CurseForge",
          * "~/x" on Linux): the known folder variables only. As given when there are none. Read capability.
          */
@@ -585,6 +607,8 @@ declare module 'gexplorer/widgets' {
         | 'AppLinks'
         /** 2026-11-01: the installed programs (sdk.installedApps): the list, and starting a Store app. */
         | 'Apps'
+        /** 2026-11-05 (H4c): change who may use files and folders, search people and groups (sdk.fsSetPermissions...). */
+        | 'Permissions'
 
     /** sdk.geolocate()'s answer: a city and the CITY's coordinates. */
     export type GeoCity = {
@@ -3008,6 +3032,53 @@ declare module 'gexplorer/widgets' {
     export type FsHashRun = {
         readonly result: Promise<{ sha256?: string; md5?: string; stopped: boolean }>
         cancel(): void
+    }
+
+    /** GEM Shell 2026-11-05 (H4c): the five levels, the same words on every OS; 'special': none of them (kept as is). */
+    export type PermissionLevel = 'none' | 'read' | 'readRun' | 'readWrite' | 'full' | 'special'
+
+    /** A user, a group or a special one (Everyone, SYSTEM, "everyone else"); id: the OS's (a SID; Unix: "owner" / "group" / "others"). */
+    export type FsPrincipal = {
+        id: string
+        name: string
+        kind: 'user' | 'group' | 'special'
+        source: 'local' | 'domain' | 'builtin' | 'resolved' | 'posix'
+    }
+
+    export type FsPermissionEntry = {
+        who: FsPrincipal
+        level: PermissionLevel
+        deny: boolean
+        inherited: boolean
+        /** Folders: 'this' | 'all' | 'thisAndSubfolders' | 'thisAndFiles' | 'subfoldersAndFiles' | 'subfolders' | 'files' | 'custom'. */
+        appliesTo: string
+        /** The OS's raw values (Windows): send them back as they are for a Special row (or 'custom') left alone. */
+        rights: number
+        inheritanceFlags: number
+        propagationFlags: number
+    }
+
+    /** GEM Shell 2026-11-05 (H4c): sdk.fsPermissions(). */
+    export type FsPermissions = {
+        owner: FsPrincipal | null
+        /** Unix's owning group (null on Windows). */
+        group: FsPrincipal | null
+        entries: FsPermissionEntry[]
+        /** Windows: inheritance from the folder is on. */
+        inherits: boolean
+        /** What the user running GEM Shell may do with it (null: not known). */
+        yourAccess: PermissionLevel | null
+        /** Unix: "0755". */
+        unixMode: string | null
+        features: { supported: boolean; addPrincipals: boolean; deny: boolean; inheritance: boolean; changeOwner: boolean; search: boolean; unixBits: boolean }
+    }
+
+    /** GEM Shell 2026-11-05 (H4c): sdk.fsSetPermissions()'s change. entries: the EXPLICIT rows as wanted (they replace them). */
+    export type FsPermissionsChange = {
+        entries?: { principalId: string; level: PermissionLevel; deny?: boolean; appliesTo?: string; rights?: number; inheritanceFlags?: number; propagationFlags?: number }[]
+        ownerId?: string
+        inherit?: boolean
+        unixMode?: number
     }
 
     /** GEM Shell 2026-11-05: sdk.ui().openWindow's options. */

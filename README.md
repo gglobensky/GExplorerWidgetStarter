@@ -493,6 +493,22 @@ unmount. `req`: `{ paths, count, folder, from? }` (a sample of paths when many: 
 { readOnly?, hidden? })` (Write). A folder's size isn't read yet: it comes with GEM Shell's indexer. The
 GExplorer's window (`widgets/items/PropertiesWindow.vue`, Alt+Enter) is the example.
 
+**Permissions** (GEM Shell 2026-11-05). The same words on Windows and Linux: No access, Read, Read & run,
+Read & write, Full control (`special`: a mix none of them says, sent back as it is). Reading needs Metadata:
+`sdk.fsPermissions(path)` → `{ owner, group, entries, inherits, yourAccess, unixMode, features }` (`entries`:
+`{ who, level, deny, inherited, appliesTo, rights, inheritanceFlags, propagationFlags }`; `features` says what
+this drive can do: `supported`, `addPrincipals`, `deny`, `inheritance`, `changeOwner`, `search`, `unixBits`).
+Changing them needs the **Permissions** capability (declare it with a reason; the user grants it per item or
+folder, never "This file" only): `sdk.fsSetPermissions(path, { entries?, ownerId?, inherit?, unixMode? })`.
+`entries` are the item's EXPLICIT rows as wanted (they replace them; inherited rows are its folder's). GEM Shell
+itself asks before a risky change (your own access going down, Everyone getting write, inheritance off) and
+offers "Retry as administrator": `E_CANCELLED` means the user kept them. People and groups:
+`sdk.searchPrincipals(query, forPath)` → `{ items, directoryUnreachable }` (an empty query lists the built-in
+ones; a domain that doesn't answer in time is said, not waited for) and `sdk.resolvePrincipal(name, forPath)`
+for a typed `DOMAIN\name`. Linux shows three rows (owner, group, everyone else) and the mode: UNTESTED until
+GEM Shell's Linux port. GExplorer's Permissions tab (`PermissionsTab.vue`, `permissionsDraft.ts`,
+`PrincipalPicker.vue`) is the example: a draft saved by the window's footer with the rest.
+
 **The packaging check.** Every `npm run build` / `watch` first reads your widget's sources and
 styles (and the shared libraries it imports) for these:
 
