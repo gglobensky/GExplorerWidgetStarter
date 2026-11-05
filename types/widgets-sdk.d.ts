@@ -803,6 +803,8 @@ declare module 'gexplorer/widgets' {
         virtual?: boolean
         /** With virtual: the program offering them ("Input Director"). */
         source?: string
+        /** No files but a picture (a screenshot...): fsPasteClipboard saves it as a PNG file; paths holds its name. */
+        image?: boolean
     }
 
     // ── DnD types ──────────────────────────────────────────────────────────
@@ -1292,6 +1294,65 @@ declare module 'gexplorer/widgets' {
     export function createLinearSortable<T>(items: T[], options: CreateSortableOptions<T>): SortableHandle
     export function useSortable<T>(source: Ref<T[]>, options: UseSortableOptions<T>): UseSortableReturn<T>
     export function useScrollHints(options: any): any
+
+    // ── Ink kit: drawing on pictures and sketches (NEW 2026-11-05, GEM Shell H1; from Corkboard's ink.ts) ───
+    // Strokes are data in their surface's units: the <svg>'s viewBox (1000 wide: ink scales with the picture; or the
+    // picture's own pixels). A freehand stroke is exactly Corkboard's Stroke ({ c, w, pts, p? }): saved ink reads as it is.
+    // `c` is a colour KEY your look resolves (yours: 'k' | 'b' | 'r' | 'hl', or a CSS colour). README "Drawing on pictures".
+    /** [x, y, pressure 0..1]. */
+    export type InkPoint = [number, number, number]
+    /** Freehand: one smoothed path for a mouse; a pen's (p: 1) segments whose width follows the pressure. */
+    export type InkLine = { k?: undefined; c: string; w: number; pts: InkPoint[]; p?: 1 }
+    export type InkShapeKind = 'arrow' | 'rect' | 'ellipse'
+    /** Dragged from a to b (Shift: a square / a circle, an arrow at 45° steps). */
+    export type InkShape = { k: InkShapeKind; c: string; w: number; a: [number, number]; b: [number, number] }
+    /** Placed with a click; `y` is the baseline. */
+    export type InkText = { k: 'text'; c: string; size: number; x: number; y: number; text: string }
+    export type InkStroke = InkLine | InkShape | InkText
+    export type InkLook = {
+        /** A colour key to a CSS colour (a var(...) is fine; flattenInk resolves it). */
+        color: (c: string) => string
+        /** Keys drawn as a highlighter (wide, see-through). Default: 'hl'. */
+        highlighter?: (c: string) => boolean
+    }
+    export type InkMode = 'draw' | 'erase' | InkShapeKind | 'text'
+    /** What one gesture did (added or erased), for undoInk. */
+    export type InkUndo = { arr: InkStroke[]; add?: InkStroke; removed?: { s: InkStroke; i: number }[] }
+    /** What a press turned out to be: a right-press that erased is not a click for your context menu. */
+    export type InkGesture = { right: boolean; moved: boolean; removed: number }
+    export type InkOptions = {
+        mode: InkMode
+        /** The colour key for what is drawn. */
+        color: string
+        look: InkLook
+        /** Width at 1:1 in CSS px. Defaults: mouse 2.6, pen 3.2, highlighter 18, shapes 3. */
+        width?: number
+        /** Text size at 1:1 in CSS px. Default 18. */
+        textSize?: number
+        /** A stroke was added or strokes erased: save, and keep the undo entry. */
+        done: (u: InkUndo) => void
+        gesture?: (g: InkGesture) => void
+        /** Text mode: the words to place there (show your own box); null or empty: nothing. */
+        askText?: (at: { clientX: number; clientY: number }) => Promise<string | null>
+    }
+    export type FlattenOptions = {
+        /** The strokes' surface width in its units (your <svg>'s viewBox width). */
+        units: number
+        /** A part of the picture to keep, in the picture's pixels. */
+        crop?: { x: number; y: number; width: number; height: number }
+        /** Default 'image/png'. */
+        type?: string
+    }
+    /** Starts a stroke / shape / text / erase on `svg` from a pointerdown (erase also: the right button, a pen's eraser end). */
+    export function beginInk(e: PointerEvent, svg: SVGSVGElement, arr: InkStroke[], o: InkOptions): void
+    /** Draws `arr` into `svg` (its content replaced). */
+    export function drawInk(svg: SVGSVGElement | null, arr: InkStroke[], look: InkLook): void
+    /** Takes back one gesture (redraw after). */
+    export function undoInk(u: InkUndo): void
+    /** The picture with its strokes drawn into the pixels (PNG by default), optionally cropped. `image` must be loaded. */
+    export function flattenInk(image: HTMLImageElement | ImageBitmap | HTMLCanvasElement, arr: InkStroke[], look: InkLook, opts: FlattenOptions): Promise<Blob>
+    /** A freehand stroke's SVG path. */
+    export function inkPathD(p: InkPoint[]): string
 
     // ── Grid layout: the hubs' own engine (NEW 2026-11-02, GEM Corkboard) ───
     // The layout maths GEM Shell uses to push widgets aside on a hub, for a widget laying its own things

@@ -149,6 +149,24 @@ const geo = createVirtualGeometry({ vlist: v.lines, scrollEl, flow, count: () =>
   The Layout menu offers them after the sizes; the choice arrives in `props.config.view.arrange` and is kept
   per folder for an explorer (Items does this for Icons and Media).
 
+## Drawing on pictures (the ink kit)
+
+GEM Shell's picture editor and the Corkboard draw with the same kit (GEM Shell, 2026-11-05), from `gexplorer/widgets`:
+`beginInk`, `drawInk`, `undoInk`, `flattenInk`, `inkPathD` and their types.
+
+- **Your surface:** an `<svg>` over the picture with a `viewBox`. Strokes are kept in its units: give it a fixed width
+  (`viewBox="0 0 1000 <h>"`) and the ink scales with the picture; or the picture's own pixels.
+- **Your look:** `{ color: key => css, highlighter?: key => boolean }`. Keys are yours (`'k'`, `'hl'`...) or plain CSS
+  colours; a CSS variable is fine on screen, `flattenInk` resolves it.
+- **A gesture:** on `pointerdown`, `beginInk(e, svg, strokes, { mode, color, look, done })`. Modes: `draw` (freehand:
+  smoothed for a mouse, pressure for a pen), `arrow`, `rect`, `ellipse` (dragged; Shift: square / circle / 45°),
+  `text` (a click; `askText` shows your box and returns the words), `erase` (whole strokes; also the right button and
+  a pen's eraser end). `done(u)`: save, and keep `u` for `undoInk(u)`. `gesture` tells whether a right-press erased
+  (then it isn't a click for your context menu). The kit listens on `window` only while a stroke is under way.
+- **Showing saved ink:** `drawInk(svg, strokes, look)`.
+- **Into the pixels:** `flattenInk(img, strokes, look, { units, crop? })` → a PNG `Blob` (the picture's size, or the crop).
+- Strokes are plain data: freehand `{ c, w, pts, p? }`, shapes `{ k, c, w, a, b }`, text `{ k: 'text', c, size, x, y, text }`.
+
 ## The user's city
 
 Declare `{ cap: 'Geolocation', reason: '…' }` (GEM Shell, 2026-10-30) and call `sdk.geolocate()` from a click or a
