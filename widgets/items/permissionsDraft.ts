@@ -7,6 +7,10 @@
 // 0.13.1 (H4c-4): GEM Shell's risk question comes WHEN a choice is made (sdk.confirmPermissionChange, with the whole
 // draft): "Keep them as they are" undoes that last choice only, the rest of the draft stays; Save doesn't ask again
 // for what was accepted. A part the OS refused at Save (the owner) is marked (failedPart) with its own Undo.
+// 0.13.2 (H4c-5): "No access" means no access on every OS. Windows adds up allowed rights (its folder's, its groups',
+// this item's), so an allowed row at "No access" took nothing away: there, "No access" is written as a DENIED row
+// with every right (a denied right wins), shown under People as "No access" (infoNote says so once); a partly
+// denied row (Read, Read & run, Read & write) stays under Advanced. Linux: no bits, as before.
 //   rows       the item's EXPLICIT rows (allow and deny), as wanted: sent whole (they replace the explicit ones)
 //   owner      a new owner (Windows; the picker in owner mode; ownerChoices: who may own it without admin rights)
 //   inherit    inheritance from the folder on / off (Windows)
@@ -69,6 +73,8 @@ export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null,
   const checking = ref(false)
   /** 0.13.1: why the last choice was undone without the question (no grant, ...). */
   const editNote = ref<string | null>(null)
+  /** 0.13.2: what a choice did behind the scenes ("No access" written as a denied row, Windows). */
+  const infoNote = ref<string | null>(null)
   /** 0.13.1: the part the OS refused at the last Save ('owner'); nothing was written. */
   const failedPart = ref<'owner' | null>(null)
   /** 0.13.1: bumped when a choice is undone, so the controls show the restored values. */
@@ -91,6 +97,18 @@ export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null,
   const inherited = computed(() => perms.value?.entries.filter(e => e.inherited) ?? [])
   const allowRows = computed(() => rows.value.filter(r => !r.deny))
   const denyRows = computed(() => rows.value.filter(r => r.deny))
+  /** 0.13.2: a row denying everything is "No access" (Windows' way to write it). */
+  const isNoAccess = (r: { deny: boolean; level: PermissionLevel }) => r.deny && r.level === 'full'
+  /** People: allowed rows and "No access" rows. */
+  const peopleRows = computed(() => rows.value.filter(r => !r.deny || isNoAccess(r)))
+  /** Advanced: the partly denied rows. */
+  const deniedRows = computed(() => rows.value.filter(r => r.deny && !isNoAccess(r)))
+  const inheritedPeople = computed(() => inherited.value.filter(e => !e.deny || isNoAccess(e)))
+  const inheritedDenied = computed(() => inherited.value.filter(e => e.deny && !isNoAccess(e)))
+  /** The level a People line shows. */
+  const shownLevel = (r: { deny: boolean; level: PermissionLevel }): PermissionLevel => isNoAccess(r) ? 'none' : r.level
+  /** An inherited row this item's own "No access" overrules (shown struck through). */
+  const deniedHere = (principalId: string) => rows.value.some(r => isNoAccess(r) && r.who.id === principalId)
 
   const snapshot = (list: PermRow[]) => JSON.stringify(list.map(r => [r.who.id, r.level, r.deny, r.appliesTo, r.rights, r.inheritanceFlags, r.propagationFlags]))
   const rowsDirty = computed(() => snapshot(rows.value) !== savedRows)
@@ -117,6 +135,7 @@ export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null,
     inherit.value = null
     mode.value = modeCommitted = p?.unixMode ?? ''
     editNote.value = null
+    infoNote.value = null
     failedPart.value = null
     rev.value++
     closePicker()
@@ -173,6 +192,7 @@ export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null,
   async function edit(apply: () => void): Promise<void> {
     if (checking.value || busy.value) return
     const before = capture()
+    infoNote.value = null
     apply()
     editNote.value = null
     const path = pathOf()
@@ -181,9 +201,10 @@ export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null,
     if (!change) return
     checking.value = true
     try {
-      if (!(await sdk.confirmPermissionChange(path, change))) restore(before)
+      if (!(await sdk.confirmPermissionChange(path, change))) { restore(before); infoNote.value = null }
     } catch (err: any) {
       restore(before)
+      infoNote.value = null
       editNote.value = err?.code === 'E_PERMISSION' ? 'The permission to change them was not granted.' : `Couldn't check this change: ${err?.message ?? err}`
     } finally {
       checking.value = false
@@ -191,7 +212,25 @@ export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null,
   }
 
   function setLevel(row: PermRow, level: PermissionLevel): Promise<void> {
-    return edit(() => { const r = rows.value.find(x => x.key === row.key); if (r) r.level = level })
+    return edit(() => {
+      const i = rows.value.findIndex(x => x.key === row.key)
+      if (i < 0) return
+      const r = rows.value[i]
+      if (features.value?.deny) {
+        // 0.13.2 (Windows): "No access" ⇄ a row denying everything
+        if (isNoAccess(r)) {
+          if (level !== 'none') rows.value.splice(i, 1, { ...r, key: nextKey++, deny: false, level, rights: 0, orig: 'none' })
+          return
+        }
+        if (!r.deny && level === 'none') {
+          if (rows.value.some(x => isNoAccess(x) && x.who.id === r.who.id)) rows.value.splice(i, 1)
+          else rows.value.splice(i, 1, { ...r, key: nextKey++, deny: true, level: 'full', rights: 0, orig: 'none' })
+          infoNote.value = `"No access" for ${r.who.name}: Windows adds up what its folder, groups and this item allow, so GEM Shell writes it as a denied row (every right denied: a denied right wins over any allowed one).`
+          return
+        }
+      }
+      r.level = level
+    })
   }
   function setAppliesTo(row: PermRow, appliesTo: string): Promise<void> {
     return edit(() => { const r = rows.value.find(x => x.key === row.key); if (r) r.appliesTo = appliesTo })
@@ -277,13 +316,15 @@ export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null,
       return
     }
     const deny = m === 'deny'
-    if (rows.value.some(r => r.who.id === who.id && r.deny === deny)) { pickerNote.value = `${who.name} is already listed.`; return }
+    const listed = deny ? deniedRows.value : peopleRows.value
+    if (listed.some(r => r.who.id === who.id)) { pickerNote.value = `${who.name} is already listed.`; return }
     closePicker()
     void edit(() => {
       rows.value = [...rows.value, {
         key: nextKey++, who, deny,
-        // A new allow row starts low (Read); a new deny row denies everything (what "deny" usually means)
-        level: deny ? 'full' : 'read',
+        // A new allow row starts low (Read); a new partly denied row (Advanced) denies changing it ("No access"
+        // is chosen under People)
+        level: deny ? 'readWrite' : 'read',
         appliesTo: isDirOf() ? 'all' : 'this', rights: 0, inheritanceFlags: 0, propagationFlags: 0, orig: 'none',
       }]
     })
@@ -339,8 +380,8 @@ export function usePermissionsDraft(sdk: WidgetSdk, pathOf: () => string | null,
   }
 
   return {
-    perms, loadError, loading, busy, checking, editNote, failedPart, rev, view, canRead, canEdit, features,
-    rows, inherited, allowRows, denyRows, owner, inherit, mode, modeDirty, modeValid, dirty, ownerNeedsAdmin,
+    perms, loadError, loading, busy, checking, editNote, infoNote, failedPart, rev, view, canRead, canEdit, features,
+    rows, inherited, allowRows, denyRows, peopleRows, deniedRows, inheritedPeople, inheritedDenied, shownLevel, deniedHere, owner, inherit, mode, modeDirty, modeValid, dirty, ownerNeedsAdmin,
     load, setLevel, setAppliesTo, removeRow, setInherit, commitMode, undoOwner,
     picker, query, found, searching, unreachable, pickerNote, openPicker, closePicker, pick, useTyped,
     save, discard,

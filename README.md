@@ -508,7 +508,9 @@ ones; a domain that doesn't answer in time is said, not waited for) and `sdk.res
 for a typed `DOMAIN\name`. Ask GEM Shell's risk question when the user MAKES a choice:
 `sdk.confirmPermissionChange(path, wholeDraftChange)` → `false` means "Keep them as they are": undo that last
 choice only (accepted risks aren't asked again at Save). A refused owner fails with `E_INVALID_OWNER` and
-`err.part === 'owner'` (nothing is written); `ownerChoices` lists who may own the item without administrator
+`err.part === 'owner'` (nothing is written). Windows ADDS UP allowed rights (the folder's, the groups', the
+item's): an allowed row at `none` takes nothing away; to mean "No access" there, write a denied row at `full`
+(GExplorer does, and says so); `ownerChoices` lists who may own the item without administrator
 rights (others: tag them "needs admin": Save offers "Retry as administrator"). Linux shows three rows (owner, group,
 everyone else) and the mode: UNTESTED until GEM Shell's Linux port. GExplorer's Permissions tab (`PermissionsTab.vue`, `permissionsDraft.ts`,
 `PrincipalPicker.vue`) is the example: a draft saved by the window's footer with the rest.

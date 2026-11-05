@@ -19,7 +19,9 @@ const ARRANGES = [
 export default {
     api:     '1.0',
     id:      'items',
-    version: '0.13.1',   // 0.13.1 (2026-11-05, GEM Shell H4c-4): Permissions without scrollbars (People / Advanced views, the
+    version: '0.13.2',   // 0.13.2 (2026-11-05, GEM Shell H4c-5): "No access" means no access on Windows too (written as a row
+                         // denying everything, said once); partly denied rows under Advanced
+                         // 0.13.1 (2026-11-05, GEM Shell H4c-4): Permissions without scrollbars (People / Advanced views, the
                          // picker in the tab's place, short lists scroll), GEM Shell's risk question when a choice is
                          // made (Keep undoes that choice only), a refused owner shown with Undo, "needs admin" owners
                          // 0.13.0 (2026-11-05, GEM Shell H4c): the Permissions tab edits (PermissionsTab.vue: owner, who may

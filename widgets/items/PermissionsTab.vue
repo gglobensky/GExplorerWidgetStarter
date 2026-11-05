@@ -11,6 +11,9 @@
 // takes the tab's place while open; long lists scroll inside themselves (about 6 rows). Closing the picker gives
 // the focus back to the tab (Escape again closes the window). A part the OS refused at Save (the owner) shows why,
 // with its own Undo.
+// 0.13.2 (H4c-5): People lists allowed rows and "No access" rows (Windows writes "No access" as a row denying
+// everything: infoNote says so when it happens); Advanced → Denied lists the partly denied rows. An inherited row
+// this item's "No access" overrules is struck through.
 import { computed, ref, watch, nextTick } from 'vue'
 import type { PermissionLevel } from 'gexplorer/widgets'
 import { LEVELS, LEVEL_WORDS, APPLIES_TO, type PermissionsDraft, type PermRow } from './permissionsDraft'
@@ -18,8 +21,9 @@ import PrincipalPicker from './PrincipalPicker.vue'
 
 const props = defineProps<{ d: PermissionsDraft; isDir: boolean }>()
 const {
-  perms, loadError, loading, busy, checking, editNote, failedPart, rev, view, canEdit, features, inherited,
-  allowRows, denyRows, owner, inherit, mode, modeDirty, modeValid, picker,
+  perms, loadError, loading, busy, checking, editNote, infoNote, failedPart, rev, view, canEdit, features,
+  allowRows, denyRows, peopleRows, deniedRows, inheritedPeople, inheritedDenied, shownLevel, deniedHere,
+  owner, inherit, mode, modeDirty, modeValid, picker,
   openPicker, setLevel, setAppliesTo, removeRow, setInherit, commitMode, undoOwner,
 } = props.d
 
@@ -29,9 +33,8 @@ watch(picker, (now, before) => {
   if (before && !now) void nextTick(() => root.value?.focus({ preventScroll: true }))
 })
 
-const inheritedAllow = computed(() => inherited.value.filter(e => !e.deny))
-const inheritedDeny = computed(() => inherited.value.filter(e => e.deny))
-const anyDeny = computed(() => denyRows.value.length > 0 || inheritedDeny.value.length > 0)
+/** Partly denied rows (Advanced); "No access" rows are under People. */
+const anyDeny = computed(() => deniedRows.value.length > 0 || inheritedDenied.value.length > 0)
 /** The rows follow a typed mode once it changed (Linux): one or the other is sent. */
 const rowsLocked = computed(() => busy.value || checking.value || modeDirty.value)
 const locked = computed(() => busy.value || checking.value)
@@ -106,25 +109,26 @@ const readOnlyWhy = computed(() => {
         <div class="ipt-list">
           <table class="ipw-acl ipt-acl">
             <tbody>
-              <tr v-for="r in allowRows" :key="r.key">
+              <tr v-for="r in peopleRows" :key="r.key" :class="{ deny: r.deny }">
                 <td :title="r.who.id">{{ r.who.name }}</td>
                 <td class="ipt-level">
-                  <select v-if="canEdit" :value="r.level" :disabled="rowsLocked" @change="onLevel(r, $event)">
+                  <select v-if="canEdit" :value="shownLevel(r)" :disabled="rowsLocked" @change="onLevel(r, $event)">
                     <option v-for="l in levelsFor(r)" :key="l.id" :value="l.id" :title="l.hint">{{ l.label }}</option>
                   </select>
-                  <span v-else>{{ LEVEL_WORDS[r.level] }}</span>
+                  <span v-else>{{ LEVEL_WORDS[shownLevel(r)] }}</span>
                 </td>
                 <td class="ipt-x">
                   <button v-if="canEdit && features?.addPrincipals" type="button" class="ipt-del" :disabled="rowsLocked"
                           :title="`Remove ${r.who.name}`" @click="removeRow(r)">×</button>
                 </td>
               </tr>
-              <tr v-for="(e, i) in inheritedAllow" :key="`i${i}`" class="ipt-inh">
+              <tr v-for="(e, i) in inheritedPeople" :key="`i${i}`" class="ipt-inh"
+                  :class="{ deny: e.deny, 'ipt-over': !e.deny && deniedHere(e.who.id) }">
                 <td :title="e.who.id">{{ e.who.name }}</td>
-                <td>{{ LEVEL_WORDS[e.level] }}</td>
+                <td :title="!e.deny && deniedHere(e.who.id) ? 'Overruled by No access here' : undefined">{{ LEVEL_WORDS[shownLevel(e)] }}</td>
                 <td class="ipw-muted" title="Its folder's: change it there">inherited</td>
               </tr>
-              <tr v-if="!allowRows.length && !inheritedAllow.length"><td colspan="3" class="ipw-muted">No one.</td></tr>
+              <tr v-if="!peopleRows.length && !inheritedPeople.length"><td colspan="3" class="ipw-muted">No one.</td></tr>
             </tbody>
           </table>
         </div>
@@ -133,6 +137,7 @@ const readOnlyWhy = computed(() => {
         </div>
         <p v-if="anyDeny" class="ipw-note">Some access is denied: <button type="button" class="ipt-link" @click="showView('advanced')">see Advanced</button>.</p>
         <p v-if="modeDirty" class="ipw-note">The mode typed under Advanced is saved instead of these rows.</p>
+        <p v-if="infoNote" class="ipt-info">{{ infoNote }}</p>
       </template>
 
       <!-- ── Advanced ───────────────────────────────────────────────────── -->
@@ -143,15 +148,15 @@ const readOnlyWhy = computed(() => {
         </label>
 
         <template v-if="features?.deny">
-          <h4>Denied <span class="ipw-muted">(a denied right wins over an allowed one)</span></h4>
+          <h4>Partly denied <span class="ipw-muted">(a denied right wins; "No access" is under People)</span></h4>
           <div class="ipt-list ipt-list--short">
             <table class="ipw-acl ipt-acl">
               <tbody>
-                <tr v-for="r in denyRows" :key="r.key" class="deny">
+                <tr v-for="r in deniedRows" :key="r.key" class="deny">
                   <td :title="r.who.id">{{ r.who.name }}</td>
                   <td class="ipt-level">
                     <select v-if="canEdit" :value="r.level" :disabled="rowsLocked" @change="onLevel(r, $event)">
-                      <option v-for="l in levelsFor(r).filter(x => x.id !== 'none')" :key="l.id" :value="l.id" :title="l.hint">{{ l.label }}</option>
+                      <option v-for="l in levelsFor(r).filter(x => x.id !== 'none' && x.id !== 'full')" :key="l.id" :value="l.id" :title="l.hint">{{ l.label }}</option>
                     </select>
                     <span v-else>{{ LEVEL_WORDS[r.level] }}</span>
                   </td>
@@ -159,7 +164,7 @@ const readOnlyWhy = computed(() => {
                     <button v-if="canEdit" type="button" class="ipt-del" :disabled="rowsLocked" :title="`Remove ${r.who.name}`" @click="removeRow(r)">×</button>
                   </td>
                 </tr>
-                <tr v-for="(e, i) in inheritedDeny" :key="`d${i}`" class="deny ipt-inh">
+                <tr v-for="(e, i) in inheritedDenied" :key="`d${i}`" class="deny ipt-inh">
                   <td :title="e.who.id">{{ e.who.name }}</td>
                   <td>{{ LEVEL_WORDS[e.level] }}</td>
                   <td class="ipw-muted">inherited</td>
@@ -178,7 +183,7 @@ const readOnlyWhy = computed(() => {
           <div v-if="canEdit" class="ipt-list ipt-list--short">
             <dl class="ipw-rows">
               <template v-for="r in [...allowRows, ...denyRows]" :key="`a${r.key}`">
-                <dt :title="r.who.id">{{ r.deny ? 'Denied: ' : '' }}{{ r.who.name }}</dt>
+                <dt :title="r.who.id">{{ r.deny ? (r.level === 'full' ? 'No access: ' : 'Denied: ') : '' }}{{ r.who.name }}</dt>
                 <dd>
                   <select :value="r.appliesTo" :disabled="rowsLocked" @change="onApplies(r, $event)">
                     <option v-for="a in APPLIES_TO" :key="a.id" :value="a.id">{{ a.label }}</option>
@@ -238,6 +243,8 @@ const readOnlyWhy = computed(() => {
 .ipt-acl .ipt-level { width: 1%; }
 .ipt-acl .ipt-x { width: 1%; text-align: right; }
 .ipt-inh td { opacity: .7; }
+.ipt-over td:nth-child(2) { text-decoration: line-through; }
+.ipt-info { padding: 4px 6px; border-left: 2px solid var(--accent, #4ea1ff); background: color-mix(in oklab, var(--accent, #4ea1ff) 10%, transparent); font-size: 11px; }
 .ipt select, .ipt-mode input {
   padding: 1px 4px; border: 1px solid var(--items-border, #ffffff24); border-radius: 4px;
   background: var(--panel-bg, #1e1e1e); color: inherit; font-size: 11px;
