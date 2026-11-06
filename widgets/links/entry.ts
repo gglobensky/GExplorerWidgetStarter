@@ -10,9 +10,9 @@ export default {
   
   contexts: {
     grid: {
-      minSize: { cols: 2, rows: 1 },
-      maxSize: { cols: 6, rows: 4 },
-      defaultSize: { cols: 3, rows: 2 }
+      minSize: { width: 300, height: 200 },
+      maxSize: { width: 1200, height: 900 },
+      defaultSize: { width: '50%', height: '40%' }
     },
     sidebar: {
       minHeight: 100,

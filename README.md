@@ -297,6 +297,28 @@ const hasEpic = await sdk.appLinks!().available('com.epicgames.launcher')   // n
 - Results: `{ ok: true }` or `{ ok: false, reason: 'no-gesture' | 'not-declared' | 'declined' | 'not-registered' |
   'bad-argument' | 'failed', error? }`.
 
+## Your size in a hub
+
+Give your limits in **pixels** (GEM Shell 2026-11-06): what your content needs, and what it can use.
+
+```ts
+contexts: {
+  grid: {
+    minSize: { width: 220, height: 160 },        // px: never placed or resized smaller
+    maxSize: { width: 900 },                      // px: never larger (a side left out: no limit)
+    defaultSize: { width: '50%', height: '40%' }, // its starting size: a share of the hub's grid (or px)
+  },
+}
+```
+
+- A hub is a grid of cells whose size follows the window and the user's rows and columns. Your pixels are turned into
+  cells when the user **adds** you or **resizes** you in Edit Layout, rounded **up** (never short of your minimum).
+  Saved layouts are in cells and never move by themselves: a smaller window later, or more rows, can still make your
+  box smaller than your minimum. Plan a compact layout (container queries) or let content scroll (`<gex-scroll-area>`).
+- A minimum larger than the whole hub gets the whole hub.
+- `{ cols, rows }` (cells) still works but is deprecated; both given, the stricter wins.
+- Your real box: `placement.size.width / height` (px), with `cols / rows`.
+
 ## Several permissions in one question
 
 Mark the permissions your widget always needs with `together: true` (GEM Shell 2026-11-06): the first time it needs

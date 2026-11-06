@@ -705,6 +705,14 @@ declare module 'gexplorer/widgets' {
      */
     export type WidgetCapabilityDecl = { cap: string; reason?: string; together?: boolean; links?: AppLinkDecl[] }
     /**
+     * entry.ts contexts.grid sizes (GEM Shell 2026-11-06; README "Your size in a hub"). width / height in px: what
+     * your content needs (minSize) or can use (maxSize), turned into cells with the hub's cell size when the user adds
+     * or resizes you (rounded up). cols / rows: cells (deprecated: a cell's size changes with the window).
+     */
+    export type GridSizeDecl = { width?: number; height?: number; /** @deprecated use px */ cols?: number; /** @deprecated use px */ rows?: number }
+    /** Your starting size: a share of the hub's grid ('50%') or px; cols / rows deprecated. */
+    export type GridDefaultSizeDecl = { width?: number | `${number}%`; height?: number | `${number}%`; /** @deprecated */ cols?: number; /** @deprecated */ rows?: number }
+    /**
      * Why sdk.appLinks().open() didn't open: no-gesture (not right after a click or key press in the widget),
      * not-declared (no declared prefix fits), declined (the user said no, or revoked it), not-registered (no app
      * on this computer opens the scheme: the app isn't installed), bad-argument (not a usable link), failed.
