@@ -297,6 +297,31 @@ const hasEpic = await sdk.appLinks!().available('com.epicgames.launcher')   // n
 - Results: `{ ok: true }` or `{ ok: false, reason: 'no-gesture' | 'not-declared' | 'declined' | 'not-registered' |
   'bad-argument' | 'failed', error? }`.
 
+## Several permissions in one question
+
+Mark the permissions your widget always needs with `together: true` (GEM Shell 2026-11-06): the first time it needs
+one of them, GEM Shell asks for all of them in **one question** instead of one question each.
+
+```ts
+capabilities: [
+  { cap: 'Network', reason: 'Downloads the covers of your games.', together: true },
+  { cap: 'Apps', reason: 'Finds the games you installed.', together: true },
+  { cap: 'AppLinks', reason: 'Starts your games.', together: true, links: [ /* … */ ] },
+  { cap: 'Read', reason: 'Reads the game folders you add.' },   // a folder: asked when you pick it
+]
+```
+
+- **Nothing is asked ahead.** The question comes when your widget first needs one of them; the one needed now is
+  marked so (even if it isn't marked `together`).
+- **The user chooses each one** (a switch each, all on), or Allow all, or Cancel; until they take it back or for an
+  hour. Each one allowed is a permission of its own in Settings ▸ Security, removable on its own.
+- **Asked together once.** What the user turned off isn't in a group question again: you get the usual question when
+  an action needs it. A new version adding `together` permissions gets them asked the next time.
+- **Only permissions about no folder** (Network, Geolocation, Terminal, AppLinks: each declared scheme, Apps: the
+  list). Read, Write and the other folder ones are asked when the path is known; `together` on them is ignored.
+- **Nothing gets weaker:** Geolocation, app links and starting an app still need the user's own click or key press
+  each time.
+
 ## Settings
 
 Declare fields in `entry.ts` (GEM Shell, 2026-10-30): GEM Shell draws them on your widget's page in Settings (its

@@ -696,6 +696,15 @@ declare module 'gexplorer/widgets' {
      */
     export type AppLinkDecl = { scheme: string; templates?: string[]; /** @deprecated templates */ prefixes?: string[]; label?: string; launch?: boolean }
     /**
+     * An entry of entry.ts `capabilities` (the plain string 'Read' is the same as { cap: 'Read' }). reason: shown in
+     * GEM Shell's questions. together (GEM Shell 2026-11-06, H10): asked in ONE question with your other `together`
+     * ones, the first time you need any of them (README "Several permissions in one question"). Only STANDING
+     * permissions can be grouped: Network, Geolocation, Terminal, AppLinks (each declared scheme), Apps (the list).
+     * Scoped ones (Read, Write, Metadata, Exec, Permissions: about a folder or a file) are asked when the path is known:
+     * `together` on them is ignored, with a console warning.
+     */
+    export type WidgetCapabilityDecl = { cap: string; reason?: string; together?: boolean; links?: AppLinkDecl[] }
+    /**
      * Why sdk.appLinks().open() didn't open: no-gesture (not right after a click or key press in the widget),
      * not-declared (no declared prefix fits), declined (the user said no, or revoked it), not-registered (no app
      * on this computer opens the scheme: the app isn't installed), bad-argument (not a usable link), failed.

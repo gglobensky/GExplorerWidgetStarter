@@ -86,6 +86,7 @@ export default {
     {
       cap: 'AppLinks',
       reason: 'Starts your Steam, Epic, Ubisoft and Battle.net games through their stores\' apps, the way their own Play buttons do.',
+	  together: true,
       links: [
         // 0.23.1 (GEM Shell 2026-11-03): link TEMPLATES, the exact links built in stores/*.ts ({id}: one id, nothing
         // may follow it). The user is asked once more per store (the grant now lists them).
@@ -100,8 +101,8 @@ export default {
         { scheme: 'battlenet', templates: ['battlenet://{id}'], label: 'Battle.net', launch: true },
       ],
     },
-    { cap: 'Apps', reason: "Finds the games Rockstar, the EA app, Ubisoft Connect and Battle.net installed (they list them only among Windows' installed programs), and starts Xbox games." },
-    { cap: 'Network', reason: "Looks up your games' descriptions, genres and screenshots on Steam's store, covers on SteamGridDB once you give it your key, ratings and details on IGDB once you give it your Twitch app, and the Steam games you own (with their play time) once you give it your Steam Web API key." },
+    { cap: 'Apps', together: true, reason: "Finds the games Rockstar, the EA app, Ubisoft Connect and Battle.net installed (they list them only among Windows' installed programs), and starts Xbox games." },
+    { cap: 'Network', together: true, reason: "Looks up your games' descriptions, genres and screenshots on Steam's store, covers on SteamGridDB once you give it your key, ratings and details on IGDB once you give it your Twitch app, and the Steam games you own (with their play time) once you give it your Steam Web API key." },
   ],
   settings: {
     fields: [
