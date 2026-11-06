@@ -12,6 +12,11 @@
       - The window's draft (setDraft): closing with changes asks Save / Discard / Stay; Ctrl+S saves; GEM Shell's close
         question counts them. While changes aren't saved, the strokes and the crop are kept (keep) and come back after
         a restart ("Unsaved edit of ... — Resume").
+    0.3.0 (GEM Shell P4b): TEXT IN THE PICTURE. The Read text tool (the ink kit's text zones, turned on here: GEM Shell's
+    sdk.text() is the reader) opens the text panel: drag zones over text (outlines only, numbered in reading order; a
+    right-press on one removes it), then Read (no zone: the whole picture, or the part the crop keeps). The text is
+    editable; Copy text, Copy picture and text (one clipboard entry), Save text… (a .txt). The text and the zones are
+    kept with the edit for a restart.
 -->
 <template>
     <section ref="rootEl" class="pe" tabindex="-1" aria-label="Picture editor" @keydown="onKey" @keyup="onKeyUp">
@@ -47,12 +52,14 @@
             </div>
             <div class="pe-group" role="group" aria-label="Picture">
                 <button class="pe-btn" type="button" v-gex-command="{ id: 'copy', content: 'Copy' }" :disabled="!ready || !!busy">Copy</button>
-                <button class="pe-btn pe-btn--primary" type="button" v-gex-tooltip="'Save your changes: over the original, or a copy (Ctrl+S)'"
-                        :disabled="!ready || !!busy || !dirty" @click="onSaveClick">Save</button>
+                <button class="pe-btn pe-btn--primary" type="button"
+                        v-gex-tooltip="isShot ? 'Save the screenshot as a file (Ctrl+S)' : 'Save your changes: over the original, or a copy (Ctrl+S)'"
+                        :disabled="!ready || !!busy || (!dirty && !isShot)" @click="onSaveClick">{{ isShot ? 'Save as…' : 'Save' }}</button>
                 <button class="pe-btn" type="button" v-gex-tooltip="'Drop the changes and close'" :disabled="!!busy" @click="onDiscardClick">Discard</button>
             </div>
         </header>
 
+        <div class="pe-main">
         <div v-if="problem" class="pe-msg" role="alert">{{ problem }}</div>
         <div v-else ref="stageEl" class="pe-stage" :class="[`pe-tool-${tool}`, { panning: tool === 'hand' || spaceDown, moving: !!pan }]"
              @wheel="onWheel" @pointerdown="onDown" @contextmenu.prevent>
@@ -60,6 +67,7 @@
                 <div v-if="ready" ref="picEl" class="pe-pic" :style="{ left: PAD + 'px', top: PAD + 'px', width: iw + 'px', height: ih + 'px' }">
                     <img :src="src" alt="" draggable="false" />
                     <svg ref="svgEl" class="pe-ink" :viewBox="`0 0 ${W} ${H}`" preserveAspectRatio="none"></svg>
+                    <svg ref="zonesEl" class="pe-zones" :viewBox="`0 0 ${W} ${H}`" preserveAspectRatio="none" aria-hidden="true"></svg>
                     <svg v-if="shownCrop" class="pe-cropview" :viewBox="`0 0 ${W} ${H}`" preserveAspectRatio="none" aria-hidden="true">
                         <path :d="dimPath" fill="rgba(0, 0, 0, .55)" fill-rule="evenodd" />
                         <rect :x="shownCrop.x" :y="shownCrop.y" :width="shownCrop.width" :height="shownCrop.height"
@@ -68,6 +76,37 @@
                 </div>
                 <div v-else class="pe-loading">Opening the picture…</div>
             </div>
+        </div>
+
+        <aside v-if="textOpen && !problem" class="pe-text" aria-label="Text in the picture">
+            <div class="pe-row">
+                <strong>Text</strong>
+                <span class="pe-sp"></span>
+                <button class="pe-tool" type="button" v-gex-tooltip="'Close the text panel (the text stays)'" aria-label="Close the text panel" @click="closeText">✕</button>
+            </div>
+            <p class="pe-hint">{{ zoneCount
+                ? `${zoneCount} zone${zoneCount === 1 ? '' : 's'}: read in their numbered order. Right-click a zone to remove it.`
+                : 'With Read text, drag zones over the text to read parts of it, or read the whole picture.' }}</p>
+            <div class="pe-row">
+                <button class="pe-btn pe-btn--primary" type="button" :disabled="!ready || !!busy" @click="readText">{{ readLabel }}</button>
+                <button v-if="zoneCount" class="pe-btn" type="button" :disabled="!!busy" @click="clearZones">Clear zones</button>
+            </div>
+            <label class="pe-lang">
+                <span>Language</span>
+                <select v-model="language" :disabled="!!busy" aria-label="The language of the text">
+                    <option value="">{{ autoLabel }}</option>
+                    <option v-for="l in languages" :key="l.tag" :value="l.tag">{{ l.name }}</option>
+                </select>
+            </label>
+            <textarea v-model="text" class="pe-textarea" spellcheck="false" aria-label="The text read in the picture"
+                      placeholder="The text read appears here. You can edit it." @input="textEdited = true"></textarea>
+            <div class="pe-row pe-row--wrap">
+                <button class="pe-btn" type="button" v-gex-tooltip="'Put the text on the clipboard'" :disabled="!text.trim() || !!busy" @click="copyText">Copy text</button>
+                <button class="pe-btn" type="button" v-gex-tooltip="'One clipboard entry: a text editor pastes the text, a picture editor the picture'"
+                        :disabled="!text.trim() || !ready || !!busy" @click="copyBoth">Copy picture and text</button>
+                <button class="pe-btn" type="button" v-gex-tooltip="'Save the text as a .txt file'" :disabled="!text.trim() || !opened || !!busy" @click="saveText">Save text…</button>
+            </div>
+        </aside>
         </div>
 
         <footer class="pe-status">
@@ -83,8 +122,8 @@
 <script setup lang="ts">
 import { ref, computed, inject, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import {
-    beginInk, drawInk, undoInk,
-    type WidgetSdk, type InkStroke, type InkLook, type InkUndo, type InkMode,
+    beginInk, drawInk, undoInk, beginInkZone, drawInkZones, readInkText,
+    type WidgetSdk, type InkStroke, type InkLook, type InkUndo, type InkMode, type InkZone, type TextLanguage,
 } from 'gexplorer/widgets'
 import { encodePicture, formatOf, type Crop } from './encode'
 
@@ -95,6 +134,11 @@ const win = sdk.window?.() ?? null
 // ── What GEM Shell handed us ────────────────────────────────────────────────
 const opened = win?.opened ?? null
 const name = opened?.name ?? ''
+/**
+ * 0.2.0: a screenshot (GEM Shell's private copy of what was on the clipboard): no original to save over; Save as starts
+ * in the user's screenshots folder (opened.saveIn), under the screenshot's name.
+ */
+const isShot = opened?.kind === 'screenshot'
 /** The editor can't open a side larger than this (the browser's canvas limits). */
 const MAX_SIDE = 16000
 /** The largest picture file it reads. */
@@ -105,8 +149,10 @@ function mimeOf(n: string): string {
     return f === 'jpeg' ? 'image/jpeg' : f === 'webp' ? 'image/webp' : f === 'bmp' ? 'image/bmp' : 'image/png'
 }
 
-type Tool = 'pen' | 'hl' | 'arrow' | 'rect' | 'ellipse' | 'text' | 'eraser' | 'crop' | 'hand'
-const TOOLS: { id: Tool; cmd: string; label: string; icon: string }[] = [
+type Tool = 'pen' | 'hl' | 'arrow' | 'rect' | 'ellipse' | 'text' | 'eraser' | 'crop' | 'zones' | 'hand'
+/** 0.3.0: text recognition (GEM Shell P4b and later): the Read text tool only where the shell offers it. */
+const canRead = typeof sdk.text === 'function'
+const ALL_TOOLS: { id: Tool; cmd: string; label: string; icon: string }[] = [
     { id: 'pen', cmd: 'tool-pen', label: 'Pen', icon: '✎' },
     { id: 'hl', cmd: 'tool-highlighter', label: 'Highlighter', icon: '▮' },
     { id: 'arrow', cmd: 'tool-arrow', label: 'Arrow', icon: '➚' },
@@ -115,7 +161,9 @@ const TOOLS: { id: Tool; cmd: string; label: string; icon: string }[] = [
     { id: 'text', cmd: 'tool-text', label: 'Text', icon: 'T' },
     { id: 'eraser', cmd: 'tool-eraser', label: 'Eraser', icon: '⌫' },
     { id: 'crop', cmd: 'tool-crop', label: 'Crop', icon: '⛶' },
+    { id: 'zones', cmd: 'tool-zones', label: 'Read text: drag zones over the text', icon: '¶' },
 ]
+const TOOLS = ALL_TOOLS.filter(t => t.id !== 'zones' || canRead)
 const COLORS = ['#e53935', '#fb8c00', '#fdd835', '#43a047', '#1e88e5', '#000000', '#ffffff']
 /** Widths in the picture's pixels: lines, highlighter, text. */
 const SIZES = [
@@ -139,6 +187,7 @@ const rootEl = ref<HTMLElement | null>(null)
 const stageEl = ref<HTMLElement | null>(null)
 const picEl = ref<HTMLElement | null>(null)
 const svgEl = ref<SVGSVGElement | null>(null)
+const zonesEl = ref<SVGSVGElement | null>(null)
 const src = ref('')
 const W = ref(1)
 const H = ref(1)
@@ -157,6 +206,19 @@ const redoStack = ref<Step[]>([])
 const version = ref(0)
 const savedVersion = ref(0)
 const dirty = computed(() => version.value !== savedVersion.value)
+
+// 0.3.0: the text panel (its functions: "Text in the picture" below)
+/** Zones over the text, in the picture's pixels (the ink kit changes this array in place); not edits of the picture. */
+let zones: InkZone[] = []
+const zoneCount = ref(0)
+const textOpen = ref(false)
+const text = ref('')
+/** The user typed in the panel (Read then asks before replacing it). */
+const textEdited = ref(false)
+/** '' = the user's choice in Settings ▸ Pictures (else their Windows languages). */
+const language = ref('')
+const languages = ref<TextLanguage[]>([])
+let languagesAsked = false
 
 async function load(): Promise<void> {
     if (!opened) {
@@ -198,10 +260,16 @@ async function load(): Promise<void> {
 
 /** What a restart brought back (keep): the same file's strokes and crop. */
 function restore(): void {
-    const r = win?.restored as { v?: number; path?: string; strokes?: InkStroke[]; crop?: Crop | null } | null
+    const r = win?.restored as { v?: number; path?: string; strokes?: InkStroke[]; crop?: Crop | null; text?: string; zones?: InkZone[] } | null
     if (!r || r.v !== 1 || !opened || r.path !== opened.path) return
     strokes = Array.isArray(r.strokes) ? r.strokes : []
     crop.value = r.crop && Number.isFinite(r.crop.width) ? r.crop : null
+    // 0.3.0: the text panel's text and the zones
+    if (typeof r.text === 'string' && r.text) { text.value = r.text; textEdited.value = true; openText() }
+    if (Array.isArray(r.zones)) {
+        zones = r.zones.filter(z => [z?.x, z?.y, z?.width, z?.height].every(n => Number.isFinite(n))).slice(0, 200)
+        zoneCount.value = zones.length
+    }
     version.value++
 }
 
@@ -241,13 +309,18 @@ function clearCrop() {
 }
 
 let keepTimer: number | null = null
-watch([version, savedVersion], () => {
-    win?.setTitle(dirty.value ? `${name} •` : name)
+watch([version, savedVersion], () => { win?.setTitle(dirty.value ? `${name} •` : name) })
+// 0.3.0: the panel's text and the zones are kept too (with the edit; or alone, the text being work of its own)
+watch([version, savedVersion, text, zoneCount], () => {
     if (keepTimer !== null) window.clearTimeout(keepTimer)
     keepTimer = window.setTimeout(() => {
         keepTimer = null
-        try { win?.keep(dirty.value && opened ? { v: 1, path: opened.path, strokes, crop: crop.value } : null) }
-        catch (err) { console.warn('[picture-editor] Not kept for a restart:', err) }
+        const hasText = !!text.value.trim()
+        try {
+            win?.keep((dirty.value || hasText) && opened
+                ? { v: 1, path: opened.path, strokes, crop: crop.value, ...(hasText ? { text: text.value } : {}), ...(zones.length ? { zones } : {}) }
+                : null)
+        } catch (err) { console.warn('[picture-editor] Not kept for a restart:', err) }
     }, 500)
 })
 
@@ -313,6 +386,11 @@ function onDown(e: PointerEvent) {
         return
     }
     if (tool.value === 'crop' && e.button === 0) { startCrop(e); return }
+    if (tool.value === 'zones') {
+        if (!onPic || ![0, 2].includes(e.button) || !zonesEl.value) return
+        beginInkZone(e, zonesEl.value, zones, { done: () => { zoneCount.value = zones.length } })
+        return
+    }
     if (!onPic || ![0, 2, 5].includes(e.button) || !svgEl.value) return
     const sz = SIZES[size.value]
     const mode: InkMode = tool.value === 'pen' || tool.value === 'hl' ? 'draw'
@@ -385,9 +463,10 @@ function stemOf(n: string): string {
  * when nothing was saved (cancelled, failed): the window's close question then keeps it open.
  */
 async function save(): Promise<void> {
-    if (!dirty.value) return
+    if (!dirty.value && !isShot) return
     if (!ready.value || !opened) throw new Error('The picture is not open')
     if (busy.value) throw new Error('Busy')
+    if (isShot) { await saveCopy(); return }   // 0.2.0: a screenshot has no original: Save as only
     const r = await ui.messageBox({
         title: 'Save',
         message: `Save your changes to ${name}?`,
@@ -428,9 +507,9 @@ async function saveOver(): Promise<void> {
 
 async function saveCopy(): Promise<void> {
     const path = await ui.saveFile({
-        title: 'Save a copy',
-        startIn: folderOf(opened!.path),
-        suggestedName: `${stemOf(opened!.name)} (edited).png`,
+        title: isShot ? 'Save the screenshot' : 'Save a copy',
+        startIn: isShot ? (opened!.saveIn || undefined) : folderOf(opened!.path),
+        suggestedName: isShot ? opened!.name : `${stemOf(opened!.name)} (edited).png`,
         filters: [
             { label: 'PNG picture', extensions: ['png'] },
             { label: 'JPEG picture', extensions: ['jpg', 'jpeg'] },
@@ -471,6 +550,113 @@ async function onDiscardClick() {
     await win?.close()
 }
 
+// ── Text in the picture (0.3.0) ─────────────────────────────────────────────
+
+const autoLabel = computed(() => {
+    const pref = canRead ? sdk.text!().preferred() : ''
+    const named = pref ? languages.value.find(l => l.tag === pref)?.name ?? pref : ''
+    return named ? `As in Settings (${named})` : 'Automatic (your Windows languages)'
+})
+const readLabel = computed(() => zoneCount.value
+    ? (zoneCount.value === 1 ? 'Read the zone' : `Read the ${zoneCount.value} zones`)
+    : crop.value ? 'Read the kept part' : 'Read the whole picture')
+
+function showZones() {
+    const svg = zonesEl.value
+    if (!svg) return
+    if (textOpen.value) drawInkZones(svg, zones)
+    else svg.replaceChildren()
+}
+
+function openText() {
+    if (!canRead) return
+    textOpen.value = true
+    if (!languagesAsked) {
+        languagesAsked = true
+        void sdk.text!().languages().then(l => { languages.value = l }).catch(() => { /* Automatic only */ })
+    }
+}
+
+function closeText() {
+    textOpen.value = false
+    if (tool.value === 'zones') tool.value = 'pen'
+}
+
+function clearZones() {
+    zones.splice(0)
+    zoneCount.value = 0
+}
+
+watch(tool, t => { if (t === 'zones') openText() })
+watch([textOpen, zoneCount, scale, ready], () => { void nextTick(showZones) })
+
+async function readText(): Promise<void> {
+    if (!image || !ready.value || busy.value || !canRead) return
+    if (textEdited.value && text.value.trim()
+        && !(await ui.confirm('Replace the text in the panel with the text read now?', { title: 'Read text', okLabel: 'Replace' }))) return
+    busy.value = 'Reading the text…'
+    try {
+        const lang = language.value
+        const r = await readInkText(image, strokes, look, {
+            units: W.value,
+            zones: zones.length ? zones : undefined,
+            crop: zones.length ? undefined : crop.value ?? undefined,
+            read: png => sdk.text!().recognize(png, lang ? { language: lang } : undefined),
+        })
+        text.value = r.text
+        textEdited.value = false
+        if (!r.text) void ui.snack({ text: zones.length ? 'No text found in the zones.' : 'No text found in the picture.', timeoutMs: 5000 })
+    } catch (err: any) {
+        await ui.alert(String(err?.message ?? err), { title: 'Text not read', variant: 'danger' })
+    } finally {
+        busy.value = ''
+    }
+}
+
+async function copyText(): Promise<void> {
+    if (!text.value.trim() || busy.value) return
+    try {
+        await sdk.clipboardSetText!(text.value)
+        void ui.snack({ text: 'Text copied.', timeoutMs: 3000 })
+    } catch (err: any) {
+        await ui.alert(String(err?.message ?? err), { title: 'Not copied', variant: 'danger' })
+    }
+}
+
+async function copyBoth(): Promise<void> {
+    if (!text.value.trim() || !ready.value || busy.value) return
+    busy.value = 'Copying…'
+    try {
+        const png = await render('png')
+        await sdk.clipboardSetImage!(png, { text: text.value })
+        void ui.snack({ text: 'Copied: the picture and its text.', timeoutMs: 4000 })
+    } catch (err: any) {
+        await ui.alert(String(err?.message ?? err), { title: 'Not copied', variant: 'danger' })
+    } finally {
+        busy.value = ''
+    }
+}
+
+async function saveText(): Promise<void> {
+    if (!text.value.trim() || !opened || busy.value) return
+    const path = await ui.saveFile({
+        title: 'Save the text',
+        startIn: isShot ? (opened.saveIn || undefined) : folderOf(opened.path),
+        suggestedName: `${stemOf(opened.name)}.txt`,
+        filters: [{ label: 'Text file', extensions: ['txt'] }],
+    })
+    if (!path) return
+    busy.value = 'Saving…'
+    try {
+        await sdk.fsWriteText!(path, text.value.replace(/\r?\n/g, '\r\n'), { overwrite: true })
+        void ui.snack({ text: `Saved as ${path.split(/[\\/]/).pop()}.`, timeoutMs: 5000 })
+    } catch (err: any) {
+        await ui.alert(String(err?.message ?? err), { title: 'Not saved', variant: 'danger' })
+    } finally {
+        busy.value = ''
+    }
+}
+
 // ── Keys ────────────────────────────────────────────────────────────────────
 function onCommand(id: string) {
     switch (id) {
@@ -485,13 +671,14 @@ function onCommand(id: string) {
         case 'tool-text': tool.value = 'text'; break
         case 'tool-eraser': tool.value = 'eraser'; break
         case 'tool-crop': tool.value = 'crop'; break
+        case 'tool-zones': if (canRead) tool.value = 'zones'; break
         case 'zoom-fit': fit(); break
     }
 }
 
 function onKey(e: KeyboardEvent) {
-    if (e.defaultPrevented || (e.target as HTMLElement).closest?.('input')) return
-    if (e.key === 'Escape' && (cropDraft.value || tool.value === 'crop' || tool.value === 'hand')) {
+    if (e.defaultPrevented || (e.target as HTMLElement).closest?.('input, textarea, select')) return
+    if (e.key === 'Escape' && (cropDraft.value || tool.value === 'crop' || tool.value === 'hand' || tool.value === 'zones')) {
         // Out of cropping / moving first; the next Escape closes the window (GEM Shell asks if changes aren't saved)
         e.preventDefault()
         cropDraft.value = null
@@ -584,6 +771,7 @@ defineExpose({ onCommand })
     .pe-swatch[aria-pressed="true"] { border-color: #fff; box-shadow: 0 0 0 2px var(--accent, #3b82f6); }
     .pe-custom { display: inline-flex; width: 22px; height: 22px; overflow: hidden; border-radius: 50%; cursor: pointer; }
     .pe-custom input { width: 34px; height: 34px; margin: -6px; padding: 0; border: 0; cursor: pointer; }
+    .pe-main { display: flex; flex: 1 1 auto; min-height: 0; }
     .pe-stage {
         position: relative;
         flex: 1 1 auto;
@@ -608,7 +796,45 @@ defineExpose({ onCommand })
         -webkit-user-drag: none;
     }
     .pe-pic img { image-rendering: auto; }
-    .pe-cropview { pointer-events: none; }
+    .pe-cropview, .pe-zones { pointer-events: none; }
+    .pe-stage.pe-tool-zones { cursor: crosshair; }
+    .pe-text {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        flex: 0 0 300px;
+        min-width: 220px;
+        padding: 8px 10px;
+        border-left: 1px solid var(--border, #333);
+        background: var(--surface-2, #1d1d1d);
+        overflow: auto;
+    }
+    .pe-row { display: flex; align-items: center; gap: 6px; }
+    .pe-row--wrap { flex-wrap: wrap; }
+    .pe-hint { margin: 0; opacity: .75; line-height: 1.4; }
+    .pe-lang { display: flex; align-items: center; gap: 6px; }
+    .pe-lang select {
+        flex: 1 1 auto;
+        min-width: 0;
+        height: 26px;
+        border: 1px solid var(--border, #444);
+        border-radius: 4px;
+        background: var(--surface-1, #151515);
+        color: inherit;
+        font: inherit;
+    }
+    .pe-textarea {
+        flex: 1 1 auto;
+        min-height: 160px;
+        resize: none;
+        padding: 6px 8px;
+        border: 1px solid var(--border, #444);
+        border-radius: 4px;
+        background: var(--surface-1, #151515);
+        color: inherit;
+        font: 13px/1.45 'Segoe UI', system-ui, sans-serif;
+    }
+    .pe-textarea:focus, .pe-lang select:focus { outline: 2px solid var(--accent, #3b82f6); outline-offset: -1px; }
     .pe-loading, .pe-msg { padding: 24px; opacity: .8; font-size: 13px; }
     .pe-msg { flex: 1 1 auto; }
     .pe-status {

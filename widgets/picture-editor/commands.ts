@@ -16,6 +16,8 @@ export const COMMANDS = [
     { id: 'tool-text', name: 'Text', keys: ['T'], description: 'Click where the text goes, then type it.' },
     { id: 'tool-eraser', name: 'Eraser', keys: ['X'], description: 'Removes the strokes you touch (a right-drag erases with any tool).' },
     { id: 'tool-crop', name: 'Crop', keys: ['C'], description: 'Drag the part of the picture to keep. Nothing is cut until you save or copy.' },
+    // 0.3.0
+    { id: 'tool-zones', name: 'Read text', keys: ['Shift+T'], description: 'Opens the text panel: drag zones over the text to read (right-click one to remove it), then Read.' },
     { id: 'zoom-fit', name: 'Fit to the window', keys: ['0'], description: 'Shows the whole picture.' },
 ]
 

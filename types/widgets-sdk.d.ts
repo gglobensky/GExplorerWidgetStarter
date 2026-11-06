@@ -325,6 +325,15 @@ declare module 'gexplorer/widgets' {
          */
         window?: () => WidgetWindow | null
         /**
+         * NEW (GEM Shell 2026-11-05, P4b). Text in a picture, recognised on this computer (Windows' own recognition:
+         * nothing leaves the computer). No capability: your own pixels. recognize(png, { language }): the text, its
+         * lines and words (boxes in the picture's pixels); no language: the user's choice (Settings ▸ Pictures), else
+         * their Windows languages. Rejects with an Error whose `code` is a TextErrorCode. One recognition at a time
+         * for all of GEM Shell (the next waits). For zones over a picture: the ink kit's readInkText. README
+         * "Text in a picture". Same object on every call.
+         */
+        text?: () => WidgetText
+        /**
          * NEW (2026-10-28): the keys of this widget's own commands (entry.ts commands, by their short id), for
          * text that isn't a button's tooltip: a canvas, a status line, "press Space to...". Buttons use
          * v-gex-command instead (see WidgetCommandDecl). Read-only: the user binds keys in Keyboard shortcuts.
@@ -506,7 +515,14 @@ declare module 'gexplorer/widgets' {
          * there: every program can paste it. Only right after the user's own click or key press in your widget
          * (a command's key counts): rejects otherwise, and the security log notes it. At most 256 MB.
          */
-        clipboardSetImage?: (png: Uint8Array | ArrayBuffer | Blob) => Promise<void>
+        clipboardSetImage?: (png: Uint8Array | ArrayBuffer | Blob, opts?: { text?: string }) => Promise<void>
+        /**
+         * NEW (GEM Shell 2026-11-05, P4b). Clipboard cap. Puts text on the clipboard, replacing what was there (text
+         * read in a picture). The same rule as clipboardSetImage: only right after the user's own click or key press
+         * in your widget. 4 million characters at most. clipboardSetImage's opts.text: the picture and its text in
+         * ONE clipboard entry (a text editor pastes the text, a picture editor the picture).
+         */
+        clipboardSetText?: (text: string) => Promise<void>
         /**
          * Clipboard + Write caps. Pastes the OS clipboard into targetDir (copy, or
          * move after a cut), any count, as one backend job: progress dialog,
@@ -1380,6 +1396,44 @@ declare module 'gexplorer/widgets' {
     export function flattenInk(image: HTMLImageElement | ImageBitmap | HTMLCanvasElement, arr: InkStroke[], look: InkLook, opts: FlattenOptions): Promise<Blob>
     /** A freehand stroke's SVG path. */
     export function inkPathD(p: InkPoint[]): string
+
+    // ── Ink kit: text zones (NEW GEM Shell 2026-11-05, P4b) ───
+    // A part you turn on: rectangles over the picture, read with the reader you give readInkText (your
+    // sdk.text().recognize). Without a reader there is no text recognition (Corkboard doesn't use it).
+    // Zones are outlines only (never drawn into the pixels), in the surface's units as the strokes.
+    /** A rectangle over the picture, in the surface's units. */
+    export type InkZone = { x: number; y: number; width: number; height: number }
+    export type InkZoneOptions = {
+        /** A zone was added, or removed by a right-press on it (`i`: its index before). */
+        done: (u: { zones: InkZone[]; add?: InkZone; removed?: { z: InkZone; i: number } }) => void
+        /** The smallest zone kept, in CSS px at 1:1. Default 6. */
+        minSize?: number
+    }
+    export type InkTextReader = (png: Blob) => Promise<{ text: string }>
+    export type InkTextOptions = {
+        /** The strokes' surface width in its units (as flattenInk). */
+        units: number
+        /** The parts to read; none or empty: the whole picture (or `crop`). */
+        zones?: InkZone[]
+        /** With no zone: the part to read, in the picture's pixels. */
+        crop?: { x: number; y: number; width: number; height: number }
+        /** Your reader: (png) => sdk.text!().recognize(png). */
+        read: InkTextReader
+        /** The picture as shown, with its strokes (default), or without them (false). */
+        withInk?: boolean
+    }
+    export type InkTextPart = { zone: InkZone | null; text: string }
+    /** Starts a zone on `svg` from a pointerdown (dragged corner to corner); a right-press on a zone removes it. */
+    export function beginInkZone(e: PointerEvent, svg: SVGSVGElement, zones: InkZone[], o: InkZoneOptions): void
+    /** Shows `zones` in `svg` (its content replaced), numbered in reading order. Redraw when the zoom changes. */
+    export function drawInkZones(svg: SVGSVGElement | null, zones: InkZone[]): void
+    /** Zones top to bottom, then left to right on a row: readInkText's order. */
+    export function inkZoneOrder(zones: InkZone[]): InkZone[]
+    /**
+     * The text zone by zone in reading order (each trimmed); `text`: the parts joined by a blank line. Small zones
+     * are enlarged and given a white margin first. Rejects with your reader's error.
+     */
+    export function readInkText(image: HTMLImageElement | ImageBitmap | HTMLCanvasElement, arr: InkStroke[], look: InkLook, opts: InkTextOptions): Promise<{ text: string; parts: InkTextPart[] }>
 
     // ── Grid layout: the hubs' own engine (NEW 2026-11-02, GEM Corkboard) ───
     // The layout maths GEM Shell uses to push widgets aside on a hub, for a widget laying its own things
@@ -2275,7 +2329,12 @@ declare module 'gexplorer/widgets' {
 
     /** NEW (GEM Shell 2026-11-05): what GEM Shell handed your window (sdk.window().opened). */
     export type WidgetWindowOpen = {
-        kind: 'file'
+        /**
+         * 'file': a file of the user's ("Edit picture"). 'screenshot' (GEM Shell 2026-11-05): GEM Shell's private
+         * copy of a screenshot from the clipboard, deleted when your window closes: there is no original to save
+         * over; save it with ui().saveFile, starting in `saveIn`.
+         */
+        kind: 'file' | 'screenshot'
         /**
          * The file's full path. Your widget may read it and write it (that file only: no folder, no file beside it)
          * as long as GEM Shell runs: the user handed it ("Edit picture"). Save anything else through ui().saveFile.
@@ -2285,6 +2344,8 @@ declare module 'gexplorer/widgets' {
         name: string
         /** Writing it needs administrator rights: fsWriteBytes asks (the consent dialog, then your helper). */
         needsElevation: boolean
+        /** A screenshot: the folder the user saves screenshots in (Settings ▸ Pictures); start Save as there. */
+        saveIn?: string
     }
 
     /** NEW (GEM Shell 2026-11-05): your changes, for the window GEM Shell frames (setDraft). */
@@ -2298,6 +2359,24 @@ declare module 'gexplorer/widgets' {
     }
 
     /** NEW (GEM Shell 2026-11-05): sdk.window(), your own window (the window context). */
+    // ── Text in a picture (NEW GEM Shell 2026-11-05, P4b): sdk.text() ───
+    /** A word and its box, in the picture's pixels. */
+    export type TextWord = { text: string; x: number; y: number; width: number; height: number }
+    export type TextLine = { text: string; words: TextWord[] }
+    /** The language used (a BCP-47 tag), the text (one line per line), its lines (top to bottom). */
+    export type TextRecognition = { language: string; text: string; lines: TextLine[] }
+    export type TextLanguage = { tag: string; name: string }
+    /** E_NO_LANGUAGE: no language with text recognition installed in Windows (or the one asked isn't). */
+    export type TextErrorCode = 'E_UNAVAILABLE' | 'E_NO_LANGUAGE' | 'E_BAD_PICTURE' | 'E_TOO_LARGE' | 'E_TIMEOUT' | 'E_FAILED'
+    export type WidgetText = {
+        /** PNG, JPEG or BMP bytes, 32 MB at most. */
+        recognize(picture: Uint8Array | ArrayBuffer | Blob, opts?: { language?: string }): Promise<TextRecognition>
+        /** The languages Windows recognises text in (empty: none, or unavailable). */
+        languages(): Promise<TextLanguage[]>
+        /** The user's choice in Settings ▸ Pictures ('' = Automatic). */
+        preferred(): string
+    }
+
     export type WidgetWindow = {
         /** What GEM Shell handed you; null: nothing. */
         readonly opened: Readonly<WidgetWindowOpen> | null

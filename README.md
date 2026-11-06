@@ -189,7 +189,30 @@ or toolbar), so it declares no `contexts`.
   nothing is left to keep. While something is kept, closing GEM Shell offers **Keep for later** beside Save and
   Discard: your changes stay as they are for the next start.
 - **The clipboard:** `sdk.clipboardSetImage(pngBlob)` (Clipboard cap), right after the user's click or key in your
-  widget only.
+  widget only. `clipboardSetImage(png, { text })`: the picture and its text as one entry; `clipboardSetText(text)`.
+- **Screenshots:** with "Edit" on GEM Shell's screenshot card, `opened.kind` is `'screenshot'`: GEM Shell's private
+  copy of the clipboard's picture, deleted when your window closes. There is no original to save over: offer Save as
+  (`ui().saveFile`, `startIn: opened.saveIn`, `suggestedName: opened.name`).
+
+## Text in a picture
+
+`sdk.text()` (GEM Shell 2026-11-05) reads the text in your own pixels, on this computer (Windows' own recognition;
+nothing leaves the computer). No capability to declare.
+
+```ts
+const r = await sdk.text!().recognize(pngBlob)   // { language, text, lines: [{ text, words: [{ text, x, y, width, height }] }] }
+```
+
+- **The language:** `{ language: 'fr-FR' }`, one of `languages()`; none: the user's choice (Settings ▸ Pictures,
+  `preferred()`), else their Windows languages. A language not in Windows: `E_NO_LANGUAGE` (the user adds it in
+  Settings ▸ Time & language ▸ Language).
+- **Errors** (`e.code`): `E_UNAVAILABLE`, `E_NO_LANGUAGE`, `E_BAD_PICTURE`, `E_TOO_LARGE` (32 MB), `E_TIMEOUT`,
+  `E_FAILED`. One recognition at a time for all of GEM Shell: the next waits its turn.
+- **Zones over a picture:** the ink kit's `beginInkZone` (drag a rectangle; a right-press on one removes it),
+  `drawInkZones` (outlines numbered in reading order, never in the pixels) and `readInkText(img, strokes, look,
+  { units, zones, read: png => sdk.text!().recognize(png) })`: the text zone by zone, joined by blank lines (no zone:
+  the whole picture). Text recognition is a part of the kit you turn on by giving it that reader.
+- **Copying it:** `sdk.clipboardSetText(text)` (Clipboard cap, on the user's click or key).
 
 ## The user's city
 
