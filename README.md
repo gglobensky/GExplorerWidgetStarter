@@ -186,7 +186,8 @@ or toolbar), so it declares no `contexts`.
   Ctrl+S saves (GEM Shell's key: don't declare it); GEM Shell's close question counts them. `save` throws to keep them.
 - **After a restart:** `keep(data)` (plain JSON, 2 MB) while changes aren't saved. GEM Shell offers "Unsaved edit of
   <title> — Resume / Discard" at the next start; Resume opens your window again with `restored`. `keep(null)` when
-  nothing is left to keep.
+  nothing is left to keep. While something is kept, closing GEM Shell offers **Keep for later** beside Save and
+  Discard: your changes stay as they are for the next start.
 - **The clipboard:** `sdk.clipboardSetImage(pngBlob)` (Clipboard cap), right after the user's click or key in your
   widget only.
 

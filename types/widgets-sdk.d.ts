@@ -2314,6 +2314,8 @@ declare module 'gexplorer/widgets' {
          * Plain data (JSON, 2 MB at most) to come back with after a restart while changes aren't saved: the user is
          * offered "Unsaved edit of <title> — Resume / Discard", and Resume opens your window again with it as
          * `restored`. Kept encrypted. null: nothing kept. Throws when it isn't plain data or is too large.
+         * While something is kept, closing GEM Shell with your changes offers "Keep for later" (GEM Shell
+         * 2026-11-05): GEM Shell closes, your changes neither saved nor discarded, and they come back as above.
          */
         keep(data: unknown): void
         /** Closes the window (with changes not saved: the user's question first). true: closed. */
