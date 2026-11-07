@@ -49,8 +49,8 @@
 <script setup lang="ts">
 import { ref, computed, inject, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { SHARED } from './shared'
-import { PHOTO_CAPTION_MAX, clamp, type Photo } from './model'
-import { beginInk, drawStrokes, type InkTool, type InkGesture } from './ink'
+import { PHOTO_CAPTION_MAX, clamp, CB_LOOK, type Photo, type InkTool } from './model'
+import { beginInk, drawInk, type InkGesture } from 'gexplorer/widgets'
 
 const sh = inject(SHARED)!
 const desk = sh.desk
@@ -123,8 +123,9 @@ function onDown(e: PointerEvent) {
     const p = photo.value
     drawing = true
     window.addEventListener('pointerup', () => { drawing = false }, { once: true })
+    const tool = sh.tool.value
     beginInk(e, svgEl.value, p.ink, {
-        tool: sh.tool.value,
+        mode: tool === 'erase' ? 'erase' : 'draw', color: tool, look: CB_LOOK,
         gesture: g => { gesture = g },
         done: u => { desk.used(u.removed ? 'erase' : 'photo-draw'); sh.inkDone(u) },
     })
@@ -136,7 +137,7 @@ function onCtx(e: MouseEvent) {
     desk.used('menu')
     sh.menus.openPhoto(e, photo.value)
 }
-function redraw() { if (!drawing && photo.value) drawStrokes(svgEl.value, photo.value.ink) }
+function redraw() { if (!drawing && photo.value) drawInk(svgEl.value, photo.value.ink, CB_LOOK) }
 
 // ── Caption, keys, menu ─────────────────────────────────────────────────────
 function onCaption(e: Event) { desk.setCaption(photo.value, (e.target as HTMLInputElement).value) }

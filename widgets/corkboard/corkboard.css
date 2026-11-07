@@ -92,6 +92,9 @@
 .cb-pfoot { display: flex; justify-content: space-between; gap: 6px; font: 500 .78em var(--cb-mono); opacity: .62; }
 .cb-item.icon .cb-paper { display: grid; place-items: center; padding: 0; }
 .cb-ini { font: 700 1.9em/1 var(--cb-hand); }
+/* 0.2.5: a small stack shows its name only, as much as fits (the tooltip has all of it) */
+.cb-item.titled .cb-paper { padding: .45em .5em; justify-content: center; }
+.cb-ttl { font: 600 1.3em/1.08 var(--cb-hand); text-align: center; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .cb-badge { position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--cb-fg); color: var(--cb-chrome); font: 600 11px/18px var(--cb-mono); text-align: center; z-index: 5; }
 .cb-flags { position: absolute; right: -9px; top: 22%; display: flex; flex-direction: column; gap: 3px; z-index: 4; pointer-events: none; }
 .cb-flag { width: 17px; height: 10px; background: var(--fc); border-radius: 0 2px 2px 0; box-shadow: 1px 1px 1px rgba(0, 0, 0, .25); }
@@ -201,8 +204,6 @@
 .cb-frame:hover .cb-mx, .cb-mx:focus-visible { opacity: .92; }
 .cb-grip { position: absolute; left: 50%; bottom: -6px; width: 44px; height: 11px; margin-left: -22px; cursor: ns-resize; border-radius: 6px; background: color-mix(in oklab, var(--cb-paper-fg) 30%, transparent); opacity: 0; touch-action: none; }
 .cb-frame:hover .cb-grip { opacity: 1; }
-.cb-stk, .cb-stk line { fill: none; stroke-linecap: round; stroke-linejoin: round; }
-.cb-stk.hl { opacity: .42; }
 .cb-sh-foot { flex: none; display: flex; align-items: center; gap: 6px; padding: 6px 8px 8px 14px; border-top: 1px dashed color-mix(in oklab, var(--cb-paper-fg) 22%, transparent); font-size: 12px; min-width: 0; }
 .cb-fb { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 9px; border: 1px solid color-mix(in oklab, var(--cb-paper-fg) 25%, transparent); border-radius: 7px; background: none; cursor: pointer; flex: none; white-space: nowrap; color: var(--cb-paper-fg) !important; }
 .cb-fb:hover { background: color-mix(in oklab, var(--cb-paper-fg) 8%, transparent); }

@@ -1,0 +1,780 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GEM Forge Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+:root {
+  /* A dark shell (GEM Shell's world) with GEM Forge's ember accent; one visual world, single theme by choice.
+     Layout: a prototype bar on top, a mock GEM Shell window filling the rest. */
+  color-scheme: dark;
+  --backdrop: #0f1014;
+  --shell: #1a1c22;
+  --shell-2: #22252d;
+  --shell-3: #2b2f39;
+  --line: #343946;
+  --text: #e8e9ed;
+  --muted: #a3a9b6;
+  --faint: #757c8a;
+  --ember: #f08a4b;
+  --ember-ink: #1c0f07;
+  --forge-bar: #2a1f19;
+  --forge-line: #4a3326;
+  --gem: #62c6d4;
+  --ok: #67bd83;
+  --warn: #e3b552;
+  --err: #ef7064;
+  --font-ui: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-code: "JetBrains Mono", Consolas, "Cascadia Mono", monospace;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--backdrop); color: var(--text); font: 13px/1.45 var(--font-ui); display: flex; flex-direction: column; }
+button { font: inherit; color: inherit; }
+svg { width: 15px; height: 15px; flex: none; }
+:focus-visible { outline: 2px solid var(--gem); outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* ── The prototype's own bar ─────────────────────────────────────────── */
+.proto { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+.proto h1 { margin: 0; font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; text-wrap: balance; }
+.proto h1 small { font-weight: 400; color: var(--muted); font-size: 12px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; background: none; padding: 5px 11px; cursor: pointer; color: var(--muted); }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--shell-3); color: var(--text); }
+.proto .sim { border: 1px dashed var(--ember); background: none; color: var(--ember); border-radius: 8px; padding: 5px 11px; cursor: pointer; }
+.proto .sim:disabled { opacity: .45; cursor: default; }
+.note { flex-basis: 100%; color: var(--muted); max-width: 110ch; }
+.note b { color: var(--text); font-weight: 500; }
+
+/* ── The mock GEM Shell window ───────────────────────────────────────── */
+.stage { flex: 1; min-height: 0; padding: 14px; overflow: auto; }
+.win { position: relative; height: 100%; min-height: 560px; min-width: 980px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--shell);
+  display: grid; grid-template-rows: 42px 1fr; grid-template-columns: var(--sidew, 196px) 1fr; transition: grid-template-columns .25s, grid-template-rows .25s; }
+.win.focus { grid-template-rows: 30px 1fr; grid-template-columns: 0 1fr; }
+.s-top { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding: 0 10px; background: var(--shell-2); border-bottom: 1px solid var(--line); min-width: 0; }
+.s-logo { width: 22px; height: 22px; border-radius: 6px; background: linear-gradient(135deg, #3a7bd5, #62c6d4); flex: none; }
+.s-tabs { display: flex; gap: 2px; }
+.s-tab { padding: 5px 12px; border-radius: 7px 7px 0 0; color: var(--muted); }
+.s-tab.on { background: var(--shell); color: var(--text); }
+.s-sp { flex: 1; }
+.s-tw { display: flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 7px; background: var(--shell-3); color: var(--muted); font-size: 12px; border: 1px solid transparent; cursor: default; }
+button.s-tw { cursor: pointer; }
+button.s-tw[aria-expanded="true"] { border-color: var(--ember); color: var(--text); }
+.host-strip { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding: 0 10px; background: var(--shell-2); border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.host-strip .exit { margin-left: auto; border: 1px solid var(--line); background: var(--shell-3); border-radius: 6px; padding: 2px 9px; cursor: pointer; color: var(--text); }
+.host-strip kbd, .kbd { font: 11px var(--font-code); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+.s-side { background: var(--shell-2); border-right: 1px solid var(--line); overflow: hidden; min-width: 0; display: flex; flex-direction: column; }
+.s-side h3 { margin: 12px 12px 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
+.s-item { padding: 5px 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.s-hub { min-width: 0; min-height: 0; padding: 12px; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, 1fr); gap: 12px; }
+.win.focus .s-hub { padding: 0; grid-template-columns: 1fr; grid-template-rows: 1fr; }
+.h-tile { background: var(--shell-2); border: 1px solid var(--line); border-radius: 10px; min-width: 0; min-height: 0; overflow: hidden; position: relative; }
+.h-tile.ph { display: grid; place-items: center; color: var(--faint); font-size: 12px; }
+.h-tile.ph span { border: 1px dashed var(--line); border-radius: 8px; padding: 6px 12px; }
+.win.focus .h-tile { border: 0; border-radius: 0; }
+
+/* ── GEM Forge ───────────────────────────────────────────────────────── */
+.forge { height: 100%; display: flex; flex-direction: column; background: var(--shell); position: relative; }
+.f-head { flex: none; display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--line); min-width: 0; }
+.f-mark { width: 18px; height: 18px; color: var(--ember); flex: none; }
+.pchip { border: 1px solid transparent; background: none; border-radius: 7px; padding: 3px 10px; cursor: pointer; color: var(--muted); white-space: nowrap; }
+.pchip[aria-current="page"] { background: var(--shell-3); color: var(--text); border-color: var(--line); }
+.ib { border: 1px solid var(--line); background: var(--shell-2); border-radius: 7px; height: 28px; min-width: 28px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+.ib:hover { border-color: var(--muted); }
+.ib.run { background: var(--ember); color: var(--ember-ink); border-color: var(--ember); font-weight: 600; }
+.ib svg, .tab svg, .menu svg { width: 15px; height: 15px; flex: none; }
+.f-body { flex: 1; min-height: 0; display: flex; }
+.f-main { flex: 1; min-width: 0; min-height: 0; padding: 8px; }
+
+/* GEM Forge's own bars, in focus mode: warm, inside the widget, unlike the shell's grey ones */
+.f-bar { flex: none; display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: var(--forge-bar); border-bottom: 1px solid var(--forge-line); }
+.f-bar .ib { background: #33261e; border-color: var(--forge-line); }
+.f-bar .ib.run { background: var(--ember); border-color: var(--ember); }
+.f-bar .proj { font-weight: 600; display: flex; align-items: center; gap: 6px; padding-right: 8px; margin-right: 4px; border-right: 1px solid var(--forge-line); }
+.f-rail { flex: none; width: 92px; background: var(--forge-bar); border-right: 1px solid var(--forge-line); padding: 8px 6px; display: flex; flex-direction: column; gap: 4px; }
+.f-rail .pchip { text-align: left; padding: 6px 8px; overflow: hidden; text-overflow: ellipsis; }
+.f-rail .pchip[aria-current="page"] { background: #3a2a20; border-color: var(--forge-line); }
+.f-rail .addp { margin-top: 4px; color: var(--muted); }
+
+/* Pages of tiles (the hub engine's grid, as GEM Monitor's) */
+.tiles { height: 100%; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); grid-auto-flow: row dense; gap: 8px; }
+.tile { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--shell-2); border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.tabs { flex: none; display: flex; align-items: stretch; gap: 1px; border-bottom: 1px solid var(--line); background: var(--shell); overflow-x: auto; scrollbar-width: none; }
+.tab { display: flex; align-items: center; gap: 4px; padding: 0 2px 0 10px; height: 30px; color: var(--muted); cursor: pointer; border: 0; background: none; white-space: nowrap; border-bottom: 2px solid transparent; }
+.tab.on { color: var(--text); border-bottom-color: var(--ember); background: var(--shell-2); }
+.tab .tx { display: inline-flex; align-items: center; gap: 6px; }
+.tab-more { border: 0; background: none; width: 22px; height: 22px; border-radius: 5px; color: var(--faint); cursor: pointer; display: inline-grid; place-items: center; }
+.tab-more:hover, .tab-more:focus-visible { background: var(--shell-3); color: var(--text); }
+.pane { flex: 1; min-height: 0; overflow: auto; position: relative; }
+.badge { min-width: 16px; height: 16px; border-radius: 8px; padding: 0 4px; font: 600 10px/16px var(--font-code); text-align: center; background: var(--err); color: #200; }
+
+/* Narrow: the page's tiles fold into tabs */
+.forge.narrow .f-main { padding: 0; }
+.fold { height: 100%; display: flex; flex-direction: column; }
+
+/* Parts */
+.explorer { padding: 6px 0; }
+.ex-proj { display: flex; align-items: center; gap: 6px; padding: 2px 10px 8px; font-weight: 600; }
+.ex-f { display: flex; align-items: center; gap: 7px; width: 100%; border: 0; background: none; padding: 3px 10px 3px 22px; color: var(--muted); cursor: pointer; text-align: left; }
+.ex-f.on { background: var(--shell-3); color: var(--text); }
+.ex-f.dir { padding-left: 10px; cursor: default; }
+.ex-f .new { margin-left: auto; font-size: 10px; color: var(--ok); border: 1px solid var(--ok); border-radius: 4px; padding: 0 4px; }
+.ex-foot { margin: 10px 10px 0; padding-top: 8px; border-top: 1px solid var(--line); color: var(--faint); font-size: 12px; display: grid; gap: 3px; }
+.ex-foot .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); margin-right: 5px; }
+
+.code { display: flex; flex-direction: column; height: 100%; }
+.ftabs { flex: none; display: flex; gap: 1px; background: var(--shell); border-bottom: 1px solid var(--line); }
+.ftab { border: 0; background: none; padding: 4px 10px; color: var(--muted); cursor: pointer; font: 12px var(--font-code); }
+.ftab.on { color: var(--text); background: var(--shell-2); }
+.editor { flex: 1; overflow: auto; font: 12.5px/1.6 var(--font-code); padding: 6px 0; tab-size: 4; }
+.ln { display: flex; white-space: pre; }
+.ln .n { flex: none; width: 3.4em; padding-right: 1em; text-align: right; color: #5c6372; user-select: none; }
+.ln.err { background: rgba(239, 112, 100, .12); }
+.ln.err .c { text-decoration: underline wavy var(--err); text-decoration-skip-ink: none; text-underline-offset: 3px; }
+.ln.flash { animation: flash 1.2s ease-out; }
+@keyframes flash { from { background: rgba(98, 198, 212, .3); } to { background: transparent; } }
+.k { color: #e39bd8; } .s { color: #a8d38a; } .cm { color: #6f7787; font-style: italic; } .tg { color: #7fb8f0; } .nm { color: #f1b67a; } .h { color: var(--ember); font-weight: 600; }
+
+.preview { height: 100%; display: flex; flex-direction: column; }
+.pv-label { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 12px; color: var(--muted); }
+.pv-label .ctx { color: var(--gem); }
+.pv-banner { flex: none; margin: 0 8px 6px; padding: 5px 9px; border-radius: 6px; background: rgba(227, 181, 82, .12); color: var(--warn); font-size: 12px; }
+.pv-box { flex: 1; min-height: 0; margin: 0 8px 8px; border: 1px dashed rgba(98, 198, 212, .55); border-radius: 8px; position: relative; display: grid; place-items: center; overflow: hidden; }
+.pv-box.fill > .clock-host { position: absolute; inset: 0; }
+.pv-box .sized { border: 1px solid var(--line); border-radius: 8px; background: var(--shell); position: relative; }
+
+.out { font: 12px/1.55 var(--font-code); padding: 6px 10px; }
+.out .l { display: flex; gap: 10px; }
+.out .t { color: #5c6372; flex: none; }
+.out .e { color: var(--err); } .out .ok { color: var(--ok); } .out .i { color: var(--muted); } .out .w { color: var(--warn); }
+.probs { padding: 6px; }
+.prob { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; width: 100%; border: 0; background: none; text-align: left; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+.prob:hover { background: var(--shell-3); }
+.prob .x { color: var(--err); grid-row: span 2; }
+.prob .where { color: var(--muted); font: 11.5px var(--font-code); }
+.empty { color: var(--faint); padding: 14px; }
+
+.controls { padding: 10px; display: grid; gap: 12px; align-content: start; }
+.controls h4 { margin: 0 0 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
+.row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.toggle { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; }
+.perm { display: flex; justify-content: space-between; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); }
+.perm b { color: var(--text); font-weight: 500; }
+
+/* The Layout lab: real placements */
+.lab { height: 100%; display: flex; flex-direction: column; }
+.lab-top { flex: none; display: flex; align-items: center; gap: 10px; padding: 8px 10px; flex-wrap: wrap; }
+.lab-top .hint { color: var(--muted); font-size: 12px; }
+.lab-stage { flex: 1; min-height: 0; overflow: auto; padding: 10px 14px 14px; }
+.lab-hub { position: relative; display: grid; grid-template-columns: repeat(6, 78px); grid-template-rows: repeat(4, 78px); gap: 0; background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px); background-size: 78px 78px; border: 1px solid var(--line); width: max-content; border-radius: 6px; }
+.lab-w { position: absolute; left: 0; top: 0; padding: 5px; }
+.lab-w > .frame { position: relative; height: 100%; border: 1.5px solid var(--gem); border-radius: 9px; background: var(--shell-2); }
+.lab-h { position: absolute; right: -7px; bottom: -7px; width: 18px; height: 18px; border-radius: 5px; background: var(--gem); border: 0; cursor: nwse-resize; touch-action: none; }
+.lab-size { position: absolute; left: 6px; top: -24px; font: 12px var(--font-code); color: var(--gem); white-space: nowrap; }
+.lab-side { width: 236px; border: 1px solid var(--line); border-radius: 8px; background: var(--shell-2); padding: 8px 0; }
+.lab-side .s-item { padding: 4px 12px; }
+.lab-sw { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; }
+.slot { position: relative; margin: 6px 8px; }
+.slot .frame { height: 170px; border: 1.5px solid var(--gem); border-radius: 8px; position: relative; background: var(--shell); }
+.slot .guide { position: absolute; left: -4px; right: -4px; border-top: 1px dashed var(--warn); pointer-events: none; }
+.slot .guide span { position: absolute; right: 0; top: -17px; font: 11px var(--font-code); color: var(--warn); }
+.lab-sh { position: absolute; left: 50%; bottom: -7px; width: 44px; height: 12px; margin-left: -22px; border-radius: 6px; border: 0; background: var(--gem); cursor: ns-resize; touch-action: none; }
+.side-ctl { display: grid; gap: 12px; width: 300px; }
+.side-ctl label { display: grid; gap: 4px; color: var(--muted); }
+.side-ctl input[type="range"] { width: 100%; accent-color: var(--gem); }
+.side-ctl .now { font: 12px var(--font-code); color: var(--gem); }
+.lab-tb { width: 560px; }
+.lab-tb .bar { display: flex; gap: 6px; justify-content: flex-end; padding: 6px 8px; background: var(--shell-2); border: 1px solid var(--line); border-radius: 8px; }
+.lab-tb .chip { border: 1.5px solid var(--gem); color: var(--text); }
+.lab-tb .pop { margin: 6px 0 0 auto; width: 300px; height: 196px; border: 1.5px solid var(--gem); border-radius: 9px; background: var(--shell-2); position: relative; box-shadow: 0 10px 30px rgba(0, 0, 0, .45); }
+
+/* The Clock project, as it runs */
+.clock-host { width: 100%; height: 100%; }
+.clock { height: 100%; display: grid; place-content: center; text-align: center; gap: 4px; padding: 8px; color: var(--text); }
+.clock .time { font: 600 2.1em/1 var(--font-code); font-variant-numeric: tabular-nums; }
+.clock[data-size="s"] .time { font-size: 1.4em; }
+.clock[data-size="l"] .time { font-size: 2.8em; }
+.clock .date { color: var(--muted); }
+.clock ul { list-style: none; margin: 8px 0 0; padding: 8px 0 0; border-top: 1px solid var(--line); display: grid; gap: 2px; font-variant-numeric: tabular-nums; }
+.clock li { display: flex; justify-content: space-between; gap: 18px; }
+.clock li span { color: var(--muted); }
+
+/* Playgrounds (toolbar popover, sidebar) */
+.pg { display: flex; flex-direction: column; gap: 8px; height: 100%; padding: 10px; }
+.pg-head { display: flex; align-items: center; gap: 6px; }
+.pg-head .t { font-weight: 600; margin-right: auto; display: flex; align-items: center; gap: 6px; }
+.pg select { font: inherit; color: var(--text); background: var(--shell-3); border: 1px solid var(--line); border-radius: 7px; padding: 3px 6px; }
+.pg textarea { width: 100%; resize: none; background: #15171c; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font: 12px/1.55 var(--font-code); }
+.pg .outbox { background: #15171c; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: 12px/1.5 var(--font-code); overflow: auto; }
+.pg .outbox .l { white-space: pre-wrap; }
+.pg .foot { display: flex; gap: 6px; flex-wrap: wrap; }
+.pg .stabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); }
+.pg .stab { border: 0; background: none; padding: 4px 9px; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; }
+.pg .stab.on { color: var(--text); border-bottom-color: var(--ember); }
+.pg .list { display: grid; gap: 2px; }
+.pg .list button { text-align: left; border: 0; background: none; padding: 4px 6px; border-radius: 6px; color: var(--muted); cursor: pointer; font: 12px var(--font-code); }
+.pg .list button:hover { background: var(--shell-3); color: var(--text); }
+.popover { position: absolute; top: 46px; right: 10px; width: 400px; height: 330px; background: var(--shell-2); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 16px 40px rgba(0, 0, 0, .5); z-index: 20; }
+
+/* Windows, menus, dialogs, toasts */
+.pwin { position: absolute; z-index: 30; right: 26px; bottom: 26px; width: 340px; height: 250px; display: flex; flex-direction: column; background: var(--shell-2); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 18px 44px rgba(0, 0, 0, .55); }
+.pwin .wt { flex: none; display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 10px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.pwin .wt .x { margin-left: auto; }
+.pwin .wb { flex: 1; min-height: 0; position: relative; }
+.pwin .demo { height: 100%; display: grid; place-content: center; gap: 10px; text-align: center; }
+.pwin .demo button { border: 1px solid var(--line); background: var(--shell-3); border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+.menu { position: absolute; z-index: 40; min-width: 210px; padding: 4px; background: var(--shell-3); border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 14px 34px rgba(0, 0, 0, .5); }
+.menu button { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: none; padding: 6px 9px; border-radius: 6px; cursor: pointer; text-align: left; }
+.menu button:hover, .menu button:focus-visible { background: var(--shell-2); }
+.menu button:disabled { color: var(--faint); cursor: default; background: none; }
+.menu .sep { height: 1px; background: var(--line); margin: 4px 2px; }
+.menu .mh { padding: 4px 9px 2px; font-size: 11px; color: var(--faint); }
+.menu .ck { width: 15px; text-align: center; color: var(--ember); }
+.menu .ck.faint { opacity: .45; }
+.menu .sub { color: var(--faint); margin-left: auto; font-size: 12px; }
+.scrim { position: absolute; inset: 0; z-index: 50; background: rgba(8, 9, 12, .55); display: grid; place-items: center; }
+.dlg { width: 420px; background: var(--shell-2); border: 1px solid var(--line); border-radius: 12px; padding: 18px; box-shadow: 0 20px 50px rgba(0, 0, 0, .6); display: grid; gap: 10px; }
+.dlg h2 { margin: 0; font-size: 15px; font-weight: 600; text-wrap: balance; }
+.dlg p { margin: 0; color: var(--muted); }
+.dlg .who { font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 6px; }
+.dlg .acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.dlg .acts button { border: 1px solid var(--line); background: var(--shell-3); border-radius: 8px; padding: 6px 14px; cursor: pointer; }
+.dlg .acts .pri { background: #3a7bd5; border-color: #3a7bd5; color: #fff; }
+.dlg ul { margin: 0; padding-left: 18px; color: var(--muted); }
+.toasts { position: absolute; z-index: 45; left: 50%; bottom: 14px; transform: translateX(-50%); display: grid; gap: 6px; pointer-events: none; }
+.toast { background: var(--shell-3); border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; box-shadow: 0 10px 26px rgba(0, 0, 0, .45); white-space: nowrap; }
+.toast b { color: var(--ember); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<header class="proto">
+  <h1><svg class="f-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3l7 6-7 12-7-12z"/><path d="M5 9h14M12 3v18M9 9l3 12 3-12"/></svg>GEM Forge prototype <small>staged: the code doesn't really run</small></h1>
+  <div class="seg" role="group" aria-label="Where GEM Forge is" id="scen"></div>
+  <button class="sim" id="simAi" type="button">Simulate: your AI adds zones.ts</button>
+  <p class="note" id="note"></p>
+</header>
+
+<main class="stage"><div class="win" id="win"></div></main>
+
+<script>
+"use strict";
+// ── Icons (stroke, inline) ───────────────────────────────────────────────
+const P = {
+  run: '<path d="M7 5l12 7-12 7z" fill="currentColor" stroke="none"/>',
+  more: '<circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>', focus: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>', unfocus: '<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>',
+  file: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/>', folder: '<path d="M3 6h7l2 2h9v11H3z"/>', win: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18"/>',
+  copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/>', term: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/>',
+  pkg: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/>', close: '<path d="M6 6l12 12M18 6L6 18"/>',
+  gem: '<path d="M12 3l7 6-7 12-7-12z"/><path d="M5 9h14"/>', shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>', chev: '<path d="M8 10l4 4 4-4"/>',
+};
+const ic = (n) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[n]}</svg>`;
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+// ── The Clock project (the files your AI and you edit) ───────────────────
+const FILES = {
+  'entry.ts': `import Widget from './Widget.vue'
+
+export default {
+    id: 'my-clock',
+    name: 'Clock',
+    version: '0.1.0',
+    Component: Widget,
+    grid: { minSize: { cols: 1, rows: 1 }, defaultSize: { cols: 3, rows: 2 } },
+    capabilities: [],
+}`,
+  'Widget.vue': `<template>
+    <div class="clock" :data-size="size">
+        <div class="time">{{ time }}</div>
+        <div v-if="size !== 's'" class="date">{{ date }}</div>
+        <ul v-if="size === 'l'" class="zones">
+            <li v-for="z in zones" :key="z.city"><span>{{ z.city }}</span> {{ z.time }}</li>
+        </ul>
+    </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onUnmounted } from 'vue'
+import { CITIES, fmt } from './zones'
+
+const props = defineProps<{ placement?: { size?: { w: number; h: number } } }>()
+const now = ref(new Date())
+const timer = setInterval(() => { now.value = new Date() }, 1000)
+onUnmounted(() => clearInterval(timer))
+
+// what the clock shows depends on its own size: GEM Shell gives it many
+const size = computed(() => {
+    const w = props.placement?.size?.w ?? 300
+    return w < 160 ? 's' : w < 320 ? 'm' : 'l'
+})
+const time = computed(() => fmt(now.value))
+const date = computed(() => now.value.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' }))
+const zones = computed(() => CITIES.map(([city, tz]) => ({ city, time: fmt(now.value, tz) })))
+<\/script>`,
+  'zones.ts': `// world clocks, added by your AI
+export const CITIES: [string, string][] = [
+    ['Tokyo', 'Asia/Tokyo'],
+    ['Paris', 'Europe/Paris'],
+    ['Vancouver', 'America/Vancouver'],
+]
+
+export const fmt = (d: Date, timeZone?: string) =>
+    d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone })`,
+  'AGENTS.md': `# Working on this widget (for AIs)
+
+This folder is a GEM Shell widget. GEM Forge rebuilds it when you save a file.
+
+- The API is in types/widgets-sdk.d.ts (read-only copy). Use only what it declares.
+- Every capability is asked of the user; declare it in entry.ts with a reason.
+- Lifecycle cells: plain data, or a resource with dispose. Never eval, never inline scripts.
+- The widget meets many sizes: toolbar popover, sidebar, grid cells. Read placement.size.`,
+  'README.md': `# Clock
+
+A clock that shows more as it grows: the time, then the date, then world clocks.`,
+  'types/widgets-sdk.d.ts': `// GEM Shell widget SDK (read-only copy for this project)
+declare module 'gexplorer/widgets' {
+    export interface WidgetSdk {
+        fsList?(path: string): Promise<Array<{ name: string; path: string }>>
+        lifecycle?(): WidgetLifecycle
+        ui?(): WidgetUi
+        // … the whole SDK
+    }
+}`,
+};
+
+// ── State ────────────────────────────────────────────────────────────────
+const S = {
+  scen: 'wide',
+  fixed: false,            // the AI added zones.ts
+  goodBuild: 'v1',         // the last build that worked (v1: no world clocks yet)
+  building: false,
+  live: true,
+  newFile: false,
+  openFiles: ['Widget.vue', 'entry.ts'],
+  activeFile: 'Widget.vue',
+  flashLine: 0,
+  pvCtx: 'grid',
+  log: [
+    { t: '12:04:10', k: 'i', x: 'Opened clock (D:\\Widgets\\clock), watching for changes' },
+    { t: '12:04:11', k: 'ok', x: 'Built my-clock in 36 ms · 9.8 KB' },
+    { t: '12:06:42', k: 'w', x: 'Widget.vue changed on disk · rebuilding' },
+    { t: '12:06:42', k: 'e', x: 'Widget.vue:13:28  Could not resolve "./zones"' },
+  ],
+  pages: [
+    { id: 'code', name: 'Code', tiles: [
+      { id: 't1', tabs: ['explorer'], on: 'explorer', w: 3, h: 2 },
+      { id: 't2', tabs: ['code'], on: 'code', w: 5, h: 2 },
+      { id: 't3', tabs: ['preview'], on: 'preview', w: 4, h: 1 },
+      { id: 't4', tabs: ['problems', 'output'], on: 'problems', w: 4, h: 1 },
+    ] },
+    { id: 'lab', name: 'Lab', tiles: [
+      { id: 't5', tabs: ['lab'], on: 'lab', w: 8, h: 2 },
+      { id: 't6', tabs: ['controls'], on: 'controls', w: 4, h: 2 },
+    ] },
+  ],
+  page: 'code',
+  foldOn: null,            // the part shown when the page is folded (narrow)
+  lab: { ctx: 'grid', cols: 3, rows: 2, side: { min: 90, max: 300, h: 170 } },
+  menu: null,              // { html, x, y }
+  dialog: null,            // 'perm' | 'install'
+  pwin: null,              // 'preview' | 'ui'
+  pop: false,              // the toolbar playground is open
+  pg: { preset: 'list', allowed: false, out: [], built: false, stab: 'snippet' },
+  keepPerms: false,
+  toasts: [],
+};
+let tileSeq = 7;
+const PARTS = { explorer: 'Explorer', code: 'Code', preview: 'Preview', output: 'Output', problems: 'Problems', controls: 'Controls', lab: 'Layout lab' };
+const partName = (p) => PARTS[p.split('#')[0]] + (p.includes('#') ? ' ' + p.split('#')[1] : '');
+const page = () => S.pages.find(p => p.id === S.page);
+const problems = () => S.fixed ? [] : [{ file: 'Widget.vue', line: 13, col: 28, text: 'Could not resolve "./zones"' }];
+const now = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+const fileList = () => ['entry.ts', 'Widget.vue', ...(S.fixed ? ['zones.ts'] : []), 'README.md', 'AGENTS.md'];
+
+// ── Scenarios ────────────────────────────────────────────────────────────
+const SCEN = {
+  toolbar: { label: 'Toolbar', note: '<b>The toolbar playground.</b> ▶ Run the snippet: its first call that needs a permission asks for this scratch pad only (its own dev identity, for this session). Pick the <b>Hello UI</b> preset: it\'s one Vue file, and its UI opens in a window.' },
+  sidebar: { label: 'Sidebar', note: '<b>The sidebar playground:</b> the same, with room for history, templates, the SDK and what this scratch pad may do.' },
+  narrow: { label: 'Hub, narrow', note: '<b>The Code page, folded.</b> The page\'s tiles become tabs at the top, and the preview opens in a window. Try ▶ Run, then <b>Simulate: your AI adds zones.ts</b>.' },
+  wide: { label: 'Hub, wide', note: '<b>Pages of tiles.</b> Each tab has a ⋯ button (or right-click): Detach, Attach to…, Move to page…, Close. ＋ adds a part: ✓ on this page, a fainter ✓ on another. Click the problem to jump to its line; then simulate the AI\'s fix.' },
+  focus: { label: 'Focus mode', note: '<b>Focus mode.</b> GEM Shell folded its bars after your click; its strip on top always offers the way out (Esc). GEM Forge\'s own bars are warm-toned and inside the widget, so they can\'t pass for the shell\'s.' },
+  lab: { label: 'Layout lab', note: '<b>The Layout lab:</b> the project in real placements. Drag the corner to try grid sizes; switch to Sidebar (with the smallest and largest height it may get) or Toolbar to see it there, without placing it for real. The clock shows more as it grows (world clocks once your AI has added them).' },
+};
+function setScen(s, push = true) {
+  S.scen = SCEN[s] ? s : 'wide';
+  S.pop = S.scen === 'toolbar'; S.menu = null; S.dialog = null;
+  if (S.scen === 'lab') S.page = 'lab';
+  else if (S.scen !== 'focus' && S.page === 'lab' && (S.scen === 'narrow' || S.scen === 'wide')) S.page = 'code';
+  if (push && location.hash !== '#' + S.scen) history.replaceState(null, '', '#' + S.scen);
+  render();
+}
+window.addEventListener('hashchange', () => setScen(location.hash.slice(1), false));
+
+// ── Code highlighting ────────────────────────────────────────────────────
+const KW = /\b(import|from|export|default|const|let|return|await|async|function|type|interface|true|false|null|undefined|new|if|else|declare|module)\b/;
+function hl(src, md) {
+  if (md) return src.split('\n').map(l => l.startsWith('#') ? `<span class="h">${esc(l)}</span>` : esc(l));
+  const re = /(\/\/[^\n]*)|('(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*")|(<\/?[a-zA-Z][\w-]*|\/?>)|\b(import|from|export|default|const|let|return|await|async|function|type|interface|true|false|null|undefined|new|if|else|declare|module)\b|\b(\d+)\b/g;
+  let out = '', i = 0, m;
+  while ((m = re.exec(src))) {
+    out += esc(src.slice(i, m.index));
+    const cls = m[1] ? 'cm' : m[2] ? 's' : m[3] ? 'tg' : m[4] ? 'k' : 'nm';
+    out += `<span class="${cls}">${esc(m[0])}</span>`;
+    i = re.lastIndex;
+  }
+  return (out + esc(src.slice(i))).split('\n');
+}
+
+// ── The Clock, as the project renders at a size ──────────────────────────
+function fmtT(d, tz) { try { return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: tz }); } catch { return '--:--'; } }
+function clockHTML(w, h) {
+  const d = new Date(), size = w < 160 || h < 80 ? 's' : w < 320 || h < 120 ? 'm' : 'l';
+  const zones = S.goodBuild === 'v2' && size === 'l' && h > 150;
+  return `<div class="clock" data-size="${size}"><div class="time" data-live="">${fmtT(d)}</div>` +
+    (size !== 's' ? `<div class="date">${d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' })}</div>` : '') +
+    (zones ? `<ul>${[['Tokyo', 'Asia/Tokyo'], ['Paris', 'Europe/Paris'], ['Vancouver', 'America/Vancouver']].map(([c, tz]) => `<li><span>${c}</span> <b data-live="${tz}">${fmtT(d, tz)}</b></li>`).join('')}</ul>` : '') + '</div>';
+}
+const ro = new ResizeObserver(es => { for (const e of es) { const el = e.target; el.innerHTML = clockHTML(el.clientWidth, el.clientHeight); } });
+setInterval(() => { const d = new Date(); document.querySelectorAll('[data-live]').forEach(el => { el.textContent = fmtT(d, el.dataset.live || undefined); }); }, 1000);
+
+// ── Parts ────────────────────────────────────────────────────────────────
+function partHTML(p) {
+  const kind = p.split('#')[0];
+  if (kind === 'explorer') return `<div class="explorer">
+      <div class="ex-proj">${ic('gem')} clock ${ic('chev')}</div>
+      ${fileList().map(f => `<button class="ex-f ${S.activeFile === f ? 'on' : ''}" data-act="open" data-f="${f}">${ic('file')} ${f}${f === 'zones.ts' && S.newFile ? '<span class="new">new</span>' : ''}</button>`).join('')}
+      <div class="ex-f dir">${ic('folder')} types</div>
+      <button class="ex-f ${S.activeFile === 'types/widgets-sdk.d.ts' ? 'on' : ''}" data-act="open" data-f="types/widgets-sdk.d.ts">${ic('file')} widgets-sdk.d.ts</button>
+      <div class="ex-foot"><span><span class="dot"></span>Watching D:\\Widgets\\clock</span><span>Your AI can edit these files; GEM Forge reloads.</span></div></div>`;
+  if (kind === 'code') {
+    const f = S.activeFile, lines = hl(FILES[f] ?? '', f.endsWith('.md'));
+    const bad = new Set(problems().filter(x => x.file === f).map(x => x.line));
+    return `<div class="code"><div class="ftabs">${S.openFiles.map(o => `<button class="ftab ${o === f ? 'on' : ''}" data-act="ftab" data-f="${o}">${o.split('/').pop()}</button>`).join('')}</div>
+      <div class="editor" aria-label="${f}">${lines.map((l, i) => `<div class="ln ${bad.has(i + 1) ? 'err' : ''} ${S.flashLine === i + 1 ? 'flash' : ''}" data-line="${i + 1}"><span class="n">${i + 1}</span><span class="c">${l || ' '}</span></div>`).join('')}</div></div>`;
+  }
+  if (kind === 'preview') {
+    const failed = problems().length > 0;
+    const box = S.pvCtx === 'sidebar' ? `<div class="sized" style="width:220px;height:170px"><div class="clock-host" data-clock></div></div>`
+      : S.pvCtx === 'toolbar' ? `<div class="sized" style="width:280px;height:180px"><div class="clock-host" data-clock></div></div>`
+      : `<div class="clock-host" data-clock></div>`;
+    return `<div class="preview"><div class="pv-label">Real placement: <span class="ctx">${S.pvCtx === 'grid' ? 'grid, this tile\'s size' : S.pvCtx === 'sidebar' ? 'sidebar' : 'toolbar popover'}</span>
+        <span class="s-sp"></span><button class="ib" data-act="pwin" data-w="preview" aria-label="Open the preview in a window">${ic('win')}</button></div>
+      ${failed ? `<div class="pv-banner">Showing the last build that worked (12:04) · 1 problem</div>` : ''}
+      <div class="pv-box ${S.pvCtx === 'grid' ? 'fill' : ''}">${box}</div></div>`;
+  }
+  if (kind === 'output') return `<div class="out">${S.log.map(l => `<div class="l"><span class="t">${l.t}</span><span class="${l.k}">${esc(l.x)}</span></div>`).join('')}${S.building ? '<div class="l"><span class="t">…</span><span class="i">Building…</span></div>' : ''}</div>`;
+  if (kind === 'problems') {
+    const ps = problems();
+    return ps.length ? `<div class="probs">${ps.map(x => `<button class="prob" data-act="jump" data-f="${x.file}" data-line="${x.line}"><span class="x">●</span><span>${esc(x.text)}</span><span class="where">${x.file}:${x.line}:${x.col}</span></button>`).join('')}</div>`
+      : `<div class="empty">No problems. The last build worked.</div>`;
+  }
+  if (kind === 'controls') return controlsHTML();
+  if (kind === 'lab') return labHTML();
+  return '';
+}
+function controlsHTML() {
+  return `<div class="controls">
+    <div><h4>Run</h4><div class="row"><button class="ib run" data-act="run">${ic('run')} Run</button>
+      <label class="toggle"><input type="checkbox" id="live" data-act="live" ${S.live ? 'checked' : ''}> Live reload</label></div></div>
+    <div><h4>Preview in</h4><div class="seg" role="group" aria-label="Preview in">${[['grid', 'Grid'], ['sidebar', 'Sidebar'], ['toolbar', 'Toolbar'], ['window', 'Window']].map(([k, l]) => `<button type="button" data-act="pvctx" data-v="${k}" aria-pressed="${S.pvCtx === k}">${l}</button>`).join('')}</div></div>
+    <div><h4>For your AI</h4><div class="row"><button class="ib" data-act="copyai">${ic('copy')} Copy for AI</button><button class="ib" data-act="copyprob">${ic('copy')} Copy problems</button><button class="ib" data-act="console">${ic('term')} Open a console here</button></div></div>
+    <div><h4>While editing (dev identity)</h4>
+      <div class="perm"><span><b>Clock</b>, being edited, may: nothing yet</span></div>
+      <label class="toggle" style="margin-top:6px"><input type="checkbox" id="keep" data-act="keep" ${S.keepPerms ? 'checked' : ''}> Keep what it's allowed for this project</label></div>
+    <div><h4>Install</h4><button class="ib" data-act="install">${ic('pkg')} Install…</button></div></div>`;
+}
+function labHTML() {
+  const L = S.lab, C = 78;
+  let stage = '';
+  if (L.ctx === 'grid') {
+    const w = L.cols * C, h = L.rows * C;
+    stage = `<div class="lab-hub" id="labhub"><div class="lab-w" style="width:${w}px;height:${h}px"><div class="lab-size">${L.cols} × ${L.rows} · ${w - 10} × ${h - 10} px</div><div class="frame"><div class="clock-host" data-clock></div></div>
+      <button class="lab-h" id="labh" aria-label="Drag to resize the widget"></button></div></div>`;
+  } else if (L.ctx === 'sidebar') {
+    const sd = L.side;
+    stage = `<div class="lab-sw"><div class="lab-side"><div class="s-item">Favorites</div><div class="s-item">Drives</div>
+        <div class="slot" style="height:${sd.max + 12}px"><div class="frame" id="sideframe" style="height:${sd.h}px"><div class="clock-host" data-clock></div><button class="lab-sh" id="labsh" aria-label="Drag to change the height the sidebar gives"></button></div>
+          <div class="guide" id="gmin" style="top:${sd.min}px"><span>min ${sd.min}</span></div><div class="guide" id="gmax" style="top:${sd.max}px"><span>max ${sd.max}</span></div></div>
+        <div class="s-item">Weather</div></div>
+      <div class="side-ctl"><label for="smin">Smallest height the sidebar may give it<input type="range" id="smin" min="40" max="400" step="5" value="${sd.min}"></label>
+        <label for="smax">Largest height<input type="range" id="smax" min="60" max="600" step="5" value="${sd.max}"></label>
+        <div class="now" id="snow">Now ${sd.h} px · between ${sd.min} and ${sd.max}</div>
+        <div class="row"><button class="ib" data-act="sideset" data-v="min">Squeeze to min</button><button class="ib" data-act="sideset" data-v="max">Stretch to max</button></div>
+        <p class="empty" style="padding:0">Drag the frame's bottom edge, or squeeze it: the widget gets the space a crowded or roomy sidebar would give.</p></div></div>`;
+  } else {
+    stage = `<div class="lab-tb"><div class="bar"><span class="s-tw">12°</span><span class="s-tw chip" data-live="">${fmtT(new Date())}</span><span class="s-tw">CPU 7%</span></div><div class="pop"><div class="clock-host" data-clock></div></div></div>`;
+  }
+  return `<div class="lab"><div class="lab-top"><div class="seg" role="group" aria-label="Placement">${[['grid', 'Grid'], ['sidebar', 'Sidebar'], ['toolbar', 'Toolbar']].map(([k, l]) => `<button type="button" data-act="labctx" data-v="${k}" aria-pressed="${L.ctx === k}">${l}</button>`).join('')}</div>
+    <span class="hint">GEM Shell mounts the project here as it would in a real ${L.ctx === 'grid' ? 'hub' : L.ctx === 'sidebar' ? 'sidebar' : 'toolbar'}.</span></div><div class="lab-stage">${stage}</div></div>`;
+}
+function tabLabel(p) {
+  const n = p === 'problems' ? problems().length : 0;
+  return `<span class="tx">${partName(p)}${n ? `<span class="badge">${n}</span>` : ''}</span>`;
+}
+
+// ── GEM Forge, by size ───────────────────────────────────────────────────
+function forgeHTML(narrow) {
+  const pg = page(), focus = S.scen === 'focus' || S.scen === 'lab';
+  const pages = S.pages.map(p => `<button class="pchip" data-act="page" data-p="${p.id}" ${p.id === S.page ? 'aria-current="page"' : ''}>${esc(p.name)}</button>`).join('');
+  let main;
+  if (narrow) {
+    const all = pg.tiles.flatMap(t => t.tabs);
+    if (!all.includes(S.foldOn)) S.foldOn = all[0];
+    main = `<div class="fold"><div class="tabs" role="tablist">${all.map(p => `<div class="tab ${p === S.foldOn ? 'on' : ''}" role="tab" aria-selected="${p === S.foldOn}" data-act="fold" data-part="${p}">${tabLabel(p)}<span style="width:8px"></span></div>`).join('')}</div>
+      <div class="pane">${S.foldOn === 'preview' ? `<div class="controls"><p class="empty" style="padding:0">When GEM Forge is narrow, the preview is in a window.</p><div class="row"><button class="ib" data-act="pwin" data-w="preview">${ic('win')} Show the preview</button><button class="ib run" data-act="run">${ic('run')} Run</button></div></div>` : partHTML(S.foldOn)}</div></div>`;
+  } else {
+    main = `<div class="tiles">${pg.tiles.map(t => `<section class="tile" style="grid-column:span ${t.w};grid-row:span ${t.h}" aria-label="${partName(t.on)}">
+      <div class="tabs" role="tablist">${t.tabs.map(p => `<div class="tab ${p === t.on ? 'on' : ''}" role="tab" aria-selected="${p === t.on}" data-act="tab" data-tile="${t.id}" data-part="${p}" tabindex="0">${tabLabel(p)}<button class="tab-more" data-act="tabmenu" data-tile="${t.id}" data-part="${p}" aria-label="${partName(p)}: options">${ic('more')}</button></div>`).join('')}</div>
+      <div class="pane">${partHTML(t.on)}</div></section>`).join('')}</div>`;
+  }
+  const actions = `<button class="ib run" data-act="run" aria-label="Run">${ic('run')}${narrow ? '' : ' Run'}</button>`;
+  if (focus) {
+    return `<div class="forge ${narrow ? 'narrow' : ''}"><div class="f-bar"><span class="proj">${ic('gem')} clock</span>${actions}
+        <label class="toggle"><input type="checkbox" data-act="live" ${S.live ? 'checked' : ''}> Live reload</label>
+        <button class="ib" data-act="install">${ic('pkg')} Install…</button><button class="ib" data-act="copyai">${ic('copy')} Copy for AI</button>
+        <span class="s-sp"></span><button class="ib" data-act="addpart">${ic('plus')} Part</button><button class="ib" data-act="unfocus" aria-label="Leave focus mode">${ic('unfocus')}</button></div>
+      <div class="f-body"><nav class="f-rail" aria-label="Pages">${pages}<button class="pchip addp" data-act="addpage">＋ Page</button></nav><div class="f-main">${main}</div></div><div class="toasts">${toastsHTML()}</div></div>`;
+  }
+  return `<div class="forge ${narrow ? 'narrow' : ''}"><div class="f-head"><svg class="f-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3l7 6-7 12-7-12z"/><path d="M5 9h14"/></svg>
+      ${narrow ? `<button class="pchip" data-act="pagemenu" aria-current="page">${esc(pg.name)} ▾</button>` : pages + `<button class="ib" data-act="addpage" aria-label="New page">${ic('plus')}</button>`}
+      <span class="s-sp"></span>${narrow ? '' : `<button class="ib" data-act="addpart">${ic('plus')} Part</button>`}${actions}
+      <button class="ib" data-act="focus" aria-label="Focus mode">${ic('focus')}</button></div>
+    <div class="f-body"><div class="f-main">${main}</div></div><div class="toasts">${toastsHTML()}</div></div>`;
+}
+const toastsHTML = () => S.toasts.map(t => `<div class="toast">${t}</div>`).join('');
+
+// ── The playgrounds ──────────────────────────────────────────────────────
+const PRESETS = {
+  list: { label: 'List pictures', code: "const pics = await sdk.fsList('~/Pictures')\nconsole.log(pics.length, 'pictures')\nconsole.log(pics[0].name)" },
+  ui: { label: 'Hello UI (template)', code: '<template>\n  <button @click="n++">Clicked {{ n }} times</button>\n</template>\n<script setup>\nimport { ref } from \'vue\'\nconst n = ref(0)\n<\/script>' },
+};
+function pgHTML(big) {
+  const g = S.pg, pr = PRESETS[g.preset];
+  const outbox = `<div class="outbox" style="flex:${big ? 1 : '0 0 92px'}" aria-label="Output">${g.out.length ? g.out.map(l => `<div class="l ${l.k}">${esc(l.x)}</div>`).join('') : '<div class="l" style="color:var(--faint)">console.log output shows here</div>'}</div>`;
+  const tabs = big ? `<div class="stabs">${[['snippet', 'Snippet'], ['history', 'History'], ['templates', 'Templates'], ['sdk', 'SDK']].map(([k, l]) => `<button class="stab ${g.stab === k ? 'on' : ''}" data-act="stab" data-v="${k}">${l}</button>`).join('')}</div>` : '';
+  let body = `<textarea rows="${big ? 9 : 4}" aria-label="Snippet" spellcheck="false">${esc(pr.code)}</textarea>`;
+  if (big && g.stab === 'history') body = `<div class="list">${["fsList('~/Pictures')", "Hello UI (template)", "sdk.platform()", "fetch weather (Network)"].map(x => `<button>${esc(x)}</button>`).join('')}</div>`;
+  if (big && g.stab === 'templates') body = `<div class="list">${['A button with a counter', 'A list of files', 'A settings form', 'A toolbar chip'].map(x => `<button>${esc(x)}</button>`).join('')}</div>`;
+  if (big && g.stab === 'sdk') body = `<div class="list">${['sdk.fsList(path)', 'sdk.fsReadText(path)', 'sdk.ui().snack({ text })', 'sdk.lifecycle().cell(key, value)', 'sdk.platform()'].map(x => `<button>${esc(x)}</button>`).join('')}</div>`;
+  return `<div class="pg"><div class="pg-head"><span class="t">${ic('gem')} Playground</span>
+      <label class="sr" for="preset" style="position:absolute;left:-9999px">Preset</label><select id="preset" data-act="preset">${Object.entries(PRESETS).map(([k, p]) => `<option value="${k}" ${k === g.preset ? 'selected' : ''}>${p.label}</option>`).join('')}</select>
+      <button class="ib run" data-act="pgrun" aria-label="Run the snippet">${ic('run')}</button></div>
+    ${tabs}${body}${outbox}
+    ${big ? `<div class="perm"><span>This scratch pad may: <b>${g.allowed ? 'Read · Pictures' : 'nothing yet'}</b></span>${g.allowed ? '<span style="color:var(--faint)">this session</span>' : ''}</div>` : ''}
+    <div class="foot"><button class="ib" data-act="pwin" data-w="ui" ${g.preset === 'ui' && g.built ? '' : 'disabled'}>${ic('win')} Open its UI</button><button class="ib" data-act="toforge">${ic('gem')} Open as a project</button></div></div>`;
+}
+
+// ── The window ───────────────────────────────────────────────────────────
+function render() {
+  const win = document.getElementById('win');
+  const sc = S.scen, focus = sc === 'focus' || sc === 'lab';
+  win.className = 'win' + (focus ? ' focus' : '');
+  win.style.setProperty('--sidew', sc === 'sidebar' ? '320px' : '196px');
+  const top = focus
+    ? `<div class="host-strip">${ic('shield')}<span>GEM Shell · <b style="color:var(--text);font-weight:500">GEM Forge</b> is in focus mode</span><button class="exit" data-act="unfocus">Exit focus mode <kbd>Esc</kbd></button></div>`
+    : `<div class="s-top"><span class="s-logo" aria-hidden="true"></span><div class="s-tabs"><span class="s-tab">Home</span><span class="s-tab on">Projects</span><span class="s-tab">Media</span></div><span class="s-sp"></span>
+        <span class="s-tw">12° Montréal</span><span class="s-tw">CPU 7%</span><button class="s-tw" data-act="pop" aria-expanded="${S.pop}" aria-label="GEM Forge playground">${ic('gem')} Forge</button></div>`;
+  const side = `<aside class="s-side">${sc === 'sidebar' ? pgHTML(true) : `<h3>Favorites</h3><div class="s-item">Documents</div><div class="s-item">Widgets</div><div class="s-item">Pictures</div><h3>Drives</h3><div class="s-item">C: System</div><div class="s-item">D: Data</div>`}</aside>`;
+  let hub;
+  if (focus) hub = `<div class="s-hub"><div class="h-tile" id="forgeHost"></div></div>`;
+  else if (sc === 'narrow') hub = `<div class="s-hub"><div class="h-tile" id="forgeHost" style="grid-row:span 2"></div><div class="h-tile ph" style="grid-column:span 2"><span>GEM Corkboard</span></div><div class="h-tile ph"><span>Weather</span></div><div class="h-tile ph"><span>GEM Monitor</span></div></div>`;
+  else if (sc === 'wide') hub = `<div class="s-hub"><div class="h-tile" id="forgeHost" style="grid-column:span 3;grid-row:span 2"></div></div>`;
+  else hub = `<div class="s-hub"><div class="h-tile ph" style="grid-column:span 2"><span>GEM Corkboard</span></div><div class="h-tile ph"><span>Weather</span></div><div class="h-tile ph"><span>GEM Monitor</span></div><div class="h-tile ph" style="grid-column:span 2"><span>Items</span></div></div>`;
+  const pop = S.pop && !focus ? `<div class="popover" role="dialog" aria-label="GEM Forge playground">${pgHTML(false)}</div>` : '';
+  const pw = S.pwin ? `<div class="pwin" role="dialog" aria-label="Window"><div class="wt">${ic('win')} ${S.pwin === 'preview' ? 'Clock · preview' : 'Scratch pad · its UI'} <button class="ib x" data-act="closepwin" aria-label="Close the window">${ic('close')}</button></div>
+      <div class="wb">${S.pwin === 'preview' ? '<div class="clock-host" data-clock></div>' : `<div class="demo"><button data-act="count">Clicked <span id="cnt">${S.count || 0}</span> times</button><span style="color:var(--faint);font-size:12px">One Vue file, run as a widget</span></div>`}</div></div>` : '';
+  let dlg = '';
+  if (S.dialog === 'perm') dlg = `<div class="scrim"><div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dlgt"><div class="who">${ic('shield')} GEM Shell asks</div><h2 id="dlgt">The scratch pad wants to read your Pictures folder</h2>
+      <p>A snippet you're running in GEM Forge (a scratch pad, being edited). It's allowed for this session only, unless you keep it. GEM Forge itself gets nothing.</p>
+      <div class="acts"><button data-act="deny">Don't allow</button><button class="pri" data-act="allow">Allow for this session</button></div></div></div>`;
+  if (S.dialog === 'install') dlg = `<div class="scrim"><div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dlgt"><div class="who">${ic('shield')} GEM Shell asks</div><h2 id="dlgt">Install “Clock”?</h2>
+      <p>Your own widget, built in GEM Forge from D:\\Widgets\\clock. Code you wrote or pasted can use what you allow it.</p>
+      <ul><li>Declares: no capabilities</li><li>While editing it was allowed: nothing</li></ul>
+      <label class="toggle"><input type="checkbox" id="carry" checked> Keep its permissions when I rebuild it</label>
+      <div class="acts"><button data-act="closedlg">Cancel</button><button class="pri" data-act="doinstall">Install</button></div></div></div>`;
+  const menu = S.menu ? `<div class="menu" role="menu" style="left:${S.menu.x}px;top:${S.menu.y}px">${S.menu.html}</div>` : '';
+  win.innerHTML = top + side + hub + pop + pw + menu + dlg;
+  const host = document.getElementById('forgeHost');
+  if (host) host.innerHTML = forgeHTML(isNarrow());
+  ro.disconnect();
+  win.querySelectorAll('[data-clock]').forEach(el => { el.innerHTML = clockHTML(el.clientWidth, el.clientHeight); ro.observe(el); });
+  document.querySelectorAll('#scen button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.s === S.scen)));
+  document.getElementById('note').innerHTML = SCEN[S.scen].note;
+  const sim = document.getElementById('simAi'); sim.disabled = S.fixed; sim.textContent = S.fixed ? 'Your AI added zones.ts' : 'Simulate: your AI adds zones.ts';
+  if (S.flashLine) { const el = win.querySelector('.ln.flash'); el?.scrollIntoView({ block: 'center' }); S.flashLine = 0; }
+}
+// narrow: GEM Forge's own width decides (here: the hub tile's)
+function isNarrow() { return S.scen === 'narrow'; }
+
+// ── Actions ──────────────────────────────────────────────────────────────
+function toast(html) { S.toasts.push(html); render(); setTimeout(() => { S.toasts.shift(); render(); }, 3200); }
+function log(k, x) { S.log.push({ t: now(), k, x }); }
+function run(reason) {
+  if (S.building) return;
+  S.building = true; if (reason) log('w', reason); render();
+  setTimeout(() => {
+    S.building = false;
+    if (S.fixed) { S.goodBuild = 'v2'; log('ok', 'Built my-clock in 41 ms · 10.6 KB'); log('i', 'Running as dev:clock (being edited)'); }
+    else log('e', 'Widget.vue:13:28  Could not resolve "./zones"');
+    render();
+  }, 450);
+}
+function findTile(id) { for (const p of S.pages) { const t = p.tiles.find(x => x.id === id); if (t) return { p, t }; } return null; }
+function removePart(part) {
+  for (const p of S.pages) for (const t of p.tiles) {
+    const i = t.tabs.indexOf(part);
+    if (i >= 0) { t.tabs.splice(i, 1); if (t.on === part) t.on = t.tabs[0]; }
+  }
+  for (const p of S.pages) p.tiles = p.tiles.filter(t => t.tabs.length);
+}
+function where(part) { for (const p of S.pages) for (const t of p.tiles) if (t.tabs.includes(part)) return p.id; return null; }
+function openMenu(html, el) {
+  const w = document.getElementById('win').getBoundingClientRect(), r = el.getBoundingClientRect();
+  S.menu = { html, x: Math.min(r.left - w.left, w.width - 240), y: Math.min(r.bottom - w.top + 4, w.height - 280) };
+  render();
+  document.querySelector('.menu button:not(:disabled)')?.focus();
+}
+function tabMenu(tileId, part, el, view) {
+  const { p, t } = findTile(tileId);
+  let html;
+  if (view === 'attach') html = `<div class="mh">Attach ${partName(part)} to</div>` + p.tiles.filter(x => x.id !== tileId).map(x => `<button role="menuitem" data-act="attach" data-tile="${tileId}" data-part="${part}" data-to="${x.id}">${x.tabs.map(partName).join(' · ')}</button>`).join('') + `<div class="sep"></div><button role="menuitem" data-act="tabmenu" data-tile="${tileId}" data-part="${part}">‹ Back</button>`;
+  else if (view === 'page') html = `<div class="mh">Move ${partName(part)} to</div>` + S.pages.filter(x => x.id !== p.id).map(x => `<button role="menuitem" data-act="movepage" data-part="${part}" data-to="${x.id}">${esc(x.name)}</button>`).join('') + `<button role="menuitem" data-act="movepage" data-part="${part}" data-to="new">A new page</button><div class="sep"></div><button role="menuitem" data-act="tabmenu" data-tile="${tileId}" data-part="${part}">‹ Back</button>`;
+  else html = `<div class="mh">${partName(part)}</div>
+    <button role="menuitem" data-act="detach" data-tile="${tileId}" data-part="${part}" ${t.tabs.length < 2 ? 'disabled' : ''}>Detach <span class="sub">its own tile</span></button>
+    <button role="menuitem" data-act="attachmenu" data-tile="${tileId}" data-part="${part}" ${p.tiles.length < 2 ? 'disabled' : ''}>Attach to… <span class="sub">a tab of another tile</span></button>
+    <button role="menuitem" data-act="pagemenu2" data-tile="${tileId}" data-part="${part}">Move to page…</button>
+    <div class="sep"></div><button role="menuitem" data-act="closepart" data-part="${part}">Close</button>`;
+  openMenu(html, el);
+}
+function addPartMenu(el) {
+  const items = Object.keys(PARTS).map(k => {
+    const w = where(k), ck = w === S.page ? '<span class="ck">✓</span>' : w ? '<span class="ck faint">✓</span>' : '<span class="ck"></span>';
+    const sub = w && w !== S.page ? `<span class="sub">on ${esc(S.pages.find(p => p.id === w).name)}</span>` : '';
+    return `<button role="menuitem" data-act="addp" data-part="${k}">${ck}${PARTS[k]}${sub}</button>`;
+  }).join('');
+  openMenu(`<div class="mh">Parts on “${esc(page().name)}”</div>${items}<div class="sep"></div><button role="menuitem" data-act="addp" data-part="code#2"><span class="ck"></span>Another code editor</button>`, el);
+}
+function copyText(text, ok) { try { navigator.clipboard.writeText(text).then(() => toast(ok), () => toast('Copying isn\'t allowed in this preview')); } catch { toast('Copying isn\'t allowed in this preview'); } }
+
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-act]');
+  if (S.menu && !e.target.closest('.menu') && !(el && /menu/.test(el.dataset.act))) { S.menu = null; if (!el) { render(); return; } }
+  if (!el) return;
+  const a = el.dataset.act, d = el.dataset;
+  switch (a) {
+    case 'scen': setScen(d.s); break;
+    case 'page': S.page = d.p; S.menu = null; render(); break;
+    case 'addpage': { const n = S.pages.length + 1; S.pages.push({ id: 'p' + n, name: 'Page ' + n, tiles: [] }); S.page = 'p' + n; render(); toast('A new page: ＋ Part fills it'); break; }
+    case 'pagemenu': openMenu(S.pages.map(p => `<button role="menuitem" data-act="page" data-p="${p.id}">${p.id === S.page ? '<span class="ck">✓</span>' : '<span class="ck"></span>'}${esc(p.name)}</button>`).join('') + '<div class="sep"></div><button role="menuitem" data-act="addpage"><span class="ck"></span>New page</button>', el); break;
+    case 'tab': { const { t } = findTile(d.tile); if (e.target.closest('.tab-more')) return; t.on = d.part; render(); break; }
+    case 'fold': S.foldOn = d.part; render(); break;
+    case 'tabmenu': e.stopPropagation(); tabMenu(d.tile, d.part, el.closest('.tab') || el); break;
+    case 'attachmenu': tabMenu(d.tile, d.part, el, 'attach'); break;
+    case 'pagemenu2': tabMenu(d.tile, d.part, el, 'page'); break;
+    case 'detach': { const { p, t } = findTile(d.tile); t.tabs.splice(t.tabs.indexOf(d.part), 1); if (t.on === d.part) t.on = t.tabs[0]; p.tiles.push({ id: 't' + tileSeq++, tabs: [d.part], on: d.part, w: 4, h: 1 }); S.menu = null; render(); break; }
+    case 'attach': { removePart(d.part); const to = findTile(d.to); to.t.tabs.push(d.part); to.t.on = d.part; S.menu = null; render(); break; }
+    case 'movepage': { removePart(d.part); let to = S.pages.find(p => p.id === d.to); if (!to) { const n = S.pages.length + 1; to = { id: 'p' + n, name: 'Page ' + n, tiles: [] }; S.pages.push(to); } to.tiles.push({ id: 't' + tileSeq++, tabs: [d.part], on: d.part, w: 6, h: 1 }); S.menu = null; render(); toast(`${partName(d.part)} moved to <b>${esc(to.name)}</b>`); break; }
+    case 'closepart': removePart(d.part); S.menu = null; render(); break;
+    case 'addpart': addPartMenu(el); break;
+    case 'addp': { if (where(d.part) !== S.page || d.part.includes('#')) { removePart(d.part); page().tiles.push({ id: 't' + tileSeq++, tabs: [d.part], on: d.part, w: 4, h: 1 }); } S.menu = null; render(); break; }
+    case 'open': if (!S.openFiles.includes(d.f)) S.openFiles.push(d.f); S.activeFile = d.f; render(); break;
+    case 'ftab': S.activeFile = d.f; render(); break;
+    case 'jump': if (!S.openFiles.includes(d.f)) S.openFiles.push(d.f); S.activeFile = d.f; S.flashLine = Number(d.line);
+      for (const t of page().tiles) if (t.tabs.includes('code')) t.on = 'code'; if (isNarrow()) S.foldOn = 'code'; render(); break;
+    case 'run': run(); break;
+    case 'live': S.live = el.checked; render(); break;
+    case 'keep': S.keepPerms = el.checked; break;
+    case 'pvctx': if (d.v === 'window') { S.pwin = 'preview'; } else S.pvCtx = d.v; render(); break;
+    case 'labctx': S.lab.ctx = d.v; render(); break;
+    case 'sideset': setSide(d.v === 'min' ? S.lab.side.min : S.lab.side.max); break;
+    case 'pwin': S.pwin = d.w; render(); break;
+    case 'closepwin': S.pwin = null; render(); break;
+    case 'count': S.count = (S.count || 0) + 1; document.getElementById('cnt').textContent = S.count; break;
+    case 'install': S.dialog = 'install'; render(); break;
+    case 'closedlg': S.dialog = null; render(); break;
+    case 'doinstall': S.dialog = null; render(); toast('<b>Clock</b> is installed: find it in the Widget browser'); break;
+    case 'copyai': copyText(Object.entries(FILES).filter(([f]) => S.fixed || f !== 'zones.ts').map(([f, c]) => `--- ${f}\n${c}`).join('\n\n'), 'Copied the project\'s files for your AI'); break;
+    case 'copyprob': copyText(problems().map(p => `${p.file}:${p.line}:${p.col} ${p.text}`).join('\n') || 'No problems.', 'Copied the problems'); break;
+    case 'console': toast('GEM Console opens in D:\\Widgets\\clock'); break;
+    case 'focus': setScen('focus'); break;
+    case 'unfocus': setScen(S.page === 'lab' ? 'wide' : 'wide'); break;
+    case 'pop': S.pop = !S.pop; render(); break;
+    case 'stab': S.pg.stab = d.v; render(); break;
+    case 'pgrun': {
+      const g = S.pg;
+      if (g.preset === 'list') { if (!g.allowed) { S.dialog = 'perm'; render(); return; } g.out = [{ k: '', x: '248 pictures' }, { k: '', x: 'IMG_2041.jpg' }]; }
+      else { g.built = true; g.out = [{ k: '', x: 'Built in 22 ms: open its UI' }]; }
+      render(); break;
+    }
+    case 'allow': S.pg.allowed = true; S.dialog = null; S.pg.out = [{ k: '', x: '248 pictures' }, { k: '', x: 'IMG_2041.jpg' }]; render(); break;
+    case 'deny': S.dialog = null; S.pg.out = [{ k: '', x: 'Error: Read was not allowed (E_DENIED)' }]; render(); break;
+    case 'toforge': setScen('wide'); toast('The snippet opens as a new project'); break;
+  }
+});
+document.addEventListener('change', (e) => { if (e.target.id === 'preset') { S.pg.preset = e.target.value; S.pg.out = []; S.pg.built = false; render(); } });
+document.addEventListener('contextmenu', (e) => {
+  const t = e.target.closest('.tab[data-tile]'); if (!t) return;
+  e.preventDefault(); tabMenu(t.dataset.tile, t.dataset.part, t);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (S.menu) { S.menu = null; render(); }
+    else if (S.dialog) { S.dialog = null; render(); }
+    else if (S.scen === 'focus' || S.scen === 'lab') setScen('wide');
+  }
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.tab[data-tile]')) { e.preventDefault(); const { t } = findTile(e.target.dataset.tile); t.on = e.target.dataset.part; render(); }
+});
+// the Layout lab's sidebar: its height between the min and max the sidebar may give (updated in place while dragging)
+function setSide(h) {
+  const sd = S.lab.side; sd.h = Math.round(Math.max(sd.min, Math.min(sd.max, h)));
+  const f = document.getElementById('sideframe'); if (!f) return;
+  f.style.height = sd.h + 'px';
+  document.getElementById('gmin').style.top = sd.min + 'px'; document.getElementById('gmin').firstChild.textContent = 'min ' + sd.min;
+  document.getElementById('gmax').style.top = sd.max + 'px'; document.getElementById('gmax').firstChild.textContent = 'max ' + sd.max;
+  f.parentElement.style.height = (sd.max + 12) + 'px';
+  document.getElementById('snow').textContent = `Now ${sd.h} px · between ${sd.min} and ${sd.max}`;
+}
+document.addEventListener('input', (e) => {
+  const sd = S.lab.side;
+  if (e.target.id === 'smin') { sd.min = Number(e.target.value); if (sd.max < sd.min) { sd.max = sd.min; document.getElementById('smax').value = sd.max; } setSide(sd.h); }
+  if (e.target.id === 'smax') { sd.max = Number(e.target.value); if (sd.min > sd.max) { sd.min = sd.max; document.getElementById('smin').value = sd.min; } setSide(sd.h); }
+});
+document.addEventListener('pointerdown', (e) => {
+  if (e.target.id !== 'labsh') return;
+  e.preventDefault();
+  const top = document.getElementById('sideframe').getBoundingClientRect().top;
+  const mv = (ev) => setSide(ev.clientY - top);
+  const up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); };
+  window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up);
+});
+// the Layout lab's corner: whole cells, as the hub engine
+document.addEventListener('pointerdown', (e) => {
+  if (e.target.id !== 'labh') return;
+  e.preventDefault();
+  const hub = document.getElementById('labhub').getBoundingClientRect();
+  const mv = (ev) => {
+    const cols = Math.max(1, Math.min(6, Math.round((ev.clientX - hub.left) / 78))), rows = Math.max(1, Math.min(4, Math.round((ev.clientY - hub.top) / 78)));
+    if (cols !== S.lab.cols || rows !== S.lab.rows) { S.lab.cols = cols; S.lab.rows = rows; render(); }
+  };
+  const up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); };
+  window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up);
+});
+document.getElementById('simAi').addEventListener('click', () => {
+  S.fixed = true; S.newFile = true;
+  log('w', 'zones.ts was added on disk (another program)');
+  if (S.live) run('Rebuilding: live reload'); else log('i', 'Changes on disk: ▶ Run to rebuild');
+  toast('<b>zones.ts</b> appeared on disk · GEM Forge reloads');
+});
+
+// ── Start ────────────────────────────────────────────────────────────────
+document.getElementById('scen').innerHTML = Object.entries(SCEN).map(([k, v]) => `<button type="button" data-act="scen" data-s="${k}" aria-pressed="false">${v.label}</button>`).join('');
+setScen(location.hash.slice(1) || 'wide', false);
+</script>
+</body>
+</html>

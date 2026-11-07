@@ -3,7 +3,7 @@
     THE BOARD (0.1.0): the stacks and pinned groups of a view (a board, or a group opened), a page at a time.
       Drag a stack: the others are pushed aside live, by GEM Shell's hub engine (layout.ts). Over the MIDDLE of
       another stack it piles onto it (on a group's pin: into the group); Shift swaps; Alt places it freely.
-      Drag a stack's corner: it grows (2 × 2 at most), pushing the others. Hold it at an edge or over a page dot
+      Drag a stack's corner: it grows or shrinks (1 × 1 to a page, 0.2.5), pushing the others. Hold it at an edge or over a page dot
       to change page (the empty dot is a new page).
       Double-click the cork: a note there. Right-click: GEM Shell's menu (menus.ts). Wheel / PageUp / PageDown: pages.
 -->
@@ -20,44 +20,45 @@
 
         <div v-for="c in cards" :key="c.it.id" class="cb-item" :data-id="c.it.id" :data-kind="c.it.kind"
              :class="cardClass(c)" :style="cardStyle(c)" tabindex="0" role="button" :aria-label="ariaOf(c.it)"
-             :title="desk.geo.value.icon ? desk.labelOf(c.it) : ''"
+             :title="c.look !== 'full' ? desk.labelOf(c.it) : ''"
              @pointerdown="down($event, c.it)" @keydown.enter.prevent="openItem(c.it)" @keydown.space.prevent="openItem(c.it)">
             <template v-if="c.it.kind === 'stack'">
                 <div class="cb-paper">
-                    <template v-if="desk.geo.value.icon"><span class="cb-ini">{{ initials(c.it.name) }}</span></template>
+                    <template v-if="c.look === 'tiny'"><span class="cb-ini">{{ initials(c.it.name) }}</span></template>
+                    <div v-else-if="c.look === 'title'" class="cb-ttl">{{ c.it.name }}</div>
                     <template v-else>
                         <div class="cb-tape">{{ c.it.name }}</div>
                         <div class="cb-ptitle"><span v-if="c.it.numbered && top(c.it).num" class="cb-pnum">#{{ top(c.it).num }}</span> {{ noteLabel(top(c.it)) || 'Empty note' }}</div>
                         <div class="cb-pprev">
-                            <div v-for="(l, i) in previewLines(c.it, c.span)" :key="i" :class="{ d: l.done }">{{ l.text }}</div>
+                            <div v-for="(l, i) in previewLines(c.it, c.h)" :key="i" :class="{ d: l.done }">{{ l.text }}</div>
                         </div>
                         <div class="cb-pfoot"><span>{{ c.it.notes.length }} note{{ c.it.notes.length === 1 ? '' : 's' }}</span><span v-if="prog(c.it)">{{ prog(c.it) }}</span></div>
                     </template>
                 </div>
-                <span v-if="desk.geo.value.icon" class="cb-badge">{{ c.it.notes.length }}</span>
+                <span v-if="c.look === 'tiny'" class="cb-badge">{{ c.it.notes.length }}</span>
                 <div v-if="c.it.flags.length" class="cb-flags">
                     <span v-for="f in c.it.flags" :key="f" class="cb-flag" :style="{ '--fc': `var(--cb-fl-${f})` }" :title="FLAG_NAMES[f]"></span>
                 </div>
                 <span v-if="dueOf(c.it)" class="cb-spin"><span class="cb-head p-red"></span><span class="cb-due" :class="'s-' + dueOf(c.it)!.state">{{ dueOf(c.it)!.short }}</span></span>
-                <span v-if="!desk.geo.value.icon && 'rect' in c.it.place" class="cb-resize" title="Drag to make it bigger or smaller"
+                <span v-if="'rect' in c.it.place" class="cb-resize" title="Drag to make it bigger or smaller"
                       @pointerdown.stop="resizeDown($event, c.it)"></span>
             </template>
             <template v-else-if="c.it.kind === 'photo'">
                 <div class="cb-print" :style="printStyle(c, c.it)">
                     <div class="cb-pimg"><img :src="c.it.url" alt="" draggable="false" /><svg v-ink="c.it.ink" :viewBox="`0 0 1000 ${Math.round(1000 * c.it.h / Math.max(1, c.it.w))}`" preserveAspectRatio="none" aria-hidden="true"></svg></div>
-                    <div v-if="!desk.geo.value.icon && c.it.caption" class="cb-pcap">{{ c.it.caption }}</div>
+                    <div v-if="c.look === 'full' && c.it.caption" class="cb-pcap">{{ c.it.caption }}</div>
                     <span class="cb-head cb-ppin p-red"></span>
+                    <span v-if="'rect' in c.it.place" class="cb-resize" title="Drag to make it bigger or smaller (it keeps its shape)"
+                          @pointerdown.stop="resizeDown($event, c.it)"></span>
                 </div>
-                <span v-if="!desk.geo.value.icon && 'rect' in c.it.place" class="cb-resize" title="Drag to make it bigger or smaller"
-                      @pointerdown.stop="resizeDown($event, c.it)"></span>
             </template>
             <template v-else>
                 <div class="cb-gpapers">
                     <span v-for="(col, i) in groupColors(c.it)" :key="i" class="cb-gp" :class="'c-' + col" :style="{ '--r': [-7, 6, -2][i] + 'deg', '--dx': [-8, 8, 0][i] + 'px', '--dy': [5, 2, -2][i] + 'px' }"></span>
                 </div>
-                <div v-if="!desk.geo.value.icon" class="cb-gcard"><div class="cb-gname">{{ c.it.name }}</div><div class="cb-gmeta">{{ members(c.it) }} stack{{ members(c.it) === 1 ? '' : 's' }}</div></div>
-                <span class="cb-gpin" :class="'p-' + c.it.pin"><span class="cb-head"></span><span v-if="dueOf(c.it) && !desk.geo.value.icon" class="cb-due" :class="'s-' + dueOf(c.it)!.state">{{ dueOf(c.it)!.short }}</span></span>
-                <span v-if="desk.geo.value.icon" class="cb-badge">{{ members(c.it) }}</span>
+                <div v-if="c.look !== 'tiny'" class="cb-gcard"><div class="cb-gname">{{ c.it.name }}</div><div class="cb-gmeta">{{ members(c.it) }} stack{{ members(c.it) === 1 ? '' : 's' }}</div></div>
+                <span class="cb-gpin" :class="'p-' + c.it.pin"><span class="cb-head"></span><span v-if="dueOf(c.it) && c.look !== 'tiny'" class="cb-due" :class="'s-' + dueOf(c.it)!.state">{{ dueOf(c.it)!.short }}</span></span>
+                <span v-if="c.look === 'tiny'" class="cb-badge">{{ members(c.it) }}</span>
             </template>
         </div>
 
@@ -83,13 +84,13 @@
 import { ref, shallowRef, computed, inject, watch, onMounted, onBeforeUnmount } from 'vue'
 import type { GridRect } from 'gexplorer/widgets'
 import { SHARED } from './shared'
-import { measure, dragPreview, resizePreview, placeNew, cellAt } from './layout'
-import { FLAG_NAMES, dueInfo, initials, noteLabel, progress, isText, textOf, rndTilt, clamp, type Item, type Stack, type Group, type Note, type Photo } from './model'
-import { drawStrokes } from './ink'
+import { measure, dragPreview, resizePreview, resizeTo, placeNew, cellAt } from './layout'
+import { FLAG_NAMES, dueInfo, initials, noteLabel, progress, isText, textOf, rndTilt, clamp, CB_LOOK, DEF_SPAN, type Item, type Stack, type Group, type Note, type Photo } from './model'
+import { drawInk } from 'gexplorer/widgets'
 import type { Directive } from 'vue'
 
 /** The ink drawn on a pinned picture (its print shows it). */
-const vInk: Directive<SVGSVGElement, Photo['ink']> = { mounted: (el, b) => drawStrokes(el, b.value), updated: (el, b) => drawStrokes(el, b.value) }
+const vInk: Directive<SVGSVGElement, Photo['ink']> = { mounted: (el, b) => drawInk(el, b.value, CB_LOOK), updated: (el, b) => drawInk(el, b.value, CB_LOOK) }
 
 const sh = inject(SHARED)!
 const desk = sh.desk
@@ -108,13 +109,21 @@ const pageCount = computed(() => L.value.pages)
 const page = computed(() => { void desk.tick.value; return clamp(desk.page(), 0, pageCount.value - 1 + (drag.value ? 1 : 0)) })
 const dots = computed(() => pageCount.value + (drag.value ? 1 : 0))
 
-type Card = { it: Item; x: number; y: number; w: number; h: number; span: number }
+/**
+ * What a card shows, by its own size (0.2.5, the finer grid: a stack can be as small as one cell):
+ * tiny: initials and a badge; title: the stack's name, as much as fits (the whole of it in the tooltip); full.
+ */
+type Look = 'tiny' | 'title' | 'full'
+/** The room around a card in its cells (0.2.5: the gap between two cards stays what it was). */
+const cardPad = (g: { cell: number }) => clamp(g.cell * 0.14, 3, 14)
+const lookOf = (w: number, h: number): Look => Math.min(w, h) < 52 ? 'tiny' : w < 118 || h < 104 ? 'title' : 'full'
+type Card = { it: Item; x: number; y: number; w: number; h: number; span: number; look: Look }
 const cards = computed<Card[]>(() => {
     void desk.tick.value
-    const g = desk.geo.value, rects = preview.value ?? L.value.rects, pad = g.cell * 0.1, p = page.value
-    const out: Card[] = []
+    const g = desk.geo.value, rects = preview.value ?? L.value.rects, pad = cardPad(g), p = page.value
+    const out: (Omit<Card, 'look'>)[] = []
     for (const it of items.value) {
-        let x: number, y: number, w = g.cell, h = g.cell, span = 1
+        let x: number, y: number, w = g.cell * DEF_SPAN, h = g.cell * DEF_SPAN, span = 1
         const r = rects.get(it.id)
         if (r && !(drag.value?.id === it.id && drag.value.mode === 'free')) {
             if (Math.floor(r.row / g.rows) !== p && drag.value?.id !== it.id) continue
@@ -124,23 +133,24 @@ const cards = computed<Card[]>(() => {
             if (!f && drag.value?.id !== it.id) continue
             if (f && f.page !== p && drag.value?.id !== it.id) continue
             x = g.ox + (f?.x ?? 0) * g.cell; y = g.oy + (f?.y ?? 0) * g.cell
+            if (f) { w = f.w * g.cell; h = f.h * g.cell }
         }
         if (drag.value?.id === it.id && drag.value.moved) out.push({ it, x: drag.value.x, y: drag.value.y, w: drag.value.w, h: drag.value.h, span })
         else out.push({ it, x: x + pad, y: y + pad, w: w - 2 * pad, h: h - 2 * pad, span })
     }
-    return out
+    return out.map(c => ({ ...c, look: lookOf(c.w, c.h) }))
 })
 
 function cardClass(c: Card) {
     const s = c.it.kind === 'stack' ? c.it as Stack : null
     return {
         stack: !!s, grp: c.it.kind === 'group', photo: c.it.kind === 'photo', ['c-' + (s?.color ?? 'chalk')]: !!s,
-        many: !!s && s.notes.length > 1, lots: !!s && s.notes.length > 2, icon: desk.geo.value.icon,
+        many: !!s && s.notes.length > 1, lots: !!s && s.notes.length > 2, icon: c.look === 'tiny', titled: c.look === 'title',
         dragging: drag.value?.id === c.it.id && drag.value.moved,
         'drop-target': drag.value?.target === c.it.id && drag.value.mode === 'pile',
         'swap-target': drag.value?.target === c.it.id && drag.value.mode === 'swap',
         freeing: drag.value?.id === c.it.id && drag.value.mode === 'free',
-        sized: c.span > 1,
+        sized: c.w > 220 && c.h > 190,
     }
 }
 function cardStyle(c: Card) {
@@ -151,8 +161,8 @@ function cardStyle(c: Card) {
 // ── What a card shows ───────────────────────────────────────────────────────
 /** A print: the picture's own shape, as large as the cell(s) allow, a white border, room for the caption. */
 function printStyle(c: Card, p: Photo) {
-    const icon = desk.geo.value.icon, b = icon ? 3 : clamp(Math.min(c.w, c.h) * 0.05, 4, 10)
-    const capH = !icon && p.caption ? clamp(c.h * 0.14, 16, 30) : 0
+    const icon = c.look === 'tiny', b = icon ? 3 : clamp(Math.min(c.w, c.h) * 0.05, 4, 10)
+    const capH = c.look === 'full' && p.caption ? clamp(c.h * 0.14, 16, 30) : 0
     const k = Math.min((c.w - 2 * b) / Math.max(1, p.w), (c.h - 2 * b - capH) / Math.max(1, p.h))
     const w = p.w * k + 2 * b, h = p.h * k + 2 * b + capH
     return { width: w + 'px', height: h + 'px', left: (c.w - w) / 2 + 'px', top: (c.h - h) / 2 + 'px', padding: `${b}px ${b}px ${b + capH}px`, '--capH': capH + 'px' }
@@ -162,10 +172,10 @@ const prog = (s: Stack) => { const p = progress(top(s)); return p ? `${p.done}/$
 const dueOf = (x: Stack | Group) => dueInfo(x.due)
 const members = (g: Group) => desk.d.value.stacks.filter(s => s.group === g.id).length
 const groupColors = (g: Group) => { const c = desk.d.value.stacks.filter(s => s.group === g.id).slice(0, 3).map(s => s.color); return c.length ? c : ['chalk'] }
-function previewLines(s: Stack, span: number) {
+function previewLines(s: Stack, h: number) {
     const n = top(s), out: { text: string; done: boolean }[] = []
     let skipped = !!n.title?.trim()   // with its own title, the first line is content
-    const max = span >= 4 ? 14 : span >= 2 ? 9 : 5
+    const max = clamp(Math.floor((h - 78) / 17), 1, 30)   // 0.2.5: as many as the card's height holds
     for (const b of n.blocks) {
         if (b.t === 'table') {
             for (const r of b.rows.slice(0, 3)) { const t = r.map(h => textOf(h).trim()).filter(Boolean).join(' · '); if (t) out.push({ text: '▦ ' + t, done: false }) }
@@ -252,7 +262,9 @@ function down(e: PointerEvent, it: Item) {
     const g = desk.geo.value
     let edgeT: ReturnType<typeof setTimeout> | null = null, dotT: ReturnType<typeof setTimeout> | null = null, lastDot: number | null = null
     const st: Drag = { id: it.id, moved: false, x: r0.left - b0.left, y: r0.top - b0.top, w: r0.width, h: r0.height, mode: null, target: null, dot: null }
-    const mySpan = base.get(it.id) ?? { col: 0, row: 0, colSpan: 1, rowSpan: 1 }
+    // 0.2.5: an item placed freely keeps its size when it goes back on the grid (and when placed freely again)
+    const fr = L.value.free.get(it.id)
+    const mySpan = base.get(it.id) ?? { col: 0, row: 0, colSpan: fr?.w ?? DEF_SPAN, rowSpan: fr?.h ?? DEF_SPAN }
 
     /** The last pointer move: the page turned under a still pointer, the drop goes on the new page. */
     let lastMove: PointerEvent | null = null
@@ -302,7 +314,7 @@ function down(e: PointerEvent, it: Item) {
         const b = boardEl.value!.getBoundingClientRect()
         const cell = cellAt(desk.geo.value, page.value, ev.clientX - b.left - grabX + desk.geo.value.cell / 2, ev.clientY - b.top - grabY + desk.geo.value.cell / 2)
         const rects = new Map(base)
-        if (!rects.has(it.id)) rects.set(it.id, { col: cell.col, row: cell.row, colSpan: 1, rowSpan: 1 })
+        if (!rects.has(it.id)) rects.set(it.id, { col: cell.col, row: cell.row, colSpan: mySpan.colSpan, rowSpan: mySpan.rowSpan })
         preview.value = dragPreview(rects, g.cols, g.rows, it.id, cell)
     }
     const up = () => {
@@ -329,7 +341,7 @@ function down(e: PointerEvent, it: Item) {
         }
         if (done.mode === 'free') {
             const gg = desk.geo.value
-            it.place = { free: { page: page.value, x: clamp((done.x - gg.ox) / gg.cell, 0, gg.cols - 1), y: clamp((done.y - gg.oy) / gg.cell, 0, gg.rows - 1) } }
+            it.place = { free: { page: page.value, x: clamp((done.x - gg.ox) / gg.cell, 0, gg.cols - 1), y: clamp((done.y - gg.oy) / gg.cell, 0, gg.rows - 1), w: mySpan.colSpan, h: mySpan.rowSpan } }
             desk.used('place-free')
             const rest = new Map(base); rest.delete(it.id)
             desk.commitView(rest, gg.cols); finish(it); return
@@ -349,15 +361,33 @@ function down(e: PointerEvent, it: Item) {
 }
 function finish(it: Item) { it.z = ++desk.d.value.z; it.tilt = rndTilt(); desk.save() }
 
-// ── Resizing a stack (its corner) ───────────────────────────────────────────
+// ── Resizing a stack or a picture (its corner) ─────────────────────────────
+/**
+ * A stack: its corner follows the pointer, cell by cell (1 × 1 to its page, 0.2.5). A picture (0.2.5): the handle is
+ * on the print's own corner and the print keeps its shape, so a drag always makes it larger or smaller; the cells
+ * are the fewest that hold the print at the size the pointer asks for (it used to get taller cells it couldn't fill).
+ */
 function resizeDown(e: PointerEvent, it: Item) {
     if (e.button !== 0) return
     e.preventDefault()
     const g = desk.geo.value, base = new Map(L.value.rects), sx = e.clientX, sy = e.clientY
+    const me = base.get(it.id)
+    const print = it.kind === 'photo' ? (e.currentTarget as HTMLElement).closest<HTMLElement>('.cb-print')?.getBoundingClientRect() : null
     let last: Map<string, GridRect> | null = null
     const mv = (ev: PointerEvent) => {
-        const dc = Math.round((ev.clientX - sx) / g.cell), dr = Math.round((ev.clientY - sy) / g.cell)
-        last = dc || dr ? resizePreview(base, g.cols, g.rows, it.id, dc, dr) : null
+        if (print && me) {
+            // the print's scale: the pointer's move projected on its diagonal; then the cells that hold it at that size
+            const dx = ev.clientX - sx, dy = ev.clientY - sy, pw = print.width, ph = print.height
+            const pad = 2 * cardPad(g)
+            // no larger than the room to the board's right and the page's bottom (else it would gain cells it can't fill)
+            const roomW = (g.cols - me.col) * g.cell - pad, roomH = ((Math.floor(me.row / g.rows) + 1) * g.rows - me.row) * g.cell - pad
+            const k = clamp(1 + (dx * pw + dy * ph) / (pw * pw + ph * ph), 0.05, Math.min(roomW / pw, roomH / ph))
+            const cs = Math.max(1, Math.round((pw * k + pad) / g.cell)), rs = Math.max(1, Math.round((ph * k + pad) / g.cell))
+            last = cs !== me.colSpan || rs !== me.rowSpan ? resizeTo(base, g.cols, g.rows, it.id, cs, rs) : null
+        } else {
+            const dc = Math.round((ev.clientX - sx) / g.cell), dr = Math.round((ev.clientY - sy) / g.cell)
+            last = dc || dr ? resizePreview(base, g.cols, g.rows, it.id, dc, dr) : null
+        }
         preview.value = last
     }
     const up = () => {

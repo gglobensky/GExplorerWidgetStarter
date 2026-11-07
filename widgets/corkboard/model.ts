@@ -4,14 +4,19 @@
 // Pure: no DOM but the HTML helpers at the bottom (which need a document), no SDK. One document per copy of the
 // widget ('desk-<sourceId>', store.ts). Pictures are GEM Shell image assets (a note keeps the asset id and url);
 // an export inlines them as data so a copy pasted into another Corkboard is a standalone duplicate.
-import type { GridRect } from 'gexplorer/widgets'
+import type { GridRect, InkLook } from 'gexplorer/widgets'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export type BlockType = 'p' | 'b' | 'c' | 'n' | 'h'
 export type InkColor = 'k' | 'b' | 'r' | 'hl'
-/** A stroke: points [x, y, pressure] in the surface's own units; p: drawn with a pen (width follows pressure). */
+/** A stroke: points [x, y, pressure] in the surface's own units; p: drawn with a pen (width follows pressure).
+ *  0.2.5: exactly the ink kit's freehand InkLine (gexplorer/widgets), which draws it. */
 export type Stroke = { c: InkColor; w: number; pts: [number, number, number][]; p?: 1 }
+/** The pen chosen: a colour, or the eraser. */
+export type InkTool = InkColor | 'erase'
+/** How the ink kit draws Corkboard's colour keys ('hl' is the kit's default highlighter). */
+export const CB_LOOK: InkLook = { color: (c: string) => `var(--cb-ink-${c})` }
 
 export type TextBlock = { id: string; t: BlockType; lvl: number; checked?: boolean; html: string }
 /** A pasted picture (a GEM Shell image asset) and the ink drawn on it (1000 units wide). */
@@ -34,8 +39,9 @@ export type PaperKind = 'plain' | 'lined' | 'grid'
 export type PinColor = 'red' | 'blue' | 'green' | 'yellow' | 'black'
 export type Surface = 'cork' | 'felt' | 'slate' | 'clay' | 'plum' | 'linen'
 
-/** On the grid (whole cells of the view's tall grid), or placed freely on a page (in cells, fractions allowed). */
-export type Place = { rect: GridRect } | { free: { page: number; x: number; y: number } }
+/** On the grid (whole cells of the view's tall grid), or placed freely on a page (in cells, fractions allowed).
+ *  0.2.5: a free place keeps its size (w × h cells; absent: DEF_SPAN). */
+export type Place = { rect: GridRect } | { free: { page: number; x: number; y: number; w?: number; h?: number } }
 
 export type Stack = {
     id: string; kind: 'stack'; board: string; group: string | null
@@ -61,6 +67,8 @@ export const PHOTO_CAPTION_MAX = 120
 
 export type DeskData = {
     schema: 1
+    /** 0.2.5: the finer grid (GRID). Absent: a 0.2.4 desk, whose places are converted once when it is read. */
+    grid?: 2
     boards: Board[]
     board: string
     stacks: Stack[]
@@ -91,10 +99,22 @@ export const SURFACES: [Surface, string][] = [['cork', 'Cork'], ['felt', 'Green 
 export const PINS: PinColor[] = ['red', 'blue', 'green', 'yellow', 'black']
 export const FLAGS: [FlagId, string][] = [['important', 'Important'], ['doing', 'In progress'], ['waiting', 'Waiting'], ['idea', 'Idea'], ['done', 'Done']]
 export const FLAG_NAMES = Object.fromEntries(FLAGS) as Record<FlagId, string>
-/** A stack's size on the board, in cells. */
-export const MAX_SPAN = { cols: 2, rows: 2 }
+/**
+ * 0.2.5, the finer grid: a 0.2.4 cell is 2 × 2 cells now (GRID), so a stack or a picture can be as small as a title
+ * and grow in finer steps, up to a whole page (Guillaume: a board may have a page of the hub to itself).
+ * DEF_SPAN: a new stack, group or picture (2 × 2, a 0.2.4 cell). Groups keep that size.
+ */
+export const GRID = 2
+export const DEF_SPAN = 2
 
 // ── Small helpers ───────────────────────────────────────────────────────────
+
+/** 0.2.5: a place in the finer grid (a 0.2.4 desk or copy is read once with k = GRID: every cell becomes 2 × 2). */
+export function finerPlace(p: Place, k = GRID): Place {
+    if ('rect' in p) { const r = p.rect; return { rect: { col: r.col * k, row: r.row * k, colSpan: r.colSpan * k, rowSpan: r.rowSpan * k } } }
+    const f = p.free
+    return { free: { page: f.page, x: f.x * k, y: f.y * k, w: (f.w ?? 1) * k, h: (f.h ?? 1) * k } }
+}
 
 export const uid = () => Math.random().toString(36).slice(2, 10)
 export const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v))
@@ -117,9 +137,10 @@ export function esc(s: unknown): string {
 }
 
 /** The text of a block's HTML (entities decoded, tags dropped), without a DOM. */
+/** A block's plain text, on one line: a line break inside it (0.2.5: <br>, or a newline the editor typed) is a space. */
 export function textOf(html: string): string {
     return String(html || '')
-        .replace(/<br\s*\/?>/gi, ' ')
+        .replace(/<br\s*\/?>|\n/gi, ' ')
         .replace(/<[^>]*>/g, '')
         .replace(/&nbsp;| /g, ' ')
         .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&')
@@ -227,7 +248,7 @@ export function prefixRule(text: string, caret: number, t: BlockType, lvl: numbe
 
 export function emptyDesk(): DeskData {
     const b: Board = { id: uid(), title: 'General', surface: 'cork', cols: 0 }
-    return { schema: 1, boards: [b], board: b.id, stacks: [], groups: [], notes: {}, group: null, focus: null, photos: [], photo: null, snap: true, penMode: false, hints: true, learned: {}, pages: {}, z: 5 }
+    return { schema: 1, grid: GRID, boards: [b], board: b.id, stacks: [], groups: [], notes: {}, group: null, focus: null, photos: [], photo: null, snap: true, penMode: false, hints: true, learned: {}, pages: {}, z: 5 }
 }
 
 export function newNote(d: DeskData, s: Stack, blocks?: Block[] | null, at?: number): Note {
@@ -267,6 +288,6 @@ export function sanitize(h: unknown): string {
 }
 /** A block's HTML without trailing line breaks; '' when it holds no text. */
 export function cleanHtml(h: string): string {
-    h = (h || '').replace(/(<br\s*\/?>)+$/i, '')
+    h = (h || '').replace(/(<br\s*\/?>|\n)+$/i, '')
     return textOf(h).length ? h : ''
 }

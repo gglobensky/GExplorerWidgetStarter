@@ -1,6 +1,6 @@
 ﻿// widgets/monitor/entry.ts
 //
-// GEM MONITOR 0.3.8 (2026-11-06): the computer's resources, live: at least what Windows' Resource Monitor shows, the
+// GEM MONITOR 1.0.0 (2026-11-06): the computer's resources, live: at least what Windows' Resource Monitor shows, the
 // same views on Linux later. MONITOR-SHELL-ADDITIONS.md (GEM Shell: the backend, sdk.monitor(), the two permissions).
 //   - toolbar: the numbers you choose (right-click; CPU and memory by default) and one bar per core; a click opens the
 //     details, 📌 pins them as a window.
@@ -19,7 +19,7 @@ import RecordingCard from './RecordingCard.vue'
 export default {
     api: '1.0',
     id: 'monitor',
-    version: '0.3.8',
+    version: '1.0.0',
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     displayName: 'GEM Monitor',

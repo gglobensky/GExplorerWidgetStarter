@@ -58,8 +58,8 @@ import { SHARED, type Shared } from './shared'
 import { createMenus } from './menus'
 import { dueCount, noteText, noteLabel, parseText, blk, uid, type Stack, type Group, type Block, type Photo, type Item } from './model'
 import { exportStack, exportBoard, stackMarkdown, boardMarkdown, importStack, importBoard, copyKind, type InlinePicture } from './exchange'
-import type { InkTool, InkUndo } from './ink'
-import { undoInk } from './ink'
+import { undoInk, type InkUndo } from 'gexplorer/widgets'
+import type { InkTool } from './model'
 
 const props = defineProps<{
     sourceId: string
@@ -234,9 +234,9 @@ const saveBoardFile = () => { const b = board.value; void saveCopyFile('board', 
 async function moveToPage(it: Item, to: number) {
     const r = desk.moveToPage(it, to)
     if (r.ok) return
-    if (!r.othersCould) { desk.told(`Page ${to + 1} is full: there's no room for “${desk.labelOf(it)}”, even 1 × 1. Nothing moved.`); return }
+    if (!r.othersCould) { desk.told(`Page ${to + 1} is full: there's no room for “${desk.labelOf(it)}”, even at its smallest. Nothing moved.`); return }
     const ok = await ui.confirm(`Page ${to + 1} is full`, {
-        detail: `Making some of the larger items there smaller (1 × 1) would make room for “${desk.labelOf(it)}”. You can undo right after.`,
+        detail: `Making some of the larger items there smaller (to the size of a new stack) would make room for “${desk.labelOf(it)}”. You can undo right after.`,
         okLabel: 'Make room',
     })
     if (ok) desk.moveToPage(it, to, true)
@@ -258,7 +258,7 @@ async function importText(text: string): Promise<boolean> {
         if (kind === 'board') { const b = await importBoard(desk.d.value, text, desk.makePicture); desk.switchBoard(b.id); desk.told(`Added the board “${b.title || 'Untitled board'}” as a separate copy`); return true }
         if (kind === 'stack') {
             const s = await importStack(desk.d.value, text, desk.d.value.board, desk.d.value.group, desk.makePicture)
-            s.place = desk.newPlace(); desk.save(); desk.told(`Added “${s.name}” as a separate copy`); return true
+            s.place = desk.newPlace(undefined, 'rect' in s.place ? s.place.rect : undefined); desk.save(); desk.told(`Added “${s.name}” as a separate copy`); return true
         }
     } catch (err: any) { desk.told(err?.message || "That copy couldn't be read."); return false }
     desk.told("That isn't a Corkboard copy. Use Export to make one.")

@@ -14,7 +14,7 @@ import type { WidgetSdk, GridRect } from 'gexplorer/widgets'
 import {
     type DeskData, type Stack, type Group, type Board, type Note, type Block, type Item, type Place, type FlagId, type Photo,
     type PinColor, type Surface, type PaperColor,
-    emptyDesk, newNote, newStack, uid, PHOTO_CAPTION_MAX, rndTilt, isEmptyNote, noteLabel, shorten, viewKey, okDate, PINS, FLAG_NAMES, dueInfo,
+    emptyDesk, newNote, newStack, uid, finerPlace, GRID, DEF_SPAN, PHOTO_CAPTION_MAX, rndTilt, isEmptyNote, noteLabel, shorten, viewKey, okDate, PINS, FLAG_NAMES, dueInfo,
 } from './model'
 import { layoutView, placeNew, type Geometry } from './layout'
 import { seedDesk } from './exchange'
@@ -31,7 +31,7 @@ export function createDesk(sdk: WidgetSdk, sourceId: string) {
     const d: Ref<DeskData> = shallowRef(emptyDesk())
     const ready = ref(false)
     /** The board's last grid (Board.vue measures it): where new stacks go while a stack is open. */
-    const geo = ref<Geometry>({ cols: 4, rows: 3, cell: 150, ox: 0, oy: 0, icon: false })
+    const geo = ref<Geometry>({ cols: 8, rows: 6, cell: 75, ox: 0, oy: 0, icon: false })
     /** Bumped on every change: what the views recompute from (the desk object is not deeply reactive). */
     const tick = ref(0)
     const changed = () => { tick.value++; triggerRef(d) }
@@ -114,29 +114,30 @@ export function createDesk(sdk: WidgetSdk, sourceId: string) {
         if (d.value.group) { const g = groupById(d.value.group); if (g) g.cols = cols } else board.value.cols = cols
         save()
     }
-    /** A place for a new item in the current view: the cell asked for when free, else the first free one. */
-    function newPlace(want?: { col: number; row: number }): Place {
+    /** A place for a new item in the current view (DEF_SPAN square, or `span`): at the cell asked for when free, else the first free spot. */
+    function newPlace(want?: { col: number; row: number }, span?: { colSpan: number; rowSpan: number }): Place {
         const L = layoutNow()
         if (viewCols() !== geo.value.cols) commitView(L.rects, geo.value.cols)
-        return { rect: placeNew(L.rects, geo.value.cols, geo.value.rows, page(), want) }
+        return { rect: placeNew(L.rects, geo.value.cols, geo.value.rows, page(), want, span) }
     }
 
     // ── Moving an item to another page (0.2.2) ───────────────────────────────
     /**
      * Where `id` fits on page `to` of the view, the other items as they are in `rects`: its own size first, then
-     * smaller (2 × 2 → 2 × 1 → 1 × 2 → 1 × 1). null: not even 1 × 1.
+     * smaller, the largest first (0.2.5: any size down to 1 × 1, a page at most). null: not even 1 × 1.
      */
     function spotOnPage(rects: Map<string, GridRect>, id: string, want: GridRect, to: number): GridRect | null {
         const { cols, rows } = geo.value
         const taken = new Set<string>()
         for (const [k, r] of rects) if (k !== id) for (let y = r.row; y < r.row + r.rowSpan; y++) for (let x = r.col; x < r.col + r.colSpan; x++) taken.add(x + ',' + y)
-        // 0.2.3: what is placed freely (Alt, or snapping off) covers the cells under it too (a 1 × 1 card at x, y)
+        // 0.2.3: what is placed freely (Alt, or snapping off) covers the cells under it too (0.2.5: its own size)
         for (const [k, f] of layoutNow().free) {
             if (k === id || f.page !== to) continue
-            for (let y = Math.floor(f.y); y < Math.ceil(f.y + 1); y++) for (let x = Math.floor(f.x); x < Math.ceil(f.x + 1); x++) taken.add(x + ',' + (to * rows + y))
+            for (let y = Math.floor(f.y); y < Math.ceil(f.y + f.h); y++) for (let x = Math.floor(f.x); x < Math.ceil(f.x + f.w); x++) taken.add(x + ',' + (to * rows + y))
         }
-        const sizes = [[want.colSpan, want.rowSpan], [want.colSpan, 1], [1, want.rowSpan], [1, 1]]
-            .filter(([c, r], i, a) => c <= cols && r <= rows && a.findIndex(o => o[0] === c && o[1] === r) === i)
+        const sizes: [number, number][] = []
+        for (let c = Math.min(want.colSpan, cols); c >= 1; c--) for (let r = Math.min(want.rowSpan, rows); r >= 1; r--) sizes.push([c, r])
+        sizes.sort((a, b) => b[0] * b[1] - a[0] * a[1] || Math.abs(a[0] - a[1]) - Math.abs(b[0] - b[1]))
         for (const [cs, rs] of sizes)
             for (let row = to * rows; row + rs <= (to + 1) * rows; row++)
                 for (let col = 0; col + cs <= cols; col++) {
@@ -149,7 +150,8 @@ export function createDesk(sdk: WidgetSdk, sourceId: string) {
     /**
      * Moves an item of the view to page `to` (the page count: a new page). Shrinks it to fit when it must. When it
      * can't fit even 1 × 1: { full, othersCould } — othersCould: making the larger items there smaller would make
-     * room, which the widget offers; shrinkOthers: true does it (the largest first, as few as needed).
+     * room, which the widget offers; shrinkOthers: true does it (the largest first, as few as needed, to
+     * DEF_SPAN × DEF_SPAN: still readable).
      */
     function moveToPage(it: Item, to: number, shrinkOthers = false): { ok: true } | { ok: false; othersCould: boolean } {
         const L = layoutNow(), rows = geo.value.rows
@@ -158,15 +160,15 @@ export function createDesk(sdk: WidgetSdk, sourceId: string) {
             save(); told(`Moved “${labelOf(it)}” to page ${to + 1}`, true); return { ok: true }
         }
         const rects = new Map(L.rects)
-        const mine = rects.get(it.id) ?? { col: 0, row: 0, colSpan: 1, rowSpan: 1 }
+        const mine = rects.get(it.id) ?? { col: 0, row: 0, colSpan: DEF_SPAN, rowSpan: DEF_SPAN }
         let spot = spotOnPage(rects, it.id, mine, to)
         const shrunk: string[] = []
         if (!spot) {
-            const big = [...rects].filter(([k, r]) => k !== it.id && Math.floor(r.row / rows) === to && r.colSpan * r.rowSpan > 1)
+            const big = [...rects].filter(([k, r]) => k !== it.id && Math.floor(r.row / rows) === to && (r.colSpan > DEF_SPAN || r.rowSpan > DEF_SPAN))
                 .sort((a, b) => b[1].colSpan * b[1].rowSpan - a[1].colSpan * a[1].rowSpan)
             const trial = new Map(rects)
             for (const [k, r] of big) {
-                trial.set(k, { ...r, colSpan: 1, rowSpan: 1 }); shrunk.push(k)
+                trial.set(k, { ...r, colSpan: Math.min(r.colSpan, DEF_SPAN), rowSpan: Math.min(r.rowSpan, DEF_SPAN) }); shrunk.push(k)
                 spot = spotOnPage(trial, it.id, mine, to)
                 if (spot) break
             }
@@ -279,11 +281,12 @@ export function createDesk(sdk: WidgetSdk, sourceId: string) {
         return [...(groupId ? [] : d.value.groups.filter(g => g.board === boardId)), ...d.value.stacks.filter(s => s.board === boardId && (s.group ?? null) === groupId),
             ...d.value.photos.filter(p => p.board === boardId && (p.group ?? null) === groupId)]
     }
-    /** A place at the end of another view (a group, a board): first free spot after what it holds. */
+    /** A place at the end of another view (a group, a board): first free spot after what it holds (0.2.5: the item keeps its size). */
     function placeIn(boardId: string, groupId: string | null, except?: Item): Place {
         const cols = (groupId ? groupById(groupId)?.cols : d.value.boards.find(b => b.id === boardId)?.cols) || geo.value.cols
         const L = layoutView(itemsOf(boardId, groupId).filter(i => i !== except).map(i => ({ id: i.id, place: i.place })), cols, cols, geo.value.rows)
-        return { rect: placeNew(L.rects, cols, geo.value.rows, 0) }
+        const span = except && 'rect' in except.place ? except.place.rect : undefined
+        return { rect: placeNew(L.rects, cols, geo.value.rows, 0, undefined, span) }
     }
     function joinGroup(s: Stack | Photo, g: Group) {
         snapshot()
@@ -373,11 +376,11 @@ export function createDesk(sdk: WidgetSdk, sourceId: string) {
     // ── Groups (a pin with an optional due date) ────────────────────────────
     function createGroup(o: { name: string; due: string | null; stack?: Stack; want?: { col: number; row: number } }): Group {
         snapshot()
-        const g: Group = { id: uid(), kind: 'group', board: d.value.board, name: o.name.trim().slice(0, 40) || 'Group', pin: PINS[d.value.groups.length % PINS.length], due: okDate(o.due), place: { rect: { col: 0, row: 0, colSpan: 1, rowSpan: 1 } }, tilt: rndTilt(), z: ++d.value.z, cols: 0 }
+        const g: Group = { id: uid(), kind: 'group', board: d.value.board, name: o.name.trim().slice(0, 40) || 'Group', pin: PINS[d.value.groups.length % PINS.length], due: okDate(o.due), place: { rect: { col: 0, row: 0, colSpan: DEF_SPAN, rowSpan: DEF_SPAN } }, tilt: rndTilt(), z: ++d.value.z, cols: 0 }
         if (o.stack && 'rect' in o.stack.place) {
             const L = layoutNow(); const r = L.rects.get(o.stack.id)
-            g.place = { rect: { ...(r ?? o.stack.place.rect), colSpan: 1, rowSpan: 1 } }
-            o.stack.group = g.id; o.stack.place = { rect: { col: 0, row: 0, colSpan: 1, rowSpan: 1 } }
+            g.place = { rect: { ...(r ?? o.stack.place.rect), colSpan: DEF_SPAN, rowSpan: DEF_SPAN } }
+            o.stack.group = g.id; o.stack.place = { rect: { col: 0, row: 0, colSpan: o.stack.place.rect.colSpan, rowSpan: o.stack.place.rect.rowSpan } }
         } else g.place = newPlace(o.want)
         d.value.groups.push(g)
         save(); told(o.stack ? `Pinned “${o.stack.name}” in the new group “${g.name}”` : `Created the group “${g.name}”: drop stacks on its pin`, true)
@@ -391,7 +394,7 @@ export function createDesk(sdk: WidgetSdk, sourceId: string) {
         d.value.groups = d.value.groups.filter(x => x !== g)
         ;[...d.value.stacks.filter(s => s.group === g.id), ...d.value.photos.filter(p => p.group === g.id)].forEach((s, i) => {
             s.group = null
-            s.place = i === 0 && keep ? { rect: { ...keep, colSpan: 1, rowSpan: 1 } } : placeIn(g.board, null, s)
+            s.place = i === 0 && keep ? { rect: { ...keep } } : placeIn(g.board, null, s)
         })
         if (d.value.group === g.id) d.value.group = null
         save(); told(`Ungrouped “${g.name}”`, true)
@@ -471,15 +474,21 @@ export function createDesk(sdk: WidgetSdk, sourceId: string) {
     }
 
     // ── Pictures pinned on the board (0.2.0) ─────────────────────────────────
-    /** A picture file pinned on the view (at a cell when asked), as a print. A wide one takes two cells when free. */
+    /**
+     * A picture file pinned on the view (at a cell when asked), as a print: DEF_SPAN square, or (0.2.5) shaped like
+     * the picture (a wide one twice as wide, a tall one twice as high) when there's room for that at the spot.
+     */
     async function addPhoto(file: PictureSource, want?: { col: number; row: number } | null, caption = ''): Promise<Photo | null> {
         const pic = await makePicture(file)
         if (!pic) return null
-        const place = newPlace(want ?? undefined)
-        if ('rect' in place && pic.w > pic.h * 1.45) {
+        const shaped = pic.w > pic.h * 1.45 ? { colSpan: 2 * DEF_SPAN, rowSpan: DEF_SPAN } : pic.h > pic.w * 1.45 ? { colSpan: DEF_SPAN, rowSpan: 2 * DEF_SPAN } : null
+        let place = newPlace(want ?? undefined)
+        if (shaped && 'rect' in place) {
             const L = layoutNow(), r = place.rect
-            const taken = [...L.rects.values()].some(o => o.row <= r.row && r.row < o.row + o.rowSpan && o.col <= r.col + 1 && r.col + 1 < o.col + o.colSpan)
-            if (r.col + 1 < geo.value.cols && !taken) r.colSpan = 2
+            const big = { ...r, ...shaped }, cols = geo.value.cols, rows = geo.value.rows
+            const hit = (o: GridRect) => o.col < big.col + big.colSpan && big.col < o.col + o.colSpan && o.row < big.row + big.rowSpan && big.row < o.row + o.rowSpan
+            const samePage = Math.floor(big.row / rows) === Math.floor((big.row + big.rowSpan - 1) / rows)
+            if (big.col + big.colSpan <= cols && samePage && ![...L.rects.values()].some(hit)) place = { rect: big }
         }
         const p: Photo = { id: uid(), kind: 'photo', board: d.value.board, group: d.value.group, ...pic, caption: caption.slice(0, PHOTO_CAPTION_MAX), ink: [], place, tilt: rndTilt(), z: ++d.value.z }
         d.value.photos.push(p)
@@ -547,6 +556,13 @@ function normalize(doc: DeskData): DeskData {
     for (const n of Object.values(o.notes)) for (const b of n?.blocks ?? []) if (b.t === 'table') fitWidths(b)
     o.learned = o.learned ?? {}
     o.pages = o.pages ?? {}
+    // 0.2.5: a 0.2.4 desk is read in the finer grid once (every cell 2 × 2: it looks as it did); saved as such
+    if (doc.grid !== GRID) {   // (the doc's own: `o` has emptyDesk's)
+        for (const it of [...o.stacks, ...o.groups, ...o.photos]) if (it.place) it.place = finerPlace(it.place)
+        for (const b of o.boards) b.cols = (b.cols || 0) * GRID
+        for (const g of o.groups) g.cols = (g.cols || 0) * GRID
+        o.grid = GRID
+    }
     if (o.group && !o.groups.some(g => g.id === o.group)) o.group = null
     if (o.focus && !o.stacks.some(s => s.id === o.focus)) o.focus = null
     return o

@@ -2,6 +2,19 @@
 
 Sticky notes on a cork board, for the GEM Shell grid (a quarter of the screen or less) and the sidebar.
 
+**0.2.5 (2026-11-06), after Guillaume's notes:**
+- **A finer board.** The cells are half as wide and half as high as before, so a stack or a picture can be any size from **one small cell to a whole page** (it was 2 × 2 at most), in finer steps. A board can have a page of the hub to itself.
+  - A small stack shows only its **name**, as much of it as fits, with the whole name in the tooltip; a tiny one, its initials. What a card shows depends on its own size now, not the board's.
+  - New stacks, groups and pictures are 2 × 2 (one cell of 0.2.4). Groups keep that size.
+  - Your boards are converted once when the Corkboard opens: every cell of 0.2.4 becomes 2 × 2, so they look as they did (the gaps between cards are a little narrower). A file or a copy saved by 0.2.4 is converted the same way when opened.
+- **A picture keeps its shape when you resize it.** Its handle is on the print's own corner, and the print follows the pointer: the cells are the ones that hold it at that size. It used to get cells it couldn't fill (a wide picture made taller just re-centred), and 2 × 2 stopped it.
+- **Shift+Enter is a new line in the same item** (*New line in the same item*), in a list and in a table cell, so an item or a cell can have several lines. Ending a list:
+  - **↓ on the last line of the last item**, when nothing is under it, makes a plain line under the list, lined up;
+  - Enter on an empty item, as before;
+  - *End the list, keep writing* is still a command (and in a table, it leaves the table), with **no key by default**: give it one in Keyboard shortcuts.
+  - Markdown keeps an item's lines: the next ones are continuation lines.
+- **The ink is GEM Shell's ink kit** (`beginInk`, `drawInk`, `undoInk` from `gexplorer/widgets`), the same drawing as the picture editor. Nothing in your ink changes. **Delete by hand:** `widgets/corkboard/ink.ts` and `widgets/corkboard/dialogs/CopyDialog.vue` (no longer used).
+
 **0.2.4 (2026-11-03):**
 - **Pictures in a board file opened on another computer arrive.** A copy's pictures were read with `fetch(data:…)`, a connection GEM Shell's page policy blocks ("Blocked: … a connection from data"); the data is decoded in the widget now. Notes' pictures in a copy had the same fault.
 - **Dragging doesn't send things to another page.** The hub engine pushes what's under a dragged item down its column, and at a page's bottom that is the next page (a picture under a note went to page 2). Anything the drag would push off its page now goes to a free spot of the same page: the dragged item's old place first, so two 1 × 1 trade places either way. Only when the page has no room does it go on.
@@ -23,7 +36,7 @@ Sticky notes on a cork board, for the GEM Shell grid (a quarter of the screen or
 **0.2.0 (2026-11-02): tables and pictures on the board.** No shell change; a 0.1 desk loads as it was (no pictures, no tables yet).
 - **Tables in a note** (a simple grid, no formulas):
   - *Table* in the note's footer, Alt+T, or right-click a line ▸ *Insert a table*: 3 × 3 with a header row, where the caret is (an empty line becomes the table);
-  - in a cell, the list keys move: Tab the next cell (a new row after the last), Shift+Tab the previous one, Shift+Enter out of the table; Enter goes down a row, and on an empty last row leaves the table; the arrows cross cells at their edges and step out above and below;
+  - in a cell, the list keys move: Tab the next cell (a new row after the last), Shift+Tab the previous one, Shift+Enter out of the table (0.2.5: a new line in the cell; ↓ on the last row leaves); Enter goes down a row, and on an empty last row leaves the table; the arrows cross cells at their edges and step out above and below;
   - ＋ on the right adds a column, ＋ underneath a row; drag a column's right edge to change its width;
   - right-click a cell: insert rows / columns there, delete the row / column (Undo in the snackbar), first row as a header, delete the table;
   - cells copied from Excel or Google Sheets, pasted on an empty line, become a table; pasted into a cell, they fill from it (the table grows);
@@ -58,7 +71,7 @@ It needs two shell parts, both in `PhotinoVue1/CORKBOARD-SHELL-ADDITIONS.md`:
   - drag one and the others are pushed aside live, by the hubs' own engine;
   - drop it on the **middle** of another to pile them, on an **edge** to push;
   - **Shift** swaps, **Alt** places it freely (or snaps, when snapping is off);
-  - drag its **corner** to grow it (up to 2 × 2, pushing the others).
+  - drag its **corner** to make it bigger or smaller (one cell to a page, 0.2.5), pushing the others; a small one shows its name only.
 - **Pages:**
   - when the board is full, it pages: dots at the bottom, the wheel, PageUp / PageDown;
   - while dragging, hold at an edge or over a dot to change page; the empty dot is a new page.
@@ -72,7 +85,7 @@ It needs two shell parts, both in `PhotinoVue1/CORKBOARD-SHELL-ADDITIONS.md`:
 - **Lists:**
   - `- `, `[ ] `, `1. `, `# ` at a line's start make a bullet, a checkbox, a number, a heading;
   - Enter on an empty item steps out one level;
-  - **Shift+Enter ends the list at once** and keeps writing under the item, lined up;
+  - **Shift+Enter is a new line in the same item** (0.2.5); **↓ on the last item** ends the list and keeps writing under it, lined up (or *End the list*, a command with no key by default);
   - Tab / Shift+Tab indent from anywhere in the line;
   - Backspace at an item's start makes it plain text.
 - **Ink:**
@@ -88,7 +101,7 @@ It needs two shell parts, both in `PhotinoVue1/CORKBOARD-SHELL-ADDITIONS.md`:
 
 ## Keys, gestures, menus
 - **Commands** (entry.ts) appear in GEM Shell's Keyboard shortcuts, where the user rebinds them and stars them for the cheat sheet (F1).
-  - The list keys (Shift+Enter, Tab, Shift+Tab, Ctrl+Enter, Ctrl+Shift+7 / 8 / 9 / 1 / 0, Alt+↑ / ↓) are `whileTyping` and act on the note's line only.
+  - The list keys (Shift+Enter: a new line in the item, Tab, Shift+Tab, Ctrl+Enter, Ctrl+Shift+7 / 8 / 9 / 1 / 0, Alt+↑ / ↓) are `whileTyping` and act on the note's line only.
   - Enter, Backspace, Delete and the arrows are the editor's own keys.
 - **Gestures:** double-click, Alt-drag, right-drag, pile, place freely, swap. They're listed the same way and can be starred, but they can't be rebound.
 - **Menus:**
@@ -100,6 +113,7 @@ It needs two shell parts, both in `PhotinoVue1/CORKBOARD-SHELL-ADDITIONS.md`:
 ## Data
 - **Where:** `configRead` / `configWrite('desk-<sourceId>')`, a `DeskData` with `schema: 1` (model.ts).
 - **0.2.0 adds, still `schema: 1`:** `photos` / `photo` on the desk (a 0.1 desk reads as none) and the `table` block (`rows` of cells' HTML, `head`, `widths` in %). Nothing of 0.1 changed shape. A 0.1.1 Corkboard doesn't know tables or pinned pictures: don't go back to it once you use them.
+- **0.2.5 adds, still `schema: 1`:** `grid: 2` on the desk (the finer grid; places in its cells) and `w` / `h` on a free place (its size; absent: 2 × 2). A desk without `grid` is a 0.2.4 desk: converted once when read (every place × 2), saved converted with the next change. Copies carry `grid: 2` too. A 0.2.4 Corkboard would show a 0.2.5 desk at twice the size: don't go back to it.
 - **When it's saved:** 0.7 s after a change, and at once on suspend and unmount.
 - **Pictures:**
   - persistent image assets (`mediaImageCreate`, Media capability), 1600 px at most, PNG;
@@ -113,17 +127,16 @@ It needs two shell parts, both in `PhotinoVue1/CORKBOARD-SHELL-ADDITIONS.md`:
 |---|---|
 | `entry.ts` | manifest: menus, contexts, Media capability |
 | `commands.ts` | the commands and gestures (entry.ts declares them; the editor reads which keys are commands) |
-| `model.ts` | types, dates, parsing of lines, factories, HTML clean-up |
-| `layout.ts` | pages over the shell's grid engine; re-flow when the column count changes |
+| `model.ts` | types, dates, parsing of lines, factories, HTML clean-up; the grid (GRID, DEF_SPAN) and the ink kit's look (CB_LOOK) |
+| `layout.ts` | pages over the shell's grid engine; re-flow when the column count changes; sizes from one cell to a page |
 | `store.ts` | the desk: load / save, views, every change, undo, pictures, learned hints |
 | `exchange.ts` | export / import (JSON, Markdown), the Start here stack |
 | `menus.ts` | menu declarations and their handling |
 | `editor.ts` | the note editor (one contenteditable per line, and per table cell, imperative) |
 | `table.ts` | tables: their HTML, rows / columns / widths, pasted cells, Markdown (0.2.0) |
-| `ink.ts` | strokes, erasing, ink undo |
 | `Widget.vue`, `Board.vue`, `StackView.vue` | toolbar, board, open stack |
 | `PhotoView.vue` | a pinned picture opened large: zoom, ink, caption (0.2.0) |
-| `dialogs/*.vue` | board, group, due date, copy, stack options |
+| `dialogs/*.vue` | board, group, due date, stack options |
 | `corkboard.css` | everything `cb-*` |
 
 ## Checked before handing over (in the cloud)
@@ -135,15 +148,16 @@ It needs two shell parts, both in `PhotinoVue1/CORKBOARD-SHELL-ADDITIONS.md`:
   - piling, pushing, a 2 × 2 resize;
   - the menus' contexts and submenus, a new group with a due date, a new board, a board export.
 - 0.2.0, the same checks, plus a run that loads a desk saved by 0.1.1 (a stack, a group): it shows as it was; then a table typed with Tab / Enter, left with Enter on an empty row, re-entered with ↑, a column deleted and a row inserted from the menu, cells pasted from a spreadsheet, a column dragged wider, Shift+Enter out; a picture pasted on the board (a wide one: 2 cells), opened, drawn on, zoomed with the wheel, captioned, the stroke undone, closed with Esc, dropped on a pin, and a board export carrying it. The 0.1.1 runs pass again.
+- 0.2.5: the type check again (with `ink.ts` gone, against the SDK's ink kit), and a run in Chromium with GEM Shell's own grid engine and ink kit: a 0.2.4 desk (stacks 1 × 1 and 2 × 2, a wide picture 2 × 1 with a caption, a group) shows at the same places and sizes after the conversion and is saved with `grid: 2`; the picture's corner makes it larger with its shape kept, up to the board's right edge; two stacks made 1 × 1 and 1 × 2 show their names with the tooltip; in a checklist, Shift+Enter then ↓ gives a two-line item and a plain line under the list, and Shift+Enter in a table cell a two-line cell; a stroke drawn on an opened picture is saved and shown on its print. Markdown of a two-line item checked.
 - **Not run:** `npm run build` / `typecheck` on the real starter, and GEM Shell itself. Those are the gate.
 
 ## To check (in GEM Shell)
 - [ ] `npm run typecheck -- corkboard` and `npm run build -- corkboard` pass.
 - [ ] The first open shows the Start here stack. A second copy of the widget has its own desk.
 - [ ] Drag a stack across others: they move aside live and settle on drop. On the middle of a stack: piled (Undo in the snackbar).
-- [ ] The corner grows a stack to 2 × 1 and 2 × 2 and pushes the others; at the last row of a page it doesn't cross onto the next.
+- [ ] The corner grows a stack (0.2.5: from one cell to a page) and pushes the others; at the last row of a page it doesn't cross onto the next.
 - [ ] Fill a page: a new stack goes to page 2; the dots, the wheel and PageUp / PageDown work; dragging to an edge flips.
-- [ ] Shift+Enter, Tab, Ctrl+Enter in a list (the key mapper's commands while typing). Rebind one in Keyboard shortcuts: the footer hint shows the new key.
+- [ ] Tab, Ctrl+Enter in a list (the key mapper's commands while typing). Rebind one in Keyboard shortcuts: the footer hint shows the new key.
 - [ ] Keyboard shortcuts ▸ GEM Corkboard lists the gestures with the 🖱 chip; star one, F1 shows it.
 - [ ] Gestures (part B): Keyboard shortcuts ▸ GEM Corkboard lists the six with the 🖱 chip, and starring one shows it on F1's sheet. (A bad input, e.g. `'Win+Drag'` in commands.ts, is refused with a `[keys]` line; not worth testing on its own, Guillaume.)
 - [ ] Right-click everywhere (board, stack, group, text, drawing, tab): the items and submenus, and Settings › Context Menu lists the six contexts.
@@ -158,7 +172,16 @@ It needs two shell parts, both in `PhotinoVue1/CORKBOARD-SHELL-ADDITIONS.md`:
 - [ ] 0.2.2: GEM Shell asks for Read and Write once. Save a board as a `.gembrd`, open it from another Corkboard copy (Boards ▾ ▸ Open a board file…): a separate copy, pictures included.
 - [ ] Right-click a stack ▸ Move to page ▸ a full page of big stacks: it asks to make room; a page of 1 × 1 stacks: it says it's full.
 
-## Known limits (0.1.0, 0.2.0)
+## To check (0.2.5)
+- [ ] Your boards look as they did after the update (the pictures, the stacks, the group), and the picture that wouldn't grow now grows with its shape kept.
+- [ ] Make a stack one cell: its name only, the tooltip shows it whole; tinier (a narrow hub): its initials. Make one as large as the page.
+- [ ] In a checklist: Shift+Enter, a second line, then ↓: a plain line under the list. Keyboard shortcuts lists *New line in the same item* (Shift+Enter) and *End the list, keep writing* (no key).
+- [ ] Shift+Enter in a table cell: two lines in the cell.
+- [ ] Draw on a picture and in a note (the ink kit): it looks as before; Ctrl+Z takes back the stroke.
+- [ ] Delete `ink.ts` and `dialogs/CopyDialog.vue`; the build still passes.
+
+## Known limits (0.1.0, 0.2.0, 0.2.5)
+- 0.2.5: a board's pages follow the hub's height, as before; after the conversion a board taller than it was wide may move an item from the top of page 2 to the bottom of page 1 (the finer grid can fit one more row).
 - Tables: no merged cells, no sorting, no formulas (as agreed). Pasting cells into a line that has text puts the table under it. Ctrl+Z inside a cell undoes typing only.
 - A pinned picture opened large shows one at a time; there's no pinch-zoom with two fingers yet (the wheel and − / ＋ do it).
 - Selecting text across several lines, then typing, only edits the first line.

@@ -76,7 +76,7 @@ import { NoteEditor } from './editor'
 import StackPanel from './dialogs/StackPanel.vue'
 import { FLAG_NAMES, dueInfo, initials, noteLabel, progress, parseText, NOTE_TITLE_MAX, type Block, type Stack } from './model'
 import { TYPING_COMMANDS } from './commands'
-import type { InkTool } from './ink'
+import type { InkTool } from './model'
 
 const sh = inject(SHARED)!
 const desk = sh.desk
@@ -270,10 +270,11 @@ const hints = computed<Hint[]>(() => {
     const list: Hint[] = []
     const cmd = (id: string, text: string) => { const k = keyOf(id); if (k) list.push({ id, key: k, text }) }
     if (c.kind === 'media') list.push({ id: 'erase', key: 'Right-drag', text: 'erases' }, { id: 'menu', key: 'Right-click', text: 'for options' })
-    else if (c.kind === 'cell') { cmd('indent', 'next cell'); cmd('end-list', 'leaves the table'); list.push({ id: 'menu', key: 'Right-click', text: 'rows, columns' }) }
+    else if (c.kind === 'cell') { cmd('indent', 'next cell'); cmd('line-break', 'new line'); cmd('end-list', 'leaves the table'); list.push({ id: 'menu', key: 'Right-click', text: 'rows, columns' }) }
     else if (c.kind === 'text') {
         if (c.t === 'b' || c.t === 'n' || c.t === 'c') {
             if (c.empty) list.push({ id: 'step-out', key: 'Enter', text: 'steps out' })
+            else cmd('line-break', 'new line in the item')
             cmd('end-list', 'ends the list'); cmd('indent', 'indents')
             if (c.t === 'c') cmd('check', 'ticks')
         } else if (c.empty && !c.lvl) {

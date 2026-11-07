@@ -5,18 +5,21 @@
 //   - "- ", "[ ] ", "1. ", "# " at the start of a line make a bullet, a checkbox, a number, a heading;
 //   - Enter on an empty item steps out one level; Shift+Enter ends the list at once and goes on as plain text
 //     lined up under the item; Backspace at an item's start makes it plain text, then outdents;
+//     0.2.5: Shift+Enter is a new line in the same item (line-break); ending the list: Down on the last item, Enter
+//     on an empty one, or End the list (end-list, no key by default);
 //   - Tab / Shift+Tab indent from anywhere in the line.
 // Keys with Ctrl / Alt (and Shift+Enter, Tab) are the key mapper's: entry.ts commands with whileTyping, run here
 // through command(id). The editor's own element listens to Enter, Backspace, Delete and the arrows only (a
 // control's own keys: README "Keys"), and never to a key the shell already took (defaultPrevented).
 // Not handled (known limits): a selection across several lines, the browser's undo after a structural change.
 // NEW (0.2.0): tables (table.ts), one contenteditable per cell. In a cell, the list commands move the caret:
-// Indent (Tab) to the next cell (a new row after the last), Outdent to the previous, End the list (Shift+Enter)
+// Indent (Tab) to the next cell (a new row after the last), Outdent to the previous, End the list (0.2.5: no key by default)
 // out of the table; Enter goes down a row (a new row at the bottom; on an empty last row: out of the table); the
 // arrows cross cells at their edges and step out of the table above and below.
 import { type Note, type Block, type TextBlock, type TableBlock, type Stroke, type BlockType, blk, isText, hasInk, newTable, uid, textOf, cleanHtml, prefixRule, parseLine, esc } from './model'
 import { tableHTML, addRow, addCol, delRow, delCol, moveRow, rowEmpty, parseTSV, fillFrom, colsOf } from './table'
-import { beginInk, drawStrokes, type InkTool, type InkUndo, type InkGesture } from './ink'
+import { beginInk, drawInk, type InkUndo, type InkGesture } from 'gexplorer/widgets'
+import { CB_LOOK, type InkTool } from './model'
 
 const BUL = ['•', '◦', '▪']
 
@@ -116,9 +119,9 @@ export class NoteEditor {
         this.updateBlank()
         for (const m of this.blocksEl.querySelectorAll<HTMLElement>('.cb-media')) {
             const b = n.blocks.find(x => x.id === m.dataset.id)
-            if (b && hasInk(b)) drawStrokes(m.querySelector('svg'), b.ink)
+            if (b && hasInk(b)) drawInk(m.querySelector('svg'), b.ink, CB_LOOK)
         }
-        drawStrokes(this.marginSvg, n.ink)
+        drawInk(this.marginSvg, n.ink, CB_LOOK)
         if (focus) this.focusBlock(focus.id, focus.off, noScroll)
     }
 
@@ -173,6 +176,7 @@ export class NoteEditor {
         if (!c) return false
         switch (id) {
             case 'end-list': this.enter(c, true); break
+            case 'line-break': lineBreak(c.tx); break
             case 'indent': this.indent(c, 1); break
             case 'outdent': this.indent(c, -1); break
             case 'check': this.toggleCheck(c); break
@@ -311,6 +315,7 @@ export class NoteEditor {
                 else if (r > 0) this.focusCell(b.id, r - 1, cols - 1, Infinity)
                 return true
             case 'end-list': this.leaveTable(n, i, 1); return true
+            case 'line-break': lineBreak(this.cellEl(b.id, r, c)); return true
             case 'line-up': case 'line-down': {
                 const j = moveRow(b, r, id === 'line-up' ? -1 : 1)
                 if (j !== r) { this.structural(); this.focusCell(b.id, j, c, Infinity) }
@@ -526,7 +531,20 @@ export class NoteEditor {
         const intoPrev = (off: number) => { if (pv?.t === 'table') { e.preventDefault(); this.focusCell(pv.id, pv.rows.length - 1, off ? colsOf(pv) - 1 : 0, Infinity); return true } return false }
         const intoNext = () => { if (nx?.t === 'table') { e.preventDefault(); this.focusCell(nx.id, 0, 0, 0); return true } return false }
         if (k === 'ArrowUp' && onEdgeLine(tx, 'top')) { if (intoPrev(0)) return; const t = prevText(n, i); if (t) { e.preventDefault(); this.focusBlock(t.id, Infinity) } return }
-        if (k === 'ArrowDown' && onEdgeLine(tx, 'bottom')) { if (intoNext()) return; const t = nextText(n, i); if (t) { e.preventDefault(); this.focusBlock(t.id, 0) } return }
+        if (k === 'ArrowDown' && onEdgeLine(tx, 'bottom')) {
+            if (intoNext()) return
+            const t = nextText(n, i)
+            if (t) { e.preventDefault(); this.focusBlock(t.id, 0); return }
+            // 0.2.5 (Guillaume): Down on the last line of a list item (or a heading) with nothing under it ends the list
+            if (b.t !== 'p') {
+                e.preventDefault(); b.html = tx.innerHTML
+                const nb = blk('p', b.t === 'h' ? 0 : Math.min(6, b.lvl + 1))
+                n.blocks.splice(i + 1, 0, nb)
+                this.host.used('end-down')
+                this.structural({ id: nb.id, off: 0 })
+            }
+            return
+        }
         if (k === 'ArrowLeft' && collapsed() && textOffset(tx) === 0) { if (intoPrev(1)) return; const t = prevText(n, i); if (t) { e.preventDefault(); this.focusBlock(t.id, Infinity) } return }
         if (k === 'ArrowRight' && collapsed() && textOffset(tx) === (tx.textContent ?? '').length) { if (intoNext()) return; const t = nextText(n, i); if (t) { e.preventDefault(); this.focusBlock(t.id, 0) } }
     }
@@ -656,8 +674,9 @@ export class NoteEditor {
         if ((e.altKey && e.pointerType !== 'touch') || (this.host.penMode() && e.pointerType === 'pen')) this.ink(e, this.marginSvg, n.ink, true)
     }
     private ink(e: PointerEvent, svg: SVGSVGElement, arr: Stroke[], margin: boolean) {
+        const tool = this.host.tool()
         beginInk(e, svg, arr, {
-            tool: this.host.tool(),
+            mode: tool === 'erase' ? 'erase' : 'draw', color: tool, look: CB_LOOK,
             gesture: g => { this.gesture = g },
             done: u => {
                 if (u.removed) this.host.used('erase'); else if (margin) this.host.used('scribble')
@@ -783,6 +802,21 @@ function tailFrom(el: HTMLElement): string {
     const t = document.createRange(); t.setStart(r.startContainer, r.startOffset); t.setEnd(el, el.childNodes.length)
     const d = document.createElement('div'); d.appendChild(t.extractContents())
     return d.innerHTML
+}
+/**
+ * 0.2.5: a line break at the caret in `el` (a list item or a table cell): the browser's own, so its undo has it.
+ * (Chromium writes it as a newline in the text: the editable lines keep white space. textOf reads it as a space.)
+ */
+function lineBreak(el: HTMLElement | null) {
+    if (!el) return
+    const s = getSelection()
+    if (!s || !s.rangeCount || !el.contains(s.getRangeAt(0).startContainer)) return
+    if (document.execCommand('insertLineBreak')) return
+    const r = s.getRangeAt(0); r.deleteContents()
+    const br = document.createElement('br'); r.insertNode(br)
+    if (!br.nextSibling || (br.nextSibling.nodeType === 3 && !br.nextSibling.textContent)) br.after(document.createElement('br'))   // a line break at the end shows only with another after it
+    r.setStartAfter(br); r.collapse(true); s.removeAllRanges(); s.addRange(r)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
 }
 function onEdgeLine(tx: HTMLElement, edge: 'top' | 'bottom'): boolean {
     const s = getSelection(); if (!s || !s.rangeCount) return true

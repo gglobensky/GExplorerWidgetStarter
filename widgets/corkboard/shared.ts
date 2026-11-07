@@ -6,7 +6,8 @@ import type { InjectionKey, Ref } from 'vue'
 import type { WidgetSdk, WidgetUi } from 'gexplorer/widgets'
 import type { Desk } from './store'
 import type { Menus } from './menus'
-import type { InkTool, InkUndo } from './ink'
+import type { InkUndo } from 'gexplorer/widgets'
+import type { InkTool } from './model'
 import type { PictureSource } from './store'
 
 export type Shared = {

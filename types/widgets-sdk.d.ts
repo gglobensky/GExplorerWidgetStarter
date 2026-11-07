@@ -120,6 +120,11 @@ declare module 'gexplorer/widgets' {
          */
         monitor?: () => WidgetMonitor
         /**
+         * GEM Shell 2026-11-07 ('Develop' declared): GEM Forge's own; GEM Shell refuses it to every other widget.
+         * build(files) compiles and bundles a project's files into a widget's bundle (never run).
+         */
+        dev?: () => WidgetDev
+        /**
          * 2026-10-30: the values of the settings this widget declares (entry.ts `settings`), which the user sets on its
          * page in GEM Shell's Settings (drawn by the shell). One set for every copy of the widget. Only for widgets
          * declaring settings. Same object on every call.
@@ -699,6 +704,8 @@ declare module 'gexplorer/widgets' {
         | 'Performance'
         /** 2026-11-06: the processes that run and following one (sdk.monitor watches with 'processes' or a pid). */
         | 'Processes'
+        /** 2026-11-07: build widgets from a project's files (sdk.dev). GEM Forge's only: refused to any other widget. */
+        | 'Develop'
 
     /** sdk.terminal()'s shells: ids ('cmd', 'powershell', 'pwsh', 'bash', 'wsl:<distro>') and names. */
     export type TerminalShellInfo = { id: string; label: string; version?: string }
@@ -800,6 +807,76 @@ declare module 'gexplorer/widgets' {
         onSample(fn: (s: MonitorSample) => void): () => void
         onEnded(fn: (reason: string) => void): () => void
     }
+
+    /** sdk.dev() (GEM Forge): a project's file, its text or (a picture, a font) its bytes in base64. Paths relative, with /. */
+    export type DevFile = { path: string; text?: string; base64?: string }
+    /** A problem of a build: 1-based line and column; rule: the packaging check's rule, or 'keys'. */
+    export type DevProblem = { file: string; line: number; column: number; text: string; rule?: string }
+    export type DevBuildResult = {
+        ok: boolean
+        /** The id entry.ts declares ('' when it can't be read). */
+        type: string
+        /** The bundle (index.js), or null when the build has errors. */
+        code: string | null
+        errors: DevProblem[]
+        warnings: DevProblem[]
+        /** For each packaging rule found: what it means and the fix. */
+        notes: string[]
+        ms: number
+    }
+    export type DevRunResult =
+        | { ok: true; type: string; build: number; reopened: number }
+        | { ok: false; error: string; code?: string }
+    export type WidgetDev = {
+        /**
+         * The packaging check, the .vue files compiled, the bundle made by GEM Shell's esbuild: the starter's build,
+         * in GEM Shell. Only the project's files, vue and gexplorer/widgets (npm packages: later). 300 files, 8 MB.
+         * { project } (GEM Shell 2026-11-07): a build to run(): its id becomes 'dev-<project>', its name
+         * "<name> (being edited)". Without it: the widget as it will be installed.
+         */
+        build(files: DevFile[], options?: { project?: string }): Promise<DevBuildResult>
+        /**
+         * GEM Shell 2026-11-07: a { project } build's bundle run as widget 'dev-<project>' (its own identity,
+         * 'dev:<project>': its permissions are asked as for any widget and last while GEM Shell runs, or until end()).
+         * Its open windows are reopened on the new build (reopened: how many).
+         */
+        run(project: string, code: string): Promise<DevRunResult>
+        /** The project in a window of its own: right after the user's own click or key press in GEM Forge. */
+        openWindow(project: string): Promise<{ ok: true } | { ok: false; error: string }>
+        /** The project's bundle and permissions gone (done for you when this copy of GEM Forge is removed). */
+        end(project: string): Promise<{ ok: boolean; error?: string }>
+        /**
+         * GEM Shell 2026-11-07: a project you ran, shown by GEM Shell over <el> (an element of your own box) in a real
+         * placement: its own copy with context 'grid' (default: el's size), 'sidebar' (a column, 280 px at most) or
+         * 'toolbar' (a 36 px strip). It follows el, is clipped to your box, and remounts on every run(). You never
+         * touch its DOM; your menus and popovers draw above it.
+         */
+        preview(el: HTMLElement, project: string, options?: DevPreviewOptions): Promise<{ ok: true; preview: DevPreviewHandle } | { ok: false; error: string }>
+        /** What the projects you ran write to the console, and their uncaught errors. Returns the release. */
+        onConsole(fn: (m: DevConsoleMessage) => void): () => void
+        /**
+         * GEM Shell 2026-11-07: a project folder watched with its subfolders: after a burst of changes calms,
+         * { changes, overflow } (paths relative, with /; overflow: read it all again). node_modules, .git, dist, bin,
+         * obj and editors' temporary files are left out. Read the files with openListing / fsReadText (declare Read).
+         */
+        watch(folder: string, onChange: (e: { changes: DevChange[]; overflow: boolean }) => void): Promise<{ ok: true; stop: () => void } | { ok: false; error: string }>
+        /**
+         * GEM Shell 2026-11-07: a bundle built WITHOUT { project } installed as the user's widget <type>, after GEM
+         * Shell's own question; right after the user's own click or key press in GEM Forge. A widget already loaded
+         * keeps its version until GEM Shell restarts.
+         */
+        install(type: string, code: string): Promise<DevInstallResult>
+    }
+    export type DevChange = { path: string; kind: 'created' | 'changed' | 'deleted' }
+    export type DevInstallResult = { ok: true; type: string; replaced: boolean } | { ok: false; error: string; cancelled?: boolean }
+    export type DevPreviewContext = 'grid' | 'sidebar' | 'toolbar'
+    export type DevPreviewOptions = { context?: DevPreviewContext; width?: number; height?: number }
+    export type DevPreviewHandle = {
+        /** Another context or size (width / height null: the default again). false: it was closed. */
+        set(options: { context?: DevPreviewContext; width?: number | null; height?: number | null }): boolean
+        close(): void
+    }
+    export type DevConsoleMessage = { project: string; level: 'log' | 'info' | 'warn' | 'error' | 'debug'; text: string; at: number }
 
     export type WidgetMonitor = {
         info(): Promise<{ ok: true; available: boolean; reason?: string; info?: MonitorInfo } | MonitorFailure>
@@ -2256,6 +2333,17 @@ declare module 'gexplorer/widgets' {
     //   const life = createLifecycle(props.sourceId)
     //   const page = life.cell('page', 0)                       // same Ref after remount
     //   const src  = life.persistRef('listing', null, { dispose: s => s?.close() })
+    //
+    // THE RULE (2026-11-06): every cell is DATA or a RESOURCE.
+    //   DATA      cell / persistRef / persistReactive without `dispose`: PLAIN DATA ONLY (strings, finite numbers,
+    //             booleans, null, arrays and plain objects of those). GEM Shell saves it when it puts the widget away
+    //             (hibernation) and hands it back when it comes again.
+    //   RESOURCE  persistRef(key, init, { dispose }): anything else (a store object with methods, a function, a
+    //             class instance, a Map, a handle, a watch). Never saved: rebuilt from `init` when the widget comes
+    //             back, `dispose` runs when the owner is destroyed.
+    // Something else in a data cell is left out when the widget is put away and the USER sees "<Widget>: part of its
+    // state can't be kept, so it will start without it." GEM Shell warns in the console when such a cell is created
+    // ([lifecycle] … the key, why and this fix). GEM Monitor's live.ts is an example of a resource cell.
     export type LifecycleVisibility = 'visible' | 'collapsed'
     export type PersistOptions<T> = {
         /** Called with the current value when the owner is destroyed (close a listing, free a handle…). */
@@ -2296,9 +2384,9 @@ declare module 'gexplorer/widgets' {
         snapshotNow(key?: string): void
         hydrateNow(key?: string): void
 
-        /** The same Ref instance across unmount/remount until the owner is destroyed. */
+        /** The same Ref instance across unmount/remount until the owner is destroyed. With `dispose`: a resource (never saved); without: plain data only (THE RULE above). */
         persistRef<T>(key: string, initial: T | (() => T), opts?: PersistOptions<T>): Ref<T>
-        /** The same shallow-reactive object across unmount/remount. */
+        /** The same shallow-reactive object across unmount/remount. Plain data only (THE RULE above); a resource: persistRef with dispose. */
         persistReactive<T extends object>(key: string, initial: T | (() => T), opts?: { transient?: boolean }): T
         cell<T>(key: string, initial: T | (() => T), opts?: PersistOptions<T>): Ref<T>
         defineCells<T extends Record<string, any>>(shape: T): { [K in keyof T]: Ref<T[K]> }
@@ -3760,6 +3848,10 @@ declare module 'gexplorer/widgets' {
      * claimed key that is also bound to an action GEM Shell keeps (leave the pane, focus the next / previous pane, the
      * cheat sheet) goes to you, and the user is told once that the shell's action won't work there. Claims that would
      * leave no key to leave or move the focus are cut ("Focus the next pane" keeps its keys). At most 32.
+     * NEW (GEM Shell 2026-11-07), with the Develop capability (an editor: GEM Forge): a claimed key that is one of
+     * GEM Shell's commands (Ctrl+S, Alt+Up) may be a default key of your command marked whileTyping; it runs your
+     * command only while the user types in your widget, and stays the shell's everywhere else. Never claimable: Esc,
+     * F1, F6, Shift+F6, Ctrl+W, Ctrl+T, Ctrl+Shift+T, Ctrl+(Shift+)Tab, Ctrl+(Shift+)PageUp / PageDown, Alt+F4.
      */
     export type WidgetKeyboardDecl = { claims: string[] }
 

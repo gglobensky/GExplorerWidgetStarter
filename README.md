@@ -468,6 +468,29 @@ capabilities: [
 - **Nothing gets weaker:** Geolocation, app links and starting an app still need the user's own click or key press
   each time.
 
+## State that outlives the view: data or resource
+
+A widget unmounts when its tab or hub changes; `sdk.lifecycle()` keeps state for it until it is removed. When GEM
+Shell puts a widget away for a while (hibernation), it saves its cells and hands them back later. **Every cell is
+one of two kinds:**
+
+- **Data** (`cell`, `persistRef`, `persistReactive` without `dispose`): **plain data only**: strings, numbers,
+  booleans, `null`, arrays and plain objects of those. Saved and handed back.
+- **Resource** (`persistRef(key, init, { dispose })`): everything else: an object with methods (a store, a
+  recorder), a function, a class instance, a `Map`, a watch, a handle. Never saved; rebuilt from `init` when the
+  widget comes back; `dispose` runs when it is removed.
+
+```ts
+const life = sdk.lifecycle!()
+const page = life.cell('page', 0)                                       // data
+const live = life.persistRef('live', () => markRaw(createStore(sdk)),   // resource
+    { dispose: s => s.dispose() }).value
+```
+
+Anything else in a data cell is left out when the widget is put away, and the user sees "*Your widget*: part of its
+state can't be kept, so it will start without it." GEM Shell warns in the console as soon as such a cell is created
+(`[lifecycle] the cell "…" holds …`), with the fix. Example: `widgets/monitor/live.ts`.
+
 ## Settings
 
 Declare fields in `entry.ts` (GEM Shell, 2026-10-30): GEM Shell draws them on your widget's page in Settings (its

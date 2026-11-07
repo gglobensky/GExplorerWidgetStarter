@@ -8,7 +8,7 @@
 import {
     type DeskData, type Stack, type Group, type Board, type Note, type Block, type Stroke, type Place, type PaperColor,
     type FlagId, type PinColor, type Surface, type PaperKind, type InkColor, type TableBlock,
-    TABLE_MAX, PHOTO_CAPTION_MAX, PAPER_COLORS, PINS, SURFACES, FLAG_NAMES, MAX_SPAN, NOTE_TITLE_MAX, uid, clamp, rndTilt, okDate, isText, noteLabel, textOf, blk,
+    TABLE_MAX, PHOTO_CAPTION_MAX, PAPER_COLORS, PINS, SURFACES, FLAG_NAMES, GRID, finerPlace, NOTE_TITLE_MAX, uid, clamp, rndTilt, okDate, isText, noteLabel, textOf, blk,
     parseText, sanitize, newNote, newStack,
 } from './model'
 import { fitWidths, tableMd } from './table'
@@ -30,10 +30,11 @@ type StackOut = {
     place: Place; group?: number | null; notes: NoteOut[]
 }
 type GroupOut = { name: string; pin: PinColor; due: string | null; place: Place }
-export type StackCopy = { corkboard: 1; kind: 'stack'; stack: StackOut }
+/** grid (0.2.5): 2, places in the finer grid; absent, a 0.2.4 copy (its places are made 2 × 2 finer when read). */
+export type StackCopy = { corkboard: 1; grid?: 2; kind: 'stack'; stack: StackOut }
 /** NEW (0.2.0): a picture pinned on the board, its data inlined. */
 type PhotoOut = { caption: string; ink: Stroke[]; place: Place; group: number | null; data: string }
-export type BoardCopy = { corkboard: 1; kind: 'board'; board: { title: string; surface: Surface }; groups: GroupOut[]; stacks: StackOut[]; photos?: PhotoOut[] }
+export type BoardCopy = { corkboard: 1; grid?: 2; kind: 'board'; board: { title: string; surface: Surface }; groups: GroupOut[]; stacks: StackOut[]; photos?: PhotoOut[] }
 
 // ── Out ─────────────────────────────────────────────────────────────────────
 
@@ -60,7 +61,7 @@ async function stackOut(d: DeskData, s: Stack, inline: InlinePicture, group?: nu
 }
 
 export async function exportStack(d: DeskData, s: Stack, inline: InlinePicture): Promise<string> {
-    const copy: StackCopy = { corkboard: FORMAT, kind: 'stack', stack: await stackOut(d, s, inline) }
+    const copy: StackCopy = { corkboard: FORMAT, grid: GRID, kind: 'stack', stack: await stackOut(d, s, inline) }
     return JSON.stringify(copy)
 }
 
@@ -75,14 +76,17 @@ export async function exportBoard(d: DeskData, b: Board, inline: InlinePicture):
         if (data) photos.push({ caption: p.caption, ink: p.ink, place: p.place, group: p.group != null && gi.has(p.group) ? gi.get(p.group)! : null, data })
     }
     const copy: BoardCopy = {
-        corkboard: FORMAT, kind: 'board', board: { title: b.title, surface: b.surface },
+        corkboard: FORMAT, grid: GRID, kind: 'board', board: { title: b.title, surface: b.surface },
         groups: groups.map(g => ({ name: g.name, pin: g.pin, due: g.due, place: g.place })), stacks, photos,
     }
     return JSON.stringify(copy)
 }
 
-function mdText(h: string): string {
-    return textOf(String(h || '').replace(/<\/?(b|strong)>/gi, '**').replace(/<\/?(i|em)>/gi, '*'))
+/** A line's text as Markdown; `cont` (0.2.5): a line break inside it continues on the next line with that indent. */
+function mdText(h: string, cont?: string): string {
+    let s = String(h || '').replace(/<\/?(b|strong)>/gi, '**').replace(/<\/?(i|em)>/gi, '*')
+    if (cont != null) s = s.replace(/(<br\s*\/?>|\n)+$/i, '').replace(/<br\s*\/?>|\n/gi, '\u0001')
+    return textOf(s).replace(/\u0001/g, '  \n' + (cont ?? ''))
 }
 
 export function stackMarkdown(d: DeskData, s: Stack, level = 1): string {
@@ -101,11 +105,11 @@ export function stackMarkdown(d: DeskData, s: Stack, level = 1): string {
             if (b.t === 'img') { out += pad + '[Picture]\n'; continue }
             if (b.t === 'ink') { out += pad + '[Sketch]\n'; continue }
             if (b.t === 'table') { out += '\n' + tableMd(b, pad) + '\n'; skipped = true; continue }
-            const t = mdText(b.html)
-            if (!t.trim()) continue
-            if (!skipped && (b.t === 'p' || b.t === 'h') && t.trim() === title) { skipped = true; continue }
-            skipped = true
             const lead = b.t === 'b' ? '- ' : b.t === 'c' ? `- [${b.checked ? 'x' : ' '}] ` : b.t === 'n' ? `${cnt[L]}. ` : ''
+            const t = mdText(b.html, pad + ' '.repeat(lead.length))
+            if (!t.trim()) continue
+            if (!skipped && (b.t === 'p' || b.t === 'h') && t.replace(/\s+/g, ' ').trim() === title.replace(/\s+/g, ' ').trim()) { skipped = true; continue }
+            skipped = true
             out += pad + lead + (b.t === 'h' ? `**${t}**` : t) + '\n'
         }
     }
@@ -142,10 +146,17 @@ function okInk(a: unknown): Stroke[] {
     })
 }
 
-function okPlace(p: any): Place {
-    if (p?.free) return { free: { page: Math.floor(num(p.free.page, 0, 999, 0)), x: num(p.free.x, 0, 64, 0), y: num(p.free.y, 0, 64, 0) } }
-    const r = p?.rect ?? {}
-    return { rect: { col: Math.floor(num(r.col, 0, 255, 0)), row: Math.floor(num(r.row, 0, 1e5, 0)), colSpan: Math.floor(num(r.colSpan, 1, MAX_SPAN.cols, 1)), rowSpan: Math.floor(num(r.rowSpan, 1, MAX_SPAN.rows, 1)) } }
+/** A copy's place, checked; `finer`: a 0.2.4 copy, made 2 × 2 finer (0.2.5). Sizes are bounded here, then by the page. */
+function okPlace(p: any, finer = false): Place {
+    let out: Place
+    if (p?.free) {
+        const f = p.free, w = f.w == null ? undefined : num(f.w, 1, 128, 2), h = f.h == null ? undefined : num(f.h, 1, 128, 2)
+        out = { free: { page: Math.floor(num(f.page, 0, 999, 0)), x: num(f.x, 0, 256, 0), y: num(f.y, 0, 256, 0), ...(w ? { w } : {}), ...(h ? { h } : {}) } }
+    } else {
+        const r = p?.rect ?? {}
+        out = { rect: { col: Math.floor(num(r.col, 0, 255, 0)), row: Math.floor(num(r.row, 0, 1e5, 0)), colSpan: Math.floor(num(r.colSpan, 1, 128, 1)), rowSpan: Math.floor(num(r.rowSpan, 1, 128, 1)) } }
+    }
+    return finer ? finerPlace(out) : out
 }
 
 /** NEW (0.2.0): a table from a copy: bounded (TABLE_MAX), rectangular, each cell sanitized. */
@@ -184,9 +195,9 @@ async function blocksIn(list: unknown, make: MakePicture): Promise<Block[]> {
     return out
 }
 
-async function stackIn(d: DeskData, so: any, board: string, group: string | null, make: MakePicture): Promise<Stack> {
+async function stackIn(d: DeskData, so: any, board: string, group: string | null, make: MakePicture, finer = false): Promise<Stack> {
     const s = newStack(d, {
-        board, group, place: okPlace(so?.place), autoName: false,
+        board, group, place: okPlace(so?.place, finer), autoName: false,
         name: String(so?.name ?? 'Imported stack').slice(0, 40) || 'Imported stack',
         color: pick(so?.color, PAPER_COLORS, 'chalk'), paper: pick<PaperKind>(so?.paper, ['plain', 'lined', 'grid'], 'plain'),
         numbered: !!so?.numbered, flags: Array.isArray(so?.flags) ? so.flags.filter((f: unknown) => typeof f === 'string' && f in FLAG_NAMES) : [],
@@ -222,7 +233,7 @@ export async function importStack(d: DeskData, text: string, board: string, grou
     let o: any
     try { o = JSON.parse(text) } catch { throw new Error("That isn't a Corkboard copy. Use Export to make one.") }
     if (o?.corkboard !== FORMAT || o.kind !== 'stack' || !o.stack) throw new Error("That isn't a Corkboard copy of a stack.")
-    const s = await stackIn(d, o.stack, board, group, make)
+    const s = await stackIn(d, o.stack, board, group, make, o.grid !== GRID)
     if (d.stacks.some(x => x.board === board && x.name === s.name)) s.name = (s.name + ' (copy)').slice(0, 40)
     d.stacks.push(s)
     return s
@@ -239,12 +250,12 @@ export async function importBoard(d: DeskData, text: string, make: MakePicture):
     d.boards.push(b)
     const gids: string[] = []
     for (const go of Array.isArray(o.groups) ? o.groups.slice(0, 200) : []) {
-        const g: Group = { id: uid(), kind: 'group', board: b.id, name: String(go?.name ?? 'Group').slice(0, 40) || 'Group', pin: pick(go?.pin, PINS, 'red'), due: okDate(go?.due), place: okPlace(go?.place), tilt: rndTilt(), z: ++d.z, cols: 0 }
+        const g: Group = { id: uid(), kind: 'group', board: b.id, name: String(go?.name ?? 'Group').slice(0, 40) || 'Group', pin: pick(go?.pin, PINS, 'red'), due: okDate(go?.due), place: okPlace(go?.place, o.grid !== GRID), tilt: rndTilt(), z: ++d.z, cols: 0 }
         d.groups.push(g); gids.push(g.id)
     }
     for (const so of Array.isArray(o.stacks) ? o.stacks.slice(0, MAX_STACKS) : []) {
         const gi = Number.isInteger(so?.group) ? gids[so.group] ?? null : null
-        d.stacks.push(await stackIn(d, so, b.id, gi, make))
+        d.stacks.push(await stackIn(d, so, b.id, gi, make, o.grid !== GRID))
     }
     for (const po of Array.isArray(o.photos) ? o.photos.slice(0, MAX_STACKS) : []) {
         const data = po?.data
@@ -252,7 +263,7 @@ export async function importBoard(d: DeskData, text: string, make: MakePicture):
         const pic = await make(data)
         if (!pic) continue
         const gi = Number.isInteger(po?.group) ? gids[po.group] ?? null : null
-        d.photos.push({ id: uid(), kind: 'photo', board: b.id, group: gi, ...pic, caption: String(po?.caption ?? '').replace(/\s+/g, ' ').slice(0, PHOTO_CAPTION_MAX), ink: okInk(po?.ink), place: okPlace(po?.place), tilt: rndTilt(), z: ++d.z })
+        d.photos.push({ id: uid(), kind: 'photo', board: b.id, group: gi, ...pic, caption: String(po?.caption ?? '').replace(/\s+/g, ' ').slice(0, PHOTO_CAPTION_MAX), ink: okInk(po?.ink), place: okPlace(po?.place, o.grid !== GRID), tilt: rndTilt(), z: ++d.z })
     }
     return b
 }
@@ -261,7 +272,7 @@ export async function importBoard(d: DeskData, text: string, make: MakePicture):
 
 /** The "Start here" stack: what the board does, written as notes (the user deletes it when done). */
 export function seedDesk(d: DeskData): void {
-    const s = newStack(d, { name: 'Start here', autoName: false, color: 'sky', place: { rect: { col: 0, row: 0, colSpan: 1, rowSpan: 1 } } })
+    const s = newStack(d, { name: 'Start here', autoName: false, color: 'sky', place: { rect: { col: 0, row: 0, colSpan: GRID, rowSpan: GRID } } })
     d.stacks.push(s)
     newNote(d, s, parseText(`# How the board works
 - Double-click the cork to start a note right there
@@ -270,14 +281,14 @@ export function seedDesk(d: DeskData): void {
 - Drop a stack on the middle of another to pile them
   - Drop it on an edge to push the other aside instead
   - Hold Alt while dragging to place it freely
-- Drag a stack's corner to make it bigger
+- Drag a stack's corner to make it bigger or smaller (down to its name only)
 - Drop a stack on a pin to put it in that group
 - The board's name, top left, switches boards`))
     newNote(d, s, parseText(`# Lists that let go
 - Type "- " for a bullet, "[ ] " for a checkbox, "1. " for numbers, "# " for a heading
 - Tab and Shift+Tab indent from anywhere in the line
 - Enter on an empty item steps out one level
-- Shift+Enter ends the list now and keeps writing under the item
+- Shift+Enter starts a new line in the same item; ↓ on the last item ends the list
   Like this line: plain text, lined up with the bullet above
 - Backspace at the start of an item turns it into plain text
 - Alt+T adds a table: Tab goes to the next cell, Enter down a row

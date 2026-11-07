@@ -7,9 +7,11 @@
 //   - the widget changing width: positions are kept for the column count they were made with, and re-flowed in
 //     reading order when the board shows another count (nothing saved until the user moves something);
 //   - free places (Alt): fractions of cells on a page, outside the engine (they may overlap).
+// 0.2.5: the grid is twice as fine (model GRID): the same columns as 0.2.4 split in two, each way. Items are 1 × 1 up
+// to a whole page; new ones are DEF_SPAN × DEF_SPAN.
 // Pure: no DOM.
 import { gridSnapshot, gridDrag, gridResize, type GridRect } from 'gexplorer/widgets'
-import { MAX_SPAN, clamp, type Place } from './model'
+import { GRID, DEF_SPAN, clamp, type Place } from './model'
 
 export type Geometry = {
     cols: number
@@ -20,10 +22,10 @@ export type Geometry = {
     /** Where the grid starts in the board, px (centred horizontally; below the group's bar). */
     ox: number
     oy: number
-    /** Stacks too small to read: drawn as their initials. */
+    /** The whole board is cramped (a 0.2.4 cell under 118 px). 0.2.5: each card also picks what it shows by its size. */
     icon: boolean
 }
-export type FreeSpot = { page: number; x: number; y: number }
+export type FreeSpot = { page: number; x: number; y: number; w: number; h: number }
 export type ViewLayout = { rects: Map<string, GridRect>; free: Map<string, FreeSpot>; pages: number }
 
 /** The grid for a board W × H px (top: a bar above the grid; bottom: the pager's room). */
@@ -31,7 +33,10 @@ export function measure(W: number, H: number, top = 0, bottom = 30): Geometry {
     const w = Math.max(120, W), h = Math.max(120, H - top - bottom)
     let cols = Math.max(2, Math.round(w / 165)), cell = w / cols, rows = Math.floor(h / cell)
     if (rows < 1) { cell = Math.max(64, h - 4); cols = Math.max(1, Math.floor(w / cell)); rows = 1 }
-    return { cols, rows, cell, ox: (w - cols * cell) / 2, oy: top, icon: cell < 118 }
+    // 0.2.5: the 0.2.4 cells split in two each way (a converted board looks as it did); the rows fill the height
+    const icon = cell < 118
+    cell /= GRID; cols *= GRID; rows = Math.max(1, Math.floor(h / cell))
+    return { cols, rows, cell, ox: (w - cols * cell) / 2, oy: top, icon }
 }
 
 export const pageOf = (r: GridRect, rows: number) => Math.floor(r.row / rows)
@@ -54,9 +59,10 @@ function firstFree(occ: Set<string>, cols: number, rows: number, colSpan: number
             if (fits(occ, r, cols, rows)) return r
         }
 }
-const spanFor = (r: GridRect, cols: number, rows: number) => ({
-    colSpan: clamp(r.colSpan, 1, Math.min(MAX_SPAN.cols, cols)),
-    rowSpan: clamp(r.rowSpan, 1, Math.min(MAX_SPAN.rows, rows)),
+/** 0.2.5: any size from 1 × 1 to the page. */
+const spanFor = (r: { colSpan: number; rowSpan: number }, cols: number, rows: number) => ({
+    colSpan: clamp(Math.round(r.colSpan), 1, Math.max(1, cols)),
+    rowSpan: clamp(Math.round(r.rowSpan), 1, Math.max(1, rows)),
 })
 
 /**
@@ -89,7 +95,8 @@ export function layoutView(items: readonly { id: string; place: Place }[], store
     for (const i of items) {
         if (!('free' in i.place)) continue
         const f = i.place.free
-        const spot = { page: Math.max(0, Math.floor(f.page)), x: clamp(f.x, 0, Math.max(0, cols - 1)), y: clamp(f.y, 0, Math.max(0, rows - 1)) }
+        const s = spanFor({ colSpan: f.w ?? DEF_SPAN, rowSpan: f.h ?? DEF_SPAN }, cols, rows)
+        const spot = { page: Math.max(0, Math.floor(f.page)), x: clamp(f.x, 0, Math.max(0, cols - s.colSpan)), y: clamp(f.y, 0, Math.max(0, rows - s.rowSpan)), w: s.colSpan, h: s.rowSpan }
         free.set(i.id, spot)
         pages = Math.max(pages, spot.page + 1)
     }
@@ -150,27 +157,39 @@ function keepOnPages(before: Map<string, GridRect>, out: Map<string, GridRect>, 
 }
 
 /**
- * The layout while `id`'s corner is dragged by (dCols, dRows) cells from its size when the drag began: at most
- * MAX_SPAN, never past its page's bottom; the stacks it now covers are pushed. null: the size can't change.
+ * The layout while `id`'s corner is dragged by (dCols, dRows) cells from its size when the drag began: 1 × 1 to
+ * its page (0.2.5; was 2 × 2 at most), never past its page's right or bottom; the stacks it now covers are
+ * pushed. null: the size can't change.
  */
 export function resizePreview(rects: Map<string, GridRect>, cols: number, rows: number, id: string, dCols: number, dRows: number): Map<string, GridRect> | null {
     const me = rects.get(id)
     if (!me) return null
     const roomBelow = (pageOf(me, rows) + 1) * rows - me.row
-    const limits = { maxCols: Math.min(MAX_SPAN.cols, cols), maxRows: Math.min(MAX_SPAN.rows, roomBelow) }
+    const limits = { minCols: 1, minRows: 1, maxCols: Math.max(1, cols - me.col), maxRows: Math.max(1, roomBelow) }
     const out = gridResize(gridSnapshot([...rects].map(([i, rect]) => ({ id: i, rect }))), cols, id, 'se', Math.round(dCols), Math.round(dRows), limits)
     return out ? settlePages(out, cols, rows) : null
 }
+/** 0.2.5: the same, to a size (a picture follows its own shape: Board.vue works out the cells). */
+export function resizeTo(rects: Map<string, GridRect>, cols: number, rows: number, id: string, colSpan: number, rowSpan: number): Map<string, GridRect> | null {
+    const me = rects.get(id)
+    return me ? resizePreview(rects, cols, rows, id, colSpan - me.colSpan, rowSpan - me.rowSpan) : null
+}
 
-/** A spot for a new 1 × 1 item: `want` when free, else the first free on its page, else on the pages after. */
-export function placeNew(rects: Map<string, GridRect>, cols: number, rows: number, page: number, want?: { col: number; row: number }): GridRect {
+/**
+ * A spot for a new item (DEF_SPAN × DEF_SPAN unless `span` says otherwise; never larger than a page): `want` when
+ * free, else the first free on its page, else on the pages after. 0.2.5: `want` is the cell under the pointer; the
+ * item is placed with that cell inside it when it can be (the board's right and its page's bottom move it back).
+ */
+export function placeNew(rects: Map<string, GridRect>, cols: number, rows: number, page: number, want?: { col: number; row: number }, span?: { colSpan: number; rowSpan: number }): GridRect {
     const occ = new Set<string>()
     for (const r of rects.values()) occupy(occ, r)
+    const s = spanFor(span ?? { colSpan: DEF_SPAN, rowSpan: DEF_SPAN }, cols, rows)
     if (want) {
-        const r = { col: clamp(want.col, 0, cols - 1), row: Math.max(0, want.row), colSpan: 1, rowSpan: 1 }
+        const top = Math.floor(Math.max(0, want.row) / rows) * rows
+        const r = { col: clamp(want.col, 0, cols - s.colSpan), row: clamp(want.row, top, top + rows - s.rowSpan), ...s }
         if (fits(occ, r, cols, rows)) return r
     }
-    return firstFree(occ, cols, rows, 1, 1, Math.max(0, page) * rows)
+    return firstFree(occ, cols, rows, s.colSpan, s.rowSpan, Math.max(0, page) * rows)
 }
 
 /** The cell under a point of the board (px), on page `page`: column, and row of the tall grid. */

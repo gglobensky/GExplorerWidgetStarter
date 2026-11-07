@@ -8,7 +8,7 @@
 import type { WidgetSdk, WidgetMenuNode } from 'gexplorer/widgets'
 import { FLAGS, PAPER_COLORS, COLOR_NAMES, PINS, TABLE_MAX, dueInfo, ymd, nextWeekday, isText, hasInk, type Stack, type Group, type Photo, type FlagId, type PaperColor, type PinColor } from './model'
 import type { Desk } from './store'
-import type { InkTool } from './ink'
+import type { InkTool } from './model'
 
 export const MENU_CONTEXTS = [
     { id: 'corkboard.board', label: 'Corkboard: the board', icon: '📌' },

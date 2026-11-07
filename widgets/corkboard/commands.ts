@@ -1,6 +1,6 @@
 // widgets/corkboard/commands.ts
 //
-// THE CORKBOARD'S KEYS AND GESTURES (0.1.1; 0.2.0: Insert a table): what entry.ts declares to the key mapper (commands) and to the key
+// THE CORKBOARD'S KEYS AND GESTURES (0.1.1; 0.2.0: Insert a table; 0.2.5: New line in the same item): what entry.ts declares to the key mapper (commands) and to the key
 // pages (gestures, CORKBOARD-SHELL-ADDITIONS.md B). Here, not in entry.ts, so the editor can read which keys are
 // commands: a plain key bound to one (Down, Enter...) is left to the key mapper, never handled by the editor first.
 
@@ -27,8 +27,11 @@ export const COMMANDS = [
       description: 'Shows the next page of stacks when the board has more than one.' },
     { id: 'prev-page', name: 'Previous page of the board', keys: ['PageUp'],
       description: 'Shows the previous page of stacks.' },
-    { id: 'end-list', name: 'End the list, keep writing', keys: ['Shift+Enter'], whileTyping: true,
-      description: 'Starts a plain line under the list item you are on, lined up with its text: the list ends at once.' },
+    // 0.2.5 (Guillaume): Shift+Enter is a new line inside the item; ending the list has no key of its own by default
+    { id: 'line-break', name: 'New line in the same item', keys: ['Shift+Enter'], whileTyping: true,
+      description: 'Starts a new line inside the list item or table cell you are in, so an item can have several lines.' },
+    { id: 'end-list', name: 'End the list, keep writing', whileTyping: true,
+      description: 'Starts a plain line under the list item you are on, lined up with its text (in a table: leaves it). No key by default: Down on the last item, or Enter on an empty one, ends a list too.' },
     { id: 'indent', name: 'Indent the line', keys: ['Tab'], whileTyping: true,
       description: 'Moves the line one level in, wherever the cursor is in it (a sub-item in a list).' },
     { id: 'outdent', name: 'Outdent the line', keys: ['Shift+Tab'], whileTyping: true,

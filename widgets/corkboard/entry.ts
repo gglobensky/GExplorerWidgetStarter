@@ -12,7 +12,7 @@ import { COMMANDS, GESTURES } from './commands'
 export default {
     api: '1.0',
     id: 'corkboard',
-    version: '0.2.4',
+    version: '0.2.5',
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     displayName: 'GEM Corkboard',
