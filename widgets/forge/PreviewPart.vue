@@ -22,7 +22,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onBeforeUnmount } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import type { DevPreviewContext, DevPreviewHandle } from 'gexplorer/widgets'
 import type { Project } from './project'
 
@@ -58,5 +58,7 @@ watch(() => [s.build, s.id] as const, ([build, id]) => {
     if (id !== shownFor) { handle?.close(); handle = null; shownFor = '' }
     if (build) void show()
 }, { immediate: true })
+// FIXED (0.1c): this part on another page mounts after the project ran: the watch above came before its box
+onMounted(() => { if (s.build) void show() })
 onBeforeUnmount(() => handle?.close())
 </script>

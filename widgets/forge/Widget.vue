@@ -1,7 +1,10 @@
 ﻿<!-- widgets/forge/Widget.vue -->
 <!--
-    GEM FORGE 0.1b: write, run and try a widget in GEM Shell, on pages of tiles (layout.ts, TileGrid.vue).
-    A project is a folder (Open a folder…: read, watched, saved there) or a sample in memory (Save to a folder…).
+    GEM FORGE 0.1c: write, run and try a widget in GEM Shell, on pages of tiles (layout.ts, TileGrid.vue).
+    A project is a folder (Open a folder…: read, watched, saved there). New ▾ makes one from a template (templates.ts)
+    in an empty folder the user picks or makes. Widget ▾: Install / Update / Uninstall (GEM Shell asks each time).
+    A folder in GEM Shell's explorer ▸ Open in GEM Forge (entry.ts actions: onWidgetAction).
+    A project in memory (a 0.1a/0.1b sample, restored) still has Save to a folder….
     Run builds it (sdk.dev().build) and runs it as dev-<project> (sdk.dev().run); live reload runs it again after
     each save and each change on disk (an AI writing the files).
     KEPT WHILE AWAY (the lifecycle): the project lives as long as this copy (a resource cell: a tab switch finds it as
@@ -13,8 +16,8 @@
         <header class="gf-bar">
             <span class="gf-logo">⚒</span>
             <strong>GEM Forge</strong>
+            <button ref="newBtn" type="button" class="gf-btn" :disabled="s.loading" title="A new project, in an empty folder you pick or make" @click="newMenu">New ▾</button>
             <button type="button" class="gf-btn" :disabled="s.loading" @click="openFolder">Open a folder…</button>
-            <button type="button" class="gf-btn" :disabled="s.loading" @click="openClock">Clock sample</button>
             <button v-if="s.id && !s.folder" type="button" class="gf-btn" @click="project.saveToFolder()">Save to a folder…</button>
             <label class="gf-check" title="Run again after each save and each change on disk">
                 <input v-model="s.liveReload" type="checkbox"> Live reload
@@ -22,6 +25,7 @@
             <span class="gf-grow" />
             <button type="button" class="gf-btn" :disabled="!s.id" title="The project's files as one text, to paste in a chat" @click="copy('files')">Copy for AI</button>
             <button type="button" class="gf-btn" :disabled="!s.id" title="The problems and the console, to paste in a chat" @click="copy('problems')">Copy problems</button>
+            <button ref="widgetBtn" type="button" class="gf-btn" :disabled="!s.id || s.installing" title="Install, update or uninstall this widget" @click="widgetMenu">{{ s.installing ? 'Installing…' : 'Widget ▾' }}</button>
             <button type="button" class="gf-run" :disabled="!s.id || s.building" @click="project.run()">{{ s.building ? 'Building…' : '▶ Run' }}</button>
         </header>
         <div v-if="s.status" class="gf-status" :class="{ bad: !s.statusOk }">{{ s.status }}</div>
@@ -48,8 +52,8 @@
 import './forge.css'
 import { computed, inject, markRaw, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { WidgetSdk, WidgetPlacement } from 'gexplorer/widgets'
-import { createProject, type Project, type Session } from './project'
-import { CLOCK } from './samples'
+import { createProject, projectIdOf, type Project, type Session } from './project'
+import { TEMPLATES, templateFiles, type TemplateKind } from './templates'
 import TileGrid from './TileGrid.vue'
 import {
     cleanLayout, addPage, renamePage, removePage, placeAlone, findPart, setActive, pageName,
@@ -76,6 +80,27 @@ watch(() => [s.id, s.folder, s.active, s.openTabs.length, s.liveReload, s.files.
     snapTimer = window.setTimeout(() => { kept.session = project.snapshot() }, 1000)
 })
 life?.onSuspend(() => { if (kept) { window.clearTimeout(snapTimer); kept.session = project.snapshot() } })
+
+// ── Unsaved edits when GEM Shell closes (sdk.ui().setDraft: no save bar, only the close question) ────────────────
+// Save and close: Save all (a sample has no folder yet: it stays open, the message says why); Close without saving:
+// the edits dropped; Keep for later: the snapshot (written now) brings them back next time.
+sdk.ui?.().setDraft?.({
+    label: () => s.name,
+    dirty: () => project.dirtyPaths().length > 0,
+    save: async () => {
+        if (!s.folder) throw new Error('a sample in memory: use Save to a folder… in GEM Forge first (or Keep for later)')
+        await project.saveAll()
+        const left = project.dirtyPaths()
+        if (left.length) throw new Error(`not saved: ${left.join(', ')}`)
+    },
+    discard: () => project.discardAll(),
+    keepable: () => {
+        if (!kept) return false
+        window.clearTimeout(snapTimer)
+        kept.session = project.snapshot()
+        return true
+    },
+})
 
 // ── The pages (this copy's view) ──────────────────────────────────────────────────────────────────────────────────
 const layout = ref<Layout>(cleanLayout(props.config?.view?.forge))
@@ -135,12 +160,82 @@ async function partMenu() {
 }
 
 // ── The bar's actions ─────────────────────────────────────────────────────────────────────────────────────────────
+/** Before another project replaces this one: its unsaved edits saved, dropped, or kept (false: stay). */
+async function leaveProject(): Promise<boolean> {
+    const dirty = project.dirtyPaths()
+    if (!dirty.length) return true
+    const r = await sdk.ui?.().messageBox({
+        title: `${s.name}: save your changes?`,
+        message: dirty.length === 1 ? `${dirty[0]} has changes not saved.` : `${dirty.length} files have changes not saved.`,
+        variant: 'warning',
+        buttons: [
+            { id: 'cancel', label: 'Cancel', cancel: true },
+            { id: 'discard', label: 'Don\'t save', danger: true },
+            { id: 'save', label: s.folder ? 'Save' : 'Save to a folder…', default: true },
+        ],
+    })
+    if (!r || !r.button || r.button === 'cancel') return false
+    if (r.button === 'discard') { project.discardAll(); return true }
+    if (!s.folder) return await project.saveToFolder()
+    await project.saveAll()
+    return project.dirtyPaths().length === 0
+}
+
 async function openFolder() {
     const folder = await sdk.ui?.().pickFolder({ title: 'Open a widget project (its folder)', access: 'write', acceptLabel: 'Open' })
-    if (folder) await project.openFolder(folder)
+    if (folder && await leaveProject()) await project.openFolder(folder)
 }
-function openClock() {
-    void project.openSample('Clock', CLOCK)
+
+// New ▾: a template in an empty folder the user picks (or makes, with the dialog's New folder): named after it
+const newBtn = ref<HTMLElement | null>(null)
+async function newMenu() {
+    if (!newBtn.value) return
+    const id = await sdk.ui?.().menu(newBtn.value, TEMPLATES.map(t => ({ id: t.kind, label: t.label, title: t.title })), { label: 'New project' })
+    if (id) await newProject(id as TemplateKind)
+}
+async function newProject(kind: TemplateKind) {
+    const t = TEMPLATES.find(x => x.kind === kind)!
+    const folder = await sdk.ui?.().pickFolder({
+        title: `${t.label.replace('…', '')}: an EMPTY folder for it (New folder makes one; its name is the project's)`,
+        access: 'write', acceptLabel: 'Make the project here',
+    })
+    if (!folder || !(await leaveProject())) return
+    const name = folder.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || t.name
+    const id = projectIdOf(name)
+    if (id === 'forge' || id.startsWith('dev-')) { project.say(`"${name}": pick another name (${id} is GEM Shell's).`, false); return }
+    if (await project.createAt(folder, templateFiles(kind, id, name))) project.say(`${name}: made from the ${kind === 'clock' ? 'clock sample' : 'empty widget'} (widget ${id}). AGENTS.md is the guide for your AI.`)
+}
+
+// Widget ▾: Install / Update / Uninstall (each asked by GEM Shell)
+const widgetBtn = ref<HTMLElement | null>(null)
+async function widgetMenu() {
+    if (!widgetBtn.value) return
+    const ui = sdk.ui?.()
+    if (!ui) return
+    await project.refreshInstalled()
+    const w = s.widgetId
+    const items = !w
+        ? [{ id: 'none', label: 'entry.ts has no id: nothing to install', disabled: true }]
+        : s.installed === 'builtin'
+            ? [{ id: 'none', label: `${w} comes with GEM Shell: change the id in entry.ts`, disabled: true }]
+            : [
+                s.installed === 'yours'
+                    ? { id: 'install', label: `Update ${w}`, title: 'Installs this version in place of yours (GEM Shell asks first)' }
+                    : { id: 'install', label: `Install as ${w}`, title: 'Your widget, in Add widget (GEM Shell asks first)' },
+                { id: 'uninstall', label: `Uninstall ${w}`, disabled: s.installed !== 'yours', title: s.installed === 'yours' ? 'Removed from GEM Shell; the project folder stays' : 'Not installed' },
+            ]
+    const id = await ui.menu(widgetBtn.value, items, { label: 'Widget' })
+    if (id === 'install') await project.install()
+    else if (id === 'uninstall') await project.uninstall()
+}
+
+// A folder in GEM Shell's explorer ▸ Open in GEM Forge (entry.ts actions)
+async function onWidgetAction(msg: { payload?: { actionId?: string; args?: { paths?: string[] }; tokens?: { dir?: string } } }) {
+    if (msg?.payload?.actionId !== 'open-project') return
+    const folder = msg.payload.args?.paths?.[0] || msg.payload.tokens?.dir || ''
+    if (!folder) return
+    if (folder === s.folder) { project.say(`${s.name} is already open.`); return }
+    if (await leaveProject()) await project.openFolder(folder)
 }
 
 async function copy(what: 'files' | 'problems') {
@@ -161,12 +256,16 @@ function onCommand(id: string) {
         default: project.exec(id)
     }
 }
-defineExpose({ onCommand })
+// GEM Forge's own items in the Explorer's right-click menu (entry.ts menus)
+function onMenuItem(m: { itemId?: string; ref?: string }) {
+    if (m?.itemId === 'open-file' && m.ref) project.open(m.ref)
+}
+defineExpose({ onCommand, onWidgetAction, onMenuItem })
 
 // Without the lifecycle (an older GEM Shell): the project ends with the view
 onBeforeUnmount(() => {
     window.clearTimeout(snapTimer)
     if (kept) kept.session = project.snapshot()
-    if (!life) void project.dispose()
+    if (!life) { sdk.ui?.().setDraft?.(null); void project.dispose() }
 })
 </script>

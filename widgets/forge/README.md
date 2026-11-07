@@ -36,9 +36,30 @@ preview. GEM Shell's part: `PhotinoVue1/FORGE-SHELL-ADDITIONS.md` (forge-1 to fo
   it was: its watch, its runs, each file's undo and cursor); when GEM Shell puts the copy away or restarts, its
   snapshot brings it back: the folder read again, unsaved edits on top, the open files and cursors, live reload.
 
-Next: new projects, templates and install (0.1c), the toolbar and sidebar playgrounds (0.1d).
+## 0.1.2 (2026-11-07): asks before GEM Shell closes
+
+- Closing GEM Shell with unsaved edits asks: Save and close (Save all; a sample must be saved to a folder first),
+  Close without saving, Keep for later (they come back next time), Cancel. No save bar: changing page asks nothing.
+- A sample's unsaved marks come back with it after a restart.
+- The Preview part works on any page (it showed nothing when it lived on a page other than the one you ran from).
+
+## 0.1.3 (2026-11-07): 0.1c, real projects, install
+
+- **New ▾** ▸ Empty widget… / Clock sample…: pick (or make, with the dialog's New folder) an EMPTY folder; its name is
+  the project's (and the widget's id). GEM Forge writes the files there and opens it: Ctrl+S saves straight to disk.
+  Every new project carries `AGENTS.md` (the rules, for your AI), `widgets-sdk.d.ts` (the SDK's typings) and a
+  `tsconfig.json` pointing `gexplorer/widgets` at it. These three (and any `.md` / `.d.ts`) are never built.
+- **Widget ▾** ▸ Install as / Update / Uninstall (GEM Shell asks each time). Install builds the widget under entry.ts's
+  id; the build is kept while the files don't change (a slow first build: click Install again).
+- **The Explorer's right-click:** GEM Shell's file menu (Open, Open with, Show in folder, Copy path…) plus Open in
+  the editor.
+- **GEM Shell's explorer ▸ a folder (or the folder shown) ▸ Open in GEM Forge.** Unsaved edits: Save / Don't save /
+  Cancel first (also before New and Open a folder…).
+- The Clock sample in memory is gone (a project restored from 0.1b in memory still has Save to a folder…).
+
+Next: the toolbar and sidebar playgrounds (0.1d).
 
 ## Files
 `entry.ts`, `Widget.vue` (the bar, the pages, the lifecycle), `layout.ts` (pages of tiles), `TileGrid.vue`, `project.ts` (the project: files, saving, the watch, running), `Explorer.vue`,
-`CodeEditor.vue`, `PreviewPart.vue`, `Problems.vue`, `Output.vue`, `commands.ts`, `samples.ts`, `forge.css`.
+`CodeEditor.vue`, `PreviewPart.vue`, `Problems.vue`, `Output.vue`, `commands.ts`, `samples.ts`, `templates.ts` (New ▾), `raw.d.ts`, `forge.css`.
 Bundles CodeMirror 6 (`codemirror`, `@codemirror/lang-*`: MIT).

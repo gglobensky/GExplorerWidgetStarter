@@ -862,11 +862,24 @@ declare module 'gexplorer/widgets' {
         watch(folder: string, onChange: (e: { changes: DevChange[]; overflow: boolean }) => void): Promise<{ ok: true; stop: () => void } | { ok: false; error: string }>
         /**
          * GEM Shell 2026-11-07: a bundle built WITHOUT { project } installed as the user's widget <type>, after GEM
-         * Shell's own question; right after the user's own click or key press in GEM Forge. A widget already loaded
-         * keeps its version until GEM Shell restarts.
+         * Shell's own question; right after the user's own click or key press in GEM Forge. An update loads at once
+         * (GEM Shell 2026-11-07): its copies on screen remount with it (lifecycle data kept), its windows reopen.
          */
         install(type: string, code: string): Promise<DevInstallResult>
+        /**
+         * GEM Shell 2026-11-07: whether <type> is a widget: 'yours' (the user installed it: update or uninstall it),
+         * 'builtin' (comes with GEM Shell: its name can't be used), 'none'. No question.
+         */
+        installed?(type: string): Promise<DevInstalledState>
+        /**
+         * GEM Shell 2026-11-07: a widget the user installed removed, after GEM Shell's own question; right after the
+         * user's own click or key press in GEM Forge. Never a built-in one. A copy already running keeps going until
+         * GEM Shell restarts.
+         */
+        uninstall?(type: string): Promise<DevUninstallResult>
     }
+    export type DevInstalledState = 'yours' | 'builtin' | 'none'
+    export type DevUninstallResult = { ok: true; removed: boolean } | { ok: false; error: string; cancelled?: boolean }
     export type DevChange = { path: string; kind: 'created' | 'changed' | 'deleted' }
     export type DevInstallResult = { ok: true; type: string; replaced: boolean } | { ok: false; error: string; cancelled?: boolean }
     export type DevPreviewContext = 'grid' | 'sidebar' | 'toolbar'
@@ -3411,6 +3424,29 @@ declare module 'gexplorer/widgets' {
          * Resolves with the number made.
          */
         createLinksFromDrop(folder: string): Promise<number>
+        /**
+         * NEW (GEM Shell 2026-11-07): your unsaved work, as a placed widget (a hub, the sidebar, the toolbar). Closing
+         * GEM Shell then asks: Save and close (your save()), Close without saving (discard()), Cancel; and Keep for
+         * later when keepable() says you bring the changes back yourself (your lifecycle data). No save bar, no
+         * question when the user only leaves the page. One per instance (a new call replaces it); null when nothing
+         * is pending. A widget window uses props.setDraft (its footer) instead.
+         *   ui.setDraft({ dirty: () => changed.value, save: () => saveAll(), discard: () => revert() })
+         */
+        setDraft?(draft: WidgetPlacedDraft | null): boolean
+    }
+
+    /** NEW (GEM Shell 2026-11-07): what sdk.ui().setDraft takes. */
+    export type WidgetPlacedDraft = {
+        /** Something not saved (read refs: GEM Shell follows it). */
+        dirty: () => boolean
+        /** Saves; throw to keep the changes (your message is shown). */
+        save: () => Promise<void> | void
+        /** Drops the changes. */
+        discard: () => void
+        /** You bring these changes back after a restart (your lifecycle data): closing offers "Keep for later". */
+        keepable?: () => boolean
+        /** After your widget's name in the question (60 characters). */
+        label?: string | (() => string)
     }
 
     /** What sdk.ui().createLink suggests: targets (full paths, one link each, at most 20) or a web address. */

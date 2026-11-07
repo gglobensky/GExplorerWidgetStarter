@@ -3,7 +3,13 @@
 // GEM FORGE 0.1: THE PROJECT. A widget project: its files (text, or bytes for pictures and fonts), the ones open in the
 // editor, what the last build said, what the project wrote to the console. A project opened from a folder is that
 // folder: saved there (sdk.fsWriteText), watched (sdk.dev().watch: an AI or another editor writing a file rebuilds
-// it), read with sdk.openListing / fsReadText / fsReadBytes. A sample opened in memory has no folder until saved.
+// it), read with sdk.openListing / fsReadText / fsReadBytes. CHANGED (0.1c): New project (templates.ts) writes a
+// real folder first; a project in memory (a sample from 0.1a/0.1b, restored) still saves with Save to a folder….
+// The guide files (AGENTS.md, widgets-sdk.d.ts, tsconfig.json) and every .md / .d.ts are left out of the build.
+//
+// INSTALL (0.1c): built without { project } (its own id, entry.ts's), then sdk.dev().install after GEM Shell's
+// question; that build is kept for the files as they are, so a second click installs at once (the install must
+// follow the user's click within 5 s: a slow first build may need it).
 //
 // RUN: build the files as project <id> (sdk.dev().build(files, { project })), then run it (dev:run: widget dev-<id>);
 // with live reload on, every save and every change on disk runs it again (300 ms after the last one). A build with
@@ -17,7 +23,8 @@
 // snapshot() is what's saved (plain data: the folder or the sample's files, unsaved edits, open tabs, cursors, live
 // reload) and restore() brings it back: the folder read again, the edits put back on top.
 import { reactive, markRaw } from 'vue'
-import type { WidgetSdk, WidgetDev, DevProblem, DevChange, ListingEntry } from 'gexplorer/widgets'
+import type { WidgetSdk, WidgetDev, DevProblem, DevChange, ListingEntry, DevInstalledState } from 'gexplorer/widgets'
+import { GUIDE_FILES } from './templates'
 
 export const TEXT_FILE = /\.(ts|js|mjs|vue|css|json|md|txt|svg|html)$/i
 export const BINARY_FILE = /\.(png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf)$/i
@@ -45,7 +52,7 @@ export type Session = {
     folder: string
     name: string
     /** A sample in memory: its files (a folder project: none, it's read again). */
-    files: { path: string; text: string }[] | null
+    files: { path: string; text: string; saved?: string }[] | null
     /** Unsaved edits of a folder project: path -> text. */
     unsaved: Record<string, string>
     openTabs: string[]
@@ -65,6 +72,19 @@ export function projectIdOf(name: string): string {
 const sepOf = (folder: string) => (folder.includes('\\') ? '\\' : '/')
 const joinPath = (folder: string, rel: string) => folder.replace(/[\\/]+$/, '') + sepOf(folder) + rel.split('/').join(sepOf(folder))
 const baseName = (p: string) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? p
+
+/** Built: not the guide for AIs, no notes, no typings. */
+const isBuilt = (path: string) => !GUIDE_FILES.has(path) && !/\.(md|d\.ts)$/i.test(path)
+
+/** A cheap fingerprint of the files built (to keep an install build while they don't change). */
+function fingerprint(files: { path: string; text?: string; base64?: string }[]): string {
+    let h = 2166136261
+    for (const f of files) {
+        const t = `${f.path}\u0000${f.text ?? f.base64 ?? ''}\u0001`
+        for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 16777619) }
+    }
+    return `${files.length}:${(h >>> 0).toString(36)}`
+}
 
 function toBase64(bytes: Uint8Array): string {
     let s = ''
@@ -98,6 +118,10 @@ export function createProject(sdk: WidgetSdk) {
         liveReload: true,
         watching: false,
         loading: false,
+        /** The widget's id in entry.ts ('' when it can't be read), and whether a widget of that name is installed. */
+        widgetId: '',
+        installed: 'none' as DevInstalledState,
+        installing: false,
     })
 
     let stopWatch: (() => void) | null = null
@@ -109,6 +133,8 @@ export function createProject(sdk: WidgetSdk) {
     let editor: { exec(id: string): boolean; cursors(): Record<string, number> } | null = null
     let runTimer = 0
     let revealSeq = 0
+    /** The last install build (without { project }), for these files. */
+    let installBuild: { print: string; type: string; code: string } | null = null
     const offConsole = dev?.onConsole(m => log(m.level, m.text, m.at))
 
     function log(level: string, text: string, at = Date.now()) {
@@ -131,7 +157,8 @@ export function createProject(sdk: WidgetSdk) {
         if (s.id && s.build > 0) await dev?.end(s.id)
         window.clearTimeout(runTimer)
         Object.assign(s, { id: '', name: '', folder: '', files: [], openTabs: [], active: '', errors: [], warnings: [], notes: [],
-            build: 0, lastOkAt: 0, conflicts: [], reveal: null, status: '' })
+            build: 0, lastOkAt: 0, conflicts: [], reveal: null, status: '', widgetId: '', installed: 'none' })
+        installBuild = null
         editorStates.clear()
         cursors.clear()
     }
@@ -226,6 +253,7 @@ export function createProject(sdk: WidgetSdk) {
             say(paths.length >= MAX_FILES ? `${s.name}: the first ${MAX_FILES} files.` : `${s.name}: ${files.length} files.`)
             if (!files.some(f => f.path === 'entry.ts')) say(`${s.name} has no entry.ts: not a widget project yet (New project makes one).`, false)
             await startWatch()
+            void refreshInstalled()
             if (s.liveReload && file('entry.ts')) scheduleRun(0)
         } catch (err) {
             say(`Not opened: ${String((err as Error)?.message ?? err)}`, false)
@@ -377,8 +405,7 @@ export function createProject(sdk: WidgetSdk) {
         if (!dev || !s.id || s.building) { if (s.building) scheduleRun(); return false }
         s.building = true
         try {
-            const files = s.files.map(f => (f.base64 !== undefined ? { path: f.path, base64: f.base64 } : { path: f.path, text: f.text }))
-            const r = await dev.build(files, { project: s.id })
+            const r = await dev.build(buildFiles(), { project: s.id })
             s.errors = r.errors
             s.warnings = r.warnings
             s.notes = r.notes
@@ -403,7 +430,9 @@ export function createProject(sdk: WidgetSdk) {
             const p = [...s.errors.map(e => `error ${e.file}:${e.line}:${e.column} ${e.text}`), ...s.warnings.map(w => `warning ${w.file}:${w.line}:${w.column} ${w.text}`)]
             return [`GEM Forge project ${s.name} (${s.id}): problems`, ...p, '', 'Console:', ...s.logs.map(l => `[${l.level}] ${l.text}`)].join('\n')
         }
-        return s.files.filter(f => f.base64 === undefined).map(f => `===== ${f.path} =====\n${f.text}`).join('\n\n')
+        const parts = s.files.filter(f => f.base64 === undefined && f.path !== 'widgets-sdk.d.ts').map(f => `===== ${f.path} =====\n${f.text}`)
+        if (file('widgets-sdk.d.ts')) parts.push('(widgets-sdk.d.ts, the SDK\'s typings, is in the project folder: left out here.)')
+        return parts.join('\n\n')
     }
 
     // ── Kept while away (the lifecycle) ─────────────────────────────────────────────────────────────────────────
@@ -416,7 +445,7 @@ export function createProject(sdk: WidgetSdk) {
         if (s.folder) for (const p of dirtyPaths()) unsaved[p] = file(p)!.text
         return {
             folder: s.folder, name: s.name,
-            files: s.folder ? null : s.files.filter(f => f.base64 === undefined).map(f => ({ path: f.path, text: f.text })),
+            files: s.folder ? null : s.files.filter(f => f.base64 === undefined).map(f => ({ path: f.path, text: f.text, saved: f.saved })),
             unsaved, openTabs: [...s.openTabs], active: s.active, liveReload: s.liveReload, cursors: cur,
         }
     }
@@ -426,14 +455,110 @@ export function createProject(sdk: WidgetSdk) {
         if (!v || typeof v !== 'object') return
         s.liveReload = v.liveReload !== false
         if (v.folder) await openFolder(v.folder)
-        else if (Array.isArray(v.files)) await openSample(v.name || 'Sample', v.files.filter(f => typeof f?.path === 'string' && typeof f?.text === 'string'))
+        else if (Array.isArray(v.files)) {
+            const files = v.files.filter(f => typeof f?.path === 'string' && typeof f?.text === 'string')
+            // A sample's edits: what it held before them (an older snapshot has no saved: its text counts as saved)
+            await openSample(v.name || 'Sample', files.map(f => ({ path: f.path, text: typeof f.saved === 'string' ? f.saved : f.text })))
+            for (const f of files) { const mine = file(f.path); if (mine) mine.text = f.text }
+        }
         else return
         for (const [p, text] of Object.entries(v.unsaved ?? {})) { const f = file(p); if (f && typeof text === 'string') f.text = text }
         const tabs = (Array.isArray(v.openTabs) ? v.openTabs : []).filter(p => !!file(p))
         if (tabs.length) s.openTabs = tabs
         if (v.active && file(v.active)) s.active = v.active
         for (const [p, c] of Object.entries(v.cursors ?? {})) if (typeof c === 'number') cursors.set(p, c)
-        if (Object.keys(v.unsaved ?? {}).length) say(`${s.name}: your unsaved edits are back (not saved yet).`)
+        if (dirtyPaths().length) say(`${s.name}: your unsaved edits are back (not saved yet).`)
+    }
+
+    /** Every unsaved edit dropped: each file back to what it holds on disk (or the sample's text). */
+    function discardAll() {
+        for (const f of s.files) if (f.base64 === undefined && f.text !== f.saved) f.text = f.saved
+        s.conflicts = []
+    }
+
+    // ── New project, install (0.1c) ─────────────────────────────────────────────────────────────────────────────
+    /** The files sent to the build. */
+    function buildFiles() {
+        return s.files.filter(f => isBuilt(f.path)).map(f => (f.base64 !== undefined ? { path: f.path, base64: f.base64 } : { path: f.path, text: f.text }))
+    }
+
+    /** <files> written in <folder> (an empty one: the user picked or made it), then opened. false: not made (said why). */
+    async function createAt(folder: string, files: { path: string; text: string }[]): Promise<boolean> {
+        if (!sdk.fsWriteText) { say('This GEM Shell can\'t write files for GEM Forge.', false); return false }
+        try {
+            if ((await listAll(folder)).length) {
+                say(`${baseName(folder)} isn't empty: pick an empty folder for a new project (or Open a folder… to open it).`, false)
+                return false
+            }
+        } catch (err) {
+            say(`Not read: ${String((err as Error)?.message ?? err)}`, false)
+            return false
+        }
+        const crlf = sepOf(folder) === '\\'
+        try {
+            for (const f of files) await sdk.fsWriteText(joinPath(folder, f.path), crlf ? f.text.replace(/\n/g, '\r\n') : f.text, { overwrite: false })
+        } catch (err) {
+            say(`Not made in ${folder}: ${String((err as Error)?.message ?? err)}`, false)
+            return false
+        }
+        await openFolder(folder)
+        return true
+    }
+
+    /** A file's full path (a folder project), or ''. */
+    const pathOf = (rel: string) => (s.folder ? (rel ? joinPath(s.folder, rel) : s.folder) : '')
+
+    /** entry.ts's id, and whether it's installed (the Widget ▾ menu). */
+    async function refreshInstalled() {
+        const m = /\bid\s*:\s*['"]([a-z0-9-]+)['"]/.exec(file('entry.ts')?.text ?? '')
+        s.widgetId = m?.[1] ?? ''
+        s.installed = s.widgetId && dev?.installed ? await dev.installed(s.widgetId) : 'none'
+    }
+
+    /** Built as the widget it will be (its own id), kept while the files don't change. */
+    async function buildForInstall(): Promise<{ type: string; code: string } | null> {
+        if (!dev) return null
+        const files = buildFiles()
+        const print = fingerprint(files)
+        if (installBuild?.print === print) return installBuild
+        const r = await dev.build(files)
+        s.errors = r.errors
+        s.warnings = r.warnings
+        if (!r.code || !r.type) {
+            say(`Not installed: ${r.errors.length} problem${r.errors.length === 1 ? '' : 's'} (the Problems part lists them).`, false)
+            return null
+        }
+        installBuild = { print, type: r.type, code: r.code }
+        return installBuild
+    }
+
+    /** Install / Update (right after the user's click: GEM Shell asks first). */
+    async function install(): Promise<void> {
+        if (!dev || s.installing) return
+        s.installing = true
+        const t0 = performance.now()
+        try {
+            const b = await buildForInstall()
+            if (!b) return
+            if (performance.now() - t0 > 4000) {
+                say(`Built as ${b.type}: click Install again to install it (GEM Shell asks right after your click).`)
+                return
+            }
+            const r = await dev.install(b.type, b.code)
+            if (r.ok) say(r.replaced ? `${r.type} updated: its copies on screen restarted with this version.` : `${r.type} installed: it's in Add widget, marked "yours".`)
+            else say(r.cancelled ? 'Not installed.' : `Not installed: ${r.error}`, !!r.cancelled)
+        } finally {
+            s.installing = false
+            await refreshInstalled()
+        }
+    }
+
+    async function uninstall(): Promise<void> {
+        if (!dev?.uninstall || !s.widgetId) return
+        const r = await dev.uninstall(s.widgetId)
+        if (r.ok) say(`${s.widgetId} uninstalled. Your project folder is untouched.`)
+        else say(r.cancelled ? 'Not uninstalled.' : `Not uninstalled: ${r.error}`, !!r.cancelled)
+        await refreshInstalled()
     }
 
     function setEditor(e: typeof editor) { editor = e }
@@ -448,7 +573,8 @@ export function createProject(sdk: WidgetSdk) {
 
     return {
         state: s, dev, file, isDirty, dirtyPaths, editorStates, cursors, snapshot, restore, setEditor, clearEditor, exec,
-        openSample, openFolder, closeCurrent, setText, open, closeTab, save, saveAll, saveToFolder,
+        openSample, openFolder, closeCurrent, setText, open, closeTab, save, saveAll, saveToFolder, discardAll,
+        createAt, pathOf, refreshInstalled, install, uninstall,
         keepMine, takeDisk, run, scheduleRun, asText, log, say, dispose,
     }
 }

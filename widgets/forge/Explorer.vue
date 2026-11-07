@@ -2,19 +2,23 @@
 <!--
     GEM FORGE 0.1: the project's files as a tree (folders first, folded and unfolded with a click). ● marks a file with
     unsaved edits, ⚠ one that changed on disk while edited here. A click opens it in the editor.
+    0.1c, right-click (a folder project): GEM Shell's file menu (entry.ts menuContexts 'forge.file' / 'forge.folder',
+    subject 'files'): Open, Open with ▸, Show in folder (GEM Shell's explorer), Copy path…, other widgets' actions;
+    GEM Forge's own "Open in the editor" (onMenuItem, Widget.vue).
 -->
 <template>
     <div class="gf-explorer">
-        <div class="gf-ex-head">
+        <div class="gf-ex-head" @contextmenu.prevent="folderMenu($event, '')">
             <span class="gf-proj">{{ project.state.name || 'No project' }}</span>
             <span v-if="project.state.watching" class="gf-dot" title="GEM Forge watches this folder: what an AI or another editor writes there reloads it." />
         </div>
-        <div v-if="!rows.length" class="gf-empty">Open a folder or a sample.</div>
+        <div v-if="!rows.length" class="gf-empty">New ▾ makes a project; Open a folder… opens one.</div>
         <button v-for="r in rows" :key="r.key" type="button"
                 class="gf-row" :class="{ on: r.path === project.state.active, dir: r.dir }"
                 :style="{ paddingLeft: `${8 + r.depth * 14}px` }"
                 :title="r.path"
-                @click="r.dir ? toggle(r.path) : project.open(r.path)">
+                @click="r.dir ? toggle(r.path) : project.open(r.path)"
+                @contextmenu.prevent="r.dir ? folderMenu($event, r.path) : fileMenu($event, r.path)">
             <span class="gf-ico">{{ r.dir ? (folded.has(r.path) ? '▸' : '▾') : icon(r.name) }}</span>
             <span class="gf-name">{{ r.name }}</span>
             <span v-if="!r.dir && project.state.conflicts.includes(r.path)" class="gf-warn" title="Changed on disk while you edited it">⚠</span>
@@ -25,10 +29,22 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive } from 'vue'
+import { computed, inject, reactive } from 'vue'
+import type { WidgetSdk } from 'gexplorer/widgets'
 import type { Project } from './project'
 
 const props = defineProps<{ project: Project }>()
+const sdk = inject<WidgetSdk>('widgetSdk')!
+
+// GEM Shell's menu for a file or a folder of the project (a folder project only: the paths are real)
+function fileMenu(e: MouseEvent, rel: string) {
+    const full = props.project.pathOf(rel)
+    if (full) void sdk.ui?.().contextMenu(e, { context: 'forge.file', ref: rel, selection: [full] })
+}
+function folderMenu(e: MouseEvent, rel: string) {
+    const full = props.project.pathOf(rel)
+    if (full) void sdk.ui?.().contextMenu(e, { context: 'forge.folder', ref: rel, selection: [full] })
+}
 const folded = reactive(new Set<string>())
 
 type Row = { key: string; path: string; name: string; depth: number; dir: boolean }
