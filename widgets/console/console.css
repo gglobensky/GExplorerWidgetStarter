@@ -1,0 +1,114 @@
+/* widgets/console/console.css: GEM Console. Colours from GEM Shell's theme (with fallbacks). */
+.gc-widget, .gc-panel {
+    --gc-fg: var(--fg, #e6e6e6);
+    --gc-muted: color-mix(in oklab, var(--gc-fg) 60%, transparent);
+    --gc-chrome: var(--surface-2, #26262b);
+    --gc-term: color-mix(in oklab, var(--surface-1, #1b1b1f) 82%, #000);
+    --gc-line: var(--border, rgba(255, 255, 255, .14));
+    --gc-accent: var(--accent, #5aa9d6);
+    --gc-busy: #e0b04a;
+    --gc-mono: "Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace;
+    color: var(--gc-fg);
+    font: 12px/1.3 system-ui, "Segoe UI", sans-serif;
+}
+.gc-widget { width: 100%; height: 100%; min-height: 0; display: flex; }
+.gc-widget.p-toolbar { align-items: center; justify-content: center; }
+
+/* ── the toolbar button ── */
+.gc-toolbtn {
+    position: relative; width: 32px; height: 26px; border-radius: 6px; border: 1px solid transparent;
+    background: transparent; color: var(--gc-fg); cursor: pointer; display: grid; place-items: center; padding: 0;
+}
+.gc-toolbtn:hover { background: color-mix(in oklab, var(--gc-fg) 10%, transparent); }
+.gc-toolbtn.open { background: color-mix(in oklab, var(--gc-accent) 22%, transparent); border-color: color-mix(in oklab, var(--gc-accent) 50%, transparent); }
+.gc-toolbtn .gc-busy { position: absolute; right: 3px; top: 3px; }
+.gc-prompt { font: 700 12px/1 var(--gc-mono); letter-spacing: -.5px; }
+
+/* ── the toolbar's popover: grows out of the button ── */
+.gc-panel {
+    width: 44px; height: 30px; overflow: hidden; border-radius: 8px; background: var(--gc-chrome);
+    transition: width .22s cubic-bezier(.2, .8, .2, 1), height .22s cubic-bezier(.2, .8, .2, 1);
+}
+.gc-panel.grown { width: min(620px, calc(100vw - 32px)); height: min(400px, calc(100vh - 120px)); }
+.gc-panel > .gc-root { opacity: 0; transition: opacity .15s .08s; }
+.gc-panel.grown > .gc-root { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .gc-panel, .gc-panel > .gc-root { transition: none; } }
+
+/* ── a view ── */
+.gc-root { flex: 1; width: 100%; height: 100%; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--gc-term); }
+.gc-bar { display: flex; align-items: stretch; gap: 2px; height: 28px; flex: none; background: var(--gc-chrome); border-bottom: 1px solid var(--gc-line); padding: 0 4px; }
+.gc-tabs { flex: 1; min-width: 0; display: flex; gap: 1px; overflow-x: auto; scrollbar-width: none; }
+.gc-tabs::-webkit-scrollbar { display: none; }
+.gc-tab {
+    flex: 0 1 auto; min-width: 52px; max-width: 200px; display: flex; align-items: center; gap: 5px; padding: 0 4px 0 8px;
+    border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--gc-muted); cursor: pointer; font: inherit;
+}
+.gc-tab:hover { color: var(--gc-fg); background: color-mix(in oklab, var(--gc-fg) 6%, transparent); }
+.gc-tab.on { color: var(--gc-fg); border-bottom-color: var(--gc-accent); background: var(--gc-term); }
+.gc-tab.ended .gc-tl { text-decoration: line-through; opacity: .7; }
+.gc-tl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.gc-x { flex: none; width: 16px; height: 16px; border-radius: 4px; display: grid; place-items: center; opacity: 0; font-size: 13px; }
+.gc-tab:hover .gc-x, .gc-tab.on .gc-x { opacity: .7; }
+.gc-x:hover { opacity: 1 !important; background: color-mix(in oklab, var(--gc-fg) 16%, transparent); }
+.gc-busy { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--gc-busy); box-shadow: 0 0 0 2px color-mix(in oklab, var(--gc-busy) 30%, transparent); animation: gc-pulse 1.6s ease-in-out infinite; }
+@keyframes gc-pulse { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .gc-busy { animation: none; } }
+.gc-ib {
+    flex: none; min-width: 24px; padding: 0 5px; border: 0; border-radius: 5px; background: transparent; color: var(--gc-muted);
+    cursor: pointer; font: inherit; font-size: 13px; align-self: center; height: 22px;
+}
+.gc-ib:hover:not(:disabled) { color: var(--gc-fg); background: color-mix(in oklab, var(--gc-fg) 10%, transparent); }
+.gc-ib:disabled { opacity: .35; cursor: default; }
+.gc-caret { min-width: 16px; padding: 0 2px; font-size: 10px; margin-left: -3px; }
+
+.gc-path { display: flex; align-items: center; gap: 4px; padding: 4px 6px; flex: none; background: var(--gc-chrome); border-bottom: 1px solid var(--gc-line); }
+.gc-pin { flex: 1; min-width: 0; --gpi-font-size: 12px; }
+
+.gc-pending {
+    display: flex; align-items: center; gap: 8px; padding: 4px 8px; flex: none; font-size: 12px;
+    background: color-mix(in oklab, var(--gc-busy) 16%, var(--gc-chrome)); border-bottom: 1px solid color-mix(in oklab, var(--gc-busy) 40%, transparent);
+}
+.gc-pt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gc-pt b { font-family: var(--gc-mono); font-weight: 600; }
+.gc-link { border: 0; background: none; color: var(--gc-accent); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }
+
+.gc-main { position: relative; flex: 1; min-height: 0; }
+.gc-term { position: absolute; inset: 4px 2px 2px 6px; }
+.gc-term.hidden { visibility: hidden; }
+.gc-term .xterm { height: 100%; }
+.gc-term .xterm-viewport { scrollbar-width: thin; }
+
+.gc-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 16px; text-align: center; }
+.gc-empty p { margin: 0; max-width: 340px; }
+.gc-start {
+    display: inline-flex; align-items: center; gap: 10px; padding: 9px 16px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 13px;
+    color: var(--gc-fg); background: color-mix(in oklab, var(--gc-accent) 18%, var(--gc-chrome)); border: 1px solid color-mix(in oklab, var(--gc-accent) 45%, transparent);
+}
+.gc-start:hover { background: color-mix(in oklab, var(--gc-accent) 28%, var(--gc-chrome)); }
+.gc-start .gc-prompt { color: var(--gc-accent); }
+.gc-dim { color: var(--gc-muted); }
+.gc-where { font-family: var(--gc-mono); font-size: 11px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gc-note { font-size: 11px; }
+.gc-err { color: #e07a6a; font-size: 12px; }
+
+.gc-root.narrow .gc-tab { min-width: 40px; padding-left: 6px; }
+/* xterm.js paints its viewport and the space under the last row: the console's own colour (the theme is the same) */
+.gc-term .xterm, .gc-term .xterm-viewport, .gc-term .xterm-screen { background-color: var(--gc-term) !important; }
+/* 0.1.2: the sidebar: the terminal keeps some height whatever its box does (Widget.vue sets the box's own) */
+.gc-widget.p-sidebar .gc-main { min-height: 140px; }
+/* 0.1.3: Start ▾ (a split button: the shell to start) */
+.gc-split { display: inline-flex; align-items: stretch; }
+.gc-split > .gc-start:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.gc-start.gc-start-pick { padding: 0 9px; gap: 0; border-left: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; font-size: 11px; }
+/* 0.1.4: a console starting */
+.gc-spin {
+    display: inline-block; width: 18px; height: 18px; border-radius: 50%; flex: none;
+    border: 2px solid color-mix(in oklab, var(--gc-accent) 25%, transparent); border-top-color: var(--gc-accent);
+    animation: gc-turn .8s linear infinite;
+}
+.gc-spin-sm { width: 10px; height: 10px; border-width: 2px; }
+@keyframes gc-turn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .gc-spin { animation-duration: 2.4s; } }
+.gc-starting { display: inline-flex; align-items: center; gap: 10px; padding: 9px 16px; font-size: 13px; color: var(--gc-muted); }
+.gc-tab-starting { cursor: default; color: var(--gc-muted); }
+.gc-tab-starting:hover { background: transparent; color: var(--gc-muted); }

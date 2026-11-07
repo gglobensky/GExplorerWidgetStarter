@@ -95,6 +95,31 @@ declare module 'gexplorer/widgets' {
          */
         installedApps?: () => WidgetInstalledApps
         /**
+         * GEM Shell 2026-11-06 ('Terminal' declared): console sessions, the strongest permission there is (a console
+         * runs any command as the user). README "A console".
+         *   const t = sdk.terminal!()
+         *   const s = await t.shells()                                  // ids and names, never paths; asks nothing
+         *   const r = await t.open({ shell: 'pwsh', cwd: 'C:\\Users\\me', cols: 80, rows: 24 })   // from a click
+         *   if (r.ok) { r.session.onData(d => term.write(d)); term.onData(d => r.session.write(d)) }
+         *   const release = t.captureKeys(termElement)                  // Ctrl+C, Ctrl+R, Esc… reach you there
+         * open: only right after the user's own click or key press in this widget; the user is asked once (and asked
+         * again before Allow). sessions(): this copy's live sessions, after a remount (session.replay() gives the last
+         * output to draw again). Moving a session to a folder: session.cd(path) ONLY (GEM Shell quotes the folder for
+         * that shell and types it while the session waits at its prompt: 'busy' otherwise); never write a path into a
+         * session yourself. Output carries OSC 133;A (the prompt starts) and OSC 9;9;"<folder>" (where the shell is),
+         * genuine: GEM Shell drops every other folder or prompt mark and OSC 52 (clipboard). Copy with
+         * clipboardSetText on a gesture. Links in the output: open them with openUrl on the user's click only.
+         * Sessions keep running while you're hidden; while one runs something, the tray shows a card with Stop.
+         */
+        terminal?: () => WidgetTerminal
+        /**
+         * GEM Shell 2026-11-06 ('Performance' declared; the process list and following a process: 'Processes' too): the
+         * computer's resources, read-only. info(); watch({ sets, intervalMs, pid? }, onSample) → a watch (change, stop,
+         * onSample, onEnded). Asked the first time (no click needed). The backend reads only what some watch shows:
+         * stop or narrow yours when you show less. README "The computer's resources".
+         */
+        monitor?: () => WidgetMonitor
+        /**
          * 2026-10-30: the values of the settings this widget declares (entry.ts `settings`), which the user sets on its
          * page in GEM Shell's Settings (drawn by the shell). One set for every copy of the widget. Only for widgets
          * declaring settings. Same object on every call.
@@ -107,6 +132,11 @@ declare module 'gexplorer/widgets' {
          * every call.
          */
         prefs?: () => Readonly<WidgetShellPrefs>
+        /**
+         * GEM Shell 2026-11-06: the OS GEM Shell runs on, from its backend (the browser's user agent isn't reliable in
+         * GEM Shell's web view). No capability. Absent on older shells.
+         */
+        platform?: () => 'win32' | 'darwin' | 'linux'
         /**
          * Where this widget sends the user (the runAction prop they replaced is gone). Each resolves to { ok: true } or
          * { ok: false, reason: 'no-gesture' | 'not-on-screen' | 'bad-argument' }.
@@ -124,7 +154,9 @@ declare module 'gexplorer/widgets' {
          *              agree with what the widget shows (a layout it chose itself), nothing is written now;
          *              it is kept if a later setting is saved.
          * navigate, openPath and openUrl only right after the user's own click or key press in this widget
-         * (the GExplorer moving its own view to a folder excepted); otherwise refused and written to the security log.
+         * (the GExplorer moving its own view to a folder excepted, and, GEM Shell 2026-11-06, a `role: 'navigable'`
+         * widget placed in a hub's grid moving its own pane to a folder); otherwise refused and written to the
+         * security log.
          * openFolder(entry) goes to the folder; openEntry(entry) opens a file (gesture rule) or goes to the
          * folder a shortcut leads to.
          */
@@ -661,6 +693,132 @@ declare module 'gexplorer/widgets' {
         | 'Apps'
         /** 2026-11-05 (H4c): change who may use files and folders, search people and groups (sdk.fsSetPermissions...). */
         | 'Permissions'
+        /** 2026-11-06: console sessions (sdk.terminal): they run any command as the user. */
+        | 'Terminal'
+        /** 2026-11-06: the computer's numbers (sdk.monitor): CPU per core, memory, disks, network, GPU, GEM Shell's own use. */
+        | 'Performance'
+        /** 2026-11-06: the processes that run and following one (sdk.monitor watches with 'processes' or a pid). */
+        | 'Processes'
+
+    /** sdk.terminal()'s shells: ids ('cmd', 'powershell', 'pwsh', 'bash', 'wsl:<distro>') and names. */
+    export type TerminalShellInfo = { id: string; label: string; version?: string }
+    /**
+     * Why a console call failed: no-gesture (open: not right after a click or key press in the widget), declined (no
+     * Terminal permission, or the user said no), unavailable (no consoles on this system), bad-argument (an unknown shell,
+     * a folder that doesn't exist), limit (16 consoles per copy, 32 in all), busy (cd: a program is running or text is
+     * half typed), unsafe-name (cd: a folder name that can't be typed safely in that shell), ended, failed.
+     */
+    export type TerminalReason = 'no-gesture' | 'declined' | 'unavailable' | 'bad-argument' | 'limit' | 'failed' | 'busy' | 'unsafe-name' | 'ended'
+    export type TerminalFailure = { ok: false; reason: TerminalReason; error: string }
+    export type TerminalShellsResult = { ok: true; available: boolean; reason?: string; shells: TerminalShellInfo[] } | TerminalFailure
+    export type TerminalSession = {
+        readonly id: string
+        readonly shell: string
+        /** The folder it started in; where it is now comes in the output (OSC 9;9). */
+        readonly startedIn: string
+        /** Running something (a process besides the shell). */
+        readonly busy: boolean
+        readonly ended: boolean
+        readonly exitCode: number | null
+        /** Input as typed. Never a path: use cd(). */
+        write(data: string): void
+        resize(cols: number, rows: number): void
+        cd(path: string): Promise<{ ok: true } | TerminalFailure>
+        /** The last output kept (256 K characters), to draw the screen again after a remount. */
+        replay(): Promise<string>
+        kill(): Promise<void>
+        onData(fn: (data: string) => void): () => void
+        onExit(fn: (code: number) => void): () => void
+        onBusy(fn: (busy: boolean) => void): () => void
+    }
+    export type MonitorSet = 'cpu' | 'memory' | 'disks' | 'network' | 'gpu' | 'self' | 'processes'
+
+    export type MonitorReason = 'declined' | 'unavailable' | 'bad-argument' | 'limit' | 'failed' | 'ended'
+    export type MonitorFailure = { ok: false; reason: MonitorReason; error: string; needs?: 'Performance' | 'Processes' }
+
+    export type MonitorInfo = {
+        os: string
+        cpuName: string
+        logicalCores: number
+        totalMemory: number
+        disks: string[]
+        adapters: Array<{ id: string; name: string; kind: string; linkBits: number }>
+        /** The display adapters' names (a GPU sample is named after one when there is one GPU). */
+        gpus: string[]
+    }
+
+    export type MonitorProcess = {
+        pid: number
+        ppid: number
+        /** The image name only ("chrome.exe"). */
+        name: string
+        /** 0–100, of the whole computer. */
+        cpu: number
+        priv: number
+        ws: number
+        read: number
+        write: number
+        threads: number
+        handles: number
+        /** 0–100 (its busiest GPU engine) and its dedicated video memory: with the 'gpu' set only. */
+        gpu: number
+        gpuMem: number
+    }
+
+    /** A process and the ones it started, summed ('self': GEM Shell; follow: a pid). */
+    export type MonitorTree = Omit<MonitorProcess, 'ppid'> & { count: number; parts: MonitorProcess[] }
+
+    export type MonitorSample = {
+        at: number
+        cpu?: { total: number; kernel: number; cores: number[] }
+        memory?: {
+            total: number; available: number; committed: number; commitLimit: number; cached: number
+            pagedPool: number; nonPagedPool: number; processes: number; threads: number; handles: number
+        }
+        disks?: Array<{ name: string; read: number; write: number; active: number; queue: number }>
+        network?: Array<{ id: string; name: string; received: number; sent: number; linkBits: number }>
+        gpu?: Array<{ name: string; total: number; engines: Record<string, number>; dedicated: number; shared: number }>
+        /** The busiest first, 1 024 at most. */
+        processes?: MonitorProcess[]
+        self?: MonitorTree
+        /** The followed process; { pid, gone: true } once it ended. */
+        follow?: MonitorTree | { pid: number; gone: true }
+    }
+
+    export type MonitorWatchOptions = { sets: MonitorSet[]; intervalMs?: number; pid?: number }
+
+    export type MonitorWatch = {
+        readonly id: string
+        readonly sets: readonly MonitorSet[]
+        readonly intervalMs: number
+        readonly pid: number | null
+        /** Ended: stopped, the instance removed, or a permission taken back (onEnded says why). */
+        readonly ended: boolean
+        /** Other sets, interval or process (Processes asked first when they need it). */
+        change(opts: MonitorWatchOptions): Promise<{ ok: true } | MonitorFailure>
+        stop(): Promise<void>
+        onSample(fn: (s: MonitorSample) => void): () => void
+        onEnded(fn: (reason: string) => void): () => void
+    }
+
+    export type WidgetMonitor = {
+        info(): Promise<{ ok: true; available: boolean; reason?: string; info?: MonitorInfo } | MonitorFailure>
+        watch(opts: MonitorWatchOptions, onSample?: (s: MonitorSample) => void): Promise<{ ok: true; watch: MonitorWatch } | MonitorFailure>
+    }
+
+    export type WidgetTerminal = {
+        shells(opts?: { refresh?: boolean }): Promise<TerminalShellsResult>
+        /** cwd '' or left out (GEM Shell 2026-11-06): the user's home folder. */
+        open(opts: { shell: string; cwd?: string; cols: number; rows: number }): Promise<{ ok: true; session: TerminalSession } | TerminalFailure>
+        sessions(): Promise<TerminalSession[]>
+        /**
+         * The console's keys inside <el>: while the USER put the focus there (a press in it, Tab into it) and a
+         * session is live, every key reaches you, Ctrl / Alt combos and Esc included, and none of your commands or
+         * GEM Shell's runs. Except the actions GEM Shell keeps (leave the pane, focus the next / previous pane, the
+         * cheat sheet: on the user's keys), unless you claim that key (entry.ts keyboard.claims). Returns the release.
+         */
+        captureKeys(el: HTMLElement): () => void
+    }
 
     /** sdk.geolocate()'s answer: a city and the CITY's coordinates. */
     export type GeoCity = {
@@ -2340,8 +2498,30 @@ declare module 'gexplorer/widgets' {
          * NEW (GEM Shell 2026-11-05): `'picture-editor'`: GEM Shell's picture editor. It runs in a window of its own
          * (placement.context 'window', sdk.window()), opened by "Edit picture" with ONE picture handed to it; never
          * offered for a hub's grid, the sidebar or the toolbar (for now). README "A picture editor".
+         *
+         * NEW (GEM Shell 2026-11-06): `'navigable'`: not a file explorer, but a folder of its own the user drives
+         * like a pane's (a console). Placed in a hub's grid, it is a pane: click to focus it, the path bar shows
+         * and moves its folder, so do its Back / Forward / Up, Favorites and Quick Links. In the sidebar or the
+         * toolbar it is an ordinary widget. Expose WidgetNavigableExpose from Widget.vue. README "A navigable widget".
          */
-        role?: 'explorer' | 'picture-editor'
+        role?: 'explorer' | 'picture-editor' | 'navigable'
+    }
+
+    /**
+     * NEW (GEM Shell 2026-11-06): what a `role: 'navigable'` widget exposes (`defineExpose`). Only where it is a pane
+     * (a hub's grid).
+     */
+    export type WidgetNavigableExpose = {
+        /**
+         * The user moved your pane: the path bar, Back / Forward / Up, a favorite, Quick Links, another widget
+         * opening a folder "in the focused pane". Also once when you mount, with the pane's current place. It can be
+         * a page ("home:", "sys:…") or a folder you can't use: then stay where you are and say where with
+         * sdk.navigate(yourFolder, { replace: true }). select: a name GEM Shell asked to reveal (ignore it if you
+         * show no files). Going to the folder you're already in: nothing to do.
+         */
+        applyExternalCwd(locator: string, opts?: { select?: string }): void
+        /** Where you are now (GEM Shell asks; null: not known yet). */
+        getNavState?(): { cwd: string | null }
     }
 
     /** NEW (GEM Shell 2026-11-05): what GEM Shell handed your window (sdk.window().opened). */
@@ -3017,6 +3197,14 @@ declare module 'gexplorer/widgets' {
              * and its parent for a moment. Opening it again on the same row leaves it open (no toggle).
              */
             hover?: boolean
+            /**
+             * GEM Shell 2026-11-06: a console lives in it (README "A console", the toolbar). A click in it counts as a
+             * click in your box however long it stays open (a plain popover's counts only for a minute after a click in
+             * your box), and Escape while the focus is in it is yours (it closes on Escape elsewhere, a click outside,
+             * the anchor again, close()). Only with the Terminal capability, top-level and beside its anchor (not
+             * 'center', not a child level); otherwise ignored, with a console warning.
+             */
+            console?: boolean
         }): WidgetPopoverHandle | null
         /**
          * GEM Shell 2026-11-05: your component in a WINDOW GEM Shell frames: its header ("<your widget's name> —
@@ -3565,6 +3753,15 @@ declare module 'gexplorer/widgets' {
         description: string
         input: string
     }
+
+    /**
+     * NEW (GEM Shell 2026-11-06): entry.ts `keyboard: { claims: ['Ctrl+C', 'Ctrl+V', 'Esc'] }`, with the Terminal
+     * capability only: the keys your console can't do without. While its captureKeys element has the user's focus, a
+     * claimed key that is also bound to an action GEM Shell keeps (leave the pane, focus the next / previous pane, the
+     * cheat sheet) goes to you, and the user is told once that the shell's action won't work there. Claims that would
+     * leave no key to leave or move the focus are cut ("Focus the next pane" keeps its keys). At most 32.
+     */
+    export type WidgetKeyboardDecl = { claims: string[] }
 
     /** <gex-scroll-area>'s ref (the template ref of the component; see Shared UI components below). */
     export interface GexScrollAreaRef {

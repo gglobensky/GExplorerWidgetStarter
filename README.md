@@ -69,6 +69,8 @@ Where a widget can be placed comes from its `entry.ts` `contexts`: `grid` (a hub
   installed explorer is GEM Shell's **default**: folder tabs, the file dialog and every "open a folder" use
   it. Another one runs only where the user places it, a hub's grid, with a small `*` saying it isn't the
   default. Each explorer keeps its own menu layout and per-folder views (for now).
+- **A navigable widget declares `role: 'navigable'` (2026-11-06)**: a folder of its own the user drives like a pane's
+  (a console). Below, "A navigable widget".
 - **The file explorer is a pane (2026-10-29).** Whichever widget is GEM Shell's explorer (today the
   GExplorer, `items`; the goal is that a better one can replace it) works in panes only: a folder tab, a
   hub's grid, the file dialog. Its navigation (its own Back / Forward / Up, the path bar, other widgets
@@ -259,6 +261,127 @@ await sdk.installedApps!().launch('Microsoft.4297127D64EC6_8wekyb3d8bbwe!Minecra
 - **Results:** `{ ok: true, … }` or `{ ok: false, reason: 'no-gesture' | 'declined' | 'not-installed' | 'bad-argument' |
   'unsupported' | 'failed' }`. Linux is `unsupported` for now.
 
+## A navigable widget (`role: 'navigable'`)
+
+GEM Shell 2026-11-06. A widget with a folder of its own that isn't a file explorer (a console's working folder)
+declares `role: 'navigable'`. Placed in a hub's grid, it is a **pane**:
+- a click focuses it, with the focus ring;
+- the path bar shows its folder and moves it, and so do the pane's Back / Forward / Up, Favorites, Quick Links, and
+  any widget opening a folder "in the focused pane". Their keys too, except inside a `captureKeys` element (a
+  console's keys are its own there: "A console").
+
+In the sidebar or the toolbar it is an ordinary widget (no pane, no focus): offer your own path field there
+(`<gex-path-input>`, "A path field").
+
+It is never an explorer: not a default explorer, not in folder tabs, the file dialog, "Swap for" or the file menus.
+It is never `instance: 'global'` either: each placement is its own (its pane is its identity).
+
+```ts
+// entry.ts
+role: 'navigable',
+```
+
+```ts
+// Widget.vue
+defineExpose({
+    // The user moved the pane (and once on mount, with its current place)
+    applyExternalCwd(locator: string) {
+        if (locator === cwd.value || !isRealFolder(locator)) return reportWhereIAm()
+        void goTo(locator)   // a console: session.cd(locator); `busy`: stay, and reportWhereIAm()
+    },
+    getNavState: () => ({ cwd: cwd.value }),
+} satisfies WidgetNavigableExpose)
+
+// You moved by yourself (the user typed `cd`): the pane, the path bar and its history follow
+function reportWhereIAm() { if (cwd.value) void sdk.navigate?.(cwd.value, { replace: true }) }
+function onFolderChanged(folder: string) { cwd.value = folder; void sdk.navigate?.(folder) }
+```
+
+- **Your own pane, without a click:** in a hub's grid, `sdk.navigate(folder)` moves your own pane (the same exception
+  the explorer has). Anything else (a page, a new tab, several folders) needs the user's click, and in the sidebar or
+  the toolbar every navigate does: there it goes to the focused pane, as any widget's.
+- **It stays in your pane:** your saved view can't send your navigation to the whole tab (`navigateMode` is ignored).
+- **Guard the loop:** your own `sdk.navigate` comes back to `applyExternalCwd` with the same folder: do nothing then.
+
+## The computer's resources (`Performance`, `Processes`)
+
+GEM Shell 2026-11-06 (`MONITOR-SHELL-ADDITIONS.md`). Read-only numbers, asked the first time (no click needed):
+
+```ts
+capabilities: [
+  { cap: 'Performance', reason: 'Shows how busy your processor, memory, disks and network are.', together: true },
+  { cap: 'Processes', reason: 'Shows which programs use them.', together: true },   // only if you list processes
+]
+```
+
+```ts
+const mon = sdk.monitor?.()
+const r = await mon?.watch({ sets: ['cpu', 'memory'], intervalMs: 1000 }, s => {
+  cpu.value = s.cpu?.total ?? 0          // 0–100; s.cpu.cores: one per logical processor
+  used.value = s.memory ? s.memory.total - s.memory.available : 0
+})
+if (r?.ok) onBeforeUnmount(() => r.watch.stop())
+```
+
+- **Sets:** `cpu` (total, kernel, per core), `memory` (in use, committed, cache, pools, counts), `disks` (per physical
+  disk: read / write bytes per second, active %, queue), `network` (per adapter: bytes per second, link speed), `gpu`
+  (per GPU: load per engine kind, the busiest as `total`, dedicated / shared memory), `self` (GEM Shell's own use: its
+  process and the ones it started, its web view's), `processes` (the busiest 1 024, with Processes).
+- **Following a process:** `pid` (with Processes): it and the ones it started, summed, with each part (`follow`);
+  `{ pid, gone: true }` once it ended.
+- **No waste:** the backend reads only what some watch shows, once for every widget, at the fastest interval asked
+  (500 ms at the fastest). Stop or narrow your watch (`change`) when you show less (folded, hidden).
+- **Ends:** `stop()`, your widget removed, or a permission taken back (`onEnded`). 8 watches per copy.
+- **Never:** a command line, a window title, a file, a user; nothing can be changed or stopped.
+- **Not there yet:** temperatures and frame rates (they need administrator rights or drivers on Windows); Linux
+  answers `available: false` for now.
+
+## A console (`Terminal`)
+
+Declare `Terminal` (GEM Shell, 2026-11-06) to run console sessions: Command Prompt, PowerShell, Git Bash, WSL. It's the
+strongest permission there is (a console runs any command as the user): the question says so and asks once more
+before Allow.
+
+```ts
+capabilities: [{ cap: 'Terminal', reason: 'Runs the consoles you open in it.' }],
+keyboard: { claims: ['Ctrl+C', 'Ctrl+V', 'Esc'] },   // the keys a console can't do without (below)
+```
+
+```ts
+const t = sdk.terminal!()
+const s = await t.shells()          // { ok, available, shells: [{ id, label }] }: asks nothing (declined before the first grant)
+const r = await t.open({ shell: 'pwsh', cwd: folder, cols: 80, rows: 24 })   // from a click: the user is asked once
+if (r.ok) {
+    r.session.onData(d => term.write(d))          // xterm.js, say
+    term.onData(d => r.session.write(d))
+    const release = t.captureKeys(termElement)    // the console's keys
+}
+await r.session.cd('D:\Projects')                // the ONLY way to move it (the path bar, a favorite, a menu item)
+```
+
+- **Moving to a folder:** `session.cd(path)`. GEM Shell quotes the folder for that shell and types the line only while
+  the session waits at its prompt (`busy` otherwise: try again after the next prompt). Never `write()` a path: a folder
+  named `x$(…)` would run code.
+- **Where the shell is:** the output carries `OSC 133;A` (the prompt starts) and `OSC 9;9;"<folder>"`, and they are
+  genuine: GEM Shell drops every other folder or prompt mark a program could print, and OSC 52 (clipboard). With
+  xterm.js: `term.parser.registerOscHandler(9, …)` and `(133, …)`.
+- **Keys:** inside the `captureKeys` element, while the user put the focus there and a session is live, every key
+  reaches you (Ctrl / Alt combos, Esc) and no command runs, except the actions GEM Shell keeps on the user's keys:
+  leave the pane, focus the next / previous pane, the cheat sheet. `keyboard.claims` takes such a key for you (the
+  user is told once); claims that would leave no key to leave or move the focus are cut.
+- **Copy:** `sdk.clipboardSetText` on a gesture. **Paste:** the browser's paste event reaches the focused console.
+  **Links** in the output: `sdk.openUrl` on the user's click only.
+- **Hidden:** sessions keep running. `sessions()` lists this copy's live ones after a remount; `session.replay()`
+  gives the last 256 K characters to draw again. While one runs something, the tray shows a card with Stop.
+- **Ends:** `kill()`, the widget removed, the permission taken back (at once), GEM Shell closing (everything the
+  console started goes too). 16 consoles per copy, 32 in all. Linux: `unavailable` for now.
+- **Where it starts (2026-11-06):** `open({ shell, cols, rows })` without `cwd` (or `''`) starts in the user's home folder.
+- **A console in a popover (2026-11-06):** `ui.openPopover({ anchor, component, console: true })` (Terminal only,
+  top-level, beside its anchor). A click in it counts as a click in your box however long it stays open (a plain
+  popover's counts only for a minute after one), so the console keeps its keys; Escape with the focus in it is yours.
+  It still closes on a click outside, Escape elsewhere, its anchor again and `close()`. GEM Console's toolbar uses it.
+- **Example:** `widgets/console` (GEM Console).
+
 ## An app's links (steam://, uplay://…)
 
 Declare `AppLinks` with the links your widget opens (GEM Shell, 2026-11-01), then call `sdk.appLinks().open()` from a
@@ -379,6 +502,16 @@ const off = settings?.onAction('rebuild', async () => { /* the page's button */ 
 - You never draw on the Settings page: it is GEM Shell's, so people can trust it.
 - The user's changes are a draft until they press Save (2026-10-30): `onChange` fires once per Save (`key` is the
   field when one changed, `null` when several did). Action buttons run at once.
+
+## The OS (`sdk.platform()`)
+
+GEM Shell 2026-11-06. `sdk.platform?.()` is `'win32'`, `'darwin'` or `'linux'`: the OS GEM Shell's backend runs on, the
+value GEM Shell's own OS switches use. No capability. Don't read `navigator.userAgent` or `navigator.platform` for it:
+GEM Shell's web view doesn't say Windows reliably (GEM Console offered Linux shells on Windows that way).
+
+```ts
+const onWindows = (sdk.platform?.() ?? 'win32') === 'win32'
+```
 
 ## GEM Shell's file preferences
 
