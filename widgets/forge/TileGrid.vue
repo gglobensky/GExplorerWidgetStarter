@@ -11,11 +11,11 @@
             <nav class="gf-narrow-tabs">
                 <button v-for="k in pageParts" :key="k" type="button" :class="{ on: k === narrowPart }" @click="narrowPart = k"
                         @contextmenu.prevent="partMenu($event, k)">
-                    {{ PART_TITLES[k] }}<span v-if="k === 'problems' && errors" class="gf-count">{{ errors }}</span>
+                    {{ partTitle(k) }}<span v-if="k === 'problems' && errors" class="gf-count">{{ errors }}</span>
                 </button>
             </nav>
             <section v-if="narrowPart" class="gf-tile gf-narrow-tile">
-                <component :is="components[narrowPart]" :project="project" />
+                <component :is="components[kindOf(narrowPart)]" :key="narrowPart" :project="project" v-bind="extra(narrowPart)" />
             </section>
             <div v-else class="gf-empty">This page is empty: ＋ Part adds one.</div>
         </template>
@@ -25,13 +25,13 @@
                     <button v-for="k in t.parts" :key="k" type="button" :class="{ on: k === t.active }"
                             @pointerdown.stop="arranging && startMove($event, t)"
                             @click="emit('change', setActive(layout, t.id, k))" @contextmenu.prevent="partMenu($event, k)">
-                        {{ PART_TITLES[k] }}<span v-if="k === 'problems' && errors" class="gf-count">{{ errors }}</span>
+                        {{ partTitle(k) }}<span v-if="k === 'problems' && errors" class="gf-count">{{ errors }}</span>
                     </button>
                     <span class="gf-grow" />
                     <button type="button" class="gf-more" title="Detach, attach, move, close" @pointerdown.stop @click="partMenu($event, t.active)">⋯</button>
                 </div>
                 <div class="gf-tile-body">
-                    <component :is="components[t.active]" :project="project" />
+                    <component :is="components[kindOf(t.active)]" :key="t.active" :project="project" v-bind="extra(t.active)" />
                     <div v-if="arranging" class="gf-arrange-cover" />
                 </div>
                 <span v-if="arranging" class="gf-resize" title="Resize" @pointerdown.stop="startResize($event, t)" />
@@ -46,10 +46,13 @@ import { computed, inject, onBeforeUnmount, onMounted, ref, watch, type Componen
 import type { WidgetSdk, GridRect } from 'gexplorer/widgets'
 import type { Project } from './project'
 import {
-    COLS, PART_TITLES, type Layout, type PartKind, type Tile,
-    setActive, detach, attach, moveToPage, closePart, dragTile, resizeTile, setTiles, findPart, pageName,
+    COLS, type Layout, type PartKind, type PartId, type Tile, kindOf, partTitle, newPartId,
+    setActive, detach, attach, moveToPage, closePart, dragTile, resizeTile, setTiles, findPart, pageName, placeAlone,
 } from './layout'
 import Explorer from './Explorer.vue'
+import Playground from './Playground.vue'
+import SearchPart from './SearchPart.vue'
+import PackagesPart from './PackagesPart.vue'
 import CodeEditor from './CodeEditor.vue'
 import PreviewPart from './PreviewPart.vue'
 import Problems from './Problems.vue'
@@ -58,7 +61,7 @@ import Output from './Output.vue'
 const props = defineProps<{ project: Project; layout: Layout; arranging: boolean; narrow: boolean }>()
 const emit = defineEmits<{ (e: 'change', l: Layout): void }>()
 const sdk = inject<WidgetSdk>('widgetSdk')!
-const components: Record<PartKind, Component> = { explorer: Explorer, code: CodeEditor, preview: PreviewPart, problems: Problems, output: Output }
+const components: Record<PartKind, Component> = { explorer: Explorer, code: CodeEditor, preview: PreviewPart, problems: Problems, output: Output, playground: Playground, search: SearchPart, packages: PackagesPart }
 
 const root = ref<HTMLElement | null>(null)
 const height = ref(500)
@@ -68,9 +71,11 @@ const errors = computed(() => props.project.state.errors.length)
 const page = computed(() => props.layout.pages.find(p => p.id === props.layout.page) ?? props.layout.pages[0])
 const preview = ref<Tile[] | null>(null)
 const shown = computed(() => preview.value ?? page.value.tiles)
-const rows = computed(() => Math.max(6, ...shown.value.map(t => t.rect.row + t.rect.rowSpan)))
-/** Rows share the height (at least 48 px each: past that, the page scrolls). */
-const rowH = computed(() => Math.max(48, Math.floor((height.value - GAP * (rows.value - 1)) / rows.value)))
+const rows = computed(() => Math.max(12, ...shown.value.map(t => t.rect.row + t.rect.rowSpan)))
+/** Rows share the height (at least 20 px each: past that, the page scrolls). Layout v2: 24 columns, finer rows. */
+const rowH = computed(() => Math.max(20, Math.floor((height.value - GAP * (rows.value - 1)) / rows.value)))
+/** A preview part gets its id (its own options: layout.previews). */
+const extra = (id: PartId) => (kindOf(id) === 'preview' ? { partId: id } : {})
 const gridStyle = computed(() => ({
     gridTemplateColumns: `repeat(${COLS}, minmax(0, 1fr))`,
     gridTemplateRows: `repeat(${rows.value}, ${rowH.value}px)`,
@@ -79,12 +84,12 @@ const gridStyle = computed(() => ({
 const cellStyle = (r: GridRect) => ({ gridColumn: `${r.col + 1} / span ${r.colSpan}`, gridRow: `${r.row + 1} / span ${r.rowSpan}` })
 
 // Narrow: the page's parts, one at a time
-const pageParts = computed<PartKind[]>(() => page.value.tiles.flatMap(t => t.parts))
-const narrowPart = ref<PartKind | null>(null)
+const pageParts = computed<PartId[]>(() => page.value.tiles.flatMap(t => t.parts))
+const narrowPart = ref<PartId | null>(null)
 watch(pageParts, ps => { if (!narrowPart.value || !ps.includes(narrowPart.value)) narrowPart.value = ps.includes('code') ? 'code' : ps[0] ?? null }, { immediate: true })
 
 // ── A tab's menu: Detach / Attach to… / Move to page… / Close ──────────────────────────────────────────────────────
-async function partMenu(e: MouseEvent, kind: PartKind) {
+async function partMenu(e: MouseEvent, kind: PartId) {
     const ui = sdk.ui?.()
     if (!ui) return
     const l = props.layout
@@ -93,12 +98,14 @@ async function partMenu(e: MouseEvent, kind: PartKind) {
     const others = at.page.tiles.filter(t => t.id !== at.tile.id)
     const items = [
         { id: 'detach', label: 'Detach (its own tile)', disabled: at.tile.parts.length < 2 },
-        ...others.map(t => ({ id: `attach:${t.id}`, label: `Attach to ${t.parts.map(k => PART_TITLES[k]).join(' + ')}` })),
+        ...others.map(t => ({ id: `attach:${t.id}`, label: `Attach to ${t.parts.map(partTitle).join(' + ')}` })),
         ...l.pages.filter(p => p.id !== at.page.id).map(p => ({ id: `page:${p.id}`, label: `Move to page ${pageName(l, p)}` })),
-        { id: 'close', label: `Close ${PART_TITLES[kind]}` },
+        ...(kindOf(kind) === 'preview' ? [{ id: 'another', label: 'Another preview here', disabled: !newPartId(l, 'preview'), title: 'A second preview on this page (each has its own placement)' }] : []),
+        { id: 'close', label: `Close ${partTitle(kind)}` },
     ]
-    const id = await ui.menu(e, items, { label: PART_TITLES[kind] })
+    const id = await ui.menu(e, items, { label: partTitle(kind) })
     if (!id) return
+    if (id === 'another') { const nid = newPartId(l, 'preview'); if (nid) emit('change', placeAlone(l, nid, at.page.id)); return }
     if (id === 'detach') emit('change', detach(l, kind))
     else if (id === 'close') emit('change', closePart(l, kind))
     else if (id.startsWith('attach:')) emit('change', attach(l, kind, id.slice(7)))

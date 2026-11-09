@@ -71,7 +71,13 @@
 
 /* Explorer */
 .gf-explorer { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; padding: 4px 0; }
-.gf-ex-head { display: flex; align-items: center; gap: 6px; padding: 4px 10px 6px; font-weight: 600; }
+.gf-ex-head { display: flex; align-items: center; gap: 6px; padding: 4px 10px 6px; font-weight: 600; cursor: default; user-select: none; }
+/* 0.1.9: the project's name opens its menu (a click or a right-click) */
+.gf-ex-head.live { cursor: pointer; border-radius: 4px; }
+.gf-ex-head.live:hover { background: color-mix(in oklab, var(--gf-fg) 7%, transparent); }
+.gf-row.sel { background: color-mix(in oklab, var(--gf-accent) 22%, transparent); }
+/* 0.1.10: the file in the editor, when it isn't the selection: a mark at its left */
+.gf-row.on:not(.sel) { background: none; box-shadow: inset 2px 0 0 var(--gf-accent); }
 .gf-dot { width: 7px; height: 7px; border-radius: 50%; background: #4cba74; }
 .gf-row { display: flex; align-items: center; gap: 6px; border: 0; background: none; text-align: left; padding: 3px 8px; cursor: pointer; }
 .gf-row:hover { background: color-mix(in oklab, var(--gf-fg) 7%, transparent); }
@@ -83,9 +89,17 @@
 .gf-ex-foot { margin-top: auto; padding: 8px 10px 4px; color: var(--gf-dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* Code */
-.gf-code { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.gf-tabs { display: flex; flex: none; overflow-x: auto; border-bottom: 1px solid var(--gf-line); scrollbar-width: thin; }
-.gf-tab { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; padding: 5px 8px 5px 10px; cursor: pointer; color: var(--gf-dim); font-family: var(--gf-mono) !important; font-size: 12px !important; border-bottom: 2px solid transparent; white-space: nowrap; }
+.gf-code { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
+.gf-tabbar { display: flex; flex: none; align-items: flex-start; border-bottom: 1px solid var(--gf-line); }
+/* 0.1.8: the tabs wrap onto the rows shown (Tab rows 1–3); what doesn't fit: ▾ */
+.gf-tabs { display: flex; flex-wrap: wrap; flex: 1; min-width: 0; overflow: hidden; }
+.gf-tabs.tabs-dragging .gf-tab { cursor: grabbing; }
+.gf-tab.dragging { opacity: .55; }
+.gf-tab.pinned { padding-right: 10px; }
+.gf-pin { font-size: 10px; }
+.gf-tabs-more { flex: none; height: 29px; padding: 0 8px; font-size: 12px; }
+.gf-row.flash { background: color-mix(in oklab, var(--gf-accent) 28%, transparent); transition: background .3s; }
+.gf-tab { display: inline-flex; align-items: center; gap: 6px; height: 29px; box-sizing: border-box; flex: none; border: 0; background: none; padding: 5px 8px 5px 10px; cursor: pointer; color: var(--gf-dim); font-family: var(--gf-mono) !important; font-size: 12px !important; border-bottom: 2px solid transparent; white-space: nowrap; }
 .gf-tab.on { color: var(--gf-fg); border-bottom-color: var(--gf-accent); background: color-mix(in oklab, var(--gf-fg) 5%, transparent); }
 .gf-x { opacity: .5; padding: 0 2px; border-radius: 3px; }
 .gf-x:hover { opacity: 1; background: color-mix(in oklab, var(--gf-fg) 15%, transparent); }
@@ -103,7 +117,16 @@
 .gf-seg.on { border-color: var(--gf-accent); color: var(--gf-accent); }
 .gf-ib { padding: 2px 8px; }
 .gf-pv-banner { flex: none; padding: 4px 8px; border-radius: 5px; font-size: 12px; background: color-mix(in oklab, var(--gf-warn) 18%, transparent); color: var(--gf-warn); }
-.gf-pv-area { flex: 1; min-height: 60px; border: 1px dashed color-mix(in oklab, var(--gf-accent) 45%, transparent); border-radius: 6px; display: grid; place-items: center; }
+.gf-pv-area { flex: 1; min-height: 60px; position: relative; }
+/* 0.1.9: what the preview covers (the dashed frame); in grid, sized by its grip */
+.gf-pv-frame { position: absolute; left: 0; top: 0; box-sizing: border-box; border: 1px dashed color-mix(in oklab, var(--gf-accent) 45%, transparent); border-radius: 6px; display: grid; place-items: center; }
+.gf-pv-grip { position: absolute; width: 14px; height: 14px; border-radius: 4px; background: var(--gf-accent); cursor: nwse-resize; touch-action: none; }
+.gf-pv-size { position: absolute; right: 2px; bottom: -15px; font: 11px var(--gf-mono); color: var(--gf-accent); pointer-events: none; }
+/* 0.1.10: the simulated hub's cells */
+.gf-pv-move { display: grid; place-items: center; font-size: 10px; line-height: 1; color: var(--gf-tile); cursor: move; }
+.gf-pv-cells { position: absolute; inset: 0; display: grid; box-sizing: border-box; pointer-events: none; }
+.gf-pv-cells > span { border-radius: 4px; background: color-mix(in oklab, var(--gf-fg) 4%, transparent); outline: 1px dashed color-mix(in oklab, var(--gf-fg) 10%, transparent); }
+.gf-pv-area.sized { margin-bottom: 14px; }
 
 /* Problems, Output */
 .gf-list { flex: 1; min-height: 0; overflow: auto; padding: 4px 0; }
@@ -113,6 +136,11 @@
 .gf-prob.err .gf-pi { color: var(--gf-bad); }
 .gf-prob.warn .gf-pi { color: var(--gf-warn); }
 .gf-pt { flex: 1; min-width: 0; white-space: pre-wrap; }
+/* 0.2.3: a problem's text can be selected; ⧉ on hover */
+.gf-prob .gf-pt { user-select: text; cursor: text; }
+.gf-pcopy { flex: none; visibility: hidden; padding: 0 4px; }
+.gf-prob:hover .gf-pcopy, .gf-prob:focus-within .gf-pcopy { visibility: visible; }
+.gf-prob:focus-visible { outline: 1px solid var(--gf-accent); outline-offset: -1px; }
 .gf-pw { flex: none; color: var(--gf-dim); font-family: var(--gf-mono); font-size: 11px; }
 .gf-note { margin: 6px 10px; color: var(--gf-dim); font-size: 12px; }
 .gf-out { font-family: var(--gf-mono); font-size: 12px; }
@@ -121,3 +149,127 @@
 .gf-log.error { color: var(--gf-bad); }
 .gf-log.info { color: var(--gf-dim); }
 .gf-time { color: var(--gf-dim); margin-right: 8px; }
+
+/* 0.1d: the playground (Playground.vue: the sidebar, the IDE's part; PlayPopover.vue: the toolbar's popover) */
+.gf-pop, .gf-tb, .gf-play {
+    --gf-fg: var(--fg, #e6e6e6);
+    --gf-dim: color-mix(in oklab, var(--gf-fg) 58%, transparent);
+    --gf-line: var(--border, rgba(255, 255, 255, .12));
+    --gf-tile: var(--surface-1, #1b1b1f);
+    --gf-chrome: var(--surface-2, #232328);
+    --gf-accent: var(--accent, #5aa9d6);
+    --gf-run: #e8823a;
+    --gf-bad: #e0645c;
+    --gf-warn: #d6a23c;
+    --gf-mono: var(--gex-font-mono, "Cascadia Mono", Consolas, monospace);
+    color: var(--gf-fg);
+    font: 13px/1.35 system-ui, "Segoe UI", sans-serif;
+}
+.gf-pop button, .gf-tb button, .gf-play button { font: inherit; color: inherit; }
+.gf-play { flex: 1; height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 6px; box-sizing: border-box; }
+.gf-play-bar { display: flex; align-items: center; gap: 6px; flex: none; flex-wrap: wrap; padding: 4px 6px 0; }
+.gf-play-main { flex: 1; min-height: 0; display: grid; gap: 6px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); grid-auto-rows: minmax(160px, 1fr); padding: 0 6px 6px; overflow: auto; }
+.gf-play.side .gf-play-main { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(120px, 1.1fr) minmax(0, 1fr); padding: 0; }
+.gf-play-code, .gf-play-side { min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+.gf-play-code { border: 1px solid var(--gf-line); border-radius: 6px; overflow: hidden; }
+.gf-play-side { gap: 6px; }
+.gf-play-result { flex: 1; min-height: 90px; display: flex; border: 1px solid var(--gf-line); border-radius: 6px; }
+.gf-play-out { flex: 1; min-height: 60px; border: 1px solid var(--gf-line); border-radius: 6px; }
+.gf-play.side .gf-play-result { flex: 1; }
+.gf-play.side .gf-play-out { flex: 1; }
+.gf-play code { font-family: var(--gf-mono); }
+.gf-play-wrap { height: 100%; display: flex; flex-direction: column; padding: 4px; box-sizing: border-box; color: var(--gf-fg); }
+.gf-pop { width: 460px; max-width: 100%; display: flex; flex-direction: column; gap: 6px; padding: 8px; box-sizing: border-box; }
+.gf-pop-in { width: 100%; box-sizing: border-box; resize: vertical; min-height: 44px; max-height: 240px; font: 12.5px/1.4 var(--gf-mono);
+    color: inherit; background: var(--gf-tile); border: 1px solid var(--gf-line); border-radius: 6px; padding: 6px 8px; }
+.gf-pop-in:focus { outline: none; border-color: var(--gf-accent); }
+.gf-pop-bar { display: flex; align-items: center; gap: 6px; }
+.gf-pop-out { max-height: 220px; min-height: 48px; border: 1px solid var(--gf-line); border-radius: 6px; }
+.gf-tb { position: relative; height: 100%; display: flex; align-items: center; }
+.gf-tb-btn { height: 28px; min-width: 32px; border: 1px solid transparent; background: none; border-radius: 6px; cursor: pointer; color: var(--gf-run) !important; font-size: 16px; }
+.gf-tb-btn:hover, .gf-tb-btn.open { background: color-mix(in oklab, var(--gf-fg) 10%, transparent); }
+/* where a script of the toolbar's playground runs (dev.preview): 1 px, out of sight */
+.gf-tb-host { position: absolute; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
+/* 0.1.7: one highlight everywhere (the editor's): selected text in the toolbar's line, the console, the parts */
+.gf ::selection, .gf-pop ::selection, .gf-play ::selection, .gf-tb ::selection {
+    background: color-mix(in oklab, var(--accent, #5aa9d6) 35%, transparent);
+    color: inherit;
+}
+.gf textarea:focus-visible, .gf input:focus-visible, .gf-pop textarea:focus-visible, .gf-play input:focus-visible {
+    outline: none;
+    border-color: var(--gf-accent);
+}
+
+/* 0.1.7: a preview's simulated space (the prototype's lab): the sidebar's height, the toolbar's width */
+.gf-pv-sim { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 4px 8px 6px; font-size: 12px; color: var(--gf-dim); }
+.gf-pv-sim label { display: inline-flex; align-items: center; gap: 6px; }
+.gf-pv-sim input[type="range"] { width: 110px; accent-color: var(--gf-accent); }
+.gf-pv-sim b { min-width: 52px; font: 11.5px var(--gf-mono); color: var(--gf-accent); font-weight: normal; }
+.gf-pv-sim-btns { display: inline-flex; gap: 6px; }
+.gf-ib.on { color: var(--gf-accent); }
+
+/* 0.1.11: Go to file (QuickOpen.vue, a popover) */
+.gf-quick { width: 540px; }
+.gf-quick-list { max-height: 360px; }
+.gf-quick-row { display: flex; align-items: baseline; gap: 10px; width: 100%; border: 0; background: none; text-align: left; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
+.gf-quick-row.on { background: color-mix(in oklab, var(--gf-accent) 25%, transparent); }
+.gf-quick-name { font-family: var(--gf-mono); font-size: 12.5px; }
+.gf-quick-name b { color: var(--gf-accent); }
+.gf-quick-dir { font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 0.1.11: Find in files (SearchPart.vue) */
+.gf-search { height: 100%; display: flex; flex-direction: column; gap: 4px; padding: 6px; box-sizing: border-box; min-height: 0; }
+.gf-search-bar { display: flex; gap: 4px; align-items: center; flex: none; }
+.gf-search-in { flex: 1; min-width: 0; font: 12.5px var(--gf-mono); color: inherit; background: var(--gf-tile); border: 1px solid var(--gf-line); border-radius: 5px; padding: 4px 6px; }
+.gf-search-sum { flex: none; font-size: 12px; padding: 2px 2px 4px; }
+.gf-search-list { flex: 1; min-height: 0; overflow: auto; }
+.gf-search-file { display: flex; align-items: baseline; gap: 6px; width: 100%; border: 0; background: none; text-align: left; padding: 3px 4px; cursor: pointer; }
+.gf-search-hit { display: flex; gap: 8px; width: 100%; border: 0; background: none; text-align: left; padding: 1px 4px 1px 18px; cursor: pointer; font: 12px var(--gf-mono); }
+.gf-search-hit:hover, .gf-search-file:hover { background: color-mix(in oklab, var(--gf-fg) 7%, transparent); }
+.gf-search-ln { min-width: 34px; text-align: right; }
+.gf-search-text { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.gf-search-text mark { background: color-mix(in oklab, var(--gf-warn) 45%, transparent); color: inherit; border-radius: 2px; }
+/* 0.1.11: the Explorer's drag to move */
+.gf-explorer.dragging { cursor: grabbing; }
+.gf-explorer.dragging .gf-row { cursor: grabbing; }
+.gf-row.drop, .gf-ex-head.drop { outline: 1.5px dashed var(--gf-accent); outline-offset: -2px; background: color-mix(in oklab, var(--gf-accent) 15%, transparent); }
+.gf-page .gf-dirty { margin-left: 4px; }
+/* 0.2.0: npm packages (PackagesPart.vue) */
+.gf-pkgs { height: 100%; display: flex; flex-direction: column; gap: 6px; padding: 6px; box-sizing: border-box; min-height: 0; }
+.gf-pkgs-node { flex: none; font-size: 12px; }
+.gf-pkgs-list { flex: 1; min-height: 52px; }
+.gf-pkgs-list code { font: 12px var(--gf-mono); }
+.gf-pkg-row { display: flex; align-items: baseline; gap: 8px; padding: 2px 4px; font: 12.5px var(--gf-mono); border-radius: 4px; }
+.gf-pkg-row:hover { background: color-mix(in oklab, var(--gf-fg) 7%, transparent); }
+.gf-pkgs-out { flex: none; max-height: 40%; overflow: auto; margin: 0; padding: 6px; font: 11.5px var(--gf-mono); white-space: pre-wrap; background: var(--gf-tile); border: 1px solid var(--gf-line); border-radius: 5px; }
+/* 0.2.1: TypeScript's details and hovers (lang.ts) */
+.gf-ts-info { max-width: 520px; max-height: 320px; overflow: auto; padding: 6px 8px; font-size: 12px; line-height: 1.45; }
+.gf-ts-sig { font: 12px var(--gf-mono); white-space: pre-wrap; word-break: break-word; }
+.gf-ts-doc { margin-top: 6px; white-space: pre-wrap; color: var(--gf-dim); }
+.gf-prob-head { padding: 8px 8px 2px; font-size: 11.5px; color: var(--gf-dim); }
+/* 0.2.3: npm at work */
+.gf-pkgs-bar { flex: none; height: 3px; border-radius: 2px; overflow: hidden; background: color-mix(in oklab, var(--gf-fg) 10%, transparent); position: relative; }
+.gf-pkgs-bar span { position: absolute; inset: 0 auto 0 0; width: 30%; border-radius: 2px; background: var(--gf-accent); animation: gf-pkgs-move 1.2s ease-in-out infinite; }
+@keyframes gf-pkgs-move { 0% { left: -30%; } 100% { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .gf-pkgs-bar span { animation-duration: 3s; } }
+.gf-padd { flex: none; font-size: 11.5px; padding: 0 6px; }
+/* 0.2.4: one problem tooltip at a time: while the gutter's (the red mark's) shows, the text's hover waits */
+.gf-cm .cm-editor:has(.cm-tooltip.cm-tooltip-lint:not(.cm-tooltip-hover)) .cm-tooltip-hover { display: none; }
+.gf-out-link { border: 0; padding: 0; background: none; color: var(--gf-accent); font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.gf-ts-sigs b { color: var(--gf-accent); font-weight: 600; }
+/* 0.2.9: TypeScript at work (the packages' types) */
+.gf-busy { display: flex; align-items: center; gap: 6px; }
+.gf-spin { width: 10px; height: 10px; border-radius: 50%; border: 2px solid color-mix(in oklab, var(--gf-accent) 30%, transparent); border-top-color: var(--gf-accent); animation: gf-spin .8s linear infinite; flex: none; }
+@keyframes gf-spin { to { transform: rotate(360deg); } }
+.gf-ts-busy { position: absolute; right: 14px; bottom: 10px; z-index: 5; display: flex; align-items: center; gap: 6px; padding: 4px 10px; font-size: 11.5px; border-radius: 999px; background: var(--gf-chrome); border: 1px solid var(--gf-line); color: var(--gf-dim); pointer-events: none; }
+/* 0.2.10: Problems' toolbar (Check all files, Checks ▾) and its files */
+.gf-problems { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.gf-ptools { flex: none; display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-bottom: 1px solid color-mix(in oklab, var(--gf-fg) 10%, transparent); font-size: 12px; }
+.gf-ptools .gf-ib { font-size: 12px; }
+.gf-pgrow { flex: 1; }
+.gf-pskip { color: var(--gf-dim); cursor: help; }
+/* 0.2.13: the Explorer's rows left out of Check all */
+.gf-skip { flex: none; margin-left: 4px; color: var(--gf-dim); font-size: 11px; }
+.gf-name.gf-skipped { opacity: .6; }
+.gf-pfile { padding: 6px 8px 1px; font: 12px var(--gf-mono); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gf-pcount { font-family: inherit; font-weight: 400; color: var(--gf-dim); margin-left: 4px; }

@@ -9,43 +9,43 @@ import CompactLayout from './CompactLayout.vue'
 import ExpandedLayout from './ExpandedLayout.vue'
 
 import {
-  FileRefData,
-  type WidgetSdk,
-  type WidgetMenuItemMessage,
+    FileRefData,
+    type WidgetSdk,
+    type WidgetMenuItemMessage,
 } from 'gexplorer/widgets'
 import type { Track } from './usePlayerState'
 
 const isDropActive = ref(false)
 
 const props = defineProps<{
-  config?: Record<string, any>
-  placement?: {
-    context: 'grid' | 'sidebar' | 'embedded'
-    layout: string
-    size?: any
-    resizing: boolean
-    resizePhase?: 'active' | 'idle'
-  }
-  context?: 'sidebar' | 'grid'
-  variant?: 'compact' | 'expanded' | 'collapsed'
-  width?: number
-  height?: number
-  theme?: string
-  editMode?: boolean
-  sourceId: string
+    config?: Record<string, any>
+    placement?: {
+        context: 'grid' | 'sidebar' | 'embedded'
+        layout: string
+        size?: any
+        resizing: boolean
+        resizePhase?: 'active' | 'idle'
+    }
+    context?: 'sidebar' | 'grid'
+    variant?: 'compact' | 'expanded' | 'collapsed'
+    width?: number
+    height?: number
+    theme?: string
+    editMode?: boolean
+    sourceId: string
 }>()
 
 const offWidgetMsg = ref<(() => void) | null>(null)
 
 const onMediaError = (e: Event) => {
-  const t = e.target as HTMLMediaElement
-  console.error('[Widget] Media error:', {
-    src: t.currentSrc || t.src,
-    error: t.error?.code,
-    errorMessage: t.error?.message,
-    currentTrack: state.current.value?.name,
-    currentIndex: state.currentIndex.value
-  })
+    const t = e.target as HTMLMediaElement
+    console.error('[Widget] Media error:', {
+        src: t.currentSrc || t.src,
+        error: t.error?.code,
+        errorMessage: t.error?.message,
+        currentTrack: state.current.value?.name,
+        currentIndex: state.currentIndex.value
+    })
 }
 
 const expandedLayoutRef = ref<InstanceType<typeof ExpandedLayout> | null>(null)
@@ -71,10 +71,10 @@ const state = usePlayerState(props.sourceId)
 // a cleared queue, or this player being removed from its layout. Pausing keeps it.
 const jobs = sdk.jobs!()
 function ensurePlaybackJob() {
-  jobs.ensure('playback', { title: 'Music' }).hold(state.music)
+    jobs.ensure('playback', { title: 'Music' }).hold(state.music)
 }
 watch(() => state.queue.value.length, n => {
-  if (n === 0) { jobs.current('playback')?.end(); ui.setHeaderStatus(null) }
+    if (n === 0) { jobs.current('playback')?.end(); ui.setHeaderStatus(null) }
 })
 
 // ===== HEADER STATUS =====
@@ -82,47 +82,47 @@ watch(() => state.queue.value.length, n => {
 // Kept up to date by the music element's own events (bound once per element), so it
 // goes on while no view is mounted: collapsed in the sidebar, the job playing on.
 function bindHeaderStatus() {
-  const el = state.music as any
-  if (el.__lpHeaderStatus) return
-  el.__lpHeaderStatus = true
-  const { playlists, sel } = state
-  const update = () => {
-    const pl = playlists.get(sel)
-    const it = pl && pl.currentIdx >= 0 ? pl.items[pl.currentIdx] : null
-    const name: string = it?.name ?? ''
-    ui.setHeaderStatus(name ? (el.paused ? `Paused · ${name}` : name) : null)
-  }
-  for (const ev of ['play', 'pause', 'ended', 'emptied', 'rack:playlistindex']) el.addEventListener(ev, update)
-  update()
+    const el = state.music as any
+    if (el.__lpHeaderStatus) return
+    el.__lpHeaderStatus = true
+    const { playlists, sel } = state
+    const update = () => {
+        const pl = playlists.get(sel)
+        const it = pl && pl.currentIdx >= 0 ? pl.items[pl.currentIdx] : null
+        const name: string = it?.name ?? ''
+        ui.setHeaderStatus(name ? (el.paused ? `Paused · ${name}` : name) : null)
+    }
+    for (const ev of ['play', 'pause', 'ended', 'emptied', 'rack:playlistindex']) el.addEventListener(ev, update)
+    update()
 }
 
 // Where it is, for recovery (the host saves it at most every 2 s): track, time, playing.
 function checkpointPlayback() {
-  jobs.current('playback')?.checkpoint({
-    trackId: state.current.value?.id ?? null,
-    index: state.currentIndex.value,
-    position: state.music.currentTime || 0,
-    playing: !state.music.paused,
-  })
+    jobs.current('playback')?.checkpoint({
+        trackId: state.current.value?.id ?? null,
+        index: state.currentIndex.value,
+        position: state.music.currentTime || 0,
+        playing: !state.music.paused,
+    })
 }
 
 // The last run stopped while it played (entry.ts: recovery 'resume'): the queue came back
 // with the player's state; continue at the same track and time (paused if it was).
 const stopWhenPending = jobs.whenPending('playback', p => {
-  const st = (p.state ?? {}) as { trackId?: string | null; index?: number; position?: number; playing?: boolean }
-  // By the track (the restored queue may be older than the checkpoint), else by its place
-  const byId = st.trackId ? state.queue.value.findIndex(t => t.id === st.trackId) : -1
-  const index = byId >= 0 ? byId : typeof st.index === 'number' ? st.index : -1
-  if (index < 0 || index >= state.queue.value.length) { p.discard(); return }
-  p.resume({ title: 'Music' }).hold(state.music)
-  void resumeAt(index, Number(st.position) || 0, st.playing !== false)
+    const st = (p.state ?? {}) as { trackId?: string | null; index?: number; position?: number; playing?: boolean }
+    // By the track (the restored queue may be older than the checkpoint), else by its place
+    const byId = st.trackId ? state.queue.value.findIndex(t => t.id === st.trackId) : -1
+    const index = byId >= 0 ? byId : typeof st.index === 'number' ? st.index : -1
+    if (index < 0 || index >= state.queue.value.length) { p.discard(); return }
+    p.resume({ title: 'Music' }).hold(state.music)
+    void resumeAt(index, Number(st.position) || 0, st.playing !== false)
 })
 
 async function resumeAt(index: number, position: number, playing: boolean) {
-  console.log('[local-player] resuming', { index, track: state.queue.value[index]?.name, position, playing })
-  await play(index)
-  if (position > 1) await seekWhenReady(position)
-  if (!playing) pause()
+    console.log('[local-player] resuming', { index, track: state.queue.value[index]?.name, position, playing })
+    await play(index)
+    if (position > 1) await seekWhenReady(position)
+    if (!playing) pause()
 }
 
 /**
@@ -131,23 +131,23 @@ async function resumeAt(index: number, position: number, playing: boolean) {
  * (the element moved on meanwhile: no seek). Gives up after 5 s.
  */
 function seekWhenReady(position: number): Promise<void> {
-  const el = state.music
-  const src = el.src
-  return new Promise<void>(resolve => {
-    let timer: ReturnType<typeof setTimeout> | null = null
-    const apply = () => {
-      el.removeEventListener('loadedmetadata', apply)
-      if (timer) clearTimeout(timer)
-      if (el.src === src) {
-        try { el.currentTime = position } catch { /* not seekable */ }
-        console.log('[local-player] resumed at', { asked: position, now: el.currentTime, ready: el.readyState })
-      }
-      resolve()
-    }
-    if (el.readyState >= 1) { apply(); return }
-    el.addEventListener('loadedmetadata', apply)
-    timer = setTimeout(apply, 5000)
-  })
+    const el = state.music
+    const src = el.src
+    return new Promise<void>(resolve => {
+        let timer: ReturnType<typeof setTimeout> | null = null
+        const apply = () => {
+            el.removeEventListener('loadedmetadata', apply)
+            if (timer) clearTimeout(timer)
+            if (el.src === src) {
+                try { el.currentTime = position } catch { /* not seekable */ }
+                console.log('[local-player] resumed at', { asked: position, now: el.currentTime, ready: el.readyState })
+            }
+            resolve()
+        }
+        if (el.readyState >= 1) { apply(); return }
+        el.addEventListener('loadedmetadata', apply)
+        timer = setTimeout(apply, 5000)
+    })
 }
 
 
@@ -157,16 +157,16 @@ const containerWidth = ref(0)
 
 // utility: common parent dir
 function commonDir(paths: string[]) {
-  const parts = paths.map(p => p.replace(/\\/g, '/').split('/'))
-  let i = 0
-  while (true) {
-    const seg = parts[0][i]
-    if (!seg) break
-    if (!parts.every(a => a[i] === seg)) break
-    i++
-  }
-  const shared = parts[0].slice(0, i).join('/')
-  return shared.endsWith(':') ? shared + '/' : shared || '/'
+    const parts = paths.map(p => p.replace(/\\/g, '/').split('/'))
+    let i = 0
+    while (true) {
+        const seg = parts[0][i]
+        if (!seg) break
+        if (!parts.every(a => a[i] === seg)) break
+        i++
+    }
+    const shared = parts[0].slice(0, i).join('/')
+    return shared.endsWith(':') ? shared + '/' : shared || '/'
 }
 
 // rAF + idle-gated width pipeline ------------------------------------------
@@ -174,92 +174,92 @@ let pendingWidth: number | null = null
 let rafForWidth = 0
 
 function commitWidth(w: number) {
-  if (Math.abs(w - containerWidth.value) < 1) return
-  containerWidth.value = w | 0
+    if (Math.abs(w - containerWidth.value) < 1) return
+    containerWidth.value = w | 0
 }
 
 function scheduleWidth(w: number, src: 'host' | 'ro' = 'ro') {
-  pendingWidth = w | 0
-  if (props.placement?.resizePhase === 'active' && src === 'ro') return
-  if (rafForWidth) return
-  rafForWidth = requestAnimationFrame(() => {
-    rafForWidth = 0
-    if (pendingWidth != null) {
-      commitWidth(pendingWidth)
-      pendingWidth = null
-    }
-  })
+    pendingWidth = w | 0
+    if (props.placement?.resizePhase === 'active' && src === 'ro') return
+    if (rafForWidth) return
+    rafForWidth = requestAnimationFrame(() => {
+        rafForWidth = 0
+        if (pendingWidth != null) {
+            commitWidth(pendingWidth)
+            pendingWidth = null
+        }
+    })
 }
 
 function seedMeasureNow() {
-  const el = widgetRootEl.value
-  if (!el) return
-  const w = Math.round(el.getBoundingClientRect().width || 0)
-  if (w) scheduleWidth(w)
+    const el = widgetRootEl.value
+    if (!el) return
+    const w = Math.round(el.getBoundingClientRect().width || 0)
+    if (w) scheduleWidth(w)
 }
 
 watch(() => props.placement?.resizePhase, (phase) => {
-  if (phase === 'idle' && pendingWidth != null) {
-    commitWidth(pendingWidth)
-    pendingWidth = null
-  }
+    if (phase === 'idle' && pendingWidth != null) {
+        commitWidth(pendingWidth)
+        pendingWidth = null
+    }
 })
 // ---------------------------------------------------------------------------
 
 const hostContext = computed<'grid' | 'sidebar' | 'embedded'>(() =>
-  props.placement?.context ?? props.context ?? 'sidebar'
+    props.placement?.context ?? props.context ?? 'sidebar'
 )
 
 const hostLayout = computed<string>(() =>
-  // Priority order:
-  // 1. config.view.layout (set by WidgetHost via context menu or cycle button)
-  // 2. placement.layout (legacy GridLayout)
-  // 3. variant (Sidebar prop)
-  // 4. Default to 'expanded'
-  props.config?.view?.layout ??
-  props.placement?.layout ?? 
-  props.variant ?? 
-  'expanded'
+    // Priority order:
+    // 1. config.view.layout (set by WidgetHost via context menu or cycle button)
+    // 2. placement.layout (legacy GridLayout)
+    // 3. variant (Sidebar prop)
+    // 4. Default to 'expanded'
+    props.config?.view?.layout ??
+    props.placement?.layout ??
+    props.variant ??
+    'expanded'
 )
 
 const hostWidth = computed(() => {
-  const p = props.placement?.size
-  return typeof p?.width === 'number' && p.width > 0
-    ? p.width
-    : typeof props.width === 'number' && props.width > 0
-      ? props.width
-      : 0
+    const p = props.placement?.size
+    return typeof p?.width === 'number' && p.width > 0
+        ? p.width
+        : typeof props.width === 'number' && props.width > 0
+            ? props.width
+            : 0
 })
 watch(hostWidth, (w) => {
-  if (w > 0) scheduleWidth(Math.round(w), 'host')
+    if (w > 0) scheduleWidth(Math.round(w), 'host')
 })
 
 const layoutClass = computed(() => {
-  const w = containerWidth.value || hostWidth.value || 0
-  if (w <= 160) return 'micro'
-  if (w <= 260) return 'ultra'
-  if (w <= 320) return 'narrow'
-  if (w <= 400) return 'medium'
-  return 'wide'
+    const w = containerWidth.value || hostWidth.value || 0
+    if (w <= 160) return 'micro'
+    if (w <= 260) return 'ultra'
+    if (w <= 320) return 'narrow'
+    if (w <= 400) return 'medium'
+    return 'wide'
 })
 
 watch(() => hostLayout.value, () => {
-  nextTick(() => {
-    if (hostLayout.value !== 'compact') seedMeasureNow()
-  })
+    nextTick(() => {
+        if (hostLayout.value !== 'compact') seedMeasureNow()
+    })
 })
 
 // ===== DND (list reordering) =====
 const showQueue = state.life.cell<boolean>('ui.showQueue', true)
 const dnd = useDnD(
-  state.queue,
-  state.currentIndex,
-  state.selectedIndex,
-  showQueue,
-  () => expandedLayoutRef.value?.queueEl || null,
-  state.toPlaylistItems,
-  state.playlists,
-  state.sel
+    state.queue,
+    state.currentIndex,
+    state.selectedIndex,
+    showQueue,
+    () => expandedLayoutRef.value?.queueEl || null,
+    state.toPlaylistItems,
+    state.playlists,
+    state.sel
 )
 
 // ===== PLAYLIST OPS =====
@@ -268,53 +268,53 @@ const playlist = usePlaylist(state, props.sourceId, play)
 
 // ===== KEYBOARD NAV =====
 const keyboard = useKeyboardNav(
-  state.queue,
-  state.selectedIndex,
-  state.hasTracks,
-  play,
-  playlist.removeAt,
-  widgetRootEl
+    state.queue,
+    state.selectedIndex,
+    state.hasTracks,
+    play,
+    playlist.removeAt,
+    widgetRootEl
 )
 
 // ===== MARQUEE =====
 const marquee = useMarquee(
-  state.currentTitle,
-  layoutClass,
-  computed(() => props.placement?.resizePhase),
-  computed(() => props.config)
+    state.currentTitle,
+    layoutClass,
+    computed(() => props.placement?.resizePhase),
+    computed(() => props.config)
 )
 
 // Rack index → sync current/selected
 type RackIndexEvt = CustomEvent<{
-  listId: string
-  index?: number
-  item?: { id?: string; url?: string } | null
+    listId: string
+    index?: number
+    item?: { id?: string; url?: string } | null
 }>
 // The rack's index is ITS list's (playable tracks only): the item's id says which queue track.
 const onRackIndex = (e: Event) => {
-  const d = (e as RackIndexEvt).detail
-  let real = state.queueIndexOfRack(typeof d.index === 'number' ? d.index : -1, d.item?.id)
-  if (real < 0 && d.item?.url) real = state.queue.value.findIndex(t => t.url === d.item!.url)
-  if (real < 0) return
-  // Moving on by itself (end of a track, Next): missing tracks it went over are said.
-  if (!jumping && !state.shuffle.value) reportSkipped(state.currentIndex.value, real)
-  if (state.currentIndex.value !== real) state.currentIndex.value = real
-  if (state.selectedIndex.value !== real) state.selectedIndex.value = real
+    const d = (e as RackIndexEvt).detail
+    let real = state.queueIndexOfRack(typeof d.index === 'number' ? d.index : -1, d.item?.id)
+    if (real < 0 && d.item?.url) real = state.queue.value.findIndex(t => t.url === d.item!.url)
+    if (real < 0) return
+    // Moving on by itself (end of a track, Next): missing tracks it went over are said.
+    if (!jumping && !state.shuffle.value) reportSkipped(state.currentIndex.value, real)
+    if (state.currentIndex.value !== real) state.currentIndex.value = real
+    if (state.selectedIndex.value !== real) state.selectedIndex.value = real
 }
 
 /** Missing tracks between <from> and <to> (going forward; a wrap to the start is not reported). */
 function reportSkipped(from: number, to: number) {
-  if (from < 0 || to <= from + 1) return
-  const skipped = state.queue.value.slice(from + 1, to).filter(t => !t.url)
-  if (!skipped.length) return
-  ui.snack({
-    id: 'missing',
-    dedupe: 'replace',
-    text: skipped.length === 1
-      ? `Skipped "${skipped[0].name}": ${reasonText(skipped[0].missingReason)}.`
-      : `Skipped ${skipped.length} tracks that can't be played.`,
-    timeoutMs: 5000,
-  } as any)
+    if (from < 0 || to <= from + 1) return
+    const skipped = state.queue.value.slice(from + 1, to).filter(t => !t.url)
+    if (!skipped.length) return
+    ui.snack({
+        id: 'missing',
+        dedupe: 'replace',
+        text: skipped.length === 1
+            ? `Skipped "${skipped[0].name}": ${reasonText(skipped[0].missingReason)}.`
+            : `Skipped ${skipped.length} tracks that can't be played.`,
+        timeoutMs: 5000,
+    } as any)
 }
 
 // ===== PLAYER CONTROLS =====
@@ -327,166 +327,166 @@ let jumping = 0
  * playable: a snackbar says why and the next playable track after it plays (2026-10-09).
  */
 async function playQueueIndex(index: number): Promise<void> {
-  if (index < 0 || index >= state.queue.value.length) return
-  if (!state.queue.value[index].url && !(await playlist.retryMissing(index))) {
-    const t = state.queue.value[index]
-    ui.snack({
-      id: 'missing',
-      dedupe: 'replace',
-      text: `Skipped "${t?.name}": ${reasonText(t?.missingReason)}.`,
-      timeoutMs: 5000,
-    } as any)
-    const after = state.queue.value.findIndex((x, i) => i > index && !!x.url)
-    if (after < 0) return
-    index = after
-  }
-  const rackIdx = state.rackIndexOf(index)
-  if (rackIdx < 0) return
-  const id = state.queue.value[index].id
-  let idx = -1
-  jumping++
-  try { idx = await state.playlists.playIndex(state.sel, rackIdx, state.music) }
-  finally { jumping-- }
-  if (idx < 0) return
-  const real = state.queueIndexOfRack(idx, idx === rackIdx ? id : null)
-  if (real >= 0) {
-    state.currentIndex.value = real
-    state.selectedIndex.value = real
-    state.isPlaying.value = true
-  }
+    if (index < 0 || index >= state.queue.value.length) return
+    if (!state.queue.value[index].url && !(await playlist.retryMissing(index))) {
+        const t = state.queue.value[index]
+        ui.snack({
+            id: 'missing',
+            dedupe: 'replace',
+            text: `Skipped "${t?.name}": ${reasonText(t?.missingReason)}.`,
+            timeoutMs: 5000,
+        } as any)
+        const after = state.queue.value.findIndex((x, i) => i > index && !!x.url)
+        if (after < 0) return
+        index = after
+    }
+    const rackIdx = state.rackIndexOf(index)
+    if (rackIdx < 0) return
+    const id = state.queue.value[index].id
+    let idx = -1
+    jumping++
+    try { idx = await state.playlists.playIndex(state.sel, rackIdx, state.music) }
+    finally { jumping-- }
+    if (idx < 0) return
+    const real = state.queueIndexOfRack(idx, idx === rackIdx ? id : null)
+    if (real >= 0) {
+        state.currentIndex.value = real
+        state.selectedIndex.value = real
+        state.isPlaying.value = true
+    }
 }
 
 async function play(index?: number) {
-  await state.prime()
-  // Shown in two places (instance 'global'): the other copy's unmount may have
-  // unbound the shared queue from the element (no job yet): bind it again.
-  state.playlists.bindToHandle(state.sel, state.music)
-  state.isLoading.value = true
+    await state.prime()
+    // Shown in two places (instance 'global'): the other copy's unmount may have
+    // unbound the shared queue from the element (no job yet): bind it again.
+    state.playlists.bindToHandle(state.sel, state.music)
+    state.isLoading.value = true
 
-  if (typeof index === 'number') {
-    try { await playQueueIndex(index) } finally { state.isLoading.value = false }
-    return
-  }
-
-  if (state.currentIndex.value === -1) {
-    const first = state.queue.value.findIndex(t => !!t.url)
-    if (first >= 0) {
-      try { await playQueueIndex(first) } finally { state.isLoading.value = false }
-      return
+    if (typeof index === 'number') {
+        try { await playQueueIndex(index) } finally { state.isLoading.value = false }
+        return
     }
-  }
 
-  // Nothing playable on the element (a queue restored after a restart: its stream URLs
-  // died with the last run; or its URL failed; or the current track is missing): through
-  // the playlist, which mints a new one.
-  const el = state.music as any
-  if (state.currentIndex.value >= 0 && (!el.currentSrc || el.error || el.networkState === 3)) {
-    state.isLoading.value = false
-    return play(state.currentIndex.value)
-  }
+    if (state.currentIndex.value === -1) {
+        const first = state.queue.value.findIndex(t => !!t.url)
+        if (first >= 0) {
+            try { await playQueueIndex(first) } finally { state.isLoading.value = false }
+            return
+        }
+    }
 
-  try { await state.music.play(); state.isPlaying.value = true } catch { state.isPlaying.value = false }
-  setTimeout(() => { state.isLoading.value = false }, 300)
+    // Nothing playable on the element (a queue restored after a restart: its stream URLs
+    // died with the last run; or its URL failed; or the current track is missing): through
+    // the playlist, which mints a new one.
+    const el = state.music as any
+    if (state.currentIndex.value >= 0 && (!el.currentSrc || el.error || el.networkState === 3)) {
+        state.isLoading.value = false
+        return play(state.currentIndex.value)
+    }
+
+    try { await state.music.play(); state.isPlaying.value = true } catch { state.isPlaying.value = false }
+    setTimeout(() => { state.isLoading.value = false }, 300)
 }
 
 function pause() {
-  state.music.pause()
-  state.isPlaying.value = false
+    state.music.pause()
+    state.isPlaying.value = false
 }
 
 function togglePlay() {
-  if (!state.hasTracks.value) return
-  state.isPlaying.value ? pause() : play()
+    if (!state.hasTracks.value) return
+    state.isPlaying.value ? pause() : play()
 }
 
 // next / prev answer the rack's index: the queue's is found by the rack's current item.
 function afterRackMove(idx: number) {
-  if (idx < 0) { pause(); return }
-  const pl = state.playlists.get(state.sel)
-  const real = state.queueIndexOfRack(idx, pl?.items?.[idx]?.id)
-  if (real >= 0) {
-    state.currentIndex.value = real
-    state.selectedIndex.value = real
-  }
+    if (idx < 0) { pause(); return }
+    const pl = state.playlists.get(state.sel)
+    const real = state.queueIndexOfRack(idx, pl?.items?.[idx]?.id)
+    if (real >= 0) {
+        state.currentIndex.value = real
+        state.selectedIndex.value = real
+    }
 }
 
 function next() {
-  state.playlists.next(state.sel, state.music).then(afterRackMove)
+    state.playlists.next(state.sel, state.music).then(afterRackMove)
 }
 
 function prev() {
-  state.playlists.prev(state.sel, state.music).then(afterRackMove)
+    state.playlists.prev(state.sel, state.music).then(afterRackMove)
 }
 
 function seek(e: Event) {
-  if (!state.duration.value) return
-  const v = parseFloat((e.target as HTMLInputElement).value)
-  state.music.currentTime = v * state.duration.value
+    if (!state.duration.value) return
+    const v = parseFloat((e.target as HTMLInputElement).value)
+    state.music.currentTime = v * state.duration.value
 }
 
 function adjustSpeed(delta: number) {
-  const newRate = Math.max(0.25, Math.min(3.0, state.playbackRate.value + delta))
-  state.playbackRate.value = newRate
-  applyPlaybackRate()
+    const newRate = Math.max(0.25, Math.min(3.0, state.playbackRate.value + delta))
+    state.playbackRate.value = newRate
+    applyPlaybackRate()
 }
 
 function applyPlaybackRate() {
-  const r = Number(state.playbackRate.value ?? 1)
-  // defaultPlaybackRate helps survive source changes in some browsers / flows
-  ;(state.music as any).defaultPlaybackRate = r
-  state.music.playbackRate = r
+    const r = Number(state.playbackRate.value ?? 1)
+        // defaultPlaybackRate helps survive source changes in some browsers / flows
+        ; (state.music as any).defaultPlaybackRate = r
+    state.music.playbackRate = r
 }
 
 function setVolume(v: number) {
-  const clamped = Math.min(1, Math.max(0, v))
-  state.volume.value = clamped
-  if (clamped > 0) state.lastNonZeroVolume.value = clamped
-  state.music.volume = clamped
+    const clamped = Math.min(1, Math.max(0, v))
+    state.volume.value = clamped
+    if (clamped > 0) state.lastNonZeroVolume.value = clamped
+    state.music.volume = clamped
 }
 
 function toggleMute() {
-  setVolume(state.volume.value > 0 ? 0 : state.lastNonZeroVolume.value || 0.5)
+    setVolume(state.volume.value > 0 ? 0 : state.lastNonZeroVolume.value || 0.5)
 }
 
 function volInput(v: number) {
-  setVolume(v)
+    setVolume(v)
 }
 
 function toggleShuffle() {
-  state.shuffle.value = !state.shuffle.value
-  state.playlists.setOptions(state.sel, { shuffle: state.shuffle.value })
+    state.shuffle.value = !state.shuffle.value
+    state.playlists.setOptions(state.sel, { shuffle: state.shuffle.value })
 }
 
 function toggleRepeat() {
-  state.repeat.value = state.repeat.value === 'off' ? 'all' : state.repeat.value === 'all' ? 'one' : 'off'
-  state.playlists.setOptions(state.sel, { repeat: state.repeat.value })
+    state.repeat.value = state.repeat.value === 'off' ? 'all' : state.repeat.value === 'all' ? 'one' : 'off'
+    state.playlists.setOptions(state.sel, { repeat: state.repeat.value })
 }
 
 async function clickPick() {
-  // The host's file dialog: audio files and playlists (.m3u / .m3u8).
-  await playlist.openViaDialog()
+    // The host's file dialog: audio files and playlists (.m3u / .m3u8).
+    await playlist.openViaDialog()
 }
 
 function toggleQueue() {
-  showQueue.value = !showQueue.value
+    showQueue.value = !showQueue.value
 }
 
 // ===== QUEUE RENAME =====
 // The layout's ✎ opens the shell's rename box over the queue's head; the name arrives here.
 function renameQueue(name: string) {
-  const v = name.trim()
-  if (v) state.queueName.value = v
+    const v = name.trim()
+    if (v) state.queueName.value = v
 }
 
 // ===== ROW INTERACTIONS =====
 async function onRowDblClick(track: any) {
-  if (dnd.isDragging.value) return
-  const realIdx = state.queue.value.findIndex(t => t.id === track.id)
-  if (realIdx >= 0) await play(realIdx)
+    if (dnd.isDragging.value) return
+    const realIdx = state.queue.value.findIndex(t => t.id === track.id)
+    if (realIdx >= 0) await play(realIdx)
 }
 
 function onRowClick(index: number) {
-  keyboard.selectRow(index)
+    keyboard.selectRow(index)
 }
 
 // ===== DRAG & DROP (FILES) =====
@@ -535,105 +535,105 @@ async function onDrop(e: DragEvent) {
 const onMediaPlay = () => { applyPlaybackRate(); state.isPlaying.value = true; ensurePlaybackJob() }
 const onMediaPause = () => { state.isPlaying.value = false; checkpointPlayback() }
 const onTimeUpdate = async () => {
-  state.currentTime.value = state.music.currentTime || 0
-  checkpointPlayback()
+    state.currentTime.value = state.music.currentTime || 0
+    checkpointPlayback()
 }
 
 const onLoadedMeta = (e: Event) => {
-  applyPlaybackRate()
-  const t = e.target as HTMLMediaElement | null
-  const raw = t?.duration ?? state.music.duration
-  const dur = Number.isFinite(raw) ? raw : 0
+    applyPlaybackRate()
+    const t = e.target as HTMLMediaElement | null
+    const raw = t?.duration ?? state.music.duration
+    const dur = Number.isFinite(raw) ? raw : 0
 
-  state.duration.value = dur
+    state.duration.value = dur
 
-  // ✅ Persist duration onto the current track so the list can show it
-  const curId = state.current.value?.id
-  if (curId) {
-    const tr = state.queue.value.find(x => x.id === curId)
-    if (tr) tr.duration = dur
-  } else {
-    const idx = state.currentIndex.value
-    const tr = idx >= 0 ? state.queue.value[idx] : null
-    if (tr) tr.duration = dur
-  }
+    // ✅ Persist duration onto the current track so the list can show it
+    const curId = state.current.value?.id
+    if (curId) {
+        const tr = state.queue.value.find(x => x.id === curId)
+        if (tr) tr.duration = dur
+    } else {
+        const idx = state.currentIndex.value
+        const tr = idx >= 0 ? state.queue.value[idx] : null
+        if (tr) tr.duration = dur
+    }
 }
 
 
 const onVolumeChange = () => {
-  const v = state.music.volume
-  if (v !== state.volume.value) {
-    state.volume.value = v
-    if (v > 0) state.lastNonZeroVolume.value = v
-  }
+    const v = state.music.volume
+    if (v !== state.volume.value) {
+        state.volume.value = v
+        if (v > 0) state.lastNonZeroVolume.value = v
+    }
 }
 
 function hydrateFromHandle() {
-  // Back while the job played on: the rack may have moved to another track meanwhile.
-  if (jobs.current('playback')) {
-    const pl = state.playlists.get(state.sel)
-    const item = pl && pl.currentIdx >= 0 ? pl.items[pl.currentIdx] : null
-    const real = item ? state.queue.value.findIndex(t => t.id === item.id) : -1
-    if (real >= 0) {
-      state.currentIndex.value = real
-      state.selectedIndex.value = real
+    // Back while the job played on: the rack may have moved to another track meanwhile.
+    if (jobs.current('playback')) {
+        const pl = state.playlists.get(state.sel)
+        const item = pl && pl.currentIdx >= 0 ? pl.items[pl.currentIdx] : null
+        const real = item ? state.queue.value.findIndex(t => t.id === item.id) : -1
+        if (real >= 0) {
+            state.currentIndex.value = real
+            state.selectedIndex.value = real
+        }
     }
-  }
-  state.volume.value = state.music.volume
-  if (state.volume.value > 0) state.lastNonZeroVolume.value = state.volume.value
-  state.isPlaying.value = !state.music.paused
-  state.currentTime.value = state.music.currentTime || 0
-  state.duration.value = state.music.duration || 0
+    state.volume.value = state.music.volume
+    if (state.volume.value > 0) state.lastNonZeroVolume.value = state.volume.value
+    state.isPlaying.value = !state.music.paused
+    state.currentTime.value = state.music.currentTime || 0
+    state.duration.value = state.music.duration || 0
 }
 
 // ===== LIFECYCLE =====
 let resizeObserver: ResizeObserver | null = null
 
 onMounted(async () => {
-  console.log('[local-player] mounted with sourceId:', props.sourceId)
-  state.music.addEventListener('play', onMediaPlay)
-  state.music.addEventListener('pause', onMediaPause)
-  state.music.addEventListener('timeupdate', onTimeUpdate)
-  state.music.addEventListener('loadedmetadata', onLoadedMeta as any)
-  state.music.addEventListener('volumechange', onVolumeChange)
-  state.music.addEventListener('error', onMediaError)
-  state.music.addEventListener('rack:playlistindex', onRackIndex as EventListener)
+    console.log('[local-player] mounted with sourceId:', props.sourceId)
+    state.music.addEventListener('play', onMediaPlay)
+    state.music.addEventListener('pause', onMediaPause)
+    state.music.addEventListener('timeupdate', onTimeUpdate)
+    state.music.addEventListener('loadedmetadata', onLoadedMeta as any)
+    state.music.addEventListener('volumechange', onVolumeChange)
+    state.music.addEventListener('error', onMediaError)
+    state.music.addEventListener('rack:playlistindex', onRackIndex as EventListener)
 
-  state.playlists.register(state.sel, state.toPlaylistItems(), {
-    autoNext: 'linear',
-    repeat: state.repeat.value,
-    shuffle: state.shuffle.value,
-    dedupe: false
-  })
-  state.playlists.setItems(state.sel, state.toPlaylistItems(), { keepCurrent: true })
-  state.playlists.bindToHandle(state.sel, state.music)
-  bindHeaderStatus()
+    state.playlists.register(state.sel, state.toPlaylistItems(), {
+        autoNext: 'linear',
+        repeat: state.repeat.value,
+        shuffle: state.shuffle.value,
+        dedupe: false
+    })
+    state.playlists.setItems(state.sel, state.toPlaylistItems(), { keepCurrent: true })
+    state.playlists.bindToHandle(state.sel, state.music)
+    bindHeaderStatus()
 
-  await nextTick()
-  seedMeasureNow()
-  resizeObserver = new ResizeObserver((entries) => {
-    const e = entries[0]
-    const w = 'contentBoxSize' in e && e.contentBoxSize
-      ? (Array.isArray(e.contentBoxSize) ? e.contentBoxSize[0].inlineSize : e.contentBoxSize.inlineSize)
-      : e.contentRect.width
-    scheduleWidth(Math.round(w), 'ro')
-  })
-  if (widgetRootEl.value) resizeObserver.observe(widgetRootEl.value)
+    await nextTick()
+    seedMeasureNow()
+    resizeObserver = new ResizeObserver((entries) => {
+        const e = entries[0]
+        const w = 'contentBoxSize' in e && e.contentBoxSize
+            ? (Array.isArray(e.contentBoxSize) ? e.contentBoxSize[0].inlineSize : e.contentBoxSize[0].inlineSize)
+            : e.contentRect.width
+        scheduleWidth(Math.round(w), 'ro')
+    })
+    if (widgetRootEl.value) resizeObserver.observe(widgetRootEl.value)
 
-  hydrateFromHandle()
+    hydrateFromHandle()
 
-  applyPlaybackRate()
+    applyPlaybackRate()
 
-  // Tracks without a known length (a queue restored, added before durations were read).
-  void playlist.probeDurations()
+    // Tracks without a known length (a queue restored, added before durations were read).
+    void playlist.probeDurations()
 
-  on('dnd:drop', async (msg: any) => {
-      if (msg.payload?.zone !== 'queue') return
-      const payload = msg.payload?.data
-      if (payload?.type === 'gex/file-refs' || payload?.type === 'gex/file-selection') await handleDrop(payload)
-  })
-  // 'widget:action' (context menu: Play / Enqueue) comes through the host, which calls
-  // the exposed onWidgetAction below: listening to it here too ran each action twice.
+    on('dnd:drop', async (msg: any) => {
+        if (msg.payload?.zone !== 'queue') return
+        const payload = msg.payload?.data
+        if (payload?.type === 'gex/file-refs' || payload?.type === 'gex/file-selection') await handleDrop(payload)
+    })
+    // 'widget:action' (context menu: Play / Enqueue) comes through the host, which calls
+    // the exposed onWidgetAction below: listening to it here too ran each action twice.
 })
 
 
@@ -663,64 +663,64 @@ async function onWidgetAction(msg: any) {
 
 /** Right-click on a queue row: the track's menu (the row gets selected, so it shows what the menu is about). */
 function onTrackMenu(t: Track, e: MouseEvent) {
-  const idx = state.queue.value.findIndex(x => x.id === t.id)
-  if (idx >= 0) state.selectedIndex.value = idx
-  void ui.contextMenu(e, {
-    context: 'player.track',
-    ref: t.id,
-    selection: t.sourcePath ? [t.sourcePath] : [],
-    widgetConfig: props.config,
-  })
+    const idx = state.queue.value.findIndex(x => x.id === t.id)
+    if (idx >= 0) state.selectedIndex.value = idx
+    void ui.contextMenu(e, {
+        context: 'player.track',
+        ref: t.id,
+        selection: t.sourcePath ? [t.sourcePath] : [],
+        widgetConfig: props.config,
+    })
 }
 
 /** Right-click anywhere else on the player: its menu (Add files…, playlists, Clear, Layout). */
 function onPlayerMenu(e: MouseEvent) {
-  void ui.contextMenu(e, { context: 'player.background', widgetConfig: props.config })
+    void ui.contextMenu(e, { context: 'player.background', widgetConfig: props.config })
 }
 
 /** One of this widget's menu items was chosen (the host calls it: defineExpose below). */
 async function onMenuItem(m: WidgetMenuItemMessage) {
-  const index = m.ref ? state.queue.value.findIndex(t => t.id === m.ref) : -1
-  switch (m.itemId) {
-    // Track menu (the track may be gone since the menu opened: then nothing happens)
-    case 'play':    if (index >= 0) await playQueueIndex(index); break
-    case 'remove':  if (index >= 0) await playlist.removeAt(index); break
-    case 'replace': if (m.ref) await playlist.replaceItem(m.ref); break
-    // Player menu
-    case 'add':     await playlist.openViaDialog(); break
-    case 'open':    await playlist.openPlaylistViaDialog(); break
-    case 'save':    await playlist.savePlaylist(); break
-    case 'clear':   await playlist.confirmClearQueue(); break
-    default: console.warn('[local-player] unknown menu item', m.itemId)
-  }
+    const index = m.ref ? state.queue.value.findIndex(t => t.id === m.ref) : -1
+    switch (m.itemId) {
+        // Track menu (the track may be gone since the menu opened: then nothing happens)
+        case 'play': if (index >= 0) await playQueueIndex(index); break
+        case 'remove': if (index >= 0) await playlist.removeAt(index); break
+        case 'replace': if (m.ref) await playlist.replaceItem(m.ref); break
+        // Player menu
+        case 'add': await playlist.openViaDialog(); break
+        case 'open': await playlist.openPlaylistViaDialog(); break
+        case 'save': await playlist.savePlaylist(); break
+        case 'clear': await playlist.confirmClearQueue(); break
+        default: console.warn('[local-player] unknown menu item', m.itemId)
+    }
 }
 
 onBeforeUnmount(() => {
-  if (rafForWidth) cancelAnimationFrame(rafForWidth)
-  resizeObserver?.disconnect()
+    if (rafForWidth) cancelAnimationFrame(rafForWidth)
+    resizeObserver?.disconnect()
 
-  state.music.removeEventListener('play', onMediaPlay)
-  state.music.removeEventListener('pause', onMediaPause)
-  state.music.removeEventListener('timeupdate', onTimeUpdate)
-  state.music.removeEventListener('loadedmetadata', onLoadedMeta as any)
-  state.music.removeEventListener('volumechange', onVolumeChange)
-  state.music.removeEventListener('error', onMediaError)
-  state.music.removeEventListener('rack:playlistindex', onRackIndex as EventListener)
+    state.music.removeEventListener('play', onMediaPlay)
+    state.music.removeEventListener('pause', onMediaPause)
+    state.music.removeEventListener('timeupdate', onTimeUpdate)
+    state.music.removeEventListener('loadedmetadata', onLoadedMeta as any)
+    state.music.removeEventListener('volumechange', onVolumeChange)
+    state.music.removeEventListener('error', onMediaError)
+    state.music.removeEventListener('rack:playlistindex', onRackIndex as EventListener)
 
-  stopWhenPending()
-  // While the playback job runs, the rack keeps going through the queue without us.
-  if (!jobs.current('playback')) state.playlists.unbind(state.sel)
-  cleanup() 
+    stopWhenPending()
+    // While the playback job runs, the rack keeps going through the queue without us.
+    if (!jobs.current('playback')) state.playlists.unbind(state.sel)
+    cleanup()
 })
-  /** One of entry.ts's commands, by its key (the host calls it while the player has the user's focus). */
-  function onCommand(id: string) {
+/** One of entry.ts's commands, by its key (the host calls it while the player has the user's focus). */
+function onCommand(id: string) {
     if (id === 'play-pause') togglePlay()
     else if (id === 'next-track') { if (state.canNext.value) next() }
     else if (id === 'previous-track') { if (state.canPrev.value) prev() }
     else if (id === 'remove-track') keyboard.removeSelected()
-  }
+}
 
-  defineExpose({ onWidgetAction, onMenuItem, onCommand })
+defineExpose({ onWidgetAction, onMenuItem, onCommand })
 </script>
 
 <template>

@@ -823,6 +823,12 @@ declare module 'gexplorer/widgets' {
         /** For each packaging rule found: what it means and the fix. */
         notes: string[]
         ms: number
+        /**
+         * GEM Shell 2026-11-08: a dev run's source map (a build with { project } only): esbuild's map of index.js (its
+         * sources: '../src/<path>', node_modules' under '…/node_modules/'), the lines put before esbuild's first one,
+         * and each .vue file's compiled module (a .vue file's positions in the map are its compiled module's).
+         */
+        sourceMap?: { map: string; lineOffset: number; compiled: Record<string, string> }
     }
     export type DevRunResult =
         | { ok: true; type: string; build: number; reopened: number }
@@ -830,11 +836,15 @@ declare module 'gexplorer/widgets' {
     export type WidgetDev = {
         /**
          * The packaging check, the .vue files compiled, the bundle made by GEM Shell's esbuild: the starter's build,
-         * in GEM Shell. Only the project's files, vue and gexplorer/widgets (npm packages: later). 300 files, 8 MB.
+         * in GEM Shell. Only the project's files, vue and gexplorer/widgets (and, with packagesFrom, its npm packages). 300 files, 8 MB.
          * { project } (GEM Shell 2026-11-07): a build to run(): its id becomes 'dev-<project>', its name
          * "<name> (being edited)". Without it: the widget as it will be installed.
          */
-        build(files: DevFile[], options?: { project?: string }): Promise<DevBuildResult>
+        /**
+         * GEM Shell 2026-11-07: options.packagesFrom, the project's folder: its npm packages (node_modules, filled by
+         * packages()) are bundled, their licences added to the notices. Without it, an npm import is an error.
+         */
+        build(files: DevFile[], options?: { project?: string; packagesFrom?: string }): Promise<DevBuildResult>
         /**
          * GEM Shell 2026-11-07: a { project } build's bundle run as widget 'dev-<project>' (its own identity,
          * 'dev:<project>': its permissions are asked as for any widget and last while GEM Shell runs, or until end()).
@@ -842,14 +852,16 @@ declare module 'gexplorer/widgets' {
          */
         run(project: string, code: string): Promise<DevRunResult>
         /** The project in a window of its own: right after the user's own click or key press in GEM Forge. */
-        openWindow(project: string): Promise<{ ok: true } | { ok: false; error: string }>
+        openWindow(project: string, options?: { title?: string }): Promise<{ ok: true } | { ok: false; error: string }>
         /** The project's bundle and permissions gone (done for you when this copy of GEM Forge is removed). */
         end(project: string): Promise<{ ok: boolean; error?: string }>
         /**
          * GEM Shell 2026-11-07: a project you ran, shown by GEM Shell over <el> (an element of your own box) in a real
          * placement: its own copy with context 'grid' (default: el's size), 'sidebar' (a column, 280 px at most) or
          * 'toolbar' (a 36 px strip). It follows el, is clipped to your box, and remounts on every run(). You never
-         * touch its DOM; your menus and popovers draw above it.
+         * touch its DOM; your menus and popovers draw above it. GEM Shell 2026-11-07: <el> may also be in one of your own
+         * windows (sdk.ui().openWindow): drawn just above that window, clipped to it. openWindow's { title }: after the
+         * project's name in the window's header and on its card in the operations tray.
          */
         preview(el: HTMLElement, project: string, options?: DevPreviewOptions): Promise<{ ok: true; preview: DevPreviewHandle } | { ok: false; error: string }>
         /** What the projects you ran write to the console, and their uncaught errors. Returns the release. */
@@ -877,7 +889,108 @@ declare module 'gexplorer/widgets' {
          * GEM Shell restarts.
          */
         uninstall?(type: string): Promise<DevUninstallResult>
+        /**
+         * GEM Shell 2026-11-07: a project's npm packages, by the npm of Node.js on the computer (in <folder>: its
+         * package.json, its node_modules). 'version': Node's and npm's versions (no question). 'install' (what
+         * package.json lists), 'add' (names, or name@version: saved in package.json), 'remove': right after the user's
+         * click or key press, after GEM Shell's question and the folder's Write grant. Install scripts never run.
+         */
+        packages?(op: DevPackagesOp, folder?: string, names?: string[]): Promise<DevPackagesResult>
+        /**
+         * GEM Shell 2026-11-07: TypeScript over the project's files, in the page (loaded the first time: a few MB, once
+         * per GEM Shell run). sync() the files (unsaved edits included) before asking; offsets are the file's own
+         * (in a .vue file: its <script> blocks are read, the template isn't). Disposed with this copy of GEM Forge.
+         */
+        language?(): Promise<{ ok: true; service: DevLanguageService } | { ok: false; error: string }>
+        /**
+         * GEM Shell 2026-11-08: Prettier in the page (loaded the first time: about 2 MB, once per GEM Shell run). Texts
+         * in, texts out: no file is read or written. The parser comes from the path's extension; options: Prettier's
+         * formatting options only (endOfLine 'auto' unless given).
+         */
+        prettier?(): Promise<{ ok: true; service: DevPrettierService } | { ok: false; error: string }>
     }
+    export type DevPrettierOptions = {
+        printWidth?: number; tabWidth?: number; useTabs?: boolean; semi?: boolean; singleQuote?: boolean
+        jsxSingleQuote?: boolean; quoteProps?: 'as-needed' | 'consistent' | 'preserve'
+        trailingComma?: 'all' | 'es5' | 'none'; bracketSpacing?: boolean; bracketSameLine?: boolean
+        objectWrap?: 'preserve' | 'collapse'; arrowParens?: 'always' | 'avoid'; proseWrap?: 'always' | 'never' | 'preserve'
+        htmlWhitespaceSensitivity?: 'css' | 'strict' | 'ignore'; vueIndentScriptAndStyle?: boolean
+        endOfLine?: 'lf' | 'crlf' | 'cr' | 'auto'; singleAttributePerLine?: boolean; experimentalTernaries?: boolean
+    }
+    /** Prettier couldn't read the text (a syntax error: 1-based line and column when known). */
+    export type DevPrettierError = { ok: false; error: string; line?: number; column?: number }
+    /** GEM Shell 2026-11-08: sdk.dev().prettier()'s service. */
+    export type DevPrettierService = {
+        /** Prettier's version (GEM Shell's). */
+        version: string
+        /** Whether Prettier formats this kind of file (.ts .js .vue .css .scss .less .html .md .json .yaml…). */
+        supports(path: string): boolean
+        /** The file <path>'s text formatted. */
+        format(path: string, text: string, options?: DevPrettierOptions): Promise<{ ok: true; text: string } | DevPrettierError>
+        /** Whether the text is formatted already (Prettier's --check). */
+        check(path: string, text: string, options?: DevPrettierOptions): Promise<{ ok: true; formatted: boolean } | DevPrettierError>
+    }
+    export type DevPackagesOp = 'version' | 'install' | 'add' | 'remove'
+    export type DevPackagesResult =
+        | { ok: true; node?: string; npm?: string; output?: string }
+        | { ok: false; error: string; code?: string; output?: string; cancelled?: boolean }
+    /** GEM Shell 2026-11-07: sdk.dev().language()'s service (TypeScript). Paths relative, with /; offsets in the file's text. */
+    export type DevLanguageService = {
+        /** TypeScript's version. */
+        readonly version: string
+        /**
+         * The project's files as they are now (.ts .js .vue .json .d.ts; 300 files, 2 MB each, 8 MB in all). aliases:
+         * a module name and the project file it is ('gexplorer/widgets' -> 'widgets-sdk.d.ts'); untyped: npm packages
+         * whose imports are any. packages (GEM Shell 2026-11-08): the npm packages' own types read from node_modules
+         * ('node_modules/<name>/….d.ts' and package.json; 4000 files, 32 MB; the same array again: not read again).
+         */
+        sync(files: { path: string; text: string }[], options?: { aliases?: Record<string, string>; untyped?: string[]; packages?: { path: string; text: string }[] }): { ok: boolean; error?: string }
+        completions(path: string, offset: number): { isMember: boolean; items: DevCompletion[] } | null
+        /** 2026-11-08: edits: an auto-import's import to add (an item with module). */
+        completionDetails(path: string, offset: number, item: DevCompletion): { detail: string; documentation: string; edits?: DevLanguageEdit[] } | null
+        hover(path: string, offset: number): { from: number; to: number; text: string; documentation: string } | null
+        /** TypeScript's problems in the file (syntax and types), as you type. */
+        problems(path: string): DevLanguageProblem[]
+        /** Where the name at offset is declared: a project file (path), or outside it (external: 'lib.dom.d.ts', 'vue'). */
+        definition(path: string, offset: number): { path?: string; external?: string; from: number; to: number }[]
+        /** GEM Shell 2026-11-08: TypeScript's formatting (indentation, spaces; quotes and semicolons as written): edits
+         *  on the file's text, in order (apply them from the last one to the first). A .vue file: inside its scripts only. */
+        format?(path: string, options?: { indent?: number; tabs?: boolean }): { from: number; to: number; text: string }[]
+        /** GEM Shell 2026-11-08: whether the name at offset can be renamed (its name and place), or why not. */
+        renameInfo?(path: string, offset: number): { ok: true; name: string; from: number; to: number } | { ok: false; error: string }
+        /** GEM Shell 2026-11-08: the edits renaming it in the project's files (a .vue file's scripts; its template: yours). */
+        rename?(path: string, offset: number, newName: string): { ok: true; edits: DevLanguageEdit[] } | { ok: false; error: string }
+        /** GEM Shell 2026-11-08: its references in the project's files (its declaration marked). */
+        references?(path: string, offset: number): { path: string; from: number; to: number; definition: boolean }[]
+        /** GEM Shell 2026-11-08: the call's signatures around offset (while typing its arguments). */
+        signature?(path: string, offset: number): DevSignatureHelp | null
+        /** GEM Shell 2026-11-08: the packages' type files still being prepared (parsed between frames); 0: ready. */
+        preparing?(): number
+        dispose(): void
+    }
+    /** GEM Shell 2026-11-08: a change in one of the project's files (offsets in its text). */
+    export type DevLanguageEdit = { path: string; from: number; to: number; text: string }
+    /** GEM Shell 2026-11-08: signature help; parameter: the argument the cursor is in. */
+    export type DevSignatureHelp = {
+        active: number
+        parameter: number
+        items: { prefix: string; parameters: { text: string; documentation: string }[]; separator: string; suffix: string; documentation: string }[]
+    }
+    export type DevCompletion = {
+        name: string
+        /** GEM Shell 2026-11-08: another module's export (an auto-import): completionDetails' edits add its import. */
+        module?: string
+        /** TypeScript's kind: 'method', 'property', 'function', 'var', 'keyword'… */
+        kind: string
+        modifiers: string
+        sort: string
+        insert?: string
+        /** The range the completion replaces, when not the word before the cursor. */
+        replace?: { from: number; to: number }
+        source?: string
+        data?: unknown
+    }
+    export type DevLanguageProblem = { from: number; to: number; severity: 'error' | 'warning' | 'info'; text: string; code: number }
     export type DevInstalledState = 'yours' | 'builtin' | 'none'
     export type DevUninstallResult = { ok: true; removed: boolean } | { ok: false; error: string; cancelled?: boolean }
     export type DevChange = { path: string; kind: 'created' | 'changed' | 'deleted' }
@@ -3433,7 +3546,24 @@ declare module 'gexplorer/widgets' {
          *   ui.setDraft({ dirty: () => changed.value, save: () => saveAll(), discard: () => revert() })
          */
         setDraft?(draft: WidgetPlacedDraft | null): boolean
+        /**
+         * NEW (GEM Shell 2026-11-07): the user's naming pattern for a taken name (Settings ▸ New items: "a (2).txt",
+         * "a (Copy 2).txt", a timestamp…), as GEM Shell applies it. No capability.
+         */
+        namingPattern?(): Promise<NamingToken[]>
+        /**
+         * NEW (GEM Shell 2026-11-07): a hub's grid as the user has it: columns (12), rows in the visible height
+         * (Settings ▸ Layout), the gap between cells in px. No capability.
+         */
+        hubGrid?(): { columns: number; rows: number; gap: number }
     }
+
+    /** NEW (GEM Shell 2026-11-07): a naming pattern's parts (timestamp: a .NET date format, e.g. "yyyy-MM-dd HH'h'mm"). */
+    export type NamingToken =
+        | { type: 'basename' }
+        | { type: 'literal'; value: string }
+        | { type: 'increment'; start?: number }
+        | { type: 'timestamp'; format: string }
 
     /** NEW (GEM Shell 2026-11-07): what sdk.ui().setDraft takes. */
     export type WidgetPlacedDraft = {
@@ -3886,7 +4016,9 @@ declare module 'gexplorer/widgets' {
      * leave no key to leave or move the focus are cut ("Focus the next pane" keeps its keys). At most 32.
      * NEW (GEM Shell 2026-11-07), with the Develop capability (an editor: GEM Forge): a claimed key that is one of
      * GEM Shell's commands (Ctrl+S, Alt+Up) may be a default key of your command marked whileTyping; it runs your
-     * command only while the user types in your widget, and stays the shell's everywhere else. Never claimable: Esc,
+     * command only while the user types in your widget, and stays the shell's everywhere else. GEM Shell 2026-11-08:
+     * it may also be the default of a command NOT marked whileTyping (F2 on your list's item, Delete): it runs while the
+     * user's focus is in your widget and they aren't typing there. Never claimable: Esc,
      * F1, F6, Shift+F6, Ctrl+W, Ctrl+T, Ctrl+Shift+T, Ctrl+(Shift+)Tab, Ctrl+(Shift+)PageUp / PageDown, Alt+F4.
      */
     export type WidgetKeyboardDecl = { claims: string[] }
