@@ -1,0 +1,6 @@
+{
+  "name": "skin-file",
+  "version": "1.0.0",
+  "licence": "PolyForm-Noncommercial-1.0.0",
+  "description": "The common .gemskin compatibility header and friendly family checks."
+}

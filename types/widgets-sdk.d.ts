@@ -1132,6 +1132,8 @@ declare module 'gexplorer/widgets' {
     export type WidgetSettingField =
         | (WidgetSettingBase & { type: 'toggle'; default?: boolean })
         | (WidgetSettingBase & { type: 'choice'; choices: Array<{ value: string | number; label: string }>; default?: string | number })
+        /** A dynamic choice of widget types currently providing an extension point. */
+        | (WidgetSettingBase & { type: 'provider'; point: string; default?: string; automaticLabel?: string; builtinLabel?: string })
         | (WidgetSettingBase & { type: 'number'; min?: number; max?: number; step?: number; unit?: string; slider?: boolean; default?: number })
         | (WidgetSettingBase & { type: 'text'; maxLength?: number; placeholder?: string; default?: string })
         | (WidgetSettingBase & { type: 'path'; kind?: 'folder' | 'file' | 'any'; default?: string })
@@ -1277,7 +1279,8 @@ declare module 'gexplorer/widgets' {
     // ── Messaging ──────────────────────────────────────────────────────────
 
     export type ScopedMessaging = {
-        send: (to: string, topic: string, payload?: any) => void
+        /** Omit the target to broadcast; the shell still seals this instance as the sender. */
+        send: (to: string | undefined, topic: string, payload?: any) => void
         on: (topic: string, handler: (msg: any) => void) => () => void
         cleanup: () => void
     }
@@ -1702,7 +1705,12 @@ declare module 'gexplorer/widgets' {
     // ── Slot providers ─────────────────────────────────────────────────────
 
     export type SlotProvider = {
-        id: string
+        /** Widget type that registered this provision. */
+        widgetType: string
+        /** Stable widgetType + point key. */
+        key: string
+        /** Legacy alias used by older providers. */
+        id?: string
         label?: string
         component?: any
         props?: Record<string, any>
@@ -3041,7 +3049,8 @@ declare module 'gexplorer/widgets' {
         /**
          * After a crash, a lost window or the end of the session: 'none' (default), 'ask' (a card
          * asks: Open and resume / Resume when opened / Discard), 'resume' (resumed when the widget
-         * is opened). Get it back with jobs().whenPending(kind, fn).
+         * is opened). Get it back with jobs().whenPending(kind, fn). A normal app close still ends
+         * the journal unless restartOnLaunch is enabled.
          */
         recovery?: 'none' | 'ask' | 'resume'
         /** The version of what checkpoint() saves (default 0). */
@@ -3050,14 +3059,16 @@ declare module 'gexplorer/widgets' {
         onNewVersion?: 'restart' | 'migrate'
         /** Recoverable only when the user keeps widgets' state after a restart (the job needs it). */
         requiresRestore?: boolean
+        /** Keep this recoverable job across a normal app close and reclaim it automatically at the next launch. Requires `recovery: 'resume'` and a card. */
+        restartOnLaunch?: boolean
         /** Closing GEM Shell ends it without a question: false only for now. */
         blocksClose?: false
     }
     export interface WidgetJob {
         readonly id: string
         readonly kind: string
-        /** The title in the card's frame. */
-        update(patch: { title?: string }): void
+        /** Updates the card title and, while relevant, a reason to confirm before quitting GEM Shell. */
+        update(patch: { title?: string; closeWarning?: string | null }): void
         /**
          * Keeps a handle from this instance's sdk.audio() or sdk.video() alive until the job ends,
          * then releases it (a held video keeps playing, parked, while the widget is unmounted).

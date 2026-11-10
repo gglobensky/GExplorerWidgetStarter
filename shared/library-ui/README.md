@@ -92,6 +92,9 @@ All of them are generic over your item type (`<script setup generic="T extends L
 
 ## History
 
+- **3.8.0 (2026-11-09):** exported `.gemskin` files identify their compatibility family (`library-store`) through
+  the shared GEM skin header. Old headerless library skins still load; another widget family's skin is identified by
+  name instead of reported as corrupt. The extension remains `.gemskin` for every widget.
 - **3.7.1 (2026-11-02):** the showroom's shelves are level across racks: when some rack's rows have labels (the
   Video Club's series and sets), every row keeps the label's room, empty shelves included ("Continue watching" sat
   higher than the genres).

@@ -1,0 +1,6 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "allowImportingTsExtensions": true, "noEmit": true },
+  "include": ["./**/*.ts", "./**/*.vue", "../../shared/**/*.ts", "../../shared/**/*.vue", "../../types/**/*.d.ts"],
+  "exclude": ["./tests", "../../shared/**/tests"]
+}

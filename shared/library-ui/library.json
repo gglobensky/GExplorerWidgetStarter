@@ -1,6 +1,6 @@
 {
   "name": "library-ui",
-  "version": "3.7.1",
+  "version": "3.8.0",
   "licence": "PolyForm-Noncommercial-1.0.0",
   "description": "The media libraries' look: the item core, boxes in the style of their kind, shelves, the store floor, the store detail (Video Club, Game Library)."
 }

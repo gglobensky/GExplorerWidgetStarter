@@ -16,6 +16,25 @@
 // characters, so a shared skin can't load anything from the network or break out of its declaration. Pictures in
 // skins (a wall photo) will come with GEM Shell's assets, not urls.
 
+// Kept local so library-ui's Node tests can load this file without a build-time
+// @shared alias. It implements shared/skin-file's format for the legacy library.
+const gemSkinHeader = (family: string, schema: number, targets: string[]) => ({ kind: 'gem.skin' as const, family, schema, targets })
+function readGemSkinHeader(raw: unknown): { header: { family: string; schema: number } | null } | { error: string } {
+  const h = (raw as { skin?: any } | null)?.skin
+  if (h === undefined) return { header: null }
+  if (!h || h.kind !== 'gem.skin' || typeof h.family !== 'string' || !/^[a-z][a-z0-9-]{0,47}$/.test(h.family)
+    || !Number.isInteger(h.schema) || h.schema < 1 || h.schema > 100 || !Array.isArray(h.targets)
+    || h.targets.length < 1 || h.targets.length > 20
+    || h.targets.some((target: unknown) => typeof target !== 'string' || !/^[a-z][a-z0-9-]{0,47}$/.test(target)))
+    return { error: 'This file has an invalid GEM skin compatibility header.' }
+  return { header: { family: h.family, schema: h.schema } }
+}
+function incompatibleSkinMessage(header: { family: string; schema: number } | null): string | null {
+  if (!header) return null
+  if (header.family !== 'library-store') return `This is a ${header.family === 'timepiece' ? 'Clock/Calendar' : header.family} skin, not a Game/Media Library skin.`
+  return header.schema === 1 ? null : 'This Game/Media Library skin uses a newer schema. Update the widget to load it.'
+}
+
 export const SKIN_FORMAT = 1
 
 /** What a skin may set (each becomes --skin-<key>). */
@@ -260,7 +279,7 @@ export function skinFileText(skin: LibrarySkin, pictureData: Record<string, stri
   const values: Partial<Record<SkinKey, string>> = {}
   for (const key of SKIN_KEYS) if (skin.values[key] !== undefined) values[key] = skin.values[key]
   const pictures = Object.fromEntries(Object.entries(pictureData).filter(([n, d]) => SKIN_PICTURE_NAME.test(n) && PICTURE_DATA.test(d)).slice(0, MAX_SKIN_PICTURES).map(([n, d]) => [n, { data: d }]))
-  const doc = { format: SKIN_FORMAT, id: skin.id, name: skin.name, ...(skin.author ? { author: skin.author } : {}), values, ...(Object.keys(pictures).length ? { pictures } : {}) }
+  const doc = { format: SKIN_FORMAT, skin: gemSkinHeader('library-store', 1, ['game-library', 'media-library']), id: skin.id, name: skin.name, ...(skin.author ? { author: skin.author } : {}), values, ...(Object.keys(pictures).length ? { pictures } : {}) }
   return JSON.stringify(doc, null, 2) + '\n'
 }
 
@@ -272,6 +291,10 @@ export function parseSkinFile(text: string): { skin: LibrarySkin; dropped: numbe
   if (text.length > SKIN_FILE_MAX_BYTES) return { error: 'This file is too big to be a skin.' }
   let raw: unknown
   try { raw = JSON.parse(text.replace(/^﻿/, '')) } catch { return { error: "This file isn't a skin (it isn't JSON)." } }
+  const header = readGemSkinHeader(raw)
+  if ('error' in header) return header
+  const incompatible = incompatibleSkinMessage(header.header)
+  if (incompatible) return { error: incompatible }
   if ((raw as { format?: unknown } | null)?.format !== undefined && (raw as { format?: unknown }).format !== SKIN_FORMAT)
     return { error: 'This skin was made for a newer GEM shop: update the widget to load it.' }
   const parsed = normalizeSkin({ ...(raw as object), pictures: undefined })

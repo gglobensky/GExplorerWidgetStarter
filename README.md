@@ -516,7 +516,7 @@ settings?.onChange((values, key) => { /* after the user changed one */ })
 const off = settings?.onAction('rebuild', async () => { /* the page's button */ })
 ```
 
-- Types: `toggle`, `choice` (radios up to 4, a list beyond), `number` (`slider` with min and max), `text`, `path`
+- Types: `toggle`, `choice` (radios up to 4, a list beyond), `provider` (a dynamic list from an extension point), `number` (`slider` with min and max), `text`, `path`
   (GEM Shell's path field), `color` (`#rrggbb`), `list` (of text or paths: add, remove, reorder), `keyValue`, and
   `action` (a button running your handler; enabled while a copy of your widget is open).
 - `showWhen: { key, equals | in | truthy }` shows a field only when another fits. `hint` explains it.

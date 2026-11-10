@@ -58,6 +58,9 @@ test('a file that is not a skin, or holds what a skin may not, is told apart', (
   assert.ok(!('error' in r))
   assert.deepEqual(r.skin.values, { accent: 'red' })
   assert.equal(r.dropped, 2)
+  const clock = parseSkinFile('{"format":1,"skin":{"kind":"gem.skin","family":"timepiece","schema":1,"targets":["clock","calendar"]},"id":"nixie","name":"Nixie","values":{}}')
+  assert.ok('error' in clock)
+  assert.match(clock.error, /Clock\/Calendar skin/)
 })
 
 test('new ids and copy names never clash, and every key is in the editor once', () => {
