@@ -47,6 +47,15 @@ declare module 'gexplorer/widgets' {
             caps?: string[]
         ) => Promise<{ ok: boolean; reason?: string }>
 
+        /**
+         * The new names Power Rename would give (nothing is renamed). matchPattern: a regex on the name without its
+         * extension (options.includeExtension: the whole name); '' = all, replacePattern replacing the whole name.
+         * replacePattern tokens (2026-11-12): {fs:name} (no extension) {fs:ext} (no dot: jpg) {fs:filename}
+         * {fs:parent} {fs:date_created[:format]} {fs:date_modified[:format]} (format: y M d H m s, digits, space
+         * - _ . ; default yyyy-MM-dd) {counter} {meta:<group>:<field>}; {{ and }} are a literal brace. With a
+         * matchPattern, $1 ... are its groups; a $ in a token's value stays a $. Without includeExtension the
+         * original extension is added after the result.
+         */
         renamePreview?: (
             files: string[],
             matchPattern: string,
