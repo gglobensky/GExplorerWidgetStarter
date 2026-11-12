@@ -19,7 +19,9 @@ const ARRANGES = [
 export default {
     api:     '1.0',
     id:      'items',
-    version: '0.15.0',   // 0.15.0 (2026-11-12): one selection across panes (globalSelection.ts): selecting in a pane
+    version: '0.15.1',   // 0.15.1 (2026-11-12): the selected count is anchored on its pane (GEM Shell hides it behind
+                         // the file dialog and other questions; the dialog's own shows)
+                         // 0.15.0 (2026-11-12): one selection across panes (globalSelection.ts): selecting in a pane
                          // clears the others' (focusing or scrolling clears nothing; the file dialog's apart); the
                          // count shows at the top right of the main view (GEM Shell's status tip)
                          // 0.14.0 (2026-11-05, GEM Shell H4c-6): one line per person, every line editable (GEM Shell writes

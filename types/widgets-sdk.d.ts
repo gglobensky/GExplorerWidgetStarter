@@ -2305,9 +2305,12 @@ declare module 'gexplorer/widgets' {
 
     /**
      * A tooltip shown by code in a tooltip zone (status such as "N selected").
-     * zones: the widget's choice (wins); omitted: DEFAULT_TIP_ZONES (bottom-right,
-     * later the user's choice). durationMs: hides that long after the last show /
+     * zones: the widget's choice (wins); omitted: DEFAULT_TIP_ZONES (CHANGED 2026-11-12: the top right of the
+     * main view, below the toolbar; later the user's choice). durationMs: hides that long after the last show /
      * update; omitted: until hide().
+     * anchorEl (NEW 2026-11-12): pass your widget's root. While one of GEM Shell's questions is open (the file
+     * dialog, a message box, a permission question) the tip is hidden unless its anchor is inside that question,
+     * and shows again when it closes; with no anchor it's hidden behind every question.
      */
     export type ZoneTipOptions = {
         content: string

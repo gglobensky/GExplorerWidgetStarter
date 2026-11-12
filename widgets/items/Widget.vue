@@ -755,7 +755,8 @@ function showSelectionTip(pending: boolean) {
     if (selectionTip?.visible) selectionTip.update({ content: 'Nothing selected', durationMs: SELECTION_TIP_MS })
     return
   }
-  const options = { content: pending ? 'Selecting…' : `${count.toLocaleString()} selected` }
+  // 0.15.1: anchored on this pane: behind a shell question (the file dialog) GEM Shell hides it, in one it shows
+  const options = { content: pending ? 'Selecting…' : `${count.toLocaleString()} selected`, anchorEl: rootEl.value ?? undefined }
   if (selectionTip?.visible) selectionTip.update(options)
   else selectionTip = showZoneTip(options)
 }
