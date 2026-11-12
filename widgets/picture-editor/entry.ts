@@ -1,4 +1,4 @@
-﻿// widgets/picture-editor/entry.ts
+// widgets/picture-editor/entry.ts
 //
 // GEM PICTURE EDITOR 0.1.0 (2026-11-05; PhotinoVue1 claude/paste-image-design.md round 3): GEM Shell's picture
 // editor. role 'picture-editor': it runs in a window of its own, opened by "Edit picture" (the file menu), with ONE

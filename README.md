@@ -420,6 +420,62 @@ const hasEpic = await sdk.appLinks!().available('com.epicgames.launcher')   // n
 - Results: `{ ok: true }` or `{ ok: false, reason: 'no-gesture' | 'not-declared' | 'declined' | 'not-registered' |
   'bad-argument' | 'failed', error? }`.
 
+## A web page in your widget (`Web`)
+
+Show a site's pages as the site serves them, in a frame of your widget (GEM Shell 2026-11-12): articles, a
+dashboard, a sign-in. The page runs in its own browser view, kept by GEM Shell over an element of yours; it can't
+reach GEM Shell, your widget's code or the user's files, and your widget can't read it.
+
+```ts
+capabilities: [
+  { cap: 'Web', reason: 'Shows the articles of the news sites you pick, as they publish them.',
+    domains: ['lemonde.fr', 'lesechos.fr'],   // what you show (each with its subdomains)
+    userAdded: true,                           // and sites the user adds (addDomain)
+    together: true },                          // optional: the declared domains asked in one question
+]
+```
+
+```ts
+const web = sdk.web!()
+const s = await web.surface(frameEl, { url: 'https://www.lemonde.fr/' })   // frameEl: an element you size
+if ('ok' in s) { /* not shown: s.reason, s.error */ }
+else {
+  const off = s.onNavigate(url => { address.value = url })   // your surface's own address, after every page change
+  await s.load('https://www.lemonde.fr/international/')       // one of your domains only
+  s.back(); s.forward(); s.reload()
+  // later: off(); s.dispose()   (GEM Shell disposes it with your widget too)
+}
+// A site the user picked (userAdded), from their click or key press:
+const r = await web.addDomain('lefigaro.fr')   // { ok, domain } | { ok: false, reason }
+```
+
+- **One consent per domain**, its subdomains included ("Let Bugle show pages from lemonde.fr?"). Declared domains are
+  asked the first time a surface needs them (`together: true`: all at once, with your other grouped permissions). A
+  domain the user adds is asked by `addDomain`, only right after their own click or key press in your widget
+  (`no-gesture` otherwise, in the security log). The user sees and removes them in Settings ▸ Security ▸ Permissions.
+- **Never these domains:** IP addresses, `localhost`, local-network names (`.local`, `.lan`, `.home.arpa`, a single
+  name…) and public suffixes alone (`co.uk`, `github.io`…). Nothing on the user's computer or local network loads in a
+  surface, even from an allowed page. Write domains without scheme, port or path (`lemonde.fr`, not
+  `https://lemonde.fr/`); `www.` isn't needed (subdomains are covered).
+- **The page stays on your domains.** When it goes elsewhere (a partner's link, a sign-in at accounts.google.com),
+  GEM Shell's bar asks the user above the page: "This page went to <site>" · Continue here (☐ Remember for this
+  widget) · Open in browser. Your widget can't answer it, and `load()` can't go to a site the user only continued to.
+  Links opening a new window ask "Open … in your browser?". Downloads are refused (for now).
+- **Its own profile:** cookies and sign-ins in your surfaces are your widget's, kept across restarts, never another
+  widget's.
+- **The element is yours, the page isn't.** Give `frameEl` a size (the page covers it); don't put your own content
+  over it (it would freeze the page: see below). Your widget never receives the page's content, events or title.
+- **GEM Shell's UI over a page:** menus, popovers, dialogs, the operations tray (and Edit Layout) can't draw over a
+  native view, so while one is over your frame GEM Shell shows a picture of the page instead and the live page comes
+  back after. Your own overlays (a popover over the frame) do the same. Tooltips may be drawn behind it.
+- **Keys:** while the page has focus, its keys are the page's (Ctrl+F, F5, Ctrl+C…), except GEM Shell's own shortcuts
+  (the key mapper's, with Ctrl or Alt), which still work.
+- **Out of view** (another hub, a hidden stack member): suspended at once, closed after 10 minutes and reopened at its
+  last address when it shows again: sign-ins stay, the page's state (a half-typed form) may not.
+- **Windows for now** (Linux with the port: WebKitGTK). `surface()` returns `{ ok: false }` where it isn't available.
+- Results: a surface, or `{ ok: false, reason: 'not-allowed' | 'no-gesture' | 'declined' | 'bad-argument' | 'failed',
+  error? }`. `widgets/web-test/` is a small example.
+
 ## Your size in a hub
 
 Give your limits in **pixels** (GEM Shell 2026-11-06): what your content needs, and what it can use.

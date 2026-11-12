@@ -82,6 +82,14 @@ declare module 'gexplorer/widgets' {
          */
         appLinks?: () => WidgetAppLinks
         /**
+         * 2026-11-12 ('Web' declared, with `domains` and / or `userAdded: true`): a site's pages as it serves them, in a
+         * frame kept over an element of yours (README "A web page in your widget").
+         *   const s = await sdk.web!().surface(frameEl, { url: 'https://www.lemonde.fr/' })
+         *   if (!('ok' in s)) s.onNavigate(url => ...)
+         * One consent per domain (its subdomains included); addDomain only right after the user's click or key press.
+         */
+        web?: () => WidgetWeb
+        /**
          * 2026-11-01 ('Apps' declared): the programs installed on this computer, read-only, and starting a Microsoft
          * Store app (an Xbox game) by its id.
          *   const r = await sdk.installedApps!().list()                 // asks the user once
@@ -696,6 +704,8 @@ declare module 'gexplorer/widgets' {
         | 'AppLinks'
         /** 2026-11-01: the installed programs (sdk.installedApps): the list, and starting a Store app. */
         | 'Apps'
+        /** 2026-11-12: web surfaces (sdk.web), declared with `domains` and / or `userAdded: true`. */
+        | 'Web'
         /** 2026-11-05 (H4c): change who may use files and folders, search people and groups (sdk.fsSetPermissions...). */
         | 'Permissions'
         /** 2026-11-06: console sessions (sdk.terminal): they run any command as the user. */
@@ -1089,6 +1099,33 @@ declare module 'gexplorer/widgets' {
          * launch code (Battle.net: 2 to 8 letters or digits, "Pro", "WoW", "Fen"). Same rules as open().
          */
         launch?(scheme: string, code: string): Promise<AppLinkResult>
+    }
+
+    /**
+     * 2026-11-12: sdk.web(). entry.ts: { cap: 'Web', reason: '…', domains?: string[], userAdded?: boolean, together?: boolean }.
+     * Reasons: not-allowed (not one of your domains, or a user-added one not added yet), no-gesture (addDomain without
+     * the user's click or key press), declined (the user said no, or revoked it), bad-argument (not a usable address or
+     * domain), failed.
+     */
+    export type WebReason = 'not-allowed' | 'no-gesture' | 'declined' | 'bad-argument' | 'failed'
+    export type WebResult = { ok: true } | { ok: false; reason: WebReason; error?: string }
+    export interface WebSurface {
+        /** The page shown now (its last top-level address). */
+        readonly url: string
+        /** One of your domains only (not a site the user only continued to from the bar). */
+        load(url: string): Promise<WebResult>
+        back(): void
+        forward(): void
+        reload(): void
+        /** Your surface's own address, after every page change. Returns the unsubscribe. */
+        onNavigate(cb: (url: string) => void): () => void
+        /** Ends it (GEM Shell also does when your widget's instance goes). */
+        dispose(): void
+    }
+    export interface WidgetWeb {
+        surface(el: HTMLElement, opts: { url: string }): Promise<WebSurface | { ok: false; reason: WebReason; error?: string }>
+        /** userAdded only, right after the user's click or key press in your widget: the consent dialog for that domain. */
+        addDomain(domain: string): Promise<WebResult & { domain?: string }>
     }
 
     /** One program of sdk.installedApps().list() (a desktop program's uninstall entry). */

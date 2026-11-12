@@ -232,4 +232,4 @@ export default {
 		{ cap: 'Media',     reason: 'Shows thumbnails of pictures, videos and music covers in the Media layout' },
 		{ cap: 'Permissions', reason: 'Changes who may use a file or folder, from its Properties window (asked per item)' },
 	]
-}
+}
