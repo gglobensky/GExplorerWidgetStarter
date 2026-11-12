@@ -62,6 +62,7 @@ import ItemsGridLayout from './ItemsGridLayout.vue'
 import ItemsDetailsLayout from './ItemsDetailsLayout.vue'
 import ItemsPager from './ItemsPager.vue'
 import { useItemsDragDrop } from './useItemsDragDrop'
+import { claimSelection, onSelectionClaimed } from './globalSelection'
 import ItemsTypesPanel from './ItemsTypesPanel.vue'
 // 0.12.0 (GEM Shell 2026-11-05, H4b): the Properties window
 import PropertiesWindow from './PropertiesWindow.vue'
@@ -714,11 +715,27 @@ watch(arrange, () => {
 const selState = shallowRef(selection.state())
 const selTick = ref(0)
 let selectionEventTimer: number | null = null
+// 0.15.0 (2026-11-12): one selection across panes (globalSelection.ts): a selection here clears the other panes';
+// cleared because another pane took it, this one says nothing (that pane shows its count)
+const selectionOwner = Symbol('items-selection')
+let clearedByOther = false
 selection.subscribe((s) => {
   selState.value = s
   selTick.value++
   scheduleSelectionEvent()
+  if (clearedByOther && selection.count() === 0) {
+    clearedByOther = false
+    tipShown = { count: 0, pending: false }
+    selectionTip?.hide()
+    return
+  }
+  if (!inDialog.value && (s.pending || selection.count() > 0)) claimSelection(selectionOwner)
   showSelectionTip(s.pending)
+})
+const stopSelectionClaims = onSelectionClaimed((from) => {
+  if (from === selectionOwner || inDialog.value || selection.count() === 0) return
+  clearedByOther = true
+  selection.clear()
 })
 
 /* -----------------------------------------------
@@ -2242,6 +2259,7 @@ on('items:reloadAndRename', async (msg: any) => {
 })
 
 onBeforeUnmount(() => {
+  stopSelectionClaims()        // 0.15.0
   stopPropertiesRequests?.()   // 0.12.0
   selectionTip?.hide()
   saveView()      // before the selection goes away

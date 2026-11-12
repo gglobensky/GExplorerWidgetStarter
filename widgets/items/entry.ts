@@ -19,7 +19,10 @@ const ARRANGES = [
 export default {
     api:     '1.0',
     id:      'items',
-    version: '0.14.0',   // 0.14.0 (2026-11-05, GEM Shell H4c-6): one line per person, every line editable (GEM Shell writes
+    version: '0.15.0',   // 0.15.0 (2026-11-12): one selection across panes (globalSelection.ts): selecting in a pane
+                         // clears the others' (focusing or scrolling clears nothing; the file dialog's apart); the
+                         // count shows at the top right of the main view (GEM Shell's status tip)
+                         // 0.14.0 (2026-11-05, GEM Shell H4c-6): one line per person, every line editable (GEM Shell writes
                          // the rows: lowered here, No access); "Add or edit" focuses someone already listed
                          // 0.13.2 (2026-11-05, GEM Shell H4c-5): "No access" means no access on Windows too (written as a row
                          // denying everything, said once); partly denied rows under Advanced
@@ -232,4 +235,4 @@ export default {
 		{ cap: 'Media',     reason: 'Shows thumbnails of pictures, videos and music covers in the Media layout' },
 		{ cap: 'Permissions', reason: 'Changes who may use a file or folder, from its Properties window (asked per item)' },
 	]
-}
+}
