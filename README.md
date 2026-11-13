@@ -592,6 +592,26 @@ GEM Shell's web view doesn't say Windows reliably (GEM Console offered Linux she
 const onWindows = (sdk.platform?.() ?? 'win32') === 'win32'
 ```
 
+## Cursors
+
+GEM Shell 2026-11-13. Use GEM Shell's cursor handles instead of cursor keywords, with the keyword as the fallback:
+`cursor: var(--gex-cursor-item, default)`. Each is a CSS variable GEM Shell defines (`theme/global.css`), today the
+system's own cursor (so the user's OS cursor scheme shows in your widget); the Appearance page will let the user point
+them at their own cursors, and your widget follows without a change.
+
+| Handle | For | Today |
+|---|---|---|
+| `--gex-cursor-default` | anything else | the arrow |
+| `--gex-cursor-item` | what you select (files, folders, rows: double-click opens) | the arrow |
+| `--gex-cursor-link` | what one click opens (a link, a drive tile, a favorite) | the hand |
+| `--gex-cursor-text` | text you can type or select | the I-beam |
+| `--gex-cursor-grab`, `--gex-cursor-grabbing` | tiles moved on a grid (edit layout, Corkboard, Forge) | the grab hands |
+| `--gex-cursor-move` | something you move freely | four arrows |
+| `--gex-cursor-busy`, `--gex-cursor-forbidden`, `--gex-cursor-help` | working, not allowed, help | the system's |
+| `--gex-cursor-resize-ew`, `-ns`, `-nwse`, `-nesw` | resize handles | the system's arrows |
+
+Not the browser's habits: buttons and menu entries keep the arrow (as the OS), not the hand.
+
 ## GEM Shell's file preferences
 
 Hidden and protected files are the user's choice for every widget alike (Settings ▸ Files & drives, 2026-10-31),

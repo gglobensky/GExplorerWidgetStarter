@@ -577,7 +577,7 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl, fit })
 
 .resize-handle {
   position: absolute; top: 0; right: -6px; width: 12px; height: 100%;
-  cursor: col-resize; z-index: 2;
+  cursor: var(--gex-cursor-resize-ew, col-resize); z-index: 2;
 }
 
 .resize-handle::after {
@@ -618,7 +618,7 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl, fit })
   min-height: calc(var(--base-font-size) * 2.4);
   padding: var(--padY) var(--padX);
   box-sizing: border-box;
-  cursor: pointer;
+  cursor: var(--gex-cursor-item, default);   /* 0.16.4: the arrow on what you select (GEM Shell's cursor handle) */
   font-size: var(--local-font-md);
   text-align: var(--items-row-text-align, left);
 }
@@ -638,8 +638,6 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl, fit })
 .placeholder { opacity: 0.35; }
 
 .row:focus, .row:focus-visible { outline: none !important; }
-.row { cursor: grab; }
-.row:active { cursor: grabbing; }
 .row.selected { box-shadow: inset 0 0 0 2px var(--accent, #4ea1ff) !important; }
 
 .td-name { display: flex; align-items: center; gap: var(--space-sm); min-width: 0; }

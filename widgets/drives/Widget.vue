@@ -399,7 +399,7 @@ defineExpose({ onMenuItem, onCommand })
   color: inherit;
   font: inherit;
   text-align: left;
-  cursor: pointer;
+  cursor: var(--gex-cursor-link, pointer);   /* 0.7.1: one click opens it (GEM Shell's cursor handle) */
   transition: background-color 120ms ease, border-color 120ms ease, transform 120ms ease;
 }
 
@@ -419,7 +419,7 @@ defineExpose({ onMenuItem, onCommand })
 
 .drive-item.empty {
   opacity: 0.58;
-  cursor: default;
+  cursor: var(--gex-cursor-default, default);
 }
 
 .drive-heading {

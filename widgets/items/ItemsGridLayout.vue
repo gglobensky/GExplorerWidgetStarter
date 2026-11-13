@@ -305,7 +305,7 @@ const sizerStyle = computed((): Record<string, string> => (inColumns.value
   font-size: var(--local-font-sm, 12px);
   line-height: 1.3;
   text-align: center;
-  cursor: pointer;
+  cursor: var(--gex-cursor-item, default);   /* 0.16.4: the arrow on what you select (GEM Shell's cursor handle) */
 }
 .row:not(.placeholder):hover {
   background: color-mix(in oklab, var(--fg, #fff) 6%, transparent);
@@ -317,8 +317,6 @@ const sizerStyle = computed((): Record<string, string> => (inColumns.value
   outline: none !important;
 }
 
-.row { cursor: grab; }
-.row:active { cursor: grabbing; }
 
 .row.selected {
   background: color-mix(in oklab, var(--accent, #4ea1ff) 18%, transparent);

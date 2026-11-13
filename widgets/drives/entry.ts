@@ -3,7 +3,8 @@ import Widget from './Widget.vue'
 export default {
   api: '1.0',
   id: 'drives',
-  version: '0.7.0',   // 0.7.0 (2026-11-13, GEM Shell drive properties): a drive's menu (Open, Open in a new tab,
+  version: '0.7.1',   // 0.7.1 (2026-11-13): GEM Shell's cursor handles (the hand: one click opens a drive)
+                      // 0.7.0 (2026-11-13, GEM Shell drive properties): a drive's menu (Open, Open in a new tab,
                       // Rename, then GEM Shell's Copy path / Properties), F2 renames it in place, Alt+Enter: Properties
                       // 0.6.1 (2026-11-05): middle-click opens a drive in a new tab
   license: 'PolyForm-Noncommercial-1.0.0',

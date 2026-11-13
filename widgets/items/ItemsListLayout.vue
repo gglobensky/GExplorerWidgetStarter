@@ -186,7 +186,7 @@ function keyOf(i: number): string {
   box-sizing: border-box;
   font-size: var(--local-font-md);
   text-align: var(--items-row-text-align, left);
-  cursor: pointer;
+  cursor: var(--gex-cursor-item, default);   /* 0.16.4: the arrow on what you select (GEM Shell's cursor handle) */
 }
 
 .row:focus,
@@ -194,8 +194,6 @@ function keyOf(i: number): string {
   outline: none !important;
 }
 
-.row { cursor: grab; }
-.row:active { cursor: grabbing; }
 
 .row.selected {
   box-shadow: inset 0 0 0 2px var(--accent, #4ea1ff) !important;

@@ -197,6 +197,7 @@
 .fav-btn {
   width: 100%;
   text-align: left;
+  cursor: var(--gex-cursor-link, pointer);   /* 0.3.5: one click opens it (GEM Shell's cursor handle) */
 }
 
 .fav-pill {
