@@ -20,7 +20,8 @@
 // 0.16.0 (GEM Shell 2026-11-13, drive properties; claude/drive-properties-design.md):
 //   Name         a field in the window's draft for files, folders and drives (saved with the footer, after the
 //                attributes and permissions, which apply to the old path): fsRename, or a drive's label
-//                (fsSetVolumeLabel). Checked as you type. The folder shown can't be renamed from here.
+//                (fsSetVolumeLabel). Checked as you type. 0.16.1: the folder shown too: the pane follows it
+//                (onRenamed: Widget.vue navigates to its new name).
 //   A drive      its own General (type, drive, share, file system, the space used as a pie, Windows' tools: Clean
 //                up…, Optimize… / Defragment… for a hard disk) and a Hardware tab (device, bus, partition, serial,
 //                what its file system supports, BitLocker read-only): fsVolumeInfo.
@@ -45,6 +46,8 @@ const props = defineProps<{
   setDraft?: (draft: { dirty: () => boolean; save: () => Promise<void>; discard: () => void } | null) => void
   /** 0.16.0: the window's title after a rename (Widget.vue: the window handle's setTitle). */
   retitle?: (title: string) => void
+  /** 0.16.1: a file or folder renamed here (Widget.vue: the pane follows a folder it shows, or is inside). */
+  onRenamed?: (from: string, to: string) => void
 }>()
 
 // ── Tabs (0.12.1): always General first ───────────────────────────────────────
@@ -159,13 +162,12 @@ const nameDirty = computed(() => nameDraft.value !== null && nameDraft.value !==
 const canRename = computed(() => {
   if (!props.setDraft || !single.value || !item.value || item.value.exists === false) return false
   if (isDrive.value) return !!volume.value?.canLabel && !!sdk.fsSetVolumeLabel
-  return !!sdk.fsRename && !props.folder && !item.value.limited
+  return !!sdk.fsRename && !item.value.limited   // 0.16.1: the folder shown too (the pane follows it)
 })
 /** Why the name can't be changed here (its tooltip). */
 const renameHint = computed(() => {
   if (canRename.value || !item.value) return ''
   if (isDrive.value) return volume.value && !volume.value.canLabel ? 'This drive can\'t be renamed (a disc, a network share, or not ready).' : ''
-  if (props.folder) return 'This is the folder shown: rename it from the folder that holds it.'
   if (item.value.limited) return 'It needs administrator rights: rename it in the list (F2).'
   return ''
 })
@@ -226,6 +228,7 @@ async function saveName(): Promise<void> {
       paths.value = [newPath]
       nameDraft.value = null
       props.retitle?.(value)
+      props.onRenamed?.(p, newPath)
       await loadFacts()
     }
   } catch (err: any) {
@@ -593,7 +596,7 @@ onBeforeUnmount(() => {
       <section v-if="isDrive && volume">
         <p v-if="!volume.ready" class="ipw-note">{{ volume.bitLocker === 'locked' ? 'The drive is locked (BitLocker): unlock it in Windows to see what is on it.' : 'The drive isn\'t ready (no disc, or disconnected).' }}</p>
         <div v-else-if="usedFraction != null" class="ipw-space">
-          <svg class="ipw-pie" viewBox="0 0 36 36" role="img" :aria-label="`${Math.round(usedFraction * 100)}% used`">
+          <svg class="ipw-pie" viewBox="-1.5 -1.5 39 39" role="img" :aria-label="`${Math.round(usedFraction * 100)}% used`">
             <circle class="ipw-pie-free" cx="18" cy="18" r="15.9155" />
             <circle class="ipw-pie-used" :class="spaceTone" cx="18" cy="18" r="15.9155" :stroke-dasharray="pieDash" />
             <text x="18" y="20.5" text-anchor="middle" class="ipw-pie-text">{{ Math.round(usedFraction * 100) }}%</text>

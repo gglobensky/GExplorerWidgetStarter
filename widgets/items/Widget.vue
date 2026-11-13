@@ -432,7 +432,31 @@ function parentDir(path: string): string {
   return /^[A-Za-z]:$/.test(up) ? up + '\\' : up
 }
 
+/**
+ * 0.16.1: a folder renamed from its Properties window while this pane shows it (or a folder inside it): the pane
+ * follows it to its new name (replacing the history entry), instead of "no longer exists: moved up".
+ */
+let renamedAway: { from: string; to: string; at: number } | null = null
+function followRename(from: string, to: string): void {
+  const here = normalizeDir(cwd.value)
+  const old = normalizeDir(from)
+  if (!here || !old) return
+  let next: string
+  if (here === old) next = to
+  else if (here.startsWith(old + '\\')) next = to.replace(/[\\/]+$/, '') + cwd.value.slice(from.replace(/[\\/]+$/, '').length)
+  else return
+  renamedAway = { from, to, at: Date.now() }
+  if (sdk?.navigate) void sdk.navigate(next, { replace: true })
+  else void applyExternalCwd(next)
+}
+
 async function leaveGoneFolder(gone: string) {
+  // 0.16.1: renamed here a moment ago: followRename moves the pane to its new name
+  if (renamedAway && Date.now() - renamedAway.at < 10_000) {
+    const old = normalizeDir(renamedAway.from)
+    const g = normalizeDir(gone)
+    if (g === old || g.startsWith(old + '\\')) return
+  }
   if (leaving === gone) return
   leaving = gone
   try {
@@ -1682,6 +1706,7 @@ function openProperties(req: { paths: string[]; count: number; folder: boolean; 
       paths, count, folder: req.folder, from: req.from,
       more: own ? async () => (await selection.selectedEntries()).map(e => e.FullPath) : undefined,
       retitle: (t: string) => { handle?.setTitle(t) },
+      onRenamed: (from: string, to: string) => followRename(from, to),   // 0.16.1
     },
     title,
     width: 420,
