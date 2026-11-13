@@ -145,6 +145,11 @@ const featureWords = computed(() => {
 // not on an SSD (trimmed, not defragmented).
 const optimization = computed(() => volume.value?.optimization ?? null)
 const showsFragmentation = computed(() => volume.value?.kind !== 'ssd' && optimization.value?.percentFragmented != null)
+// 0.16.3: green under 10 % (Windows suggests defragmenting from 10 %), amber to 30 %, red beyond: 0 reads as good
+const fragTone = computed(() => {
+  const p = optimization.value?.percentFragmented ?? 0
+  return p < 10 ? 'ipw-good' : p < 30 ? 'ipw-warn' : 'ipw-bad'
+})
 function day(ms: number | null | undefined): string {
   return typeof ms === 'number' ? new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—'
 }
@@ -619,7 +624,7 @@ onBeforeUnmount(() => {
         <dl v-if="volume.ready && (optimization || volume.tools.includes('optimize'))" class="ipw-rows">
           <template v-if="showsFragmentation">
             <dt>Fragmented</dt>
-            <dd :class="{ 'ipw-warn': (optimization!.percentFragmented ?? 0) >= 10 }">
+            <dd :class="fragTone">
               {{ optimization!.percentFragmented }} %<span class="ipw-muted"> — measured by Windows on {{ day(optimization!.lastRun) }}</span>
               <span v-if="optimization!.movableFiles" class="ipw-muted"> ({{ (optimization!.fragmentedFiles ?? 0).toLocaleString() }} of {{ (optimization!.movableFiles ?? 0).toLocaleString() }} files)</span>
             </dd>
@@ -833,6 +838,8 @@ onBeforeUnmount(() => {
 .ipw-key.free { background: color-mix(in oklab, var(--fg, #fff) 14%, transparent); }
 .ipw-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ipw-warn { color: #f59e0b; }
+.ipw-good { color: #22c55e; }
+.ipw-bad { color: #ef4444; }
 .ipw-btn:disabled { opacity: .5; cursor: default; }
 .ipw-compare input {
   flex: 1 1 auto; min-width: 0; padding: 3px 6px; border: 1px solid var(--items-border, #ffffff24); border-radius: 4px;

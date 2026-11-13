@@ -19,7 +19,8 @@ const ARRANGES = [
 export default {
     api:     '1.0',
     id:      'items',
-    version: '0.16.2',   // 0.16.2 (2026-11-13, GEM Shell D4): a drive's fragmentation / last optimization, as Windows'
+    version: '0.16.3',   // 0.16.3 (2026-11-13): fragmentation in colours: green under 10 %, amber to 30 %, red beyond
+                         // 0.16.2 (2026-11-13, GEM Shell D4): a drive's fragmentation / last optimization, as Windows'
                          // optimizer last measured it (General), its last full run (Hardware)
                          // 0.16.1 (2026-11-13): the folder shown can be renamed from its Properties (the pane follows it);
                          // the space pie no longer clipped
