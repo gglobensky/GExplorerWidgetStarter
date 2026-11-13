@@ -1674,11 +1674,14 @@ function openProperties(req: { paths: string[]; count: number; folder: boolean; 
   // This list's own menu showed a sample: the window reads the whole selection (when small enough)
   const own = !req.from && !req.folder && count > paths.length && count <= PROPERTIES_FULL_MAX && selection.count() === count
   const title = req.folder || count <= 1 ? (basename(paths[0]) || paths[0]) : `${count.toLocaleString()} items`
-  ui.openWindow({
+  // 0.16.0: the window's title follows a rename made in it (retitle)
+  let handle: { setTitle(t: string): void } | null = null
+  handle = ui.openWindow({
     component: PropertiesWindow,
     props: {
       paths, count, folder: req.folder, from: req.from,
       more: own ? async () => (await selection.selectedEntries()).map(e => e.FullPath) : undefined,
+      retitle: (t: string) => { handle?.setTitle(t) },
     },
     title,
     width: 420,

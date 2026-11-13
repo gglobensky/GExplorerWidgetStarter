@@ -19,7 +19,9 @@ const ARRANGES = [
 export default {
     api:     '1.0',
     id:      'items',
-    version: '0.15.1',   // 0.15.1 (2026-11-12): the selected count is anchored on its pane (GEM Shell hides it behind
+    version: '0.16.0',   // 0.16.0 (2026-11-13, GEM Shell drive properties): Properties renames (the Name field, saved
+                         // with the footer); a drive's own General (space as a pie, Windows' tools) and Hardware tab
+                         // 0.15.1 (2026-11-12): the selected count is anchored on its pane (GEM Shell hides it behind
                          // the file dialog and other questions; the dialog's own shows)
                          // 0.15.0 (2026-11-12): one selection across panes (globalSelection.ts): selecting in a pane
                          // clears the others' (focusing or scrolling clears nothing; the file dialog's apart); the

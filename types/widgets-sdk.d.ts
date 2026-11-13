@@ -219,6 +219,31 @@ declare module 'gexplorer/widgets' {
          */
         fsSetAttributes?: (path: string, attrs: { readOnly?: boolean; hidden?: boolean }) => Promise<void>
         /**
+         * GEM Shell 2026-11-13 (drive properties). Metadata capability. The drive holding a path (any path on it):
+         * name, type, file system, space, partition, device, BitLocker (read-only), whether GEM Shell can rename it
+         * (`canLabel`, `labelRules`) and the OS's tools for it (`tools`). Never prompts. Rejects with an Error whose
+         * `code` is E_NOT_FOUND (no drive there) or E_FAILED. Older GEM Shell: absent.
+         */
+        fsVolumeInfo?: (path: string) => Promise<FsVolumeInfo>
+        /**
+         * GEM Shell 2026-11-13 (drive properties). Write capability. Renames the drive at its root ("C:\"; "" removes
+         * the name). Asks once for a Write grant on the drive itself ("This drive only": nothing in it); Windows
+         * refusing without administrator rights: GEM Shell offers "Retry as administrator". Check the name against
+         * `labelRules` first. Rejects with an Error whose `code` is E_BAD_LABEL (message: what its file system
+         * refuses), E_PERMISSION, E_CANCELLED (the user kept the name), E_UNSUPPORTED, E_ACCESS_DENIED,
+         * E_ELEVATION_DECLINED, E_BAD_REQUEST (not a drive's root) or E_FAILED. Every drive list gets the new name
+         * (`drives:changed`). Older GEM Shell: absent.
+         */
+        fsSetVolumeLabel?: (root: string, label: string) => Promise<void>
+        /**
+         * GEM Shell 2026-11-13 (drive properties). Metadata capability. Opens the OS's own tool for a drive, one of
+         * fsVolumeInfo's `tools`: 'cleanup' (Disk Cleanup) or 'optimize' (Optimize Drives: defragments a hard disk,
+         * trims an SSD). Only right after the user's own click or key press in this widget (rejects otherwise, in the
+         * security log). Windows may ask for administrator rights itself. Stand-ins until GEM Shell has its own.
+         * Older GEM Shell: absent.
+         */
+        volumeTool?: (path: string, tool: 'cleanup' | 'optimize') => Promise<void>
+        /**
          * GEM Shell 2026-11-05 (H4c). Metadata capability. Who may do what with one item: owner, rows (explicit and
          * inherited), your own access, what its drive can do (features). Never prompts. Rejects with an Error whose
          * `code` is E_NOT_FOUND, E_ACCESS_DENIED or E_READ_FAILED. Older GEM Shell: absent.
@@ -3784,6 +3809,66 @@ declare module 'gexplorer/widgets' {
         /** This item could not be read. */
         error?: string
         message?: string
+    }
+
+    /** GEM Shell 2026-11-13: one drive, sdk.fsVolumeInfo(). null: not known (a drive that isn't ready knows little). */
+    export type FsVolumeInfo = {
+        /** "C:\", "\\server\share\", "/media/usb". */
+        root: string
+        /** "C:", the share, the mount point's name. */
+        name: string
+        type: 'fixed' | 'removable' | 'floppy' | 'optical' | 'network' | 'ram' | 'unknown'
+        /** false: no disc, locked, disconnected. */
+        ready: boolean
+        label: string | null
+        fileSystem: string | null
+        /** Bytes. */
+        total: number | null
+        free: number | null
+        used: number | null
+        clusterSize: number | null
+        /** The volume's serial number, "1A2B-3C4D". */
+        serial: string | null
+        /** The longest name a file or folder may have on it. */
+        maxNameLength: number | null
+        /** What its file system supports. */
+        features: {
+            permissions: boolean; compression: boolean; compressedVolume: boolean; encryption: boolean; quotas: boolean
+            hardLinks: boolean; sparse: boolean; streams: boolean; readOnly: boolean
+        } | null
+        /** Its partition (null: none, like a disc or a share). */
+        partition: {
+            style: 'GPT' | 'MBR' | 'RAW'
+            /** A GUID (GPT) or "0x07" (MBR). */
+            type: string
+            /** "Basic data", "EFI System"…; null: not a known type. */
+            typeName: string | null
+            number: number
+            /** Bytes from the start of the disk; its size. */
+            offset: number
+            length: number
+            /** Why the OS keeps it for itself (boot, recovery…); null: a data partition. */
+            systemReason: string | null
+        } | null
+        kind: 'ssd' | 'hdd' | 'network' | 'unknown'
+        /** The storage device, as it describes itself. */
+        device: {
+            vendor: string | null; product: string | null; revision: string | null
+            /** usb, sata, nvme, sd, mmc, scsi, sas, ata, atapi, raid, iscsi, virtual, spaces, 1394, fibre, ufs, unknown */
+            bus: string
+            removableMedia: boolean | null
+        } | null
+        /** A mapped network drive's share ("\\server\share"). */
+        remotePath: string | null
+        bitLocker: 'on' | 'off' | 'locked' | 'unknown'
+        /** The raw value bitLocker came from (the shell's System.Volume.BitLockerProtection). */
+        bitLockerCode: number | null
+        /** sdk.fsSetVolumeLabel can rename it. */
+        canLabel: boolean
+        /** How long its name may be, whether it is stored in capitals, the characters refused. */
+        labelRules: { maxLength: number; upperCase: boolean; forbidden: string } | null
+        /** The OS's own tools for it (sdk.volumeTool). */
+        tools: ('cleanup' | 'optimize')[]
     }
 
     /** GEM Shell 2026-11-05: sdk.fsHash(). */

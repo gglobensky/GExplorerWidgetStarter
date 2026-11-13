@@ -2,9 +2,11 @@
 import { computed, inject, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   getDrives,
+  startRename,
   type DriveSnapshot,
   type DriveStats,
   type WidgetSdk,
+  type WidgetMenuItemMessage,
 } from 'gexplorer/widgets'
 import {
   chooseDensity,
@@ -33,6 +35,7 @@ const sdk = inject<WidgetSdk>('widgetSdk')
 const fsDriveStats = sdk?.fsDriveStats
 const lifecycle = sdk?.lifecycle?.()
 const settings = sdk?.settings?.()
+const ui = sdk?.ui?.()
 
 const drives = ref<DriveSnapshot[]>(getDrives())
 const stats = ref(new Map<string, DriveStats>())
@@ -84,6 +87,108 @@ function driveAriaLabel(drive: DriveSnapshot): string {
 
 function navTo(drive: DriveSnapshot): void {
   if (!isEmpty(drive) && drive.root) void sdk?.navigate?.(drive.root)
+}
+
+// ── 0.7.0: a drive's menu, F2, Alt+Enter (GEM Shell 2026-11-13, drive properties) ───────────────────
+const rootEl = ref<HTMLElement | null>(null)
+
+/** The drive the user is on: the focused one, else the one right-clicked or clicked last. */
+let lastRoot: string | null = null
+function remember(root: string): void { lastRoot = root }
+function focusedRoot(): string | null {
+  const el = document.activeElement as HTMLElement | null
+  const own = el && rootEl.value?.contains(el) ? el.closest<HTMLElement>('[data-drive-root]') : null
+  return own?.dataset.driveRoot ?? lastRoot
+}
+function driveOf(root: string | null): DriveSnapshot | undefined {
+  return root ? drives.value.find(d => d.root === root) : undefined
+}
+
+/** Right-click: the drive's menu (its own items, then GEM Shell's Copy path / Properties). */
+function onDriveMenu(drive: DriveSnapshot, e: MouseEvent): void {
+  lastRoot = drive.root
+  if (!ui?.contextMenu) return
+  e.preventDefault()
+  void ui.contextMenu(e, {
+    context: 'drive',
+    ref: drive.root,
+    selection: [drive.root],
+    states: isEmpty(drive) ? ['no-media'] : [],
+    widgetConfig: props.config,
+  })
+}
+
+/** One of this widget's menu items was chosen (the host calls it: defineExpose below). */
+async function onMenuItem(m: WidgetMenuItemMessage): Promise<void> {
+  const drive = driveOf(m.ref ?? null)
+  if (!drive) return
+  switch (m.itemId) {
+    case 'open': navTo(drive); break
+    case 'open-tab': if (!isEmpty(drive)) void sdk?.navigate?.(drive.root, { newTab: true }); break
+    case 'rename': await renameDrive(drive); break
+    default: console.warn('[drives] unknown menu item', m.itemId)
+  }
+}
+
+/** One of entry.ts's commands (the host runs it while this widget has the user's focus). */
+function onCommand(id: string): void {
+  const drive = driveOf(focusedRoot())
+  if (!drive) return
+  if (id === 'rename') void renameDrive(drive)
+  else if (id === 'properties') void ui?.showProperties?.([drive.root])
+}
+
+function snack(text: string): void {
+  void ui?.snack?.({ id: 'drives-rename', text, timeoutMs: 6000, dedupe: 'replace' })
+}
+
+/** The drive's name shown in this density (the full one, or the letter alone when space is short). */
+function labelElOf(root: string): HTMLElement | null {
+  const item = rootEl.value?.querySelector<HTMLElement>(`[data-drive-root="${CSS.escape(root)}"]`)
+  if (!item) return null
+  const shown = [...item.querySelectorAll<HTMLElement>('.drive-label')].find(el => el.getClientRects().length > 0)
+  return shown ?? item
+}
+
+/**
+ * Renames the drive in place (F2, the menu's Rename): its name becomes editable where it is shown; Enter keeps
+ * it. GEM Shell asks once for the drive itself (its name only) and offers "Retry as administrator" if Windows
+ * refuses. Checked against its file system's rules as you type.
+ */
+async function renameDrive(drive: DriveSnapshot): Promise<void> {
+  if (isEmpty(drive)) return
+  if (!sdk?.fsVolumeInfo || !sdk.fsSetVolumeLabel) { snack('Renaming drives needs a newer GEM Shell.'); return }
+  const info = await sdk.fsVolumeInfo(drive.root).catch((err: any) => {
+    snack(`Couldn't read ${drive.name}: ${err?.message ?? err}`)
+    return null
+  })
+  if (!info) return
+  if (!info.canLabel || !info.labelRules) { snack(`${drive.name} can't be renamed (a disc, a network share, or not ready).`); return }
+  const rules = info.labelRules
+  const el = labelElOf(drive.root)
+  if (!el) return
+  await startRename(el, {
+    widgetId: props.sourceId,
+    value: info.label ?? '',
+    selectAll: true,
+    validate: (v: string) => {
+      const s = v.trim()
+      if (s.length > rules.maxLength) return `At most ${rules.maxLength} characters on ${info.fileSystem ?? 'this file system'}.`
+      const bad = [...s].find(c => rules.forbidden.includes(c) || c.charCodeAt(0) < 32)
+      return bad ? `A drive name can't contain ${bad.charCodeAt(0) < 32 ? 'control characters' : bad}.` : null
+    },
+    onCommit: async (name: string) => {
+      if (name.trim() === (info.label ?? '')) return
+      try {
+        await sdk.fsSetVolumeLabel!(drive.root, name)   // drives:changed brings the new name (reloadDrives)
+      } catch (err: any) {
+        if (err?.code === 'E_CANCELLED') return
+        snack(err?.code === 'E_PERMISSION'
+          ? `${drive.name} wasn't renamed: the permission was not granted.`
+          : `${drive.name} wasn't renamed: ${err?.message ?? err}`)
+      }
+    },
+  })
 }
 
 /** Read the current drives and discard stats belonging to drives that disappeared. */
@@ -187,10 +292,13 @@ onBeforeUnmount(() => {
   refreshGeneration++
   for (const cleanup of cleanups.splice(0)) cleanup()
 })
+
+defineExpose({ onMenuItem, onCommand })
 </script>
 
 <template>
   <section
+    ref="rootEl"
     class="drives-widget"
     :class="[
       `context-${context}`,
@@ -207,6 +315,7 @@ onBeforeUnmount(() => {
         :key="drive.root"
         type="button"
         class="drive-item"
+        :data-drive-root="drive.root"
         :class="[
           `usage-${usageTone(drive)}`,
           { empty: isEmpty(drive) },
@@ -214,8 +323,10 @@ onBeforeUnmount(() => {
         :aria-disabled="isEmpty(drive) || undefined"
         :aria-label="driveAriaLabel(drive)"
         v-gex-tooltip="driveTooltip(drive)"
-        @click="navTo(drive)"
+        @click="remember(drive.root); navTo(drive)"
         @auxclick="e => { if (e.button === 1) navTo(drive) }"
+        @contextmenu="e => onDriveMenu(drive, e)"
+        @focus="remember(drive.root)"
         @mousedown.middle.prevent
       >
         <span class="drive-heading">
