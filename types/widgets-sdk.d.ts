@@ -3869,6 +3869,22 @@ declare module 'gexplorer/widgets' {
         labelRules: { maxLength: number; upperCase: boolean; forbidden: string } | null
         /** The OS's own tools for it (sdk.volumeTool). */
         tools: ('cleanup' | 'optimize')[]
+        /**
+         * GEM Shell 2026-11-13 (D4): what the OS's optimizer last measured and did (Windows: Optimize Drives, which
+         * runs weekly on its own); null: it never ran on this drive, or not on this OS yet. Dates: Unix ms. Older GEM
+         * Shell: absent.
+         */
+        optimization?: {
+            lastRun: number | null
+            /** The last full defragmentation (a hard disk) or full optimization. */
+            lastFullRun: number | null
+            /** Meaningful for a hard disk or a storage pool (an SSD is trimmed, not defragmented). */
+            percentFragmented: number | null
+            fragmentedFiles: number | null
+            movableFiles: number | null
+            /** 1.00: not fragmented. */
+            avgFragmentsPerFile: number | null
+        } | null
     }
 
     /** GEM Shell 2026-11-05: sdk.fsHash(). */

@@ -19,7 +19,9 @@ const ARRANGES = [
 export default {
     api:     '1.0',
     id:      'items',
-    version: '0.16.1',   // 0.16.1 (2026-11-13): the folder shown can be renamed from its Properties (the pane follows it);
+    version: '0.16.2',   // 0.16.2 (2026-11-13, GEM Shell D4): a drive's fragmentation / last optimization, as Windows'
+                         // optimizer last measured it (General), its last full run (Hardware)
+                         // 0.16.1 (2026-11-13): the folder shown can be renamed from its Properties (the pane follows it);
                          // the space pie no longer clipped
                          // 0.16.0 (2026-11-13, GEM Shell drive properties): Properties renames (the Name field, saved
                          // with the footer); a drive's own General (space as a pie, Windows' tools) and Hardware tab

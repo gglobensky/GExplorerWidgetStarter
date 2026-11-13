@@ -141,6 +141,14 @@ const featureWords = computed(() => {
   return out
 })
 
+// 0.16.2 (D4): what Windows' optimizer last measured (its weekly run). A percentage only where it means something:
+// not on an SSD (trimmed, not defragmented).
+const optimization = computed(() => volume.value?.optimization ?? null)
+const showsFragmentation = computed(() => volume.value?.kind !== 'ssd' && optimization.value?.percentFragmented != null)
+function day(ms: number | null | undefined): string {
+  return typeof ms === 'number' ? new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—'
+}
+
 const toolBusy = ref(false)
 async function openTool(tool: 'cleanup' | 'optimize'): Promise<void> {
   const p = paths.value[0]
@@ -607,6 +615,22 @@ onBeforeUnmount(() => {
             <dt>Capacity</dt><dd>{{ bytes(volume.total) }}</dd>
           </dl>
         </div>
+        <!-- 0.16.2 (D4): Windows' optimizer's last run -->
+        <dl v-if="volume.ready && (optimization || volume.tools.includes('optimize'))" class="ipw-rows">
+          <template v-if="showsFragmentation">
+            <dt>Fragmented</dt>
+            <dd :class="{ 'ipw-warn': (optimization!.percentFragmented ?? 0) >= 10 }">
+              {{ optimization!.percentFragmented }} %<span class="ipw-muted"> — measured by Windows on {{ day(optimization!.lastRun) }}</span>
+              <span v-if="optimization!.movableFiles" class="ipw-muted"> ({{ (optimization!.fragmentedFiles ?? 0).toLocaleString() }} of {{ (optimization!.movableFiles ?? 0).toLocaleString() }} files)</span>
+            </dd>
+          </template>
+          <template v-else-if="optimization?.lastRun">
+            <dt>Last optimized</dt><dd>{{ day(optimization.lastRun) }}</dd>
+          </template>
+          <template v-else>
+            <dt>Optimized</dt><dd class="ipw-muted">Never, by Windows</dd>
+          </template>
+        </dl>
         <div v-if="volume.tools.length && sdk.volumeTool" class="ipw-tools">
           <button v-if="volume.tools.includes('cleanup')" type="button" class="ipw-btn" :disabled="toolBusy"
                   title="Windows' Disk Cleanup for this drive: temporary files, the Recycle Bin, old updates"
@@ -651,6 +675,9 @@ onBeforeUnmount(() => {
           <template v-if="volume.clusterSize"><dt>Cluster size</dt><dd>{{ bytes(volume.clusterSize) }}</dd></template>
           <template v-if="volume.maxNameLength"><dt>Longest name</dt><dd>{{ volume.maxNameLength }} characters</dd></template>
           <dt>BitLocker</dt><dd>{{ bitLockerText }}</dd>
+          <!-- 0.16.2 (D4) -->
+          <template v-if="optimization?.lastFullRun"><dt>{{ volume.kind === 'ssd' ? 'Last full optimization' : 'Last full defrag' }}</dt><dd>{{ day(optimization.lastFullRun) }}</dd></template>
+          <template v-if="optimization?.avgFragmentsPerFile && volume.kind !== 'ssd'"><dt>Fragments per file</dt><dd>{{ (optimization.avgFragmentsPerFile ?? 1).toLocaleString(undefined, { maximumFractionDigits: 2 }) }} on average</dd></template>
         </dl>
         <template v-if="featureWords.length">
           <h3>Its file system supports</h3>
@@ -805,6 +832,7 @@ onBeforeUnmount(() => {
 .ipw-key { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 2px; background: var(--accent, #4ea1ff); }
 .ipw-key.free { background: color-mix(in oklab, var(--fg, #fff) 14%, transparent); }
 .ipw-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ipw-warn { color: #f59e0b; }
 .ipw-btn:disabled { opacity: .5; cursor: default; }
 .ipw-compare input {
   flex: 1 1 auto; min-width: 0; padding: 3px 6px; border: 1px solid var(--items-border, #ffffff24); border-radius: 4px;
