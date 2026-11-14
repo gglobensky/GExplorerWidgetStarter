@@ -6,7 +6,9 @@
 //             (the base is 12px at 100 %: "11 / 12" reads "11px at 100 %")
 //   corners   var(--radius-sm|md|lg), or a ratio of the base: calc(var(--base-radius) * 6 / 16)
 //             (16px at 100 %); a button / field / pill: a fraction of its own height x var(--roundness)
-//   50 % (a dot, a circle) and 0 are fine; px inside a var() fallback is fine.
+//   50 % (a dot, a circle) and 0 are fine; px inside a var() fallback is fine, except the fallback of a variable
+//   named for a font size or a radius (var(--x-font-size, 13px): that px IS the size wherever it isn't set).
+//   A custom property holding a text size or a corner (--x-font-size: 12px, --x-radius: 6px) counts too.
 // A line that really means px says so: put px-ok in a comment on that line.
 //
 //   node check-fixed-px.mjs [folder or file ...]      default: src (the shell) / widgets shared (the starter)
@@ -42,6 +44,11 @@ const FONT_JS = /\bfontSize\s*[:=]\s*['"`]\s*\d+(?:\.\d+)?px/
 // border-radius / border-top-left-radius / border-start-end-radius …
 const RADIUS = /(?<![-\w])border(?:-(?:top|bottom|start|end)-(?:left|right|start|end))?-radius\s*:\s*([^;"'}]*)/i
 const RADIUS_JS = /\bborder\w*Radius\s*[:=]\s*['"`]([^'"`]*)/
+// NEW (2026-11-14): a size kept in a custom property (--gpi-font-size: 12px; --tip-radius: 6px), and a px fallback
+// of a var() whose name says font size / radius (var(--gpi-font-size, 13px): the size whenever it isn't set)
+const CUSTOM_PROP = /(?<![-\w])--[\w-]*(font-size|font|radius)[\w-]*\s*:\s*([^;"'}]*)/i
+// (the shell's own tokens are always set: their fallbacks don't count)
+const VAR_FALLBACK = /var\(\s*--(?!radius-(?:sm|md|lg)\b|base-|font-(?:xs|sm|md|lg|xl)\b)[\w-]*(?:font-size|radius)[\w-]*\s*,\s*(\d+(?:\.\d+)?px)\s*\)/i
 
 /** The value with its var(…) parts removed (a fallback in px is fine). */
 function withoutVars(v) {
@@ -64,6 +71,9 @@ for (const root of roots) {
             else { const sv = line.match(FONT_SHORT); if (sv && hasPx(sv[1])) kinds.push('text') }
             const r = line.match(RADIUS) ?? line.match(RADIUS_JS)
             if (r && hasPx(r[1])) kinds.push('corner')
+            const cp = line.match(CUSTOM_PROP)
+            if (cp && hasPx(cp[2]) && !/^--base-/.test(cp[0])) kinds.push(/radius/i.test(cp[1]) ? 'corner-var' : 'text-var')
+            else if (VAR_FALLBACK.test(line) && !kinds.length) kinds.push('fallback')
             if (kinds.length) found.push({ f: relative(process.cwd(), f), n: i + 1, kinds, text: line.trim() })
         })
     }
@@ -75,9 +85,10 @@ for (const [f, list] of [...byFile].sort((a, b) => b[1].length - a[1].length)) {
     console.log(`\n${f}  (${list.length})`)
     for (const x of list) console.log(`  ${String(x.n).padStart(5)}  ${x.kinds.join('+').padEnd(11)} ${x.text.length > 110 ? x.text.slice(0, 107) + '…' : x.text}`)
 }
-const text = found.filter(x => x.kinds.includes('text')).length
-const corner = found.filter(x => x.kinds.includes('corner')).length
+const text = found.filter(x => x.kinds.some(k => k.startsWith('text'))).length
+const corner = found.filter(x => x.kinds.some(k => k.startsWith('corner'))).length
+const fallback = found.filter(x => x.kinds.includes('fallback')).length
 console.log(found.length
-    ? `\n${found.length} line(s) in ${byFile.size} file(s): ${text} fixed text size(s), ${corner} fixed corner(s). The rule: the comment at the top of this script.`
+    ? `\n${found.length} line(s) in ${byFile.size} file(s): ${text} fixed text size(s), ${corner} fixed corner(s), ${fallback} px default(s) in a var() fallback. The rule: the comment at the top of this script.`
     : '\nNo fixed px text sizes or corners.')
 process.exit(found.length && !warnOnly ? 1 : 0)
