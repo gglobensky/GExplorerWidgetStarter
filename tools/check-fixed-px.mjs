@@ -13,6 +13,12 @@
 //
 //   node check-fixed-px.mjs [folder or file ...]      default: src (the shell) / widgets shared (the starter)
 //   --warn                                           list them, but exit 0
+//   --code-only                                      NEW (2026-11-14, the starter): only what a build can't adapt.
+//                                                    The starter's build turns px in styles into Appearance sizes
+//                                                    (tools/appearance-css.mjs): there, only sizes set from code
+//                                                    count (a template's style="", :style, el.style, TS strings);
+//                                                    .css files and .vue <style> blocks are skipped.
+//   widgets.skip.json (in the folder it runs from, if there): the widgets it lists are skipped (widgets/<name>).
 //
 // Exit code 1 when something is found (0 with --warn). No dependencies.
 import { readdirSync, readFileSync, statSync } from 'node:fs'
@@ -20,16 +26,25 @@ import { join, relative, extname } from 'node:path'
 
 const args = process.argv.slice(2)
 const warnOnly = args.includes('--warn')
+const codeOnly = args.includes('--code-only')
 let roots = args.filter(a => !a.startsWith('--'))
 if (roots.length === 0) roots = ['src', 'widgets', 'shared'].filter(r => { try { return statSync(r).isDirectory() } catch { return false } })
 
 const EXTS = new Set(['.vue', '.css', '.ts', '.js', '.mjs'])
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'generated', 'public'])
 
+// widgets.skip.json: { "deprecated": [...], "fixtures": [...] }: widgets/<name> left out
+const skipped = new Set()
+try {
+    const json = JSON.parse(readFileSync('widgets.skip.json', 'utf8'))
+    for (const [list, names] of Object.entries(json ?? {})) if (!list.startsWith('$') && Array.isArray(names)) for (const n of names) skipped.add(join('widgets', String(n)))
+} catch { /* none */ }
+
 function* files(p) {
     let st
     try { st = statSync(p) } catch { return }
     if (st.isFile()) { if (EXTS.has(extname(p))) yield p; return }
+    if (skipped.has(relative(process.cwd(), p))) return
     for (const name of readdirSync(p)) {
         if (SKIP_DIRS.has(name)) continue
         yield* files(join(p, name))
@@ -61,8 +76,15 @@ const hasPx = v => /(?:^|[^\w.])(?!0+(?:\.0+)?px)\d+(?:\.\d+)?px/.test(withoutVa
 const found = []
 for (const root of roots) {
     for (const f of files(root)) {
+        if (codeOnly && extname(f) === '.css') continue
         const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+        let inStyle = false
         lines.forEach((line, i) => {
+            // --code-only: a .vue file's <style> blocks are the build's to adapt
+            if (codeOnly && extname(f) === '.vue') {
+                if (/^\s*<style\b/.test(line)) { inStyle = true; return }
+                if (inStyle) { if (/<\/style>/.test(line)) inStyle = false; return }
+            }
             if (/px-ok/.test(line)) return
             const kinds = []
             const fv = line.match(FONT_CSS)

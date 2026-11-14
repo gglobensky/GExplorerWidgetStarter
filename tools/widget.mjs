@@ -8,6 +8,7 @@
 //   npm run preview   -- <type> [--port <n>]                   widgets/<type>/preview/ with sample data
 //   npm run test      -- <type>                                widgets/<type>/tests/*.test.ts
 //   npm run typecheck -- <type>                                widgets/<type>/tsconfig.json
+//   npm run typecheck -- --all                                 every widget; the errors in dist/typecheck/report.txt (2026-11-14)
 //   npm run build     -- --lib <name> [--no-install]           every widget using shared/<name> (2026-10-31)
 //   npm run test      -- --lib <name>                          shared/<name>/tests/*.test.ts
 // (pnpm: pnpm build <type> ...)
@@ -16,6 +17,13 @@
 // watch first reads the widget's sources for what GEM Shell refuses or changes at run time; an error stops the build
 // unless the widget allows that rule with a reason (widgets/<type>/review.allow.json) or the command line does for
 // that build (--allow <rule>). The findings: dist/reviews/<type>.json.
+//
+// SIZES (2026-11-14, GEM Shell A3e, tools/appearance-css.mjs, README "Text sizes and corners"): every style a widget has
+// goes through a PostCSS step: px text sizes and corners become sizes that follow the user's Appearance settings (Text
+// size, Roundness), the same at 100 %. Authors write plain px. Also in preview.
+//
+// SKIPPED (2026-11-14, widgets.skip.json): the widgets it lists (deprecated ones, test copies) are left out of --all
+// (build, typecheck) and of npm run check:px. Each can still be built by name.
 //
 // SHARED LIBRARIES (2026-10-31, tools/libs.mjs, README "Shared libraries"): shared/<name>/ with a library.json,
 // imported as '@shared/<name>', bundled into each widget using it (written once, built into each).
@@ -46,6 +54,7 @@ import { fileURLToPath } from 'node:url'
 import { widgetNotices, wrapperEntry } from './notices.mjs'
 import { sharedLibraries, widgetsUsing, readLibrary, LibraryError, sharedDir } from './libs.mjs'
 import { reviewWidget, describeReview, writeReview, ReviewError, RULES } from './review.mjs'
+import { appearanceCss } from './appearance-css.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const WIDGETS = path.join(ROOT, 'widgets')
@@ -65,7 +74,7 @@ const USAGE = `Usage:
   npm run watch     -- <type> [--no-install] [--allow <rule>]
   npm run preview   -- <type> [--port <n>]
   npm run test      -- <type>
-  npm run typecheck -- <type>
+  npm run typecheck -- <type>                          (or --all: the errors in dist/typecheck/report.txt)
   npm run build     -- --lib <name> [--no-install]     (every widget using shared/<name>)
   npm run test      -- --lib <name>
 <type>: a folder of widgets/ (its entry.ts declares the same id). <name>: a folder of shared/ (a library).
@@ -101,7 +110,7 @@ function parseArgs(argv) {
         else if (opts.type) fail(`one widget at a time (got ${opts.type} and ${a})\n${USAGE}`)
         else opts.type = a
     }
-    const known = { build: ['install', 'sourcemap', 'all', 'lib', 'allow'], watch: ['install', 'allow'], preview: ['port'], test: ['lib'], typecheck: [] }
+    const known = { build: ['install', 'sourcemap', 'all', 'lib', 'allow'], watch: ['install', 'allow'], preview: ['port'], test: ['lib'], typecheck: ['all'] }
     if (!command || !(command in known)) fail(`unknown command "${command ?? ''}"\n${USAGE}`)
     const allowed = new Set(known[command])
     if (!opts.install && !allowed.has('install')) fail(`--no-install: not an option of ${command}`)
@@ -124,6 +133,34 @@ function listWidgets() {
         .filter(d => d.isDirectory() && fs.existsSync(path.join(WIDGETS, d.name, 'entry.ts')))
         .map(d => d.name)
         .sort()
+}
+
+/**
+ * NEW (2026-11-14): widgets.skip.json at the repository's root: { "deprecated": ["links"], "fixtures": ["items-test"] }
+ * (any list name; each list's widgets). Left out of --all and of npm run check:px.
+ */
+function skippedWidgets() {
+    const file = path.join(ROOT, 'widgets.skip.json')
+    if (!fs.existsSync(file)) return new Set()
+    let json
+    try { json = JSON.parse(fs.readFileSync(file, 'utf8')) } catch (e) { fail(`widgets.skip.json: ${e?.message ?? e}`) }
+    const out = new Set()
+    for (const [list, names] of Object.entries(json ?? {})) {
+        if (list.startsWith('$')) continue
+        if (!Array.isArray(names)) fail(`widgets.skip.json: "${list}" is not a list of widget folders.`)
+        for (const n of names) out.add(String(n))
+    }
+    return out
+}
+
+/** The widgets --all works on: every widget but the skipped ones (said once). */
+function allWidgets() {
+    const skip = skippedWidgets()
+    const all = listWidgets()
+    const left = all.filter(t => !skip.has(t))
+    const out = all.filter(t => skip.has(t))
+    if (out.length) log(`skipped (widgets.skip.json): ${out.join(', ')}`)
+    return left
 }
 
 function widgetDir(type) {
@@ -329,6 +366,7 @@ async function build(type, { watch = false, install: doInstall = true, sourcemap
             widgetNotices({ widgetDir: dir, warn: (m) => log(`${type}: ${m}`) }), vue(), cssInjectedByJs(), output,
         ],
         define: { 'process.env.NODE_ENV': JSON.stringify('production') },
+        css: { postcss: { plugins: [appearanceCss()] } },     // NEW (2026-11-14): sizes that follow Appearance
         build: {
             target: 'es2020',
             outDir: path.join(DIST, type),
@@ -366,6 +404,7 @@ async function preview(type, port) {
         clearScreen: false,
         plugins: [sharedLibraries({ root: ROOT, who: type, warn: (m) => log(`${type}: ${m}`) }), vue()],
         resolve: { alias: { 'gexplorer/widgets': shim } },
+        css: { postcss: { plugins: [appearanceCss()] } },     // NEW (2026-11-14): as built
         // Vite otherwise discovers every preview HTML file below the repository root and scans
         // them all through this widget's SDK shim. A preview shim deliberately belongs to one
         // widget, so dependencies must be discovered from that preview only.
@@ -389,14 +428,55 @@ function test(type, lib) {
     return r.status ?? 1
 }
 
+function vueTscPath() {
+    const vueTsc = path.join(ROOT, 'node_modules', 'vue-tsc', 'bin', 'vue-tsc.js')
+    if (!fs.existsSync(vueTsc)) fail('vue-tsc is not installed: run npm install.')
+    return vueTsc
+}
+
 function typecheck(type) {
     const tsconfig = path.join(widgetDir(type), 'tsconfig.json')
     if (!fs.existsSync(tsconfig)) fail(`widgets/${type}/tsconfig.json is missing.`)
-    const vueTsc = path.join(ROOT, 'node_modules', 'vue-tsc', 'bin', 'vue-tsc.js')
-    if (!fs.existsSync(vueTsc)) fail('vue-tsc is not installed: run npm install.')
-    const r = spawnSync(process.execPath, [vueTsc, '--noEmit', '-p', rel(tsconfig)], { cwd: ROOT, stdio: 'inherit' })
+    const r = spawnSync(process.execPath, [vueTscPath(), '--noEmit', '-p', rel(tsconfig)], { cwd: ROOT, stdio: 'inherit' })
     if (r.status === 0) log(`${type}: no type errors.`)
     return r.status ?? 1
+}
+
+/**
+ * NEW (2026-11-14): every widget (but widgets.skip.json's), one after the other. The console gets one line each; the
+ * whole output goes to dist/typecheck/report.txt, each widget's errors under its name (to read, or hand to someone).
+ */
+function typecheckAll() {
+    const vueTsc = vueTscPath()
+    const types = allWidgets()
+    if (!types.length) fail('no widgets in widgets/.')
+    const outDir = path.join(ROOT, 'dist', 'typecheck')
+    fs.mkdirSync(outDir, { recursive: true })
+    const report = [`typecheck --all, ${new Date().toISOString()}`, '']
+    const failed = []
+    for (const t of types) {
+        const tsconfig = path.join(widgetDir(t), 'tsconfig.json')
+        if (!fs.existsSync(tsconfig)) {
+            failed.push(t)
+            report.push(`=== ${t}: no tsconfig.json`, '')
+            log(`${t}: no tsconfig.json`)
+            continue
+        }
+        const r = spawnSync(process.execPath, [vueTsc, '--noEmit', '-p', rel(tsconfig)], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+        const text = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim()
+        const errors = (text.match(/error TS\d+/g) ?? []).length
+        const ok = r.status === 0
+        if (!ok) failed.push(t)
+        report.push(`=== ${t}: ${ok ? 'no type errors' : `${errors || 'some'} error${errors === 1 ? '' : 's'}`}`)
+        if (text) report.push(text)
+        report.push('')
+        log(`${t}: ${ok ? 'no type errors' : `${errors || 'some'} error${errors === 1 ? '' : 's'}`}`)
+    }
+    report.push(failed.length ? `${failed.length} of ${types.length} with errors: ${failed.join(', ')}` : `all ${types.length} without type errors`)
+    const file = path.join(outDir, 'report.txt')
+    fs.writeFileSync(file, report.join('\n') + '\n')
+    log(`${failed.length ? `${failed.length} of ${types.length} with errors` : `all ${types.length} without type errors`}: ${rel(file)}`)
+    return failed.length ? 1 : 0
 }
 
 /** shared/<name>, its library.json checked (a Failure, with the library's message). */
@@ -410,7 +490,7 @@ async function main() {
     switch (opts.command) {
         case 'build':
             if (opts.all) {
-                const types = listWidgets()
+                const types = allWidgets()                                  // CHANGED (2026-11-14): widgets.skip.json's left out
                 if (!types.length) fail('no widgets in widgets/.')
                 if (opts.install) shellPublicDir()                          // a wrong setting fails before any build
                 for (const t of types) checkId(t, widgetDir(t))              // every id before any build
@@ -434,7 +514,7 @@ async function main() {
         case 'watch': await build(opts.type, { watch: true, install: opts.install, allow: opts.allow }); return null
         case 'preview': await preview(opts.type, opts.port); return null
         case 'test': return test(opts.type, opts.lib)
-        case 'typecheck': return typecheck(opts.type)
+        case 'typecheck': return opts.all ? typecheckAll() : typecheck(opts.type)
     }
 }
 

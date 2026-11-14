@@ -1,0 +1,12 @@
+{
+  "$about": "Widgets left out of --all (build, typecheck) and of npm run check:px. Each can still be built by name. Any list name works; these two say why.",
+  "deprecated": [
+    "links",
+    "code-sandbox"
+  ],
+  "fixtures": [
+    "favorites-test",
+    "favorites-third",
+    "items-test"
+  ]
+}

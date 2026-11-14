@@ -41,12 +41,17 @@ otherwise, and GEM Shell refuses a bundle whose id differs from its folder.
 ```powershell
 npm run build -- media-library                 # build and install in GEM Shell
 npm run build -- media-library --no-install    # build only: dist/runtime-widgets/media-library/
-npm run build -- --all                         # every widget
+npm run build -- --all                         # every widget (but widgets.skip.json's)
 npm run watch -- media-library                 # rebuild and install on every save
 npm run preview -- media-library               # sample-data preview (prints its address)
 npm run test -- media-library
 npm run typecheck -- media-library
+npm run typecheck -- --all                     # every widget; the errors in dist/typecheck/report.txt
+npm run check:px                               # text sizes / corners set from code (see "Text sizes and corners")
 ```
+
+`widgets.skip.json` lists widgets `--all` and `check:px` leave out (`deprecated`: not supported any more;
+`fixtures`: test copies). Each can still be built by name.
 
 With pnpm: `pnpm build media-library`, and so on.
 
@@ -611,6 +616,37 @@ them at their own cursors, and your widget follows without a change.
 | `--gex-cursor-resize-ew`, `-ns`, `-nwse`, `-nesw` | resize handles | the system's arrows |
 
 Not the browser's habits: buttons and menu entries keep the arrow (as the OS), not the hand.
+
+## Text sizes and corners
+
+GEM Shell 2026-11-14. Write sizes in plain px, at the size you want them at 100 %: the build makes them follow the
+user's Appearance settings (Settings ▸ Appearance: Text size, on top of the OS's text scale; Roundness). Nothing to
+do, nothing changes at 100 %.
+
+```css
+.title { font-size: 15px; }              /* 15px at 100 %, 30px at 200 % text */
+.card  { border-radius: 8px; }           /* 8px at 100 %, square at 0 % roundness */
+```
+
+The build (`tools/appearance-css.mjs`, every `<style>` and `.css` of the widget, and `npm run preview`) rewrites:
+
+| In | What | Becomes |
+|---|---|---|
+| `font-size`, `font`, `line-height` | every px (a `clamp()`'s limits too) | `calc(var(--base-font-size, 12px) * 15 / 12)` |
+| `border-radius` and the per-corner forms | every px | `calc(var(--base-radius, 16px) * 8 / 16)` |
+| a custom property named for a size (`--my-font-size`, `--card-radius`) | the same | the same |
+
+Everything else (padding, width, gap, icons) stays px. A size that must stay as written says so with `px-ok` in a
+comment on its line (`font-size: 9px; /* px-ok: the ruler's ticks */`). Sizes from the widget's box (`cqw`, `em`,
+`%`) are left alone: a clock's digits that grow with the widget keep doing so.
+
+**Sizes set from code** aren't seen by the build: a template's `style="font-size: 13px"`, a `:style` binding, an
+element's `style.fontSize`, a CodeMirror theme. Move them to CSS, or use the SDK's `textPx(13)` / `radius(6)` (they
+return the same `calc()`; GEM Shell 2026-11-14). `npm run check:px` lists the ones left (`--code-only`: only those).
+
+**A height that holds text** (a row of 28px with 13px text) doesn't follow by itself: at 200 % the text outgrows it.
+Give it in `em`, or as `calc(var(--base-font-size) * 28 / 12)` (28px at 100 %), or `textPx(28)` from code (a virtual
+list's row height). Try your widget at 200 % text before you ship it.
 
 ## GEM Shell's file preferences
 
