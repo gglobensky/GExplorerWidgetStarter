@@ -11,7 +11,8 @@
     "watch": "node tools/widget.mjs watch",
     "preview": "node tools/widget.mjs preview",
     "test": "node tools/widget.mjs test",
-    "typecheck": "node tools/widget.mjs typecheck"
+    "typecheck": "node tools/widget.mjs typecheck",
+    "check:px": "node tools/check-fixed-px.mjs widgets shared"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.1.2",
