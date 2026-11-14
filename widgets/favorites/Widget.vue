@@ -29,7 +29,7 @@ const props = defineProps<{
   config?: FavoritesConfig | { data?: any; view?: any }
   theme?: Record<string, string>
   placement?: {
-    context: 'grid' | 'sidebar' | 'toolbar' | 'embedded'
+    context: 'grid' | 'sidebar' | 'toolbar' | 'embedded' | 'dialog'
     size?: { cols?: number; rows?: number; width?: number; height?: number }
   }
   editMode?: boolean
@@ -50,7 +50,8 @@ const cfg = computed(() => {
 
 const editMode = computed(() => !!props.editMode)
 const group = computed(() => String((cfg.value.view as any)?.group ?? (cfg.value.data as any)?.group ?? 'main'))
-const isSidebar = computed(() => props.placement?.context === 'sidebar')
+// 0.3.7: GEM Shell's file dialog shows it as in the sidebar (the list)
+const isSidebar = computed(() => props.placement?.context === 'sidebar' || props.placement?.context === 'dialog')
 // Each place has its own layouts (entry.ts); only the grid offers a choice
 const layout = computed(() => {
   if (isSidebar.value) return 'list'

@@ -251,7 +251,7 @@ const gap = computed(() => density.value === 'expanded' ? 8 : density.value === 
 
 const columns = computed(() => {
   const count = Math.max(1, drives.value.length)
-  if (context.value === 'sidebar') return 1
+  if (context.value === 'sidebar' || context.value === 'dialog') return 1   // 0.7.3: the file dialog as the sidebar
   if (context.value === 'toolbar') return count
   if (view.value.layout === 'list') return 1
 
@@ -569,20 +569,24 @@ defineExpose({ onMenuItem, onCommand })
   height: 3px;
 }
 
-.context-sidebar {
+/* 0.7.3: GEM Shell's file dialog shows it as in the sidebar */
+.context-sidebar,
+.context-dialog {
   height: auto;
   padding: 5px 6px;
   overflow: visible;
   container-type: inline-size;
 }
 
-.context-sidebar .drive-list {
+.context-sidebar .drive-list,
+.context-dialog .drive-list {
   height: auto;
   grid-template-rows: none;
   grid-auto-rows: minmax(38px, auto);
 }
 
-.context-sidebar .drive-item {
+.context-sidebar .drive-item,
+.context-dialog .drive-item {
   min-height: 38px;
 }
 

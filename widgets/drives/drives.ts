@@ -57,7 +57,7 @@ export function chooseDensity(
     if ((height > 0 && height < 40) || (perDrive > 0 && perDrive < 62)) return 'micro'
     return perDrive > 0 && perDrive < 128 ? 'compact' : 'expanded'
   }
-  if (context === 'sidebar') return 'compact'
+  if (context === 'sidebar' || context === 'dialog') return 'compact'   // 0.7.3: the file dialog as the sidebar
   if (fits(width, height, count, 154, 70, 8)) return 'expanded'
   if (fits(width, height, count, 104, 46, 5)) return 'compact'
   return 'micro'

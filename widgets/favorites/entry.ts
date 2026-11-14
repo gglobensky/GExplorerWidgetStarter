@@ -14,7 +14,8 @@ export default {
   // 0.3.0 (GEM Shell E5c-2, 2026-11-03): the folder menus are GEM Shell's popovers (a level per folder, sub-folders
   // opening on hover, never over their parent), the drag ghost GEM Shell's (ui.dragGhost): nothing drawn outside the
   // widget's box any more.
-  version: '0.3.6',   // 0.3.6 (2026-11-14): role 'favorites'
+  version: '0.3.7',   // 0.3.7 (2026-11-14): in GEM Shell's file dialog (contexts.dialog: the list)
+                      // 0.3.6 (2026-11-14): role 'favorites'
                       // 0.3.5 (2026-11-13): the hand on a favorite (one click opens it; GEM Shell's cursor handles)
                       // 0.3.4 (2026-11-05): middle-click opens a favorite in a new tab (GEM Shell's "Open where?")
   license: 'PolyForm-Noncommercial-1.0.0',
@@ -89,6 +90,12 @@ export default {
       minHeight: 120,
       // 0.3.3: the list scrolls itself (its <gex-scroll-area>), so the add button stays put above it
       scroll: 'self',
+      layouts: [{ id: 'list', icon: '☰', tooltip: 'Vertical list' }],
+    },
+
+    // NEW (0.3.7, GEM Shell G2b-2): GEM Shell's file dialog shows it beside its explorer (as in the sidebar: the
+    // list); a click moves the dialog there (sdk.navigate), a favorite of several folders asks which
+    dialog: {
       layouts: [{ id: 'list', icon: '☰', tooltip: 'Vertical list' }],
     },
 
