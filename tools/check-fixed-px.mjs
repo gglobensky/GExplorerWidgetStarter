@@ -9,7 +9,8 @@
 //   50 % (a dot, a circle) and 0 are fine; px inside a var() fallback is fine, except the fallback of a variable
 //   named for a font size or a radius (var(--x-font-size, 13px): that px IS the size wherever it isn't set).
 //   A custom property holding a text size or a corner (--x-font-size: 12px, --x-radius: 6px) counts too.
-// A line that really means px says so: put px-ok in a comment on that line.
+// A line that really means px says so: put px-ok in a comment on that line. A block of them (CSS for a page opened
+// outside GEM Shell, as a saved report): px-ok:begin ... px-ok:end, each in a comment.
 //
 //   node check-fixed-px.mjs [folder or file ...]      default: src (the shell) / widgets shared (the starter)
 //   --warn                                           list them, but exit 0
@@ -79,7 +80,10 @@ for (const root of roots) {
         if (codeOnly && extname(f) === '.css') continue
         const lines = readFileSync(f, 'utf8').split(/\r?\n/)
         let inStyle = false
+        let inOk = false
         lines.forEach((line, i) => {
+            if (/px-ok:begin/.test(line)) { inOk = true; return }
+            if (inOk) { if (/px-ok:end/.test(line)) inOk = false; return }
             // --code-only: a .vue file's <style> blocks are the build's to adapt
             if (codeOnly && extname(f) === '.vue') {
                 if (/^\s*<style\b/.test(line)) { inStyle = true; return }

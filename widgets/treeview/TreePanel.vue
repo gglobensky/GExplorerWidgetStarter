@@ -501,9 +501,9 @@ defineExpose({ choose, focusFolder, command, exitFocus, reveal, showCreated, roo
              reached: it is never a row of its own. -->
         <div v-if="narrowParent" class="tv-narrow-up">
           <button class="tv-up-step" v-gex-tooltip="{ content: `Up to ${label(narrowParent)}`, detail: 'Shows its folders here. The pane stays where it is.' }" :aria-label="`Collapse ${narrowNode.name} and show ${label(narrowParent)}`" @click="leaveNarrow"><span class="tv-folder-up-icon" aria-hidden="true"><span>↑</span></span></button>
-          <button class="tv-up-go" v-gex-tooltip="{ content: `Go to ${label(narrowParent)}`, detail: narrowParent }" :aria-label="`Open ${label(narrowParent)} in the pane`" @click="navigate(narrowParent)" @auxclick="e => { if (e.button === 1) navigate(narrowParent) }" @mousedown.middle.prevent><strong>{{ label(narrowParent) }}</strong></button>
+          <button class="tv-up-go" v-gex-tooltip="{ content: `Go to ${label(narrowParent)}`, detail: narrowParent }" :aria-label="`Open ${label(narrowParent)} in the pane`" @click="navigate(narrowParent)" @auxclick="e => { if (e.button === 1) navigate(narrowParent!) }" @mousedown.middle.prevent><strong>{{ label(narrowParent) }}</strong></button>
         </div>
-        <button class="tv-narrow-here" v-gex-tooltip="{ content: `Go to ${narrowNode.name}`, detail: narrowNode.path }" :aria-label="`Open ${narrowNode.name} in the pane`" @click="navigate(narrowNode.path)" @auxclick="e => { if (e.button === 1) navigate(narrowNode.path) }" @mousedown.middle.prevent><span>▱</span><strong>{{ narrowNode.name }}</strong></button>
+        <button class="tv-narrow-here" v-gex-tooltip="{ content: `Go to ${narrowNode.name}`, detail: narrowNode.path }" :aria-label="`Open ${narrowNode.name} in the pane`" @click="navigate(narrowNode.path)" @auxclick="e => { if (e.button === 1) navigate(narrowNode!.path) }" @mousedown.middle.prevent><span>▱</span><strong>{{ narrowNode.name }}</strong></button>
       </div>
       <div v-if="columns" class="tv-columns-shell">
         <button v-if="columnsHaveOverflow" class="tv-column-page tv-column-page-left" :disabled="columnsAtStart" :aria-label="columnsAtStart ? 'At first folder level' : 'Show previous folder levels'" @click="scrollColumnsByPage(-1)">{{ columnsAtStart ? '│' : '‹' }}</button>

@@ -149,6 +149,7 @@ export function buildReport(rec: Recording, info: MonitorInfo | null): string {
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
 <style>
+/* px-ok:begin: a saved HTML file, opened outside GEM Shell (no Appearance settings there): its sizes stay px */
 :root { --bg: #faf8f3; --fg: #1f1c17; --muted: #6d665b; --line: #e3ddd0; --card: #fff; --brass: #b8862f; }
 @media (prefers-color-scheme: dark) { :root { --bg: #18171a; --fg: #ebe7df; --muted: #a39d92; --line: #34313a; --card: #211f24; } }
 * { box-sizing: border-box; }
@@ -174,6 +175,7 @@ h2 { font-size: 16px; margin: 26px 0 8px; } h3 { font-size: 14px; margin: 0 0 4p
 .core span { position: absolute; top: 2px; left: 0; right: 0; text-align: center; font-size: 10px; color: var(--muted); }
 footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
 @media print { body { background: #fff; } .chart, .t { border-color: #ccc; } }
+/* px-ok:end */
 </style></head>
 <body><main>
 <header>

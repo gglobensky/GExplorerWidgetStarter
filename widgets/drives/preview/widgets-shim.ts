@@ -43,3 +43,9 @@ export function setPreviewDrives(drives: DriveSnapshot[]): void {
 export function getDrives(): DriveSnapshot[] {
   return previewDrives.map(drive => ({ ...drive }))
 }
+
+// NEW (2026-11-14): the widget imports GEM Shell's rename box (Rename a drive's label). A missing export made the
+// whole preview fail to load (only the page's header showed). Here it only says what it would do.
+export async function startRename(target: string | HTMLElement, _options?: unknown): Promise<void> {
+  console.info('[preview] startRename:', typeof target === 'string' ? target : target.textContent?.trim())
+}

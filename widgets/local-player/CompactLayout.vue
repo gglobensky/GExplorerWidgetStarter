@@ -9,7 +9,7 @@ const props = defineProps<{
   volume: number
   volumeIcon: string
   layoutClass: string
-  playTooltip: TooltipOptions
+  playTooltip: TooltipOptions | string   // a text, or the tooltip's options (v-gex-tooltip takes both)
   isDropActive: boolean
 }>()
 

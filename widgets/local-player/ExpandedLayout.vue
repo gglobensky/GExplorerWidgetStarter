@@ -336,13 +336,13 @@ defineExpose({ controlsEl, queueEl })
         <span class="title" v-gex-tooltip="rowTip(t)">
         <template v-if="t.id === queue[currentIndex]?.id">
             <span
-            :ref="setMarqueeBox"
+            :ref="(el) => setMarqueeBox(el as Element | null)"
             class="marquee"
             :class="{ run: marqueeOn, suspend: resizePhase === 'active' }"
             :data-dir="marqueeDir"
             >
             <span class="marquee-track">
-                <span :ref="setMarqueeCopy" class="copy">{{ t.name }}</span>
+                <span :ref="(el) => setMarqueeCopy(el as Element | null)" class="copy">{{ t.name }}</span>
                 <span class="copy" aria-hidden="true">{{ t.name }}</span>
             </span>
             </span>

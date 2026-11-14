@@ -1,5 +1,5 @@
 {
-  "$about": "Widgets left out of --all (build, typecheck) and of npm run check:px. Each can still be built by name. Any list name works; these two say why.",
+  "$about": "Widgets left out of --all (build, typecheck) and of npm run check:px. Each can still be built by name. Any list name works; these say why: deprecated (not supported any more), fixtures (test copies), paused (on ice).",
   "deprecated": [
     "links",
     "code-sandbox"
@@ -8,5 +8,8 @@
     "favorites-test",
     "favorites-third",
     "items-test"
+  ],
+  "paused": [
+    "gexchange"
   ]
 }

@@ -22,9 +22,10 @@ export function useVolumePopover(opts: {
     /** The button's click: opens it, or closes it when open (the shell's toggle). */
     function toggle(ev: MouseEvent) {
         const anchor = ev.currentTarget as HTMLElement | null
-        if (!anchor || !sdk) return
+        const ui = sdk?.ui?.()          // FIXED (2026-11-14, typecheck): ui is optional in the SDK's type
+        if (!anchor || !ui) return
         const mine = ++seq
-        const h = sdk.ui().openPopover({
+        const h = ui.openPopover({
             anchor,
             component: VolumePopover,
             props: props(),
