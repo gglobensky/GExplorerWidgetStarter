@@ -83,9 +83,10 @@ const volPop = useVolumePopover({
 .compact-title .vol-in-title {
   position: absolute;
   right: 6px;
-  top: 50%;
-  transform: translateY(-50%);
-  height: calc(var(--lp-px) * 22);
+  /* CHANGED (2026-11-14): inside the strip whatever the text size (a fixed height went past its top and bottom) */
+  top: 2px;
+  bottom: 2px;
+  height: auto;
   padding: 0 6px;
 }
 

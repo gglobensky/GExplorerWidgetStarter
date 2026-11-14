@@ -18,7 +18,11 @@
 //                                                    The starter's build turns px in styles into Appearance sizes
 //                                                    (tools/appearance-css.mjs): there, only sizes set from code
 //                                                    count (a template's style="", :style, el.style, TS strings);
-//                                                    .css files and .vue <style> blocks are skipped.
+//                                                    .css files and .vue <style> blocks are skipped, except
+//                                                    for one rule: NEW (2026-11-14) a widget's CSS never sets
+//                                                    :root, html or body (the build doesn't scope them: they
+//                                                    change the whole of GEM Shell). Listed as 'page-wide'
+//                                                    (a preview/ folder, a page of its own, excepted).
 //   widgets.skip.json (in the folder it runs from, if there): the widgets it lists are skipped (widgets/<name>).
 //
 // Exit code 1 when something is found (0 with --warn). No dependencies.
@@ -72,12 +76,17 @@ function withoutVars(v) {
     do { prev = v; v = v.replace(/var\([^()]*\)/g, '') } while (v !== prev)
     return v
 }
+// A rule whose selector names the page itself (:root, html, body), alone or in a list: `:root {`, `body, .x {`
+const PAGE_WIDE = /(?:^|[,}]\s*|:global\(\s*)(?::root|html|body)(?![-\w])[^;{}]*\{/i
+const stripComments = (s) => s.replace(/\/\*.*?\*\//g, '')
+
 const hasPx = v => /(?:^|[^\w.])(?!0+(?:\.0+)?px)\d+(?:\.\d+)?px/.test(withoutVars(v))
 
 const found = []
 for (const root of roots) {
     for (const f of files(root)) {
-        if (codeOnly && extname(f) === '.css') continue
+        const cssFile = extname(f) === '.css'
+        const inPreview = /[\\/]preview[\\/]/.test(f)
         const lines = readFileSync(f, 'utf8').split(/\r?\n/)
         let inStyle = false
         let inOk = false
@@ -87,7 +96,13 @@ for (const root of roots) {
             // --code-only: a .vue file's <style> blocks are the build's to adapt
             if (codeOnly && extname(f) === '.vue') {
                 if (/^\s*<style\b/.test(line)) { inStyle = true; return }
-                if (inStyle) { if (/<\/style>/.test(line)) inStyle = false; return }
+                if (inStyle && /<\/style>/.test(line)) { inStyle = false; return }
+            }
+            if (codeOnly && (cssFile || inStyle)) {
+                // (a widget's preview/ folder is a page of its own: its :root is its own)
+                if (!inPreview && PAGE_WIDE.test(stripComments(line)) && !/px-ok/.test(line))
+                    found.push({ f: relative(process.cwd(), f), n: i + 1, kinds: ['page-wide'], text: line.trim() })
+                return
             }
             if (/px-ok/.test(line)) return
             const kinds = []
@@ -114,7 +129,10 @@ for (const [f, list] of [...byFile].sort((a, b) => b[1].length - a[1].length)) {
 const text = found.filter(x => x.kinds.some(k => k.startsWith('text'))).length
 const corner = found.filter(x => x.kinds.some(k => k.startsWith('corner'))).length
 const fallback = found.filter(x => x.kinds.includes('fallback')).length
+const pageWide = found.filter(x => x.kinds.includes('page-wide')).length
 console.log(found.length
-    ? `\n${found.length} line(s) in ${byFile.size} file(s): ${text} fixed text size(s), ${corner} fixed corner(s), ${fallback} px default(s) in a var() fallback. The rule: the comment at the top of this script.`
+    ? `\n${found.length} line(s) in ${byFile.size} file(s): ${text} fixed text size(s), ${corner} fixed corner(s), ${fallback} px default(s) in a var() fallback`
+      + (pageWide ? `, ${pageWide} page-wide rule(s) (:root / html / body: a widget's CSS must not set them)` : '')
+      + '. The rule: the comment at the top of this script.'
     : '\nNo fixed px text sizes or corners.')
 process.exit(found.length && !warnOnly ? 1 : 0)

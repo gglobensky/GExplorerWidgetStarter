@@ -641,12 +641,62 @@ comment on its line (`font-size: 9px; /* px-ok: the ruler's ticks */`). Sizes fr
 `%`) are left alone: a clock's digits that grow with the widget keep doing so.
 
 **Sizes set from code** aren't seen by the build: a template's `style="font-size: 13px"`, a `:style` binding, an
-element's `style.fontSize`, a CodeMirror theme. Move them to CSS, or use the SDK's `textPx(13)` / `radius(6)` (they
-return the same `calc()`; GEM Shell 2026-11-14). `npm run check:px` lists the ones left (`--code-only`: only those).
+element's `style.fontSize`, a CodeMirror theme. Move them to CSS, or use `textPx(13)` / `radiusPx(6)` from
+`gexplorer/widgets` (they return the same `calc()`; GEM Shell 2026-11-14). `npm run check:px` lists the ones left
+(`--code-only`: only those).
 
-**A height that holds text** (a row of 28px with 13px text) doesn't follow by itself: at 200 % the text outgrows it.
-Give it in `em`, or as `calc(var(--base-font-size) * 28 / 12)` (28px at 100 %), or `textPx(28)` from code (a virtual
-list's row height). Try your widget at 200 % text before you ship it.
+```ts
+import { textPx } from 'gexplorer/widgets'
+EditorView.theme({ '&': { fontSize: textPx(13) } })
+```
+
+**A height or width that must grow with the text** (a row of 28px with 13px text, a column for a time) doesn't
+follow by itself: at 200 % the text outgrows it. Use `--gex-px`, one px at 100 % Text size:
+
+```css
+.row  { height: calc(var(--gex-px, 1px) * 28); }                 /* 28px at 100 %, 56px at 200 % */
+.list { grid-template-columns: calc(var(--gex-px, 1px) * 36) 1fr calc(var(--gex-px, 1px) * 70); }
+```
+
+(`1px`: the fallback where GEM Shell's tokens aren't, your preview page.) Or `min-height` and padding, which grow
+by themselves; or `textPx(28)` from code (a virtual list's row height). Try your widget at 200 % text before you
+ship it.
+
+**Buttons and fields take your text.** A browser gives `<button>`, `<input>`, `<select>` and `<textarea>` a font of
+their own (13.33px, whatever is around them). In GEM Shell (2026-11-14) they take the text size and font around them
+in your widget, its popovers and its job card; your own `font-size` / `font-family` on them still wins.
+
+**Never style `:root`, `html` or `body`.** The build doesn't scope them: a widget's `:root { --btn-h: 32px }`
+changes every button of GEM Shell while the widget is loaded. Put your variables on your own root element.
+`npm run check:px` lists such rules (a `preview/` page is its own page: there they're fine).
+
+## Colours and fonts
+
+GEM Shell 2026-11-14. Three layers, each over the one before: GEM Shell's theme → your widget's own design (what
+you write stays yours) → later, the user's choices for one widget (set on your widget's host element).
+
+To look native and follow the user's theme, use these public variables (with a fallback for your preview page):
+
+| Variable | What |
+|---|---|
+| `--gex-bg` | the page's background |
+| `--gex-surface`, `--gex-surface-2` | a panel or card; a raised or hovered one |
+| `--gex-fg`, `--gex-fg-muted` | text; secondary text |
+| `--gex-border` | lines and frames |
+| `--gex-accent`, `--gex-accent-fg` | the accent (selection, primary buttons); text on it |
+| `--gex-danger` | something destructive or wrong |
+| `--gex-font`, `--gex-font-mono` | the interface font (yours by default); a monospace one |
+| `--gex-widget-bg`, `--gex-widget-backdrop` | your widget's own background and its backdrop filter (the surface and none today; transparent / glass once hubs get wallpapers) |
+| `--gex-px` | one px at 100 % Text size (above) |
+
+```css
+.card { background: var(--gex-widget-bg, #2a2a2a); color: var(--gex-fg, #eaeaea);
+        border: 1px solid var(--gex-border, #555); }
+.card:hover { border-color: var(--gex-accent, #4ea1ff); }
+```
+
+A widget with a design of its own keeps it: hard-coded colours and its own fonts are fine (a handwriting font on a
+corkboard). Set `font-family` on your elements; the host's `--gex-font` is only the default.
 
 ## GEM Shell's file preferences
 

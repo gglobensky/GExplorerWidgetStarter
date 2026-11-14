@@ -2521,6 +2521,15 @@ declare module 'gexplorer/widgets' {
     /** The drives to show (free). Changes: sdk.onHostChange('drives', () => ...). */
     export function getDrives(): DriveSnapshot[]
 
+    /**
+     * NEW (GEM Shell 2026-11-14): <px> at 100 % Text size, as a CSS value following Appearance ▸ Text size (and the
+     * OS text scale): calc(var(--base-font-size, 12px) * px / 12). For sizes set from code, which the build doesn't
+     * see (a :style binding, el.style, a CodeMirror theme). In CSS, write px: the build converts it.
+     */
+    export function textPx(px: number): string
+    /** NEW (GEM Shell 2026-11-14): a <px> corner at 100 % Roundness, as a CSS value (border-radius set from code). */
+    export function radiusPx(px: number): string
+
     // Favorites: through the SDK (getGlobalFavorites, addFavorite...: 'Favorites' cap).
     export type FavoritesMovePlacement = 'before' | 'after' | 'inside'
     export type FavoritesMoveSpec = {
