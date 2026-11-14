@@ -59,6 +59,7 @@ const volPop = useVolumePopover({
 
 <style scoped>
 .compact {
+  --lp-px: calc(var(--base-font-size, 12px) / 12);   /* one px at 100 % Text size (ExpandedLayout.vue says why) */
   position: relative;
   overflow: visible;
   display: flex;
@@ -70,7 +71,7 @@ const volPop = useVolumePopover({
   position: relative;
   text-align: center;
   font-weight: 600;
-  padding: 2px 36px;
+  padding: 2px calc(var(--lp-px) * 36);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -84,7 +85,7 @@ const volPop = useVolumePopover({
   right: 6px;
   top: 50%;
   transform: translateY(-50%);
-  height: 22px;
+  height: calc(var(--lp-px) * 22);
   padding: 0 6px;
 }
 
@@ -97,7 +98,8 @@ const volPop = useVolumePopover({
 }
 
 .btn {
-  height: 28px;
+  font-family: inherit; font-size: inherit;   /* a <button> doesn't inherit the text size by itself */
+  height: calc(var(--lp-px) * 28);
   padding: 0 8px;
   border-radius: var(--radius-sm, 6px);
   border: 1px solid var(--border, #555);

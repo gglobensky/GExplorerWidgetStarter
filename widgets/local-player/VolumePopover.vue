@@ -41,16 +41,18 @@ function input(e: Event) {
 
 <style scoped>
 .vol-pop {
+  --lp-px: calc(var(--base-font-size, 12px) / 12);   /* one px at 100 % Text size (it shows in the shell's popover, outside the player) */
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
   padding: 8px 6px;
 }
-.vol-vertical { writing-mode: vertical-rl; direction: rtl; height: 120px; }
+.vol-vertical { writing-mode: vertical-rl; direction: rtl; height: calc(var(--lp-px) * 120); }
 .vol-pct { font-size: 11px; font-variant-numeric: tabular-nums; opacity: 0.8; min-width: 3.5ch; text-align: center; }
 .vol-mute {
-  width: 26px; height: 22px; padding: 0;
+  width: calc(var(--lp-px) * 26); height: calc(var(--lp-px) * 22); padding: 0;
+  font-family: inherit; font-size: inherit;
   border-radius: 4px; border: 1px solid var(--border, #555);
   background: var(--surface-1, #1a1a1a); color: var(--fg, #eee); cursor: pointer;
 }

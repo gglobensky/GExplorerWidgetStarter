@@ -86,17 +86,18 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.pc { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.pc { --lp-px: calc(var(--base-font-size, 12px) / 12); display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .pc-track { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: .9; }
 .pc-row { display: flex; align-items: center; gap: 4px; }
 .pc-btn {
-  width: 26px; height: 22px; padding: 0;
+  width: calc(var(--lp-px) * 26); height: calc(var(--lp-px) * 22); padding: 0;
   border: 1px solid var(--border, #555); border-radius: 4px;
+  font-family: inherit;
   background: transparent; color: var(--fg, #eee);
   font-size: 11px; line-height: 1; cursor: pointer;
 }
 .pc-btn:hover, .pc-btn:focus-visible { background: var(--surface-3, #333); border-color: var(--accent, #4ea1ff); }
-.pc-btn--main { width: 32px; }
+.pc-btn--main { width: calc(var(--lp-px) * 32); }
 .pc-state { margin-left: auto; font-size: 11px; opacity: .6; }
 .pc-bar { height: 3px; border-radius: 2px; background: var(--gex-op-bar-bg, rgba(255,255,255,.12)); overflow: hidden; }
 .pc-fill { height: 100%; background: var(--accent, #4ea1ff); transition: width 200ms linear; }

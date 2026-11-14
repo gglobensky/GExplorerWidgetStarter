@@ -394,7 +394,10 @@ defineExpose({ controlsEl, queueEl })
 </template>
 
 <style scoped>
-:root { --control-row-h: 38px; --btn-h: 32px; }
+/* FIXED (2026-11-14): these were on :root, which a widget's styles must never set: the build doesn't scope :root, so
+   --btn-h: 32px replaced GEM Shell's own button height everywhere while the player was loaded (and froze it at 32px).
+   They now live on the player's root, and follow Appearance ▸ Text size: --lp-px is one px at 100 % (the build turns
+   font sizes into this form by itself; heights and widths are the widget's to scale). --control-row-h was unused. */
 
 /* in ExpandedLayout.vue <style scoped> */
 .empty {
@@ -405,6 +408,8 @@ defineExpose({ controlsEl, queueEl })
 
 /* ====================== ROOT ====================== */
 .player-root {
+  --lp-px: calc(var(--base-font-size, 12px) / 12);
+  --btn-h: calc(var(--lp-px) * 32);
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
@@ -491,6 +496,7 @@ defineExpose({ controlsEl, queueEl })
 
 /* Buttons always same height; width may vary by layout */
 .btn {
+  font-family: inherit; font-size: inherit;   /* a <button> doesn't inherit the text size by itself (13.33px) */
   height: var(--btn-h);
   line-height: calc(var(--btn-h) - 2px);
   padding: 0 8px;
@@ -517,19 +523,20 @@ defineExpose({ controlsEl, queueEl })
 .player-root.micro .btn.add-right,
 .player-root.ultra .vol-btn,
 .player-root.micro .vol-btn {
-  min-width: 26px; width: 26px; padding: 0; text-align: center;
+  min-width: calc(var(--lp-px) * 26); width: calc(var(--lp-px) * 26); padding: 0; text-align: center;
 }
 
 /* ====================== QUEUE HEAD (gex-fold-header, restyled) ====================== */
 .queue-head { margin-top: 8px; min-width: 0; }
 .queue-head .gex-fold-header {
-  height: 28px; padding: 0 4px 0 8px; font-size: 13px; font-weight: 600; letter-spacing: 0;
+  height: calc(var(--lp-px) * 28); padding: 0 4px 0 8px; font-size: 13px; font-weight: 600; letter-spacing: 0;
   opacity: 1; border: 1px solid var(--border, #555); border-radius: var(--radius-sm, 6px);
   background: var(--surface-1, #1a1a1a);
 }
 .queue-head .gex-fold-header.folded { border-bottom-color: var(--border, #555); }
 .queue-head .gex-fold-header:hover { background: var(--surface-3, #333); }
-.icon-btn { width: 22px; height: 22px; border-radius: 4px; border: 1px solid var(--border, #555);
+.icon-btn { width: calc(var(--lp-px) * 22); height: calc(var(--lp-px) * 22); border-radius: 4px;
+  font-family: inherit; font-size: inherit; border: 1px solid var(--border, #555);
   display: grid; place-items: center; background: var(--surface-2, #222); color: var(--fg, #eee);
   cursor: pointer; transition: all 0.12s ease;
 }
@@ -549,7 +556,7 @@ defineExpose({ controlsEl, queueEl })
 
 .row {
   display: grid;
-  grid-template-columns: 36px 1fr 70px 40px;
+  grid-template-columns: calc(var(--lp-px) * 36) 1fr calc(var(--lp-px) * 70) calc(var(--lp-px) * 40);
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
