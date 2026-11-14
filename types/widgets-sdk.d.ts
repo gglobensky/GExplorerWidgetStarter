@@ -4120,6 +4120,10 @@ declare module 'gexplorer/widgets' {
          * NEW (2026-10-28): defaults for the user's "Disable when…": greyed while one of these situations
          * is true (the widget's menuStates ids, or 'layout:<id>'); hideWhen: left out instead (wins over
          * disableWhen). The user can change it per item in sys:context-menus.
+         * NEW (GEM Shell 2026-11-14): GEM Shell's own situations too: 'place:dialog' (the menu was opened in GEM
+         * Shell's file dialog). An `actions[]` entry shown in other widgets' menus may declare them as well, the
+         * shell's only: `contextMenu: { label, icon, hideWhen: ['place:dialog'] }` (GEM Console's "Open console
+         * here", GEM Forge's "Open in GEM Forge": not offered in the file dialog by default).
          */
         disableWhen?: string[]
         hideWhen?: string[]

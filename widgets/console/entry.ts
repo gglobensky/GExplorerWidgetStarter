@@ -23,7 +23,7 @@ import Widget from './Widget.vue'
 export default {
     api: '1.0',
     id: 'console',
-    version: '0.1.6',
+    version: '0.1.7',   // 0.1.7 (2026-11-14): "Open console here" hidden in GEM Shell's file dialog (a default rule)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     displayName: 'GEM Console',
@@ -51,7 +51,8 @@ export default {
             id: 'open-here',
             label: 'Open console here',
             accepts: { contexts: ['folder', 'background'], kinds: 'folders', count: { max: 1 } },
-            contextMenu: { label: 'Open console here', icon: '>_', submenuLabel: 'GEM Console' },
+            // 0.1.7: not offered in GEM Shell's file dialog by default (the user can show it: sys:context-menus)
+            contextMenu: { label: 'Open console here', icon: '>_', submenuLabel: 'GEM Console', hideWhen: ['place:dialog'] },
         },
     ],
 

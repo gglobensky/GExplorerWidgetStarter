@@ -68,7 +68,8 @@ import { COMMANDS } from './commands'
 export default {
     api: '1.0',
     id: 'forge',
-    version: '0.2.14',   // 0.2.14 (2026-11-13): New project / a try as a project ask GEM Shell for an empty folder (require)
+    version: '0.2.15',   // 0.2.15 (2026-11-14): "Open in GEM Forge" hidden in GEM Shell's file dialog (a default rule)
+                         // 0.2.14 (2026-11-13): New project / a try as a project ask GEM Shell for an empty folder (require)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     displayName: 'GEM Forge',
@@ -121,7 +122,8 @@ export default {
         id: 'open-project',
         label: 'Open in GEM Forge',
         accepts: { contexts: ['folder', 'background'], kinds: 'folders', count: { max: 1 } },
-        contextMenu: { label: 'Open in GEM Forge', icon: '⚒️' },
+        // 0.2.15: not offered in GEM Shell's file dialog by default (the user can show it: sys:context-menus)
+        contextMenu: { label: 'Open in GEM Forge', icon: '⚒️', hideWhen: ['place:dialog'] },
     }],
     capabilities: [
         { cap: 'Develop', reason: 'Builds the widgets you write into widgets GEM Shell can run (nothing runs while it builds).' },
