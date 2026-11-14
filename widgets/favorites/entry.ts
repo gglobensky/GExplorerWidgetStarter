@@ -4,6 +4,8 @@ import Widget from './Widget.vue'
 export default {
   api: '1.0',
   id: 'favorites',
+  // NEW (2026-11-14, 0.3.6; GEM Shell G2b): GEM Shell's favorites role (widgets/roles.ts)
+  role: 'favorites',
   // 0.3.3 (GEM Shell Session N, 2026-11-04): the list and the bar scroll in GEM Shell's <gex-scroll-area> (the list's ▲ / ▼
   // strips, a line at the end; the bar's sideways strips, the wheel scrolling it sideways); dragging near an edge
   // scrolls them. The list's own scroller and its bottom handle are gone: the sidebar row's min / max sizes it.
@@ -12,7 +14,8 @@ export default {
   // 0.3.0 (GEM Shell E5c-2, 2026-11-03): the folder menus are GEM Shell's popovers (a level per folder, sub-folders
   // opening on hover, never over their parent), the drag ghost GEM Shell's (ui.dragGhost): nothing drawn outside the
   // widget's box any more.
-  version: '0.3.5',   // 0.3.5 (2026-11-13): the hand on a favorite (one click opens it; GEM Shell's cursor handles)
+  version: '0.3.6',   // 0.3.6 (2026-11-14): role 'favorites'
+                      // 0.3.5 (2026-11-13): the hand on a favorite (one click opens it; GEM Shell's cursor handles)
                       // 0.3.4 (2026-11-05): middle-click opens a favorite in a new tab (GEM Shell's "Open where?")
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,

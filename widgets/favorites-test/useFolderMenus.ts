@@ -1,0 +1,336 @@
+// /src/widgets/favorites/useFolderMenus.ts
+import { ref, markRaw } from 'vue'
+import type { FavoriteTreeFolder } from 'gexplorer/widgets'
+import type { OpenMenu, MenuRow } from './favorites.model'
+import { buildMenuRows, menuRowId } from './favorites.model'
+
+export type UseFolderMenusOptions = {
+  isSidebar: () => boolean
+  findFolderNodeById: (id: string | null) => FavoriteTreeFolder | null
+  isRootFolder: (folderId: string) => boolean
+  openFavorite: (fav: { locations: string[]; label?: string }, event?: MouseEvent) => void | Promise<unknown>
+  rowEls: Map<string, HTMLElement>
+}
+
+export function useFolderMenus(opts: UseFolderMenusOptions) {
+  const {
+    isSidebar,
+    findFolderNodeById,
+    isRootFolder,
+    openFavorite,
+    rowEls,
+  } = opts
+
+  // Map from folderId -> menu container element (for empty-folder drops)
+  const menuContainers = new Map<string, HTMLElement>()
+
+  // Stack of open menus (supports nested cascading)
+  const openMenus = ref<OpenMenu[]>([])
+
+  /**
+   * Computed: the folder ID that's currently being targeted for a drop (if any)
+   */
+  function getDropTargetFolderId(lastDropIntent: any): string | null {
+    const intent = lastDropIntent
+    if (!intent || intent.placement !== 'inside' || !intent.targetId) {
+      return null
+    }
+    const id = String(intent.targetId)
+    return id.startsWith('folder:') ? id : null
+  }
+
+  /**
+   * Helper to check if a folder menu is currently open
+   */
+  function isFolderMenuOpen(folderId: string): boolean {
+    return openMenus.value.some(m => m.folderId === folderId)
+  }
+
+  /** 0.3.0: the element a level opens next to (GEM Shell's popover anchor), never made reactive. */
+  const anchorOf = (el: HTMLElement | null | undefined) => (el ? markRaw(el) : null)
+  /** A menu row's own element (its <li>), the anchor of the level it opens. */
+  const rowElementOf = (el: Element | null | undefined) => anchorOf((el?.closest?.('li') as HTMLElement | null) ?? (el as HTMLElement | null))
+
+  /**
+   * Open a folder dropdown (user click on folder pill)
+   */
+  function openFolderDropdown(folder: FavoriteTreeFolder, event: MouseEvent) {
+    const anchor = event.currentTarget as HTMLElement | null
+    const rect = anchor?.getBoundingClientRect()
+
+    const top = rect ? rect.bottom + 4 : 80
+
+    let left: number
+    if (rect) {
+      if (isSidebar()) {
+        // Sidebar: shift menu so only ~half of it covers the sidebar
+        left = rect.left + rect.width / 2
+      } else {
+        // Toolbar / grid: keep existing behavior
+        left = rect.left
+      }
+    } else {
+      left = 80
+    }
+
+    const rows = buildMenuRows(folder.children)
+
+    // Toggle if same folder already open as root
+    const existingRoot = openMenus.value[0]
+    if (existingRoot && existingRoot.folderId === folder.id) {
+      closeFolderMenu()
+      return
+    }
+
+    openMenus.value = [
+      {
+        folderId: folder.id,
+        label: folder.label,
+        rows,
+        top,
+        left,
+        anchor: anchorOf(anchor),
+      },
+    ]
+  }
+
+  /**
+   * Open a folder dropdown from drag hover (auto-expand on hover)
+   */
+  function openFolderDropdownFromDrag(folder: FavoriteTreeFolder, anchor: HTMLElement | null) {
+    const rect = anchor?.getBoundingClientRect()
+    const rows = buildMenuRows(folder.children)
+
+    // Case 1: root-level folder (same behavior as before)
+    if (isRootFolder(folder.id)) {
+      const top = rect ? rect.bottom + 4 : 80
+      const left = rect ? rect.left : 80
+
+      const existingRoot = openMenus.value[0]
+      if (existingRoot && existingRoot.folderId === folder.id) {
+        // Already open as root → do nothing
+        return
+      }
+
+      openMenus.value = [
+        {
+          folderId: folder.id,
+          label: folder.label,
+          rows,
+          top,
+          left,
+          anchor: anchorOf(anchor),
+        },
+      ]
+      return
+    }
+
+    // Case 2: nested folder inside an existing menu
+    // Find which menu level contains this folder as a row
+    const level = openMenus.value.findIndex(menu =>
+      menu.rows.some(r => r.type === 'folder' && r.id === folder.id),
+    )
+
+    if (level === -1) {
+      // Fallback: treat it like a root-level open if we somehow didn't find it
+      const top = rect ? rect.bottom + 4 : 80
+      const left = rect ? rect.left : 80
+      openMenus.value = [
+        {
+          folderId: folder.id,
+          label: folder.label,
+          rows,
+          top,
+          left,
+          anchor: anchorOf(anchor),
+        },
+      ]
+      return
+    }
+
+    const parentMenu = openMenus.value[level]
+    const top = rect ? rect.top : parentMenu?.top ?? 80
+    const left = rect ? rect.right + 8 : (parentMenu?.left ?? 80) + 220
+
+    // Already open there: nothing to do (a drag lingering on the row)
+    if (openMenus.value[level + 1]?.folderId === folder.id) return
+
+    const next = openMenus.value.slice(0, level + 1)
+    next[level + 1] = {
+      folderId: folder.id,
+      label: folder.label,
+      rows,
+      top,
+      left,
+      anchor: rowElementOf(anchor),
+    }
+
+    openMenus.value = next
+  }
+
+  /**
+   * 0.3.0: a folder row hovered in level <level> (FolderMenu.vue, after a short delay): its folder opens as the next
+   * level, replacing what was there (GEM Shell closes a hover level once the pointer leaves it and its parent).
+   */
+  function openFolderLevelOnHover(row: MenuRow, el: HTMLElement, level: number) {
+    if (row.type !== 'folder') return
+    if (openMenus.value[level + 1]?.folderId === row.id) return
+    const folder = findFolderNodeById(row.id)
+    if (!folder || !openMenus.value[level]) return
+    const next = openMenus.value.slice(0, level + 1)
+    next[level + 1] = {
+      folderId: folder.id,
+      label: folder.label,
+      rows: buildMenuRows(folder.children),
+      top: 0,
+      left: 0,
+      anchor: rowElementOf(el),
+    }
+    openMenus.value = next
+  }
+
+  /** 0.3.0: the levels under <level> close (a favorite of that level hovered: its sibling folder's level goes). */
+  function closeLevelsAfter(level: number) {
+    if (openMenus.value.length > level + 1) openMenus.value = openMenus.value.slice(0, level + 1)
+  }
+
+  /**
+   * Close all folder menus
+   */
+  function closeFolderMenu() {
+    openMenus.value = []
+  }
+
+  /**
+   * Handle click on a menu row (either folder or item)
+   */
+  function handleFolderMenuClick(row: MenuRow, event: MouseEvent, level: number) {
+    if (row.type === 'folder') {
+      const folder = findFolderNodeById(row.id)
+      if (!folder) return
+
+      const anchor = event.currentTarget as HTMLElement | null
+      const rect = anchor?.getBoundingClientRect()
+
+      const parentMenu = openMenus.value[level]
+      const top = rect ? rect.top : parentMenu?.top ?? 80
+      const left = rect ? rect.right + 8 : (parentMenu?.left ?? 80) + 220
+
+      const rows = buildMenuRows(folder.children)
+
+      // 0.3.0: already open from this row (a hover opened it): a click keeps it
+      if (openMenus.value[level + 1]?.folderId === folder.id) return
+
+      const next = openMenus.value.slice(0, level + 1)
+      next[level + 1] = {
+        folderId: folder.id,
+        label: folder.label,
+        rows,
+        top,
+        left,
+        anchor: rowElementOf(anchor),
+      }
+      openMenus.value = next
+      return
+    }
+
+    // Leaf item
+    if (!row.locations?.length) return
+    // CHANGED (2026-10-28): the dropdown closes once the place is opened, after the shell's "where?"
+    // question when it asks one (sdk.navigate resolves then), not as soon as the row is clicked.
+    void Promise.resolve(openFavorite({ locations: row.locations, label: row.label }, event)).finally(closeFolderMenu)
+  }
+
+  /**
+   * Keep open menus in sync with tree changes (after moves/deletes)
+   */
+  function refreshOpenMenusFromTree() {
+    console.log('[DEBUG] refreshOpenMenusFromTree called', {
+      openMenusCount: openMenus.value.length,
+      menuFolderIds: openMenus.value.map(m => m.folderId),
+      timestamp: performance.now()
+    })
+
+    if (!openMenus.value.length) return
+
+    const next: OpenMenu[] = []
+
+    for (const menu of openMenus.value) {
+      // Menus tied to a folderId need to be rebuilt
+      if (!menu.folderId) {
+        next.push(menu)
+        continue
+      }
+
+      const folder = findFolderNodeById(menu.folderId)
+      if (!folder) {
+        // Folder no longer exists → drop that menu level
+        console.log('[DEBUG] Folder no longer exists, dropping menu:', menu.folderId)
+        continue
+      }
+
+      next.push({
+        ...menu,
+        label: folder.label,
+        rows: buildMenuRows(folder.children),
+        // keep top/left so the menu doesn't jump
+      })
+    }
+
+    console.log('[DEBUG] refreshOpenMenusFromTree complete', {
+      oldCount: openMenus.value.length,
+      newCount: next.length
+    })
+
+    openMenus.value = next
+  }
+
+  /**
+   * Set a menu container ref (for hit-testing empty folders)
+   */
+  function setMenuContainerRef(menu: OpenMenu, el: HTMLElement | null) {
+    const folderId = menu.folderId
+    if (!folderId) return
+
+    if (el) {
+      menuContainers.set(folderId, el)
+    } else {
+      menuContainers.delete(folderId)
+    }
+  }
+
+  /**
+   * Set a menu row ref (for drag hit-testing)
+   */
+  function setMenuRowRef(row: MenuRow, el: HTMLElement | null) {
+    const id = menuRowId(row)
+    if (!id) return
+
+    if (el) {
+      rowEls.set(id, el)
+    } else {
+      rowEls.delete(id)
+    }
+  }
+
+  return {
+    // State
+    openMenus,
+    menuContainers,
+
+    // Computed helpers
+    getDropTargetFolderId,
+    isFolderMenuOpen,
+
+    // Methods
+    openFolderDropdown,
+    openFolderDropdownFromDrag,
+    openFolderLevelOnHover,
+    closeLevelsAfter,
+    closeFolderMenu,
+    handleFolderMenuClick,
+    refreshOpenMenusFromTree,
+    setMenuContainerRef,
+    setMenuRowRef,
+  }
+}

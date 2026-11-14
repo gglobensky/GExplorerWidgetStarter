@@ -2799,8 +2799,12 @@ declare module 'gexplorer/widgets' {
          * like a pane's (a console). Placed in a hub's grid, it is a pane: click to focus it, the path bar shows
          * and moves its folder, so do its Back / Forward / Up, Favorites and Quick Links. In the sidebar or the
          * toolbar it is an ordinary widget. Expose WidgetNavigableExpose from Widget.vue. README "A navigable widget".
+         *
+         * NEW (GEM Shell 2026-11-14): `'favorites'` / `'drives'`: lists the user's favorites / the computer's drives.
+         * One widget of each is GEM Shell's (Settings ▸ Files & drives; asked once when a second one is installed):
+         * the file dialog shows it beside its explorer, and Edit Layout's "Swap for" offers the others.
          */
-        role?: 'explorer' | 'picture-editor' | 'navigable'
+        role?: 'explorer' | 'picture-editor' | 'navigable' | 'favorites' | 'drives'
     }
 
     /**
