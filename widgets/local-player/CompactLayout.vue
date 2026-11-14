@@ -8,7 +8,7 @@ const props = defineProps<{
   isPlaying: boolean
   volume: number
   volumeIcon: string
-  layoutClass: string
+  layoutClass?: string   // the width class; the compact strip doesn't style by it (Widget.vue doesn't pass it)
   playTooltip: TooltipOptions | string   // a text, or the tooltip's options (v-gex-tooltip takes both)
   isDropActive: boolean
 }>()

@@ -412,6 +412,12 @@ async function preview(type, port) {
         server: { host: '127.0.0.1', port: port ?? 5173, strictPort: port != null },
     })
     await server.listen()
+    // NEW (2026-11-14): the preview once ended silently right after Vite re-optimized its dependencies. Say when
+    // and why it stops, so a repeat can be traced (an unexpected end prints the exit code and the last step).
+    let stopping = false
+    process.once('SIGINT', () => { stopping = true; void server.close().finally(() => process.exit(0)) })
+    server.httpServer?.once('close', () => { if (!stopping) log(`${type} preview: the server closed`) })
+    process.once('exit', (code) => { if (!stopping) console.error(`[widget] ${type} preview ended (exit code ${code}). Run it again; if it repeats, send this output.`) })
     const base = (server.resolvedUrls?.local?.[0] ?? `http://127.0.0.1:${server.config.server.port}/`).replace(/\/?$/, '/')
     log(`${type} preview: ${base}widgets/${type}/preview/`)
 }

@@ -10,7 +10,7 @@ const PLAYER_EXTENSIONS = [...AUDIO_EXTS, ...PLAYLIST_EXTS].map(e => `.${e}`)
 export default {
     api:     '1.0',
     id:      'local-player',
-    version: '1.0.1',   // 1.0.1 (2026-11-14): type fixes; sizes follow Appearance (the build)
+    version: '1.0.2',   // 1.0.2 (2026-11-14): type fixes; sizes follow Appearance (the build)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
 
