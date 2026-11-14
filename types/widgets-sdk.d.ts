@@ -3591,15 +3591,20 @@ declare module 'gexplorer/widgets' {
          * The host's save dialog: the full path chosen, null when cancelled. An existing file
          * was confirmed by the user ("Replace it?") and the widget may write THAT FILE (only),
          * while GEM Shell runs, with no other prompt: fsWriteText(path, text, { overwrite: true }).
+         * require (GEM Shell 2026-11-13): rules GEM Shell checks before Save is possible; the widget sees nothing
+         * until the user saves. notExisting: no file of that name there (Save greyed with the reason).
          */
-        saveFile(opts?: { title?: string; startIn?: string; filters?: WidgetFileFilter[]; suggestedName?: string; signal?: AbortSignal }): Promise<string | null>
+        saveFile(opts?: { title?: string; startIn?: string; filters?: WidgetFileFilter[]; suggestedName?: string; require?: { notExisting?: boolean }; signal?: AbortSignal }): Promise<string | null>
         /**
          * The host's folder dialog: the folder chosen, null when cancelled. The folder highlighted,
          * or with none highlighted the folder shown (button "Select this folder"). acceptLabel:
          * the button's text instead ("Add to library"). access 'write': the widget may write in
          * it (and its subfolders: an export destination), while GEM Shell runs.
+         * require (GEM Shell 2026-11-13): rules GEM Shell checks before the folder can be chosen; the widget sees
+         * nothing until the user chooses. empty: the folder has nothing in it (the button greyed with the reason;
+         * the dialog's New folder makes one): pickFolder({ require: { empty: true } }) for a new project.
          */
-        pickFolder(opts?: { title?: string; startIn?: string; access?: 'read' | 'write'; acceptLabel?: string; signal?: AbortSignal }): Promise<string | null>
+        pickFolder(opts?: { title?: string; startIn?: string; access?: 'read' | 'write'; acceptLabel?: string; require?: { empty?: boolean }; signal?: AbortSignal }): Promise<string | null>
         /**
          * Immersive playback: dismisses the host's hover tooltips and shows none until the
          * returned release() is called, or this instance leaves the screen. Fullscreen (a

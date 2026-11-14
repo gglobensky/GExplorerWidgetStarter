@@ -68,7 +68,7 @@ import { COMMANDS } from './commands'
 export default {
     api: '1.0',
     id: 'forge',
-    version: '0.2.13',
+    version: '0.2.14',   // 0.2.14 (2026-11-13): New project / a try as a project ask GEM Shell for an empty folder (require)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     displayName: 'GEM Forge',

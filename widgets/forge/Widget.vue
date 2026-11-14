@@ -123,7 +123,8 @@ provide('gfPreviewOpts', {
 })
 // Open as a project… (the IDE's Playground part): an empty folder, New project's empty widget with this try
 provide('gfPlayAsProject', async () => {
-    const folder = await sdk.ui?.().pickFolder({ title: 'Your try as a project: an EMPTY folder for it (its name is the project\'s)', access: 'write', acceptLabel: 'Make the project here' })
+    // 0.2.14: GEM Shell checks the folder is empty before it can be chosen (require; older GEM Shell: createAt says so)
+    const folder = await sdk.ui?.().pickFolder({ title: 'Your try as a project: an empty folder for it (its name is the project\'s)', access: 'write', acceptLabel: 'Make the project here', require: { empty: true } })
     if (!folder || !(await leaveProject())) return
     const name = folder.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'My widget'
     const id = projectIdOf(name)
@@ -311,8 +312,9 @@ async function newMenu() {
 async function newProject(kind: TemplateKind) {
     const t = TEMPLATES.find(x => x.kind === kind)!
     const folder = await sdk.ui?.().pickFolder({
-        title: `${t.label.replace('…', '')}: an EMPTY folder for it (New folder makes one; its name is the project's)`,
+        title: `${t.label.replace('…', '')}: an empty folder for it (New folder makes one; its name is the project's)`,
         access: 'write', acceptLabel: 'Make the project here',
+        require: { empty: true },   // 0.2.14: GEM Shell greys the button until the folder chosen is empty
     })
     if (!folder || !(await leaveProject())) return
     const name = folder.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || t.name
