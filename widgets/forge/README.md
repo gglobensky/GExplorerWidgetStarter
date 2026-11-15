@@ -400,6 +400,10 @@ preview. GEM Shell's part: `PhotinoVue1/FORGE-SHELL-ADDITIONS.md` (forge-1 to fo
 - ✎ Arrange: the terminal (drawn by GEM Shell above the page) covered its tile's move and resize handles. While the
   page is arranged it steps aside and the tile says it comes back when you're done.
 
+## 0.6.2 (2026-11-15): cleanup
+
+- The `[forge] preview …` console lines (0.5.4, to find why previews opened twice) are gone.
+
 ## Files
 `entry.ts`, `Widget.vue` (the bar, the pages, the lifecycle), `layout.ts` (pages of tiles), `TileGrid.vue`, `project.ts` (the project: files, saving, the watch, running), `Explorer.vue`,
 `CodeEditor.vue`, `PreviewPart.vue`, `Problems.vue`, `Output.vue`, `commands.ts`, `samples.ts`, `templates.ts` (New ▾), `raw.d.ts`, `playground.ts`, `Playground.vue`, `PlayPopover.vue`,

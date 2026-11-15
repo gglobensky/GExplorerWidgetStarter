@@ -225,9 +225,9 @@ function show(): Promise<void> {
     })()
     return showing
 }
-function closeHandle(why: string) {
+/** <_why>: what closes it (another project, the part leaving…), kept at the call sites for reading. */
+function closeHandle(_why: string) {
     if (!handle) return
-    console.debug(`[forge] preview of ${shownFor || s.id} closed (${why})`)
     handle.close()
     handle = null
 }
@@ -240,7 +240,7 @@ async function showNow() {
     if (!allowed.value?.length || handle) return
     const sz = sizes()
     const r = await dev.preview(frame.value ?? area.value, s.id, { context: o.value.context, width: sz.width ?? undefined, height: sz.height ?? undefined })
-    if (r.ok) { handle = r.preview; shownFor = s.id; console.debug(`[forge] preview of ${s.id} opened (${props.partId ?? 'playground'})`) }
+    if (r.ok) { handle = r.preview; shownFor = s.id }
     else props.project.log('warn', `Preview: ${r.error}`)
 }
 function setContext(c: DevPreviewContext) {
@@ -251,7 +251,7 @@ function setContext(c: DevPreviewContext) {
 watch(() => [o.value.context, curH.value, o.value.width] as const, () => {
     if (!handle) return
     const sz = sizes()
-    if (!handle.set({ context: o.value.context, ...sz })) { console.debug('[forge] preview gone: opened again'); handle = null; void show() }
+    if (!handle.set({ context: o.value.context, ...sz })) { handle = null; void show() }
 })
 async function openWindow() {
     // Its title on the window and its card (0.1.5): the playground's result, or the project's preview
