@@ -1269,7 +1269,7 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
                 },
             })
             s.pkg.output = (streamed || r.output || '').trim()
-            if (r.cancelled) { say('npm stopped.'); return false }
+            if (!r.ok && r.cancelled) { say('npm stopped.'); return false }
             if (r.ok) {
                 say(kind === 'remove' ? `Removed: ${list.join(', ')}.` : kind === 'add' ? `Added: ${list.join(', ')}. Import it in your code.` : kind === 'add-dev' ? `Added (tools): ${list.join(', ')}.` : 'Packages installed.')
                 if (s.workspace) await readWorkspacePackage()
@@ -1418,13 +1418,13 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
             if (rebuildAsking) return
             rebuildAsking = true
             try {
-                const r = await sdk.ui?.().messageBox({
+                const r = await sdk.ui?.().messageBox({   // (resolves with the answer)
                     title: 'Rebuild the widgets that use it?',
                     message: `${name} changed. ${users.join(', ')} ${users.length === 1 ? 'uses' : 'use'} it too: rebuild ${users.length === 1 ? 'it' : 'them'} now?`,
                     detail: `GEM Forge runs the workspace's build script (npm run build -- --lib ${name}): the project's own code. The project open here rebuilds by itself.`,
                     content: [{ type: 'checkbox', id: 'remember', label: 'Remember my choice', region: 'footer' }],
                     buttons: [{ label: 'Not now', id: 'no', cancel: true }, { label: 'Rebuild', id: 'yes', default: true }],
-                }).result
+                })
                 if (!r || r.button === null) return
                 if (r.values.remember) await sdk.configWrite?.('rebuild-choice', { choice: r.button === 'yes' ? 'always' : 'never' })
                 if (r.button !== 'yes') return
@@ -1448,7 +1448,7 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
                 onOutput: text => { streamed = (streamed + text).slice(-PKG_OUTPUT); s.pkg.output = streamed },
             })
             s.pkg.output = (streamed || r.output || '').trim()
-            if (r.cancelled) say('The rebuild stopped.')
+            if (!r.ok && r.cancelled) say('The rebuild stopped.')
             else if (r.ok) say(`Rebuilt the widgets that use ${name}.`)
             else say(`Not rebuilt: ${r.error}`, false)
         } finally {
