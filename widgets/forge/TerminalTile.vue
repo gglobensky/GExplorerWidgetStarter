@@ -15,7 +15,10 @@
                 <input type="checkbox" :checked="t.state.npmHere" @change="t.setNpmHere(($event.target as HTMLInputElement).checked)"> npm output here too
             </label>
         </div>
-        <div ref="box" class="gf-term-box">
+        <!-- 0.6.1: while the page is arranged the terminal steps aside (drawn above the page, it covered the tile's
+             handles): the box isn't laid out, so GEM Shell hides it -->
+        <div v-if="arranging" class="gf-empty gf-term-note">The terminal shows again when you're done arranging.</div>
+        <div ref="box" class="gf-term-box" :class="{ away: arranging }">
             <div v-if="t.state.state !== 'ready'" class="gf-empty gf-term-note">
                 <template v-if="t.state.state === 'loading' || t.state.state === 'idle'">Opening the terminal…</template>
                 <template v-else-if="t.state.state === 'none'">No widget you have provides a terminal. GEM Console does: add it from the Widget browser.</template>
@@ -45,7 +48,7 @@ import type { ForgeTerminal } from './terminal'
 import type { Project } from './project'
 
 // The tile's props, as every part's (the terminal itself is terminal.ts's, kept with the project)
-defineProps<{ project: Project }>()
+defineProps<{ project: Project; arranging?: boolean }>()
 
 const sdk = inject<WidgetSdk>('widgetSdk')!
 const t = inject<ForgeTerminal>('gfTerminal')!

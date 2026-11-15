@@ -123,8 +123,8 @@ const terminal: ForgeTerminal = life
     ? life.persistRef<ForgeTerminal>('gf-terminal', () => markRaw(createForgeTerminal(sdk, project)), { dispose: t => t.release() }).value
     : createForgeTerminal(sdk, project)
 provide('gfTerminal', terminal)
-// It follows the project's folder
-watch(() => project.packageFolder(), () => terminal.follow())
+// It follows the project's folder (0.6.1: once the project is open: the folder, then its workspace's, moved it twice)
+watch(() => [project.packageFolder(), s.loading], () => terminal.follow())
 // 0.1.7: each preview part's options (its placement, the simulated sizes), kept in the layout (this copy's view)
 provide('gfPreviewOpts', {
     get: (id: string) => previewOpts(layout.value, id),

@@ -390,8 +390,15 @@ preview. GEM Shell's part: `PhotinoVue1/FORGE-SHELL-ADDITIONS.md` (forge-1 to fo
   rebuild) also shows in the terminal's **Tool output** tab. Output and Packages keep theirs (the default).
 - The tile coming and going (a tab switch, another page) shows the same terminal; removing the part closes it (its
   consoles keep running as GEM Forge's until GEM Forge ends: adding it again shows them).
-- **Esc** is now GEM Forge's (`keyboard.claims`): in the terminal it reaches vim or a prompt's own Esc. F6 /
-  Shift+F6 still move the focus out of GEM Forge.
+- **Esc** is now GEM Forge's (`keyboard.claims`): in the terminal it reaches vim or a prompt's own Esc. (F6 moves
+  between navigable panes; in GEM Forge's terminal it does nothing.)
+
+## 0.6.1 (2026-11-15): the terminal moves once, steps aside while arranging
+
+- Opening a project in a workspace moved the terminal twice (the project's folder, then the workspace's): it moves
+  once, when the project is open.
+- ✎ Arrange: the terminal (drawn by GEM Shell above the page) covered its tile's move and resize handles. While the
+  page is arranged it steps aside and the tile says it comes back when you're done.
 
 ## Files
 `entry.ts`, `Widget.vue` (the bar, the pages, the lifecycle), `layout.ts` (pages of tiles), `TileGrid.vue`, `project.ts` (the project: files, saving, the watch, running), `Explorer.vue`,

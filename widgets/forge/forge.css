@@ -286,5 +286,6 @@
 .gf-term-bar { flex: none; display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-bottom: 1px solid var(--gf-line); }
 .gf-term-who { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gf-term-box { position: relative; flex: 1; min-height: 0; }
+.gf-term-box.away { display: none; }
 .gf-term-note { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .gf-term-note p { margin: 0; }

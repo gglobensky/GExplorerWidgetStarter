@@ -2288,7 +2288,6 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand, onMenuI
 
     <!-- Filter: the menus' anchor (top right), and the chip (bottom left) while a filter is on -->
     <span ref="viewAnchor" class="items-view-anchor" aria-hidden="true"></span>
-    Testicouio
     <div v-if="filterChipText" ref="filterChip" class="items-filter-chip" role="status">
       <button type="button" class="items-filter-chip-open" v-gex-tooltip="{ content: `Filtered: ${filterChipText}`, detail: 'Click to change the filter.', command: 'filter' }" @click.stop="openFilterMenu(filterChip)">
         <span aria-hidden="true">⏷</span>{{ filterChipText }}

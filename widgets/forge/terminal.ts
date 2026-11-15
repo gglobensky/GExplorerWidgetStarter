@@ -92,6 +92,8 @@ export function createForgeTerminal(sdk: WidgetSdk, project: Project) {
 
     /** The terminal to the project's folder when it changes (the workspace's, else the project's). */
     function follow() {
+        // 0.6.1: not while a project opens (its folder, then its workspace's: it moved twice)
+        if (project.state.loading) return
         const folder = project.packageFolder()
         if (!handle || !folder || folder === lastFolder) return
         lastFolder = folder

@@ -76,7 +76,8 @@ const rows = computed(() => Math.max(12, ...shown.value.map(t => t.rect.row + t.
 /** Rows share the height (at least 20 px each: past that, the page scrolls). Layout v2: 24 columns, finer rows. */
 const rowH = computed(() => Math.max(20, Math.floor((height.value - GAP * (rows.value - 1)) / rows.value)))
 /** A preview part gets its id (its own options: layout.previews). */
-const extra = (id: PartId) => (kindOf(id) === 'preview' ? { partId: id } : {})
+// 0.6.1: the Terminal tile knows when the page is arranged (GEM Shell's terminal, drawn above, covered the handles)
+const extra = (id: PartId) => (kindOf(id) === 'preview' ? { partId: id } : kindOf(id) === 'terminal' ? { arranging: props.arranging } : {})
 const gridStyle = computed(() => ({
     gridTemplateColumns: `repeat(${COLS}, minmax(0, 1fr))`,
     gridTemplateRows: `repeat(${rows.value}, ${rowH.value}px)`,
