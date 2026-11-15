@@ -63,9 +63,10 @@ const showIcons = computed(() => cfg.value.view?.showIcons !== false)
 const showLabels = computed(() => cfg.value.data?.showLabels !== false)
 
 const hostVars = computed(() => ({
-  '--fav-bg': props.theme?.bg         || 'var(--surface-1, #141414)',
-  '--fav-fg': props.theme?.fg         || 'var(--fg, #eee)',
-  '--fav-border': props.theme?.border || 'rgba(255,255,255,.14)',
+  // 0.3.9 (2026-11-14): GEM Shell's public theme variables (the starter README "Colours and fonts")
+  '--fav-bg': props.theme?.bg         || 'var(--gex-widget-bg, #2a2a2a)',
+  '--fav-fg': props.theme?.fg         || 'var(--gex-fg, #eee)',
+  '--fav-border': props.theme?.border || 'var(--gex-border, rgba(255,255,255,.14))',
 }))
 
 // --- DOM Refs ----------------------------------------------------------------

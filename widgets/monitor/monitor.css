@@ -1,11 +1,13 @@
 /* widgets/monitor/monitor.css: GEM Monitor. Colours from GEM Shell's theme (with fallbacks); the gauges are brass. */
 .gm-widget, .gm-detail, .gm-card-rec {
-    --gm-fg: var(--fg, #e6e6e6);
+    /* 1.0.2 (2026-11-14): GEM Shell's public colours and fonts (the starter README "Colours and fonts"); the brass
+       gauges and the series' colours stay the widget's own */
+    --gm-fg: var(--gex-fg, #e6e6e6);
     --gm-muted: color-mix(in oklab, var(--gm-fg) 60%, transparent);
-    --gm-bg: var(--surface-1, #1d1d22);
-    --gm-card: color-mix(in oklab, var(--surface-2, #2a2a30) 80%, transparent);
-    --gm-line: var(--border, rgba(255, 255, 255, .12));
-    --gm-accent: var(--accent, #5aa9d6);
+    --gm-bg: var(--gex-bg, #1d1d22);
+    --gm-card: color-mix(in oklab, var(--gex-surface, #2a2a30) 80%, transparent);
+    --gm-line: var(--gex-border, rgba(255, 255, 255, .12));
+    --gm-accent: var(--gex-accent, #5aa9d6);
     --gm-mem: #b07ee8;
     --gm-gpu: #6fc28b;
     --gm-disk: #e0a84a;
@@ -13,9 +15,9 @@
     --gm-face-1: #f6f0e1;
     --gm-face-2: #d9ceb4;
     --gm-tick: #3b2f1c;
-    --gm-mono: "Cascadia Mono", Consolas, monospace;
+    --gm-mono: var(--gex-font-mono, "Cascadia Mono", Consolas, monospace);
     color: var(--gm-fg);
-    font: 12px/1.35 system-ui, "Segoe UI", sans-serif;
+    font: 12px/1.35 var(--gex-font, system-ui, "Segoe UI", sans-serif);
 }
 .gm-widget { width: 100%; height: 100%; min-height: 0; display: flex; }
 .gm-widget.p-toolbar { align-items: center; }
@@ -25,8 +27,8 @@
 .gm-gauge { flex: none; display: block; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .45)); }
 .gm-needle { transform-origin: 50px 50px; transition: transform .6s cubic-bezier(.25, 1.4, .5, 1); }
 @media (prefers-reduced-motion: reduce) { .gm-needle { transition: none; } }
-.gm-g-label { font: 600 7px system-ui, sans-serif; fill: #3b2f1c; letter-spacing: .5px; text-transform: uppercase; }
-.gm-g-value { font: 700 11px var(--gm-mono); fill: #1f170b; }
+.gm-g-label { font: 600 7px system-ui, sans-serif; fill: #3b2f1c; letter-spacing: .5px; text-transform: uppercase; }   /* px-ok: in the gauge's own 100-unit drawing, which scales with the tile */
+.gm-g-value { font: 700 11px var(--gm-mono); fill: #1f170b; }   /* px-ok: the same (at 200 % text it overflowed the dial) */
 
 /* ── the toolbar button ── */
 .gm-toolbtn {
@@ -79,7 +81,7 @@
 .gm-line { fill: none; stroke-width: 1.5; }
 .gm-line2 { stroke-dasharray: 3 2; opacity: .8; }
 .gm-area { opacity: .16; }
-.gm-row { display: grid; grid-template-columns: minmax(60px, 1.4fr) 60px 42px 1fr 1fr; gap: 6px; align-items: center; font-size: 11px; }
+.gm-row { display: grid; grid-template-columns: minmax(calc(var(--gex-px, 1px) * 60), 1.4fr) calc(var(--gex-px, 1px) * 60) calc(var(--gex-px, 1px) * 42) 1fr 1fr; gap: 6px; align-items: center; font-size: 11px; }
 .gm-row-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gm-num { font-family: var(--gm-mono); text-align: right; white-space: nowrap; }
 .gm-bar-mini { height: 6px; border-radius: 3px; background: color-mix(in oklab, var(--gm-fg) 12%, transparent); overflow: hidden; }
@@ -131,7 +133,7 @@
 .gm-tiles.arranging .gm-tile { cursor: grab; outline: 1px dashed color-mix(in oklab, var(--gm-accent) 55%, transparent); outline-offset: -3px; user-select: none; }
 .gm-tile.dragging { cursor: grabbing; z-index: 2; box-shadow: 0 6px 18px rgba(0, 0, 0, .4); }
 .gm-tile { transition: box-shadow .15s; }
-.gm-tile-x { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; border: 0; border-radius: 50%; cursor: pointer; font: 13px/1 system-ui;
+.gm-tile-x { position: absolute; top: 3px; right: 3px; width: calc(var(--gex-px, 1px) * 20); height: calc(var(--gex-px, 1px) * 20); border: 0; border-radius: 50%; cursor: pointer; font: 13px/1 system-ui;
     background: color-mix(in oklab, var(--gm-bg) 85%, transparent); color: var(--gm-fg); }
 .gm-tile-x:hover { background: #c4473a; }
 .gm-tile-grip { position: absolute; right: 2px; bottom: 2px; width: 14px; height: 14px; cursor: nwse-resize;
@@ -143,7 +145,8 @@
 .gm-tile .gm-cores.grid .gm-core { height: auto; }
 
 /* the graph's background line (what it is about), and the pages */
-.gm-tile-bg { position: absolute; left: 7px; right: 7px; top: 21px; font-size: 10.5px; line-height: 1.2; color: var(--gm-fg); opacity: .32;
+/* 1.0.2: under the tile's head line, whatever the text size (top was 21px: at large text it covered the head) */
+.gm-tile-bg { position: absolute; left: 7px; right: 7px; top: calc(var(--gex-px, 1px) * 21); font-size: 10.5px; line-height: 1.2; color: var(--gm-fg); opacity: .32;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; z-index: 0; }
 .gm-tile-head, .gm-tile-spark { position: relative; z-index: 1; }
 .gm-tile-head span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
@@ -164,7 +167,7 @@
 .gm-page-color { --pg: var(--gm-accent); display: inline-flex; align-items: center; padding: 5px 6px; }
 .gm-page-color .gm-page-dot { width: 11px; height: 11px; }
 .gm-pages-sep { width: 1px; height: 14px; background: var(--gm-line); margin: 0 4px; flex: none; }
-.gm-page-input { flex: 0 1 140px; padding: 2px 6px; font-size: 11px; height: 20px; box-sizing: border-box; }
+.gm-page-input { flex: 0 1 140px; padding: 2px 6px; font-size: 11px; height: calc(var(--gex-px, 1px) * 20); box-sizing: border-box; }
 .gm-tile-x, .gm-tile-grip { z-index: 2; }
 
 /* graphs: measuring a stretch (Spark selectable) */
@@ -207,7 +210,7 @@
 
 /* InlineMenu: GEM Monitor's own menus, inside its box */
 .gm-imenu { position: absolute; z-index: 20; min-width: 170px; padding: 4px; border-radius: 8px; box-sizing: border-box; outline: none;
-    background: var(--surface-2, #2a2a30); border: 1px solid var(--gm-line); box-shadow: 0 8px 24px rgba(0, 0, 0, .45); color: var(--gm-fg); }
+    background: var(--gex-surface, #2a2a30); border: 1px solid var(--gm-line); box-shadow: 0 8px 24px rgba(0, 0, 0, .45); color: var(--gm-fg); }
 .gm-imenu-label { padding: 3px 8px 5px; font-size: 10.5px; color: var(--gm-muted); text-transform: uppercase; letter-spacing: .4px; }
 .gm-imenu-item { display: flex; align-items: center; gap: 6px; width: 100%; height: 24px; padding: 0 10px 0 4px; border: 0; border-radius: 5px;
     background: transparent; color: inherit; font: 12px system-ui, "Segoe UI", sans-serif; text-align: left; cursor: pointer; white-space: nowrap; outline: none; }

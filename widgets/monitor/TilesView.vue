@@ -139,6 +139,8 @@ const props = defineProps<{
     onSave?: (layout: TileLayout) => void
     /** This copy's recorder: its clock in the bar while it records. */
     recorder?: Recorder
+    /** 1.0.2 (2026-11-14): GEM Shell's text scale (placement.size.textScale; 2 at 200 % Text size). */
+    textScale?: number
 }>()
 const emit = defineEmits<{ (e: 'details'): void }>()
 
@@ -155,6 +157,9 @@ const height = ref(400)
 
 /** A column is at least CELL_W wide; rows share the height (MIN_H to MAX_H each), so the usual tiles fit without a scrollbar. */
 const CELL_W = 150, MIN_H = 96, MAX_H = 230, GAP = 6, PAD = 6, PAGES_H = 33
+/** 1.0.2 (2026-11-14): the sizes above that hold text (a cell's width and height, the pages bar, a tile's head) are at
+ *  100 % text: times the text scale, so at large text the cells grow and fewer columns fit (was: text over text). */
+const textK = computed(() => props.textScale && props.textScale > 0 ? props.textScale : 1)
 const KINDS: TileKind[] = ['cpu', 'cpu-graph', 'cores', 'ram', 'ram-graph', 'gpu', 'gpu-graph', 'disk', 'net', 'top', 'follow', 'follow-graph', 'self', 'self-graph', 'self-mem', 'gem']
 const TITLES: Record<TileKind, string> = {
     cpu: 'CPU gauge', 'cpu-graph': 'CPU graph', cores: 'Cores', ram: 'Memory gauge', 'ram-graph': 'Memory graph', gpu: 'GPU gauge',
@@ -205,7 +210,7 @@ const USUAL: Array<{ kind: TileKind; rect: GridRect }> = [
 let seq = 0
 const newId = () => `t${Date.now().toString(36)}${(seq++).toString(36)}`
 
-const cols = computed(() => Math.max(1, Math.min(12, Math.floor((width.value - 2 * PAD + GAP) / (CELL_W + GAP)))))
+const cols = computed(() => Math.max(1, Math.min(12, Math.floor((width.value - 2 * PAD + GAP) / (CELL_W * textK.value + GAP)))))
 
 const fresh = (list: Array<{ kind: TileKind; rect: GridRect }>): Tile[] => list.map(u => ({ id: newId(), kind: u.kind, rect: { ...u.rect } }))
 const usualPages = (): TilePage[] => [
@@ -274,8 +279,8 @@ const rows = computed(() => Math.max(1, ...placed.value.map(t => t.rect.row + t.
 let frozenH = 0
 const rowH = computed(() => {
     if (drag.value && frozenH) return frozenH
-    const fitH = Math.floor((height.value - PAGES_H - 2 * PAD - GAP * (rows.value - 1)) / rows.value)
-    return Math.max(MIN_H, Math.min(MAX_H, fitH))
+    const fitH = Math.floor((height.value - PAGES_H * textK.value - 2 * PAD - GAP * (rows.value - 1)) / rows.value)
+    return Math.max(MIN_H * textK.value, Math.min(MAX_H * textK.value, fitH))
 })
 const cellW = computed(() => (width.value - 2 * PAD - GAP * (cols.value - 1)) / cols.value)
 const gridStyle = computed(() => ({
@@ -380,8 +385,8 @@ function tileSub(k: TileKind): string {
     return x?.self ? `${bytes(x.self.priv)} in ${x.self.count} processes` : ''
 }
 function gaugeSize(r: GridRect): number {
-    const w = r.colSpan * cellW.value + (r.colSpan - 1) * GAP, h = r.rowSpan * rowH.value + (r.rowSpan - 1) * GAP - (r.colSpan > 1 || r.rowSpan > 1 ? 26 : 12)
-    return Math.max(60, Math.min(w - 12, h))
+    const w = r.colSpan * cellW.value + (r.colSpan - 1) * GAP, h = r.rowSpan * rowH.value + (r.rowSpan - 1) * GAP - (r.colSpan > 1 || r.rowSpan > 1 ? 26 : 12) * textK.value
+    return Math.max(60 * textK.value, Math.min(w - 12, h))
 }
 function graph(k: TileKind): [number[], number[] | undefined] {
     switch (k) {
@@ -445,11 +450,11 @@ function graphInfo(k: TileKind): string {
 }
 function coreColumns(r: GridRect): number {
     const n = s.value?.cpu?.cores.length ?? 1
-    const perRow = Math.max(1, Math.floor(r.colSpan * cellW.value / 18))
+    const perRow = Math.max(1, Math.floor(r.colSpan * cellW.value / (18 * textK.value)))
     return Math.min(n, Math.max(Math.ceil(n / Math.max(1, r.rowSpan * 2)), Math.min(perRow, n)))
 }
 /** As many rows as the tile has room for. */
-const listRows = (rect: GridRect) => Math.max(2, Math.floor((rect.rowSpan * rowH.value + (rect.rowSpan - 1) * GAP - 30) / 16))
+const listRows = (rect: GridRect) => Math.max(2, Math.floor((rect.rowSpan * rowH.value + (rect.rowSpan - 1) * GAP - 30 * textK.value) / (16 * textK.value)))
 function topProcs(rect: GridRect) {
     return [...(s.value?.processes ?? [])].sort((a, b) => b.cpu - a.cpu).slice(0, listRows(rect))
 }

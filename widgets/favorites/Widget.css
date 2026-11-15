@@ -21,6 +21,13 @@
   padding: 4px 6px;
 }
 
+/* 0.3.9 (2026-11-14): in the toolbar and the sidebar the bar sits on GEM Shell's own chrome: no background of its own
+   (the grid keeps --fav-bg: GEM Shell's --gex-widget-bg, or the user's theme) */
+.favorites-root.toolbar-mode,
+.favorites-root.sidebar-mode {
+  background: transparent;
+}
+
 /* Slightly tighter padding & font-size when used in a toolbar row */
 .favorites-root.toolbar-mode .add-favorite-pill,
 .favorites-root.toolbar-mode .fav-pill {
@@ -93,8 +100,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: 1.15em;    /* 0.3.9: from its own text size (was 16px: at large text the + outgrew it) */
+  height: 1.15em;
   font-size: 14px;
   font-weight: 600;
   opacity: 0.8;
@@ -134,7 +141,7 @@
 }
 
 .fav-msg.error {
-  color: #ff8a8a;
+  color: var(--gex-danger, #ff8a8a);
 }
 
 .fav-msg.empty {
@@ -292,8 +299,8 @@
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
-  height: 22px;
-  min-width: 22px;
+  height: calc(var(--gex-px, 1px) * 22);
+  min-width: calc(var(--gex-px, 1px) * 22);
   border-radius: 999px;
   border: 1px solid rgba(255,255,255,0.22);
   background: rgba(0,0,0,0.25);
@@ -428,7 +435,7 @@
 
 .fav-icon {
   flex: 0 0 auto;
-  width: 16px;
+  width: 1.34em;    /* 0.3.9 (2026-11-14): from its own text size: at 200 % text the icon covered the label (was 16px) */
   text-align: center;
   font-size: 12px;
   opacity: 0.9;
@@ -505,7 +512,7 @@
 
 .fav-menu-icon {
   display: inline-block;
-  width: 18px;
+  width: 1.5em;     /* 0.3.9: from the text size (was 18px) */
   text-align: center;
   margin-right: 4px;
 }
@@ -523,12 +530,12 @@
 }
 
 .gex-fav-insert-bar {
-  background-color: var(--gex-accent-color, #4dabf7);
+  background-color: var(--gex-accent, #4dabf7);
   box-shadow: 0 0 4px rgba(0, 0, 0, 0.7);
 }
 
 .gex-fav-insert-bar-blocked {
-  background-color: #ff4d4f;
+  background-color: var(--gex-danger, #ff4d4f);
 }
 
 .fav-menu-row {
@@ -623,7 +630,7 @@
 }
 .fav-edge-add:hover:not(:disabled),
 .add-favorite-btn:hover .fav-add-star {
-  color: var(--accent, #4ea1ff);
+  color: var(--gex-accent, #4ea1ff);
 }
 .fav-edge-add:hover:not(:disabled) {
   background: color-mix(in srgb, currentColor 10%, transparent);
@@ -648,7 +655,7 @@
   padding: 0 2px;
   box-sizing: border-box;
   border-radius: 6px;
-  background: var(--accent, #4ea1ff);
+  background: var(--gex-accent, #4ea1ff);
   color: #081018;
   font: 700 8px/11px system-ui, sans-serif;
   text-align: center;

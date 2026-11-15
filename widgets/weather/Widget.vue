@@ -20,7 +20,11 @@ const props = defineProps<{
   sourceId?: string;
   config?: WeatherConfig;
   theme?: Record<string, string>;
-  placement?: { context: "grid" | "sidebar" | "toolbar" | "embedded" };
+  placement?: {
+    context: "grid" | "sidebar" | "toolbar" | "embedded";
+    // GEM Shell 2026-11-14: the text scale (2 at 200 % Text size); missing in an older shell
+    size?: { textScale?: number };
+  };
 }>();
 const emit = defineEmits<{
   (e: "event", value: { type: "update:config"; payload: WeatherConfig }): void;
@@ -146,9 +150,9 @@ const {
   minPageStep: 48,
 });
 const hostStyle = computed(() => ({
-  "--weather-base": props.theme?.bg || "var(--surface-1, #19222e)",
-  "--weather-fg": props.theme?.fg || "var(--fg, #edf3fa)",
-  "--weather-border": props.theme?.border || "var(--border, #526477)",
+  "--weather-base": props.theme?.bg || "var(--gex-widget-bg, #19222e)",   // 1.5.2: GEM Shell's public colours
+  "--weather-fg": props.theme?.fg || "var(--gex-fg, #edf3fa)",
+  "--weather-border": props.theme?.border || "var(--gex-border, #526477)",
 }));
 const provider = createOpenMeteo(async (url) => {
   if (!sdk?.networkFetch)
@@ -391,23 +395,33 @@ watch(
 onMounted(() => {
   // Observe the allocated box, not content height, so switching layouts cannot
   // feed back into its own breakpoint. Hysteresis avoids flicker during resizing.
-  const resize = new ResizeObserver(([entry]) => {
-    if (!entry || !root.value) return;
-    const { width, height } = entry.contentRect;
+  // 1.5.2 (2026-11-14): every size "as at 100 %" (divided by GEM Shell's text scale), so at large text the widget picks
+  // the layout of a smaller box. Measured again when the text size changes (the box doesn't resize then).
+  const measure = () => {
+    if (!root.value) return;
+    const s = props.placement?.size?.textScale || 1;
+    const box = root.value.getBoundingClientRect();
+    const style = getComputedStyle(root.value);
+    const padX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+    const padY = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
+    const width = (box.width - padX) / s;
+    const height = (box.height - padY) / s;
     // The strip from the box's outer height (its padding changes with the strip), with hysteresis
-    const outer = root.value.getBoundingClientRect().height;
+    const outer = box.height / s;
     strip.value =
       props.placement?.context === "toolbar" ||
       outer < STRIP_MAX_HEIGHT + (strip.value ? 12 : 0);
     stripTiny.value = strip.value && outer < 46;
     narrow.value = width <= 300;
-    minimalCurrent.value = root.value.getBoundingClientRect().width <= 240;
-    const fontSize = parseFloat(getComputedStyle(root.value).fontSize) || 14;
+    minimalCurrent.value = box.width / s <= 240;
+    const fontSize = (parseFloat(style.fontSize) || 14) / s;
     const threshold = Math.max(280, fontSize * 20) + (width < 300 ? 32 : 0);
     stacked.value = height >= threshold - (stacked.value ? 16 : 0);
-  });
+  };
+  const resize = new ResizeObserver(() => measure());
   if (root.value) resize.observe(root.value);
   cleanups.push(() => resize.disconnect());
+  cleanups.push(watch(() => props.placement?.size?.textScale, () => measure()));
   // The control panel's "Refresh now" (an action setting): every open Weather widget refreshes.
   if (settings) cleanups.push(settings.onAction("refreshNow", () => refresh()));
   const motion = window.matchMedia("(prefers-reduced-motion: reduce)");

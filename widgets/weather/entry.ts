@@ -3,7 +3,7 @@ import Widget from './Widget.vue'
 export default {
   api: '1.0',
   id: 'weather',
-  version: '1.5.1',   // 1.5.1 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step). 1.4.0 (2026-10-30): Detect my location (Geolocation); 1.5.0: settings in the control panel
+  version: '1.5.2',   // 1.5.2 (2026-11-14): layouts chosen as at 100 % text (no overflow at large text); GEM Shell's colours and font. 1.5.1: sizes follow Appearance (built with the Text size / Roundness step). 1.4.0 (2026-10-30): Detect my location (Geolocation); 1.5.0: settings in the control panel
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
   

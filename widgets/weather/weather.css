@@ -1,7 +1,7 @@
 .weather {
-  --weather-base: var(--surface-1, #19222e);
-  --weather-fg: var(--fg, #edf3fa);
-  --weather-border: var(--border, #526477);
+  --weather-base: var(--gex-widget-bg, #19222e);   /* 1.5.2: GEM Shell's public colours (Widget.vue sets them too) */
+  --weather-fg: var(--gex-fg, #edf3fa);
+  --weather-border: var(--gex-border, #526477);
   --weather-panel: color-mix(
     in srgb,
     var(--weather-base) 93%,
@@ -18,8 +18,7 @@
   color: var(--weather-fg);
   background: var(--weather-base);
   font:
-    14px/1.4 "Segoe UI",
-    sans-serif;
+    14px/1.4 var(--gex-font, "Segoe UI", sans-serif);
   border-radius: 14px;
   min-width: 0;
   height: 100%;
@@ -82,7 +81,7 @@ button:disabled {
 button:focus-visible,
 input:focus-visible,
 a:focus-visible {
-  outline: 2px solid var(--accent, #65b6f4);
+  outline: 2px solid var(--gex-accent, #65b6f4);
   outline-offset: 2px;
 }
 h2,
@@ -129,7 +128,7 @@ h2 {
   perspective: 900px;
 }
 .single-view-switch .view-toggle {
-  min-width: 66px;
+  min-width: calc(var(--gex-px, 1px) * 66);
   background: var(--weather-fg);
   color: var(--weather-base);
   backface-visibility: hidden;
@@ -257,7 +256,7 @@ h2 {
   font-size: 12px;
 }
 .day[aria-pressed="true"] {
-  border-color: var(--accent, #65b6f4);
+  border-color: var(--gex-accent, #65b6f4);
   background: color-mix(in srgb, var(--weather-panel) 94%, var(--weather-fg));
 }
 .day:hover {
@@ -462,15 +461,15 @@ h2 {
   color: var(--weather-muted);
 }
 .strip .strip-day-icon {
-  width: 18px;
-  height: 18px;
+  width: 1.3em;    /* 1.5.2: from the text size (was 18px) */
+  height: 1.3em;
 }
 .strip .strip-alert {
   flex: none;
   padding: 0;
   border: 0;
-  width: 18px;
-  height: 18px;
+  width: 1.3em;
+  height: 1.3em;
   border-radius: 50%;
   display: grid;
   place-items: center;

@@ -28,7 +28,7 @@
         </button>
         <template v-else-if="context === 'grid'">
             <TilesView :store="store" :recorder="rec" :pages="config?.view?.pages" :legacy-tiles="config?.view?.tiles" :page="config?.view?.page"
-                       :on-save="saveTiles" @details="showDetails = true" />
+                       :text-scale="placement?.size?.textScale" :on-save="saveTiles" @details="showDetails = true" />
             <DetailView v-if="showDetails" :store="store" :recorder="rec" mode="panel" :interval="interval" :on-interval="setRefresh" :on-back="() => showDetails = false" />
         </template>
         <DetailView v-else :store="store" :recorder="rec" mode="panel" :interval="interval" :on-interval="setRefresh" />
