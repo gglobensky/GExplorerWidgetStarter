@@ -15,9 +15,14 @@
     "check:px": "node tools/check-fixed-px.mjs widgets shared --code-only"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@vitejs/plugin-vue": "^5.1.2",
     "cross-env": "^7.0.3",
+    "eslint": "^10.15.0",
+    "eslint-plugin-vue": "^10.12.1",
+    "globals": "^17.14.0",
     "typescript": "^5.5.4",
+    "typescript-eslint": "^8.72.2",
     "vite": "^5.4.10",
     "vite-plugin-css-injected-by-js": "^3.5.2",
     "vue": "^3.4.38",

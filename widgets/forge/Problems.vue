@@ -6,6 +6,8 @@
 <!-- 0.2.10: Check all files (the toolbar; Checks ▾ chooses which) and its problems by file (All files). -->
 <!-- 0.2.12: Prettier among the checks; how many files / folders are left out of Check all. -->
 <!-- 0.2.13: a run's problems in a file edited since are hidden (a line says how many) until it runs again. -->
+<!-- 0.4.0: ESLint (the project's own, GEM Shell's Node tools): ◆ Lint (every file, saved), Lint on save, Set up ESLint
+     when the project has none; its problems end with "· ESLint <rule>". -->
 <template>
     <div class="gf-problems">
     <div class="gf-ptools">
@@ -15,6 +17,18 @@
         </template>
         <button v-else type="button" class="gf-ib" title="Checks every .ts / .js / .vue file of the project" @click="checkAll(project)">✓ Check all files</button>
         <button type="button" class="gf-ib" title="Which checks Check all files runs" @click="chooseChecks($event)">Checks ▾</button>
+        <!-- 0.4.0: ESLint -->
+        <button v-if="canLint" type="button" class="gf-ib" :disabled="s.checked.running || s.eslint.state === 'running'"
+                v-gex-tooltip="{ content: 'Lint', detail: 'The project\'s own ESLint on every file (as saved). It runs the project\'s code: GEM Shell asks you once.' }"
+                @click="lintAll(project)">◆ Lint</button>
+        <label v-if="canLint" class="gf-ib gf-plint" v-gex-tooltip="{ content: 'Lint on save', detail: 'ESLint checks each file you save (its problems in All files).' }">
+            <input v-model="s.lintOnSave" type="checkbox"> on save
+        </label>
+        <button v-if="s.eslint.state === 'missing' || s.eslint.state === 'no-config'" type="button" class="gf-ib" :disabled="s.pkg.busy"
+                v-gex-tooltip="{ content: 'Set up ESLint', detail: s.eslint.note || 'Adds ESLint to the project (npm, devDependencies) and writes a basic eslint.config.mjs (asked first).' }"
+                @click="project.setupEslint()">Set up ESLint</button>
+        <span v-else-if="s.eslint.state === 'running'" class="gf-busy"><span class="gf-spin" />ESLint…</span>
+        <span v-else-if="s.eslint.state === 'needs-grant' || s.eslint.state === 'failed'" class="gf-pskip" v-gex-tooltip="s.eslint.note">ESLint: {{ s.eslint.state === 'needs-grant' ? 'not allowed yet' : 'didn\'t run' }}</span>
         <span v-if="s.checkSkip.length" class="gf-pskip" :title="`Left out of Check all (the Explorer's right-click ▸ Include in Check all):\n${s.checkSkip.join('\n')}`">{{ s.checkSkip.length }} left out</span>
         <span class="gf-pgrow" />
         <button v-if="!s.checked.running && s.checked.at" type="button" class="gf-ib" title="Clear the All files list" @click="clearChecked(project)">Clear</button>
@@ -63,10 +77,12 @@
 import { computed, inject } from 'vue'
 import type { DevProblem, WidgetSdk } from 'gexplorer/widgets'
 import { packageOf, type Project } from './project'
-import { CHECKS, checkAll, clearChecked } from './checks'
+import { CHECKS, checkAll, clearChecked, lintAll } from './checks'
 
 const props = defineProps<{ project: Project }>()
 const s = props.project.state
+// 0.4.0: ESLint can run (a GEM Shell with it, a project folder)
+const canLint = computed(() => !!props.project.dev?.lint && !!s.folder)
 // The file shown's, while it's still a file of the project
 // 0.2.13: the last build's problems, those in files edited since left out (counted)
 const errs = computed(() => s.errors.filter(p => !props.project.isStale(p)))

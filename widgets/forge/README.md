@@ -318,9 +318,22 @@ preview. GEM Shell's part: `PhotinoVue1/FORGE-SHELL-ADDITIONS.md` (forge-1 to fo
   - npm and the build's packages are the workspace's (its `package.json` and `node_modules`); TypeScript reads the
     types of the packages this project and its libraries import.
 
-Next (claude/forge-dev-tools-design.md): rebuilding the other widgets a library edit affects (asked, with a choice
-to remember), ESLint (the project's own, run by Node), TypeScript and Prettier in a
-background worker, explorer projects in the grid preview, a terminal part lent by the Console.
+## 0.4.0 (2026-11-15): ESLint, rebuilding a library's widgets
+
+- **ESLint, the project's own** (its folder's, or its workspace's `node_modules/eslint` and `eslint.config.*`), run by
+  Node through GEM Shell. It loads the project's code (its configuration, its plugins), so GEM Shell asks once whether
+  GEM Forge may run this project's tools (Settings ▸ Security ▸ Permissions takes it back).
+  - Problems ▸ **◆ Lint**: every file (as saved). **on save**: each file you save. The Explorer's right-click ▸
+    **Lint with ESLint** on files and folders. ESLint is also one of Check all's checks (Checks ▾).
+  - Its problems end with `· ESLint <rule>`, in All files.
+  - No ESLint in the project: **Set up ESLint** adds it (npm, devDependencies: eslint, @eslint/js,
+    typescript-eslint, eslint-plugin-vue, globals) and writes a basic `eslint.config.mjs` (asked; never over one).
+- **A shared library changed:** GEM Forge asks whether to rebuild the workspace's other widgets that use it (their
+  build script: `npm run build -- --lib <name>`; its output in Packages, Cancel there), with "Remember my choice".
+  Settings ▸ GEM Forge: Ask / Rebuild them / Don't, and Forget the remembered answer.
+
+Next (claude/forge-dev-tools-design.md): TypeScript and Prettier in a background worker, explorer projects in the
+grid preview, a terminal part lent by the Console.
 
 ## Files
 `entry.ts`, `Widget.vue` (the bar, the pages, the lifecycle), `layout.ts` (pages of tiles), `TileGrid.vue`, `project.ts` (the project: files, saving, the watch, running), `Explorer.vue`,

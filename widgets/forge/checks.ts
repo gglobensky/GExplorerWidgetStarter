@@ -22,7 +22,12 @@ export type Check = {
     handles(path: string): boolean
     /** <path>'s problems (null: not checked: not ready). */
     run(project: Project, path: string): Promise<DevProblem[] | null>
+    /** 0.4.0: once before a run over <paths> (ESLint: one run for them all). */
+    prepare?(project: Project, paths: string[]): Promise<void>
 }
+
+// 0.4.0: ESLint's last run over a Check (all files, or the Explorer's): its problems by file
+let eslintFound: Map<string, DevProblem[]> | null = null
 
 export const CHECKS: Check[] = [
     {
@@ -40,16 +45,19 @@ export const CHECKS: Check[] = [
         run: (p, path) => prettyFor(p).problemsOfFile(path),
     },
     {
+        // 0.4.0: the project's own ESLint (its folder's, or its workspace's), run by GEM Shell's Node tools on the saved
+        // files (one run for the whole check)
         id: 'eslint',
-        label: 'ESLint (rules)',
-        unavailable: () => 'Coming next: the project\'s own ESLint (its eslint.config.js), run by Node.',
+        label: 'ESLint (the project\'s rules, saved files)',
+        unavailable: p => (p.dev?.lint ? (p.state.folder ? null : 'ESLint needs a project folder.') : 'This GEM Shell can\'t run ESLint (GEM Shell 2026-11-15 or later).'),
         handles: path => TS_FILE.test(path),
-        run: async () => null,
+        prepare: async (p, paths) => { eslintFound = await p.lint(paths, true) },
+        run: async (_p, path) => eslintFound?.get(path) ?? [],
     },
 ]
 
-/** The checks chosen that can run. */
-export const chosenChecks = (project: Project) => CHECKS.filter(c => project.state.checks.includes(c.id) && !c.unavailable(project))
+/** The checks chosen that can run (0.4.0: only <only> when given: Lint). */
+export const chosenChecks = (project: Project, only?: CheckId[]) => CHECKS.filter(c => (only ? only.includes(c.id) : project.state.checks.includes(c.id)) && !c.unavailable(project))
 
 /** A file Check all may look at: the project's own text (not node_modules', not the guide's, not GEM Forge's). */
 const ownText = (project: Project, path: string) => {
@@ -69,8 +77,8 @@ export function checkedFiles(project: Project): string[] {
 }
 
 /** 0.2.12: the files under <paths> (files, or folders) a chosen check handles (left out or not: asked for). */
-export function filesUnder(project: Project, paths: string[]): string[] {
-    const chosen = chosenChecks(project)
+export function filesUnder(project: Project, paths: string[], only?: CheckId[]): string[] {
+    const chosen = chosenChecks(project, only)
     const under = (p: string) => paths.some(r => p === r || p.startsWith(`${r}/`))
     return project.state.files.map(f => f.path).filter(p => under(p) && ownText(project, p) && chosen.some(c => c.handles(p))).sort()
 }
@@ -81,19 +89,34 @@ export function checkAll(project: Project): Promise<void> {
     return runChecks(project, checkedFiles(project), false)
 }
 /** 0.2.12: checks these files and folders (the Explorer's Check); their entries replace the list's. */
-export function checkPaths(project: Project, paths: string[]): Promise<void> {
-    return runChecks(project, filesUnder(project, paths), true)
+export function checkPaths(project: Project, paths: string[], only?: CheckId[]): Promise<void> {
+    return runChecks(project, filesUnder(project, paths, only), true, only)
+}
+/** 0.4.0: ESLint on every file Check all looks at (Problems ▸ Lint), whatever the checks chosen. */
+export function lintAll(project: Project): Promise<void> {
+    const files = project.state.files.map(f => f.path).filter(p => ownText(project, p) && !isSkipped(project, p) && TS_FILE.test(p)).sort()
+    return runChecks(project, files, false, ['eslint'])
 }
 
-async function runChecks(project: Project, paths: string[], merge: boolean): Promise<void> {
+async function runChecks(project: Project, paths: string[], merge: boolean, only?: CheckId[]): Promise<void> {
     const s = project.state
     const run = ++running
-    const chosen = chosenChecks(project)
+    const chosen = chosenChecks(project, only)
     if (!chosen.length) { project.say('No check to run: choose one in Problems ▸ Checks ▾.', false); return }
     if (!paths.length) { project.say('Nothing to check there (no file the chosen checks look at).', false); return }
     const kept = merge ? s.checked.files.filter(f => !paths.includes(f.path)) : []
     const started = Date.now()
     s.checked = { running: true, done: 0, total: paths.length, at: 0, files: kept }
+    // 0.4.0: a check that runs once for all (ESLint)
+    eslintFound = null
+    for (const c of chosen) if (c.prepare) await c.prepare(project, paths.filter(p => c.handles(p)))
+    if (run !== running) return
+    // ESLint alone (Lint) that didn't run: said, nothing listed as "no problems"
+    if (only?.length === 1 && only[0] === 'eslint' && s.eslint.state !== 'ready') {
+        s.checked = { running: false, done: 0, total: 0, at: kept.length ? Date.now() : 0, files: kept }
+        project.say(s.eslint.note || 'ESLint didn\'t run.', false)
+        return
+    }
     const files: { path: string; items: DevProblem[] }[] = []
     for (const [i, path] of paths.entries()) {
         if (run !== running) return

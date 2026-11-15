@@ -944,6 +944,18 @@ declare module 'gexplorer/widgets' {
          */
         packages?(op: DevPackagesOp, folder?: string, names?: string[], options?: DevToolRunOptions): Promise<DevPackagesResult>
         /**
+         * GEM Shell 2026-11-15: the folder's own ESLint (node_modules/eslint) on <paths> (relative to the folder, with /)
+         * or the whole folder, through Node: its problems by file. It runs the PROJECT'S code (its config, plugins): the
+         * widget's permission to run the folder's tools, asked once (on the user's click; options.ask false: never
+         * asked, { code: 'E_NEEDS_GRANT' } instead). Other codes: E_NO_ESLINT, E_NO_CONFIG, E_NO_NODE, E_CANCELLED.
+         */
+        lint?(folder: string, paths?: string[], options?: DevToolRunOptions & { ask?: boolean }): Promise<DevLintResult>
+        /**
+         * GEM Shell 2026-11-15: npm run <script> [args] in the folder (one of its package.json's scripts: the project's
+         * code; the same permission as lint), right after the user's click or key press; output streamed.
+         */
+        runScript?(folder: string, script: string, args?: string[], options?: DevToolRunOptions): Promise<DevPackagesResult>
+        /**
          * GEM Shell 2026-11-07: TypeScript over the project's files, in the page (loaded the first time: a few MB, once
          * per GEM Shell run). sync() the files (unsaved edits included) before asking; offsets are the file's own
          * (in a .vue file: its <script> blocks are read, the template isn't). Disposed with this copy of GEM Forge.
@@ -977,7 +989,13 @@ declare module 'gexplorer/widgets' {
         /** Whether the text is formatted already (Prettier's --check). */
         check(path: string, text: string, options?: DevPrettierOptions): Promise<{ ok: true; formatted: boolean } | DevPrettierError>
     }
-    export type DevPackagesOp = 'version' | 'install' | 'add' | 'remove'
+    /** 'add-dev' (GEM Shell 2026-11-15): saved in devDependencies. */
+    export type DevPackagesOp = 'version' | 'install' | 'add' | 'add-dev' | 'remove'
+    /** GEM Shell 2026-11-15: one ESLint problem (lines and columns 1-based). */
+    export type DevLintProblem = { line: number; column: number; endLine?: number; endColumn?: number; severity: 'error' | 'warning'; rule: string | null; text: string }
+    export type DevLintResult =
+        | { ok: true; files: { path: string; problems: DevLintProblem[] }[]; errors: number; warnings: number; cut: boolean; output?: string }
+        | { ok: false; error: string; code?: string; output?: string; cancelled?: boolean }
     /** GEM Shell 2026-11-15: a Node tool's run (npm): its output while it works, and a signal that stops it. */
     export type DevToolRunOptions = { onOutput?: (text: string) => void; signal?: AbortSignal }
     export type DevPackagesResult =

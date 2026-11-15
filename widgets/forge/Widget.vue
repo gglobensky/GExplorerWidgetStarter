@@ -413,6 +413,8 @@ async function onMenuItem(m: { itemId?: string; ref?: string }) {
     if (m?.itemId === 'delete') return project.deletePaths(topLevel(selectionOr(ref)))
     // 0.2.12: Check, Format with Prettier, Leave out of / Include in Check all
     if (m?.itemId === 'check') { project.showPart('problems'); return checkPaths(project, topLevel(selectionOr(ref))) }
+    // 0.4.0: ESLint on these (the project's own; GEM Shell asks once to run the project's tools)
+    if (m?.itemId === 'lint') { project.showPart('problems'); return checkPaths(project, topLevel(selectionOr(ref)), ['eslint']) }
     if (m?.itemId === 'format-prettier') return formatWithPrettier(topLevel(selectionOr(ref)))
     if (m?.itemId === 'skip-checks' || m?.itemId === 'unskip-checks') return setSkipped(project, topLevel(selectionOr(ref)), m.itemId === 'skip-checks')
     if (m?.itemId !== 'new-file' && m?.itemId !== 'new-folder') return

@@ -30,7 +30,7 @@
 // edited and saved in place; the watch is on <root>; npm and the build's packages are <root>'s (its package.json and
 // node_modules). Paths never leave their place: a project file stays in the project, a library's in its library.
 import { reactive, markRaw } from 'vue'
-import type { WidgetSdk, WidgetDev, DevProblem, DevChange, ListingEntry, DevInstalledState, NamingToken } from 'gexplorer/widgets'
+import type { WidgetSdk, WidgetDev, DevProblem, DevChange, ListingEntry, DevInstalledState, NamingToken, DevLintProblem } from 'gexplorer/widgets'
 import { GUIDE_FILES } from './templates'
 import { createMapper } from './smap'
 import { zipFiles } from './zip'
@@ -73,6 +73,8 @@ export type Session = {
     liveReload: boolean
     /** 0.2.2: TypeScript's formatting before each save. */
     formatOnSave?: boolean
+    /** 0.4.0: ESLint on each file saved. */
+    lintOnSave?: boolean
     /** 0.2.10: the checks Check all files runs. */
     checks?: string[]
     /** 0.2.12: files / folders left out of Check all; the formatter (Format document, Format on save). */
@@ -131,6 +133,28 @@ export const SHARED = '@shared/'
 const LIB_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 /** 0.3.0: the library a path is in ('@shared/library-ui/x.ts' → 'library-ui'), or null (a project file). */
 export const libOf = (rel: string): string | null => (rel.startsWith(SHARED) ? rel.slice(SHARED.length).split('/')[0] || null : null)
+/** 0.4.0: Set up ESLint's eslint.config.mjs (flat config: ESLint's, TypeScript's and Vue's recommended rules). */
+const ESLINT_CONFIG = `// eslint.config.mjs: written by GEM Forge (Set up ESLint). The rules are yours to change:
+// https://eslint.org/docs/latest/use/configure/
+import js from '@eslint/js'
+import tseslint from 'typescript-eslint'
+import vue from 'eslint-plugin-vue'
+import globals from 'globals'
+
+export default tseslint.config(
+    { ignores: ['**/dist/**', '**/node_modules/**'] },
+    js.configs.recommended,
+    ...tseslint.configs.recommended,
+    ...vue.configs['flat/recommended'],
+    {
+        files: ['**/*.vue'],
+        languageOptions: { parserOptions: { parser: tseslint.parser } },
+    },
+    {
+        languageOptions: { globals: { ...globals.browser } },
+    },
+)
+`
 /** 0.3.0: a workspace's library (shared/<name>/library.json). */
 export type Library = { name: string; version: string; description: string; uses: string[] }
 
@@ -234,6 +258,9 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
         workspacePackage: '',
         /** 0.3.0: the workspace's widgets using each library (found when asked: libraryUsers), by library name. */
         libraryUsers: {} as Record<string, string[] | 'finding'>,
+        /** 0.4.0: ESLint (the folder's own): whether it's there and allowed, after the last run; lint on save. */
+        eslint: { state: 'unknown' as 'unknown' | 'running' | 'ready' | 'missing' | 'no-config' | 'needs-grant' | 'failed', note: '' },
+        lintOnSave: false,
     })
 
     let stopWatch: (() => void) | null = null
@@ -496,17 +523,32 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
         else log('warn', `Not watching ${where}: ${r.error}`)
     }
 
-    /** 0.3.0: a change under the workspace's root as a path of the project ('' when it's neither the project's nor a library's). */
-    function fromRoot(p: string): string {
-        const own = s.folder.slice(s.workspace.length).replace(/^[\\/]+/, '').split(/[\\/]/).join('/')
+    /** 0.4.0: the project's place in its workspace ('widgets/<name>'; '' without one). */
+    const ownInWorkspace = () => (s.workspace ? s.folder.slice(s.workspace.length).replace(/^[\\/]+/, '').split(/[\\/]/).filter(Boolean).join('/') : '')
+    /** 0.4.0: a path relative to the folder the tools work in (the workspace's root, else the project's) as a project path ('' when neither the project's nor a library's). */
+    function fromToolPath(p: string): string {
+        if (!s.workspace) return p
+        const own = ownInWorkspace()
         if (p.startsWith(`${own}/`)) return p.slice(own.length + 1)
         if (p.startsWith('shared/')) {
             const rest = p.slice('shared/'.length)
             const name = rest.split('/')[0]
             if (s.libraries.some(l => l.name === name) && rest.length > name.length + 1) return SHARED + rest
         }
-        if (p.startsWith('widgets/')) s.libraryUsers = {}
         return ''
+    }
+    /** 0.4.0: a project path as the folder the tools work in sees it. */
+    function toToolPath(rel: string): string {
+        if (!s.workspace) return rel
+        if (libOf(rel)) return 'shared/' + rel.slice(SHARED.length)
+        const own = ownInWorkspace()
+        return rel ? `${own}/${rel}` : own
+    }
+    /** 0.3.0: a change under the workspace's root as a path of the project ('' when it's neither the project's nor a library's). */
+    function fromRoot(p: string): string {
+        const r = fromToolPath(p)
+        if (!r && p.startsWith('widgets/')) s.libraryUsers = {}
+        return r
     }
 
     async function onDisk(changes: DevChange[], overflow: boolean) {
@@ -657,6 +699,9 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
             s.conflicts = s.conflicts.filter(p => p !== path)
             say(`${path} saved.`)
             if (s.liveReload) scheduleRun()
+            // 0.4.0: ESLint on the file (Lint on save), and a library's other widgets (rebuild: asked)
+            if (s.lintOnSave && /\.(ts|mts|js|mjs|vue)$/i.test(path)) void lintSaved(path)
+            if (libOf(path)) void afterLibrarySave(path)
             return true
         } catch (err) {
             say(`${path}: not saved (${String((err as Error)?.message ?? err)})`, false)
@@ -761,7 +806,7 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
         return {
             folder: s.folder, name: s.name, id: s.folder ? undefined : s.id,
             files: s.folder ? null : s.files.filter(f => f.base64 === undefined).map(f => ({ path: f.path, text: f.text, saved: f.saved })),
-            unsaved, openTabs: [...s.openTabs], active: s.active, liveReload: s.liveReload, formatOnSave: s.formatOnSave, checks: [...s.checks], checkSkip: [...s.checkSkip], formatter: s.formatter, cursors: cur,
+            unsaved, openTabs: [...s.openTabs], active: s.active, liveReload: s.liveReload, formatOnSave: s.formatOnSave, lintOnSave: s.lintOnSave, checks: [...s.checks], checkSkip: [...s.checkSkip], formatter: s.formatter, cursors: cur,
             pinned: s.pinned.filter(p => s.openTabs.includes(p)), tabRows: s.tabRows,
         }
     }
@@ -771,6 +816,7 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
         if (!v || typeof v !== 'object') return
         s.liveReload = v.liveReload !== false
         s.formatOnSave = v.formatOnSave === true
+        s.lintOnSave = v.lintOnSave === true
         if (Array.isArray(v.checks)) s.checks = v.checks.filter(c => typeof c === 'string').slice(0, 8)
         s.formatter = v.formatter === 'prettier' ? 'prettier' : 'typescript'
         if (v.folder) await openFolder(v.folder)
@@ -1202,12 +1248,12 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
     function cancelPackages() { pkgStop?.abort() }
 
     /** 0.2.4: npm, for the Packages part and Problems' "＋ Add <name>" (a click: GEM Shell asks first). */
-    async function packagesOp(kind: 'install' | 'add' | 'remove', list: string[] = []): Promise<boolean> {
+    async function packagesOp(kind: 'install' | 'add' | 'add-dev' | 'remove', list: string[] = []): Promise<boolean> {
         if (!dev?.packages) { say('This GEM Shell has no npm packages yet.', false); return false }
         if (s.pkg.busy) { say('npm is already working: wait for it.', false); return false }
         Object.assign(s.pkg, {
             busy: true, output: '', started: Date.now(),
-            doing: kind === 'remove' ? `Removing ${list.join(', ')}` : kind === 'add' ? `Downloading ${list.join(', ')}` : 'Installing the packages',
+            doing: kind === 'remove' ? `Removing ${list.join(', ')}` : kind === 'add' || kind === 'add-dev' ? `Downloading ${list.join(', ')}` : 'Installing the packages',
         })
         try {
             // package.json made (a minimal one) or saved first: npm writes in it
@@ -1225,7 +1271,7 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
             s.pkg.output = (streamed || r.output || '').trim()
             if (r.cancelled) { say('npm stopped.'); return false }
             if (r.ok) {
-                say(kind === 'remove' ? `Removed: ${list.join(', ')}.` : kind === 'add' ? `Added: ${list.join(', ')}. Import it in your code.` : 'Packages installed.')
+                say(kind === 'remove' ? `Removed: ${list.join(', ')}.` : kind === 'add' ? `Added: ${list.join(', ')}. Import it in your code.` : kind === 'add-dev' ? `Added (tools): ${list.join(', ')}.` : 'Packages installed.')
                 if (s.workspace) await readWorkspacePackage()
                 else await reloadFile('package.json')
                 packagesChanged()
@@ -1282,6 +1328,140 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
         await refreshInstalled()
     }
 
+    // ── ESLint (0.4.0, GEM Shell's Node tools: the folder's own ESLint; claude/forge-dev-tools-design.md 4c) ───────
+    const ESLINT_TAG = ' · ESLint'
+    /** ESLint's problems in Problems' terms (the rule in the text: "… · ESLint no-unused-vars"). */
+    const asProblem = (path: string, m: DevLintProblem): DevProblem => ({ file: path, line: m.line, column: m.column, text: `${m.text}${ESLINT_TAG}${m.rule ? ` ${m.rule}` : ''}`, rule: m.severity })
+    const isEslintProblem = (p: DevProblem) => p.text.includes(ESLINT_TAG)
+
+    /**
+     * The folder's ESLint on these project files (all the project's when null). ask: GEM Shell's question for the
+     * project's tools may open (a click started it). Their problems by file; null when ESLint didn't run (s.eslint says why).
+     */
+    async function lint(paths: string[] | null, ask: boolean): Promise<Map<string, DevProblem[]> | null> {
+        if (!dev?.lint || !s.folder) { s.eslint = { state: 'failed', note: 'This GEM Shell can\'t run ESLint (GEM Shell 2026-11-15 or later).' }; return null }
+        const targets = paths ? paths.map(toToolPath) : [toToolPath('')].filter(Boolean)
+        s.eslint = { state: 'running', note: '' }
+        const r = await dev.lint(packageFolder(), targets, { ask })
+        if (!r.ok) {
+            const state = r.code === 'E_NO_ESLINT' ? 'missing' : r.code === 'E_NO_CONFIG' ? 'no-config' : r.code === 'E_NEEDS_GRANT' ? 'needs-grant' : 'failed'
+            s.eslint = { state, note: r.error }
+            if (state === 'failed' && r.output) log('warn', `ESLint: ${r.output.trim().slice(-2000)}`)
+            return null
+        }
+        s.eslint = { state: 'ready', note: r.cut ? 'More than 5000 problems: the first ones are listed.' : '' }
+        const found = new Map<string, DevProblem[]>()
+        for (const f of r.files) {
+            const path = fromToolPath(f.path)
+            if (path && file(path)) found.set(path, f.problems.map(m => asProblem(path, m)))
+        }
+        return found
+    }
+    let toldGrant = false
+    /** Lint on save: the file's ESLint problems replace its earlier ones in Problems ▸ All files. */
+    async function lintSaved(path: string) {
+        const found = await lint([path], false)
+        if (!found) {
+            if (s.eslint.state === 'needs-grant' && !toldGrant) { toldGrant = true; say('Lint on save: allow GEM Forge to run this project\'s tools once (Problems ▸ Lint).', false) }
+            return
+        }
+        const items = found.get(path) ?? []
+        const rest = s.checked.files.filter(f => f.path !== path)
+        const mine = s.checked.files.find(f => f.path === path)
+        const kept = (mine?.items ?? []).filter(p => !isEslintProblem(p))
+        const all = [...kept, ...items]
+        s.checked.files = (all.length ? [...rest, { path, items: all }] : rest).sort((a, b) => a.path.localeCompare(b.path))
+        if (!s.checked.at) s.checked.at = Date.now()
+    }
+
+    /** Set up ESLint: the packages (devDependencies), then a basic eslint.config.mjs (asked; never over one there). */
+    async function setupEslint(): Promise<void> {
+        if (!s.folder) return
+        if (!(await packagesOp('add-dev', ['eslint', '@eslint/js', 'typescript-eslint', 'eslint-plugin-vue', 'globals']))) return
+        const folder = packageFolder()
+        let names: string[] = []
+        try { names = (await listOne(folder)).map(e => e.Name) } catch { /* asked below */ }
+        if (names.some(n => /^eslint\.config\.(js|mjs|cjs|ts|mts|cts)$/i.test(n))) {
+            s.eslint = { state: 'unknown', note: '' }
+            say('ESLint is set up: the project already has its configuration. Lint checks it.')
+            return
+        }
+        const ok = await sdk.ui?.().confirm(`Write a basic eslint.config.mjs in ${folder}? It turns on ESLint's, TypeScript's and Vue's recommended rules; change it as you like.`, { title: 'Set up ESLint', okLabel: 'Write it' })
+        if (!ok || !sdk.fsWriteText) return
+        const text = ESLINT_CONFIG.replace(/\n/g, sepOf(folder) === '\\' ? '\r\n' : '\n')
+        try { await sdk.fsWriteText(joinPath(folder, 'eslint.config.mjs'), text, { overwrite: false }) } catch (err) {
+            say(`eslint.config.mjs not written: ${String((err as Error)?.message ?? err)}`, false)
+            return
+        }
+        if (folder === s.folder) await reloadFile('eslint.config.mjs')
+        s.eslint = { state: 'unknown', note: '' }
+        say('ESLint is set up: Lint (Problems) checks the project.')
+    }
+
+    // ── A shared library changed: its other widgets (0.4.0) ─────────────────────────────────────────────────────
+    let rebuildAsking = false
+    /** The answer remembered at the question (GEM Forge's own config), when the setting is "Ask". */
+    async function rememberedRebuild(): Promise<'always' | 'never' | null> {
+        try { const v = await sdk.configRead?.<{ choice?: string }>('rebuild-choice'); return v?.choice === 'always' || v?.choice === 'never' ? v.choice : null } catch { return null }
+    }
+    /** After a library file is saved: rebuild the workspace's other widgets using it (its build script), as the setting says. */
+    async function afterLibrarySave(path: string) {
+        const name = libOf(path)
+        if (!name || !s.workspace || !dev?.runScript) return
+        try { if (!JSON.parse(packageJsonText() || '{}')?.scripts?.build) return } catch { return }
+        const setting = String(sdk.settings?.().values.rebuildLibraryUsers ?? 'ask')
+        const choice = setting === 'ask' ? (await rememberedRebuild()) ?? 'ask' : setting
+        if (choice === 'never') return
+        const users = (await libraryUsers(name)).filter(u => u !== baseName(s.folder))
+        if (!users.length) return
+        if (choice === 'ask') {
+            if (rebuildAsking) return
+            rebuildAsking = true
+            try {
+                const r = await sdk.ui?.().messageBox({
+                    title: 'Rebuild the widgets that use it?',
+                    message: `${name} changed. ${users.join(', ')} ${users.length === 1 ? 'uses' : 'use'} it too: rebuild ${users.length === 1 ? 'it' : 'them'} now?`,
+                    detail: `GEM Forge runs the workspace's build script (npm run build -- --lib ${name}): the project's own code. The project open here rebuilds by itself.`,
+                    content: [{ type: 'checkbox', id: 'remember', label: 'Remember my choice', region: 'footer' }],
+                    buttons: [{ label: 'Not now', id: 'no', cancel: true }, { label: 'Rebuild', id: 'yes', default: true }],
+                }).result
+                if (!r || r.button === null) return
+                if (r.values.remember) await sdk.configWrite?.('rebuild-choice', { choice: r.button === 'yes' ? 'always' : 'never' })
+                if (r.button !== 'yes') return
+            } finally {
+                rebuildAsking = false
+            }
+        }
+        await rebuildUsers(name)
+    }
+    /** npm run build -- --lib <name> in the workspace (its output in Packages, Cancel there). */
+    async function rebuildUsers(name: string) {
+        if (!dev?.runScript) return
+        if (s.pkg.busy) { say('npm is already working: rebuild the other widgets once it\'s done.', false); return }
+        Object.assign(s.pkg, { busy: true, output: '', started: Date.now(), doing: `Rebuilding the widgets that use ${name}` })
+        showPart('packages')
+        pkgStop = new AbortController()
+        let streamed = ''
+        try {
+            const r = await dev.runScript(packageFolder(), 'build', ['--lib', name], {
+                signal: pkgStop.signal,
+                onOutput: text => { streamed = (streamed + text).slice(-PKG_OUTPUT); s.pkg.output = streamed },
+            })
+            s.pkg.output = (streamed || r.output || '').trim()
+            if (r.cancelled) say('The rebuild stopped.')
+            else if (r.ok) say(`Rebuilt the widgets that use ${name}.`)
+            else say(`Not rebuilt: ${r.error}`, false)
+        } finally {
+            s.pkg.busy = false
+            pkgStop = null
+        }
+    }
+    // The settings page's "Forget it" (entry.ts settings: forgetRebuildChoice)
+    const offForget = sdk.settings?.().onAction('forgetRebuildChoice', async () => {
+        await sdk.configWrite?.('rebuild-choice', {})
+        return { message: 'Forgotten: GEM Forge asks again.' }
+    })
+
     function setEditor(e: typeof editor) { editor = e }
     /** The editor leaving: forgotten, unless another one already took its place (a tile moved: mount before unmount). */
     function clearEditor(e: typeof editor) { if (editor === e) editor = null }
@@ -1289,6 +1469,7 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
 
     async function dispose() {
         offConsole?.()
+        offForget?.()
         await closeCurrent()
     }
 
@@ -1301,6 +1482,7 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
         keepMine, takeDisk, run, scheduleRun, asText, log, say, dispose,
         packagesFrom, reloadFile, ensurePackageJson, packagesChanged, setFormatter, packagesOp, cancelPackages, addPackage, showPart,
         diskPath, packageFolder, packageJsonText, packagePathOf, libraryUsers, sharedSpec,
+        lint, setupEslint, rebuildUsers, isEslintProblem,
     }
 }
 

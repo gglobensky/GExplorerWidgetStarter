@@ -68,7 +68,7 @@ import { COMMANDS } from './commands'
 export default {
     api: '1.0',
     id: 'forge',
-    version: '0.3.2',   // 0.3.2 (2026-11-15): a relative import into the workspace's shared/ builds and type-checks (the library's file). 0.3.1 (2026-11-15): the Explorer's tooltips are GEM Shell's. 0.3.0 (2026-11-15): workspaces: a project in <root>/widgets/<name> gets <root>'s shared libraries (@shared/<name>: built, checked, edited) and packages. 0.2.19 (2026-11-15): npm's output shows while it works, with Cancel (GEM Shell's Node tools' runner). 0.2.18 (2026-11-14): the preview's placement buttons without a label (a tooltip), wrapping. 0.2.17 (2026-11-14): GEM Shell's colours and fonts; tabs and buttons grow with the text. 0.2.16 (2026-11-14): the editor's text follows Text size (textPx); sizes follow Appearance. 0.2.15 (2026-11-14): "Open in GEM Forge" hidden in GEM Shell's file dialog (a default rule)
+    version: '0.4.0',   // 0.4.0 (2026-11-15): ESLint (Lint, Lint on save, Set up ESLint, Check all's ESLint); rebuilding a shared library's other widgets (asked; Settings). 0.3.2 (2026-11-15): a relative import into the workspace's shared/ builds and type-checks (the library's file). 0.3.1 (2026-11-15): the Explorer's tooltips are GEM Shell's. 0.3.0 (2026-11-15): workspaces: a project in <root>/widgets/<name> gets <root>'s shared libraries (@shared/<name>: built, checked, edited) and packages. 0.2.19 (2026-11-15): npm's output shows while it works, with Cancel (GEM Shell's Node tools' runner). 0.2.18 (2026-11-14): the preview's placement buttons without a label (a tooltip), wrapping. 0.2.17 (2026-11-14): GEM Shell's colours and fonts; tabs and buttons grow with the text. 0.2.16 (2026-11-14): the editor's text follows Text size (textPx); sizes follow Appearance. 0.2.15 (2026-11-14): "Open in GEM Forge" hidden in GEM Shell's file dialog (a default rule)
                          // 0.2.14 (2026-11-13): New project / a try as a project ask GEM Shell for an empty folder (require)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
@@ -97,6 +97,25 @@ export default {
         { id: 'included', label: 'In Check all' },
         { id: 'no-prettier', label: 'No Prettier in this GEM Shell' },
     ],
+    // 0.4.0: GEM Forge's page in Settings
+    settings: {
+        fields: [
+            {
+                key: 'rebuildLibraryUsers', type: 'choice', label: 'After you change a shared library', default: 'ask',
+                hint: 'The other widgets of the workspace that use it are rebuilt by its build script (npm run build -- --lib <name>): the project\'s own code. The project open in GEM Forge rebuilds by itself.',
+                choices: [
+                    { value: 'ask', label: 'Ask whether to rebuild the widgets that use it' },
+                    { value: 'always', label: 'Rebuild them' },
+                    { value: 'never', label: 'Don\'t rebuild them' },
+                ],
+            },
+            {
+                key: 'forgetRebuildChoice', type: 'action', label: 'The answer you asked GEM Forge to remember', buttonLabel: 'Forget it',
+                hint: '"Remember my choice" at the question: forgotten, GEM Forge asks again (with "Ask" above).',
+                showWhen: { key: 'rebuildLibraryUsers', equals: 'ask' },
+            },
+        ],
+    },
     menuContexts: [
         { id: 'forge.file', label: 'File in GEM Forge', icon: '◇', subject: 'files' },
         { id: 'forge.folder', label: 'Folder in GEM Forge', icon: '▾', subject: 'files' },
@@ -112,6 +131,8 @@ export default {
             { id: 'delete', label: 'Delete', icon: '🗑', contexts: ['forge.file', 'forge.folder'] },
             // 0.2.12: the checks chosen (Problems ▸ Checks ▾) on these; Prettier on these; Check all without them
             { id: 'check', label: 'Check', icon: '✓', contexts: ['forge.file', 'forge.folder'] },
+            // 0.4.0: the project's own ESLint on these
+            { id: 'lint', label: 'Lint with ESLint', icon: '◆', contexts: ['forge.file', 'forge.folder'] },
             { id: 'format-prettier', label: 'Format with Prettier', icon: '✨', contexts: ['forge.file', 'forge.folder'], hideWhen: ['no-prettier'] },
             { id: 'skip-checks', label: 'Leave out of Check all', icon: '⊘', contexts: ['forge.file', 'forge.folder'], hideWhen: ['skipped'] },
             { id: 'unskip-checks', label: 'Include in Check all', icon: '⊕', contexts: ['forge.file', 'forge.folder'], hideWhen: ['included'] },
