@@ -206,7 +206,9 @@ function openSkinManager(anchor: HTMLElement) {
     onSelect: (id: string) => { setSkin(id); popover?.update(propsFor(id)) },
   })
   popover = sdk?.ui?.().openPopover({
-    anchor, component: SkinStudio, placement: 'center', maxWidth: 920, maxHeight: 720, title: 'Skins',
+    // 0.11.1: room for the larger text (the studio is 610px at 100 %)
+    anchor, component: SkinStudio, placement: 'center', title: 'Skins',
+    maxWidth: Math.round(920 * (props.placement?.size?.textScale || 1)), maxHeight: Math.round(720 * (props.placement?.size?.textScale || 1)),
     props: propsFor(skin.value.id),
   }) ?? null
 }
