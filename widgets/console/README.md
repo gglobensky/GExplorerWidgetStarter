@@ -18,6 +18,8 @@ WSL distro GEM Shell finds. Built on xterm.js (MIT, bundled into `index.js`; its
 - **＋** a console in your usual shell (the last one you picked), where the active one is. **▾** another shell.
 - **Moving while a program runs:** the console waits for its prompt, says so ("Moves to … when the command ends"), and
   you can cancel. GEM Shell types the `cd`, quoted for that shell; the widget never types a path.
+  **0.1.11:** something typed at the prompt also makes it wait; erase it (Backspace) and the move goes at once. After
+  a key GEM Shell can't follow on the line (arrows, Tab, Esc, a paste), it still waits for Enter or the next prompt.
 - **Copy:** select, then Ctrl+C (Ctrl+C without a selection goes to the program), Ctrl+Shift+C, or a right-click.
   **Paste:** Ctrl+V / Ctrl+Shift+V.
 - **Links** in the output (and a program's own links) open on **Ctrl+click**, http and https only: GEM Shell asks

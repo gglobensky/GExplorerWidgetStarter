@@ -108,7 +108,7 @@ const pending = computed(() => current.value?.pending ?? null)
 const pendingName = computed(() => pending.value ?? '')
 const pendingWhy = computed(() => current.value?.busy
     ? 'A program is running in this console: it moves once the program ends.'
-    : 'Something is typed at the prompt: it moves after you run or clear it (Enter, or Esc in PowerShell).')
+    : 'Something is typed at the prompt: it moves once you erase it (Backspace) or run it (Enter). After arrows, Tab or Esc, only once you run it.')
 const narrow = computed(() => width.value < 360)
 const hasFavorites = typeof sdk.getGlobalFavorites === 'function'
 const canStart = computed(() => (con.st.state === 'ready' || con.st.state === 'declined') && !con.st.starting)

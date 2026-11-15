@@ -259,6 +259,8 @@ export function createConsoles(sdk: WidgetSdk, opts: ConsolesOptions = {}) {
         })
         rt.offs.push(session.onData(d => term.write(d)))
         rt.offs.push(session.onBusy(b => { tab.busy = b; touch(); if (!b) flushPending(tab) }))
+        // 0.1.11: what was typed at the prompt was erased again: a move waiting for it goes now (it waited for Enter)
+        rt.offs.push(session.onReady(() => flushPending(tab)))
         rt.offs.push(session.onExit(code => {
             tab.ended = true
             tab.exitCode = code

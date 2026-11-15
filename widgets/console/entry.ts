@@ -23,7 +23,7 @@ import Widget from './Widget.vue'
 export default {
     api: '1.0',
     id: 'console',
-    version: '0.1.10',   // 0.1.10 (2026-11-14): the terminal's text follows Text size. 0.1.9 (2026-11-14): GEM Shell's colours and fonts; bars and buttons grow with the text. 0.1.8 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step). 0.1.7 (2026-11-14): "Open console here" hidden in GEM Shell's file dialog (a default rule)
+    version: '0.1.11',   // 0.1.11 (2026-11-15): a move waiting because something was typed goes as soon as it is erased (it waited for Enter; GEM Shell's terminal:ready). 0.1.10 (2026-11-14): the terminal's text follows Text size. 0.1.9 (2026-11-14): GEM Shell's colours and fonts; bars and buttons grow with the text. 0.1.8 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step). 0.1.7 (2026-11-14): "Open console here" hidden in GEM Shell's file dialog (a default rule)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     displayName: 'GEM Console',

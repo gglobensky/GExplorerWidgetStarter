@@ -787,12 +787,20 @@ declare module 'gexplorer/widgets' {
         write(data: string): void
         resize(cols: number, rows: number): void
         cd(path: string): Promise<{ ok: true } | TerminalFailure>
+        /**
+         * GEM Shell 2026-11-15: one command line (4096 characters at most, no control characters), typed by GEM Shell
+         * then Enter, only while the session waits at its prompt with nothing typed ('busy' otherwise). Use it, not
+         * write(), to run something for the user: it never mixes with what they typed.
+         */
+        run(line: string): Promise<{ ok: true } | TerminalFailure>
         /** The last output kept (256 K characters), to draw the screen again after a remount. */
         replay(): Promise<string>
         kill(): Promise<void>
         onData(fn: (data: string) => void): () => void
         onExit(fn: (code: number) => void): () => void
         onBusy(fn: (busy: boolean) => void): () => void
+        /** GEM Shell 2026-11-15: what was typed at the prompt was erased again (Backspace): a cd that got 'busy' can go now. */
+        onReady(fn: () => void): () => void
     }
     export type MonitorSet = 'cpu' | 'memory' | 'disks' | 'network' | 'gpu' | 'self' | 'processes'
 
