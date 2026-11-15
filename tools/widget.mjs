@@ -5,7 +5,8 @@
 //
 //   npm run build     -- <type> [--no-install] [--sourcemap] [--allow <rule>]   (or --all instead of <type>)
 //   npm run watch     -- <type> [--no-install]                 rebuilds (and installs) on save
-//   npm run preview   -- <type> [--port <n>]                   widgets/<type>/preview/ with sample data
+//   npm run preview   -- <type> [--port <n>] [--text <percent>] widgets/<type>/preview/ with sample data; --text 200:
+//                                                              as at 200 % Text size (2026-11-14)
 //   npm run test      -- <type>                                widgets/<type>/tests/*.test.ts
 //   npm run typecheck -- <type>                                widgets/<type>/tsconfig.json
 //   npm run typecheck -- --all                                 every widget; the errors in dist/typecheck/report.txt (2026-11-14)
@@ -72,7 +73,7 @@ const log = (message) => console.log(`[widget] ${message}`)
 const USAGE = `Usage:
   npm run build     -- <type> [--no-install] [--sourcemap] [--allow <rule>]    (or --all)
   npm run watch     -- <type> [--no-install] [--allow <rule>]
-  npm run preview   -- <type> [--port <n>]
+  npm run preview   -- <type> [--port <n>] [--text <percent>]
   npm run test      -- <type>
   npm run typecheck -- <type>                          (or --all: the errors in dist/typecheck/report.txt)
   npm run build     -- --lib <name> [--no-install]     (every widget using shared/<name>)
@@ -85,7 +86,7 @@ with its reason: widgets/<type>/review.allow.json.`
 
 function parseArgs(argv) {
     const [command, ...rest] = argv
-    const opts = { command, type: null, all: false, install: true, sourcemap: false, port: null, lib: null, allow: [] }
+    const opts = { command, type: null, all: false, install: true, sourcemap: false, port: null, text: null, lib: null, allow: [] }
     for (let i = 0; i < rest.length; i++) {
         const a = rest[i]
         if (a === '--no-install') opts.install = false
@@ -106,16 +107,22 @@ function parseArgs(argv) {
             if (!Number.isInteger(n) || n < 1 || n > 65535) fail('--port: a port number (1-65535).')
             opts.port = n
         }
+        else if (a === '--text') {
+            const n = Number(rest[++i])
+            if (!Number.isFinite(n) || n < 50 || n > 400) fail('--text: a percentage of the text size (50-400), as Settings ▸ Appearance.')
+            opts.text = n
+        }
         else if (a.startsWith('-')) fail(`unknown option ${a}\n${USAGE}`)
         else if (opts.type) fail(`one widget at a time (got ${opts.type} and ${a})\n${USAGE}`)
         else opts.type = a
     }
-    const known = { build: ['install', 'sourcemap', 'all', 'lib', 'allow'], watch: ['install', 'allow'], preview: ['port'], test: ['lib'], typecheck: ['all'] }
+    const known = { build: ['install', 'sourcemap', 'all', 'lib', 'allow'], watch: ['install', 'allow'], preview: ['port', 'text'], test: ['lib'], typecheck: ['all'] }
     if (!command || !(command in known)) fail(`unknown command "${command ?? ''}"\n${USAGE}`)
     const allowed = new Set(known[command])
     if (!opts.install && !allowed.has('install')) fail(`--no-install: not an option of ${command}`)
     if (opts.sourcemap && !allowed.has('sourcemap')) fail(`--sourcemap: not an option of ${command}`)
     if (opts.port != null && !allowed.has('port')) fail(`--port: not an option of ${command}`)
+    if (opts.text != null && !allowed.has('text')) fail(`--text: not an option of ${command}`)
     if (opts.all && !allowed.has('all')) fail(`--all: not an option of ${command}`)
     if (opts.all && opts.type) fail('--all or a widget, not both')
     if (opts.lib && !allowed.has('lib')) fail(`--lib: not an option of ${command}`)
@@ -390,7 +397,7 @@ async function build(type, { watch = false, install: doInstall = true, sourcemap
     if (watch) log(`watching widgets/${type} (Ctrl+C to stop)`)
 }
 
-async function preview(type, port) {
+async function preview(type, port, text) {
     const dir = widgetDir(type)
     const html = path.join(dir, 'preview', 'index.html')
     const shim = path.join(dir, 'preview', 'widgets-shim.ts')
@@ -402,7 +409,7 @@ async function preview(type, port) {
         configFile: false,
         root: ROOT,
         clearScreen: false,
-        plugins: [sharedLibraries({ root: ROOT, who: type, warn: (m) => log(`${type}: ${m}`) }), vue()],
+        plugins: [sharedLibraries({ root: ROOT, who: type, warn: (m) => log(`${type}: ${m}`) }), vue(), ...(text ? [previewText(text)] : [])],
         resolve: { alias: { 'gexplorer/widgets': shim } },
         css: { postcss: { plugins: [appearanceCss()] } },     // NEW (2026-11-14): as built
         // Vite otherwise discovers every preview HTML file below the repository root and scans
@@ -419,7 +426,24 @@ async function preview(type, port) {
     server.httpServer?.once('close', () => { if (!stopping) log(`${type} preview: the server closed`) })
     process.once('exit', (code) => { if (!stopping) console.error(`[widget] ${type} preview ended (exit code ${code}). Run it again; if it repeats, send this output.`) })
     const base = (server.resolvedUrls?.local?.[0] ?? `http://127.0.0.1:${server.config.server.port}/`).replace(/\/?$/, '/')
-    log(`${type} preview: ${base}widgets/${type}/preview/`)
+    log(`${type} preview: ${base}widgets/${type}/preview/${text ? ` (as at ${text} % text)` : ''}`)
+}
+
+/**
+ * NEW (2026-11-14): --text <percent>: the preview page as at that Text size. GEM Shell's size tokens on the page, over
+ * the page's own (what the build made of the widget's px sizes follows them). window.__GEX_TEXT_SCALE__ for a preview's
+ * main.ts that passes placement.size (textScale, fit: README "Choosing a layout at any text size").
+ */
+function previewText(percent) {
+    const scale = percent / 100
+    return {
+        name: 'gex-preview-text',
+        transformIndexHtml(html) {
+            const tag = `<style id="gex-preview-text">:root{--base-font-size:${12 * scale}px !important;--gex-px:${scale}px !important}</style>`
+                + `<script>window.__GEX_TEXT_SCALE__=${scale}</script>`
+            return html.includes('</head>') ? html.replace('</head>', `${tag}\n</head>`) : tag + html
+        },
+    }
 }
 
 function test(type, lib) {
@@ -518,7 +542,7 @@ async function main() {
             }
             return 0
         case 'watch': await build(opts.type, { watch: true, install: opts.install, allow: opts.allow }); return null
-        case 'preview': await preview(opts.type, opts.port); return null
+        case 'preview': await preview(opts.type, opts.port, opts.text); return null
         case 'test': return test(opts.type, opts.lib)
         case 'typecheck': return opts.all ? typecheckAll() : typecheck(opts.type)
     }

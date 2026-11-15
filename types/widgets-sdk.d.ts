@@ -2931,8 +2931,16 @@ declare module 'gexplorer/widgets' {
          * - `width` / `height`: CSS px, measured in every place (the pane's header row left out), updated as it is
          *   resized; missing until first measured.
          * - `cols` / `rows`: grid cells, in a hub's grid and folder panes only.
+         * - NEW (GEM Shell 2026-11-14) `textScale`: the text size against 100 % (2 at 200 % Text size, the OS's text
+         *   scale included). `fit`: the box "as at 100 %" (width / height divided by textScale): compare it to the
+         *   numbers you chose at 100 % to pick a layout, and at large text you get the layout of a smaller box.
+         *   Missing in an older GEM Shell: use `fit?.width ?? width`.
          */
-        size: { width?: number; height?: number; cols?: number; rows?: number }
+        size: {
+            width?: number; height?: number; cols?: number; rows?: number
+            textScale?: number
+            fit?: { width?: number; height?: number }
+        }
         phase: 'active' | 'idle'
         resizing: boolean
         resizePhase?: 'active' | 'idle'

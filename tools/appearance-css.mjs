@@ -7,13 +7,17 @@
 //   font-size, the font shorthand, line-height    13px -> calc(var(--base-font-size, 12px) * 13 / 12)   ("13px at 100 %")
 //   border-radius and the per-corner forms         6px -> calc(var(--base-radius, 16px) * 6 / 16)         ("6px at 100 %")
 //   a custom property named for a size            --my-font-size: 12px, --my-radius: 8px: the same
+//   @container conditions (NEW 2026-11-14)        (max-width: 260px) -> (max-width: 21.6667em): the breakpoint moves
+//                                                  with the text (em in a container query: the container's text size;
+//                                                  @media is the window's size: left alone)
 //
 // Every px in those values, a clamp()'s limits and a var()'s fallback included. Nothing changes at 100 %: GEM Shell's
 // --base-font-size is 12px and --base-radius 16px there. A line that really means px says so in a comment on that
 // line: /* px-ok */. 0 and percentages are left alone; so is everything else (padding, width, gap...).
 //
-// Sizes set from code (an inline :style, el.style.fontSize) are not CSS the build sees: use the SDK's textPx(13) /
-// radius(6) there (npm run check:px lists them). The same rule as GEM Shell's own code (its scripts/check-fixed-px.mjs).
+// Sizes set from code (an inline :style, el.style.fontSize) are not CSS the build sees: use textPx(13) / radiusPx(6)
+// from 'gexplorer/widgets' there (npm run check:px lists them).
+// GEM Shell has the same plugin for its own build and GEM Forge's (src/theme/appearanceCss.ts): KEEP THE TWO ALIKE.
 
 const PX = /(?<![\w.#-])(\d+(?:\.\d+)?)px\b/g
 
@@ -41,6 +45,11 @@ export function adaptValue(value, kind) {
     return out.replace(/\u0000(\d+)\u0000/g, (_, i) => kept[Number(i)])
 }
 
+/** NEW (2026-11-14): a container query's px in em of a 12px text (the breakpoint follows the text size). */
+export function adaptQuery(params) {
+    return params.replace(PX, (m, n) => (Number(n) === 0 ? m : `${Math.round(Number(n) / 12 * 10000) / 10000}em`))
+}
+
 /** The declaration's source line says px-ok (a comment on that line). */
 function pxOk(decl) {
     const css = decl.source?.input?.css
@@ -64,6 +73,11 @@ export function appearanceCss() {
                 // A font shorthand's family can be a quoted name: only what is outside quotes is changed there
                 const next = prop === 'font' ? adaptOutsideQuotes(decl.value, kind) : adaptValue(decl.value, kind)
                 if (next !== decl.value) decl.value = next
+            })
+            // NEW (2026-11-14): container queries' breakpoints
+            root.walkAtRules((at) => {
+                if (at.name.toLowerCase() !== 'container' || !at.params.includes('px') || pxOk(at)) return
+                at.params = adaptQuery(at.params)
             })
         },
     }

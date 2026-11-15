@@ -660,7 +660,21 @@ follow by itself: at 200 % the text outgrows it. Use `--gex-px`, one px at 100 %
 
 (`1px`: the fallback where GEM Shell's tokens aren't, your preview page.) Or `min-height` and padding, which grow
 by themselves; or `textPx(28)` from code (a virtual list's row height). Try your widget at 200 % text before you
-ship it.
+ship it: `npm run preview -- <widget> --text 200`, or Settings ▸ Appearance in GEM Shell.
+
+**Choosing a layout at any text size** (GEM Shell 2026-11-14). A widget that picks a layout by its size ("below 260px,
+the narrow one") designed those numbers at 100 %. At 200 % text a 400px box holds what a 200px one held: it should
+pick the narrow layout. Compare GEM Shell's `placement.size.fit` instead of the raw size: the box "as at 100 %".
+
+```ts
+const w = computed(() => props.placement.size.fit?.width ?? props.placement.size.width ?? 0)
+const layout = computed(() => (w.value <= 260 ? 'narrow' : 'wide'))       // 260: as at 100 %
+```
+
+`placement.size.textScale` is the factor (2 at 200 %): divide your own measures by it (a ResizeObserver on a part).
+In CSS, container queries do it by themselves: the build turns `@container (max-width: 260px)` into em of the text
+size, so the breakpoint moves with it (give the box `container-type: inline-size`; `@media` is the window, left as is).
+A preview's `main.ts` passing `placement.size` can read `window.__GEX_TEXT_SCALE__` (set by `--text`; else 1).
 
 **Buttons and fields take your text.** A browser gives `<button>`, `<input>`, `<select>` and `<textarea>` a font of
 their own (13.33px, whatever is around them). In GEM Shell (2026-11-14) they take the text size and font around them
