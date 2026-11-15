@@ -43,7 +43,7 @@ const height = computed(() => props.placement?.size?.fit?.height ?? props.placem
 const layout = computed(() => clockLayout(width.value, height.value))
 const size = computed(() => layout.value.size)
 const showSeconds = computed(() => props.config?.view?.showSeconds !== false)
-const chosenSkin = ref(props.config?.view?.skin ?? 'quiet-system')
+const chosenSkin = ref(props.config?.view?.skin ?? 'gem-shell')
 const initialTab = props.config?.view?.tab
 const selectedTab = ref<ClockTab>(initialTab === 'calendar' || initialTab === 'timers' || initialTab === 'stopwatch' ? initialTab : 'clock')
 watch(() => props.config?.view?.skin, value => { if (value) chosenSkin.value = value })
@@ -483,7 +483,7 @@ function moveComplication(id: string, delta: number) {
 .compact-timer-tool>header { position:relative; display:flex; min-width:0; align-items:baseline; justify-content:center; gap:8px; }
 .compact-timer-tool>header small { position:absolute; left:0; max-width:45%; overflow:hidden; color:var(--clock-muted,#aaa); font-size:7px; letter-spacing:.12em; text-overflow:ellipsis; white-space:nowrap; }
 .compact-timer-tool>header b { color:var(--clock-fg,#fff); font:600 11px/1 ui-serif,Georgia,serif; }
-.compact-timer-create { display:grid; min-width:0; grid-template-columns:minmax(72px,1fr) 62px 27px auto; gap:4px; }
+.compact-timer-create { display:grid; min-width:0; grid-template-columns:minmax(calc(var(--gex-px, 1px) * 72),1fr) calc(var(--gex-px, 1px) * 62) calc(var(--gex-px, 1px) * 27) auto; gap:4px; }   /* 0.11.0: columns grow with the text (the 🔔 overflowed 27px) */
 .compact-timer-create input,.compact-timer-create button,.compact-presets button,.compact-timer-tool article button { min-width:0; padding:4px 6px; border:1px solid var(--clock-edge,#ffffff28); border-radius:4px; color:var(--clock-fg,#fff); background:var(--clock-panel,#111a); font:600 9px/1 inherit; }
 .compact-timer-create>label { display:flex; min-width:0; align-items:center; }
 .compact-timer-create>label:not(.compact-sound) { border:1px solid var(--clock-edge,#ffffff28); border-radius:4px; background:var(--clock-panel,#111a); }

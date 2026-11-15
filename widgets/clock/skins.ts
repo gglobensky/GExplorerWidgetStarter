@@ -26,6 +26,21 @@ const ID = /^[a-z0-9][a-z0-9-]{0,47}$/
 const RENDERERS: ClockRenderer[] = ['digital', 'analog', 'nixie', 'matrix', 'flap']
 
 export const BUILT_IN_TIMEPIECE_SKINS: readonly TimepieceSkin[] = [
+  // 0.11.0 (2026-11-14, Guillaume): the default skin follows GEM Shell's theme (its public --gex-* variables); the
+  // others keep their own design. Its var() values are trusted because they are ours (timepieceSkinStyle); a skin
+  // file never carries a variable (cleanGemSkinCssValue drops them), so a saved copy falls back to the CSS defaults.
+  {
+    format: 1, id: 'gem-shell', name: 'GEM Shell (your theme)', renderer: 'digital', values: {
+      bg: 'var(--gex-widget-bg, #17212b)', panel: 'color-mix(in srgb, var(--gex-surface, #15202a) 75%, transparent)',
+      fg: 'var(--gex-fg, #edf5f7)', muted: 'var(--gex-fg-muted, #91a2aa)', accent: 'var(--gex-accent, #72c7df)',
+      'accent-2': 'color-mix(in oklab, var(--gex-accent, #72c7df) 65%, var(--gex-fg, #edf5f7))',
+      edge: 'var(--gex-border, #ffffff18)', digit: 'var(--gex-fg, #f4fbff)',
+      'digit-off': 'color-mix(in srgb, var(--gex-fg, #ffffff) 5%, transparent)',
+      glow: 'color-mix(in srgb, var(--gex-accent, #72c7df) 26%, transparent)',
+      'calendar-paper': '#f0ede3', 'calendar-ink': '#25313a', 'calendar-rule': '#5c6d7840',
+      'calendar-mark': '#b14f48', 'calendar-today': '#dfeaf0', radius: 'calc(var(--base-radius, 16px) * 14 / 16)',
+    },
+  },
   {
     format: 1, id: 'quiet-system', name: 'Quiet system', renderer: 'digital', values: {
       bg: 'linear-gradient(145deg,#17212b,#0b1118 72%)', panel: '#15202aaa', fg: '#edf5f7', muted: '#91a2aa',
@@ -74,8 +89,10 @@ export function timepieceSkin(id: string | undefined): TimepieceSkin {
 }
 
 export function timepieceSkinStyle(skin: TimepieceSkin): CSSProperties {
+  // A built-in skin's own values are used as written (the GEM Shell skin's var(--gex-*)); any other value is cleaned
+  const builtIn = BUILT_IN_TIMEPIECE_SKINS.find(s => s.id === skin.id)
   return Object.fromEntries(Object.entries(skin.values).flatMap(([key, value]) => {
-    const clean = cleanGemSkinCssValue(value)
+    const clean = builtIn && builtIn.values[key as TimepieceSkinKey] === value ? value : cleanGemSkinCssValue(value)
     return clean === undefined ? [] : [[`--clock-${key}`, clean]]
   })) as CSSProperties
 }

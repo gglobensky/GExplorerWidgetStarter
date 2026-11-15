@@ -26,7 +26,7 @@ async function importSkin() {
 }
 function removeSkin(id: string) {
   skins.remove(id)
-  if (id === props.selected) emit('select', 'quiet-system')
+  if (id === props.selected) emit('select', 'gem-shell')
 }
 </script>
 

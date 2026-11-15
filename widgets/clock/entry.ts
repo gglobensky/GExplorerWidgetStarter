@@ -16,7 +16,7 @@ export default {
     description: 'A skinnable clock, paper calendar, timers and time tools.',
     category: 'tools',
     icon: '◷',
-    version: '0.10.2',   // 0.10.2 (2026-11-14): layouts chosen as at 100 % text. 0.10.1 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step)
+    version: '0.11.0',   // 0.11.0 (2026-11-14): the GEM Shell skin (your theme), the default; timer columns grow with the text. 0.10.2 (2026-11-14): layouts chosen as at 100 % text. 0.10.1 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     instance: 'global',
@@ -34,7 +34,7 @@ export default {
         stopwatch: { card: StopwatchCard, recovery: 'resume', restartOnLaunch: true, stateVersion: 1 },
         scheduler: { card: SchedulerCard, recovery: 'resume', restartOnLaunch: true, stateVersion: 1 },
     },
-    defaults: { data: {}, view: { skin: 'quiet-system', tab: 'clock', showSeconds: true } },
+    defaults: { data: {}, view: { skin: 'gem-shell', tab: 'clock', showSeconds: true } },
     settings: {
         fields: [
             { key: 'calendarProvider', type: 'provider', point: CALENDAR_PROVIDER_POINT, label: 'Calendar',
