@@ -399,7 +399,8 @@ onBeforeUnmount(() => {
 
     <template #behind>
       <span class="glu-dvd-disc" aria-hidden="true"><i></i></span>
-      <button v-if="item.path" type="button" class="glu-artwork-edit" title="Change artwork" aria-label="Change artwork" @click="emit('edit-artwork')">✎</button>
+      <!-- 0.17.5: not while the back is shown (its T / G / ¶ buttons are in that corner) -->
+      <button v-if="item.path && !flipped" type="button" class="glu-artwork-edit" title="Change artwork" aria-label="Change artwork" @click="emit('edit-artwork')">✎</button>
     </template>
 
     <template #front>

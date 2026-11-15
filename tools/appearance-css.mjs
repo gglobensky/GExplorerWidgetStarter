@@ -7,6 +7,10 @@
 //   font-size, the font shorthand, line-height    13px -> calc(var(--base-font-size, 12px) * 13 / 12)   ("13px at 100 %")
 //   border-radius and the per-corner forms         6px -> calc(var(--base-radius, 16px) * 6 / 16)         ("6px at 100 %")
 //   a custom property named for a size            --my-font-size: 12px, --my-radius: 8px: the same
+//   small boxes of a rule with a text size         .btn { width: 31px; font-size: 14px }: the 31px -> calc(var(--base-font-size,
+//     (NEW 2026-11-15)                             12px) * 31 / 12): width, height, their min-/max- forms, inline-/block-size,
+//                                                  flex-basis and flex, each px up to 64 (an icon button grows with its glyph;
+//                                                  a panel or a column, larger, stays)
 //   @container conditions (NEW 2026-11-14)        (max-width: 260px) -> (max-width: 21.6667em): the breakpoint moves
 //                                                  with the text (em in a container query: the container's text size;
 //                                                  @media is the window's size: left alone)
@@ -22,6 +26,10 @@
 const PX = /(?<![\w.#-])(\d+(?:\.\d+)?)px\b/g
 
 const TEXT_PROPS = new Set(['font-size', 'font', 'line-height'])
+// NEW (2026-11-15): a rule that sets a text size has its small boxes follow it (the glyph and its box stay together)
+const BOX_PROPS = new Set(['width', 'height', 'min-width', 'min-height', 'max-width', 'max-height', 'inline-size', 'block-size',
+    'min-inline-size', 'min-block-size', 'max-inline-size', 'max-block-size', 'flex-basis', 'flex'])
+export const BOX_MAX_PX = 64
 const isRadiusProp = (p) => /^border(-(top|bottom|start|end)-(left|right|start|end))?-radius$/.test(p)
 const customKind = (p) => /^--[\w-]*radius[\w-]*$/i.test(p) ? 'radius' : /^--[\w-]*font(-size)?[\w-]*$/i.test(p) ? 'text' : null
 
@@ -45,6 +53,18 @@ export function adaptValue(value, kind) {
     return out.replace(/\u0000(\d+)\u0000/g, (_, i) => kept[Number(i)])
 }
 
+/** NEW (2026-11-15): <value>'s px up to BOX_MAX_PX in text form (a box sized for its rule's text). */
+export function adaptBox(value) {
+    return value.replace(PX, (m, n) => (Number(n) === 0 || Number(n) > BOX_MAX_PX ? m : textPx(n)))
+}
+
+/** NEW (2026-11-15): the rule sets a text size the build converts (a px one, not px-ok). */
+function setsTextSize(rule) {
+    return (rule.nodes ?? []).some((d) => d.type === 'decl' && TEXT_PROPS.has(d.prop.toLowerCase())
+        && PX_IN.test(d.prop.toLowerCase() === 'font' ? d.value.replace(/"[^"]*"|'[^']*'/g, '') : d.value) && !pxOk(d))
+}
+const PX_IN = /(?<![\w.#-])\d+(?:\.\d+)?px\b/
+
 /** NEW (2026-11-14): a container query's px in em of a 12px text (the breakpoint follows the text size). */
 export function adaptQuery(params) {
     return params.replace(PX, (m, n) => (Number(n) === 0 ? m : `${Math.round(Number(n) / 12 * 10000) / 10000}em`))
@@ -66,6 +86,15 @@ export function appearanceCss() {
         // FIXED (2026-11-14, a build hung on a widget's style): ONE pass over the stylesheet. A Declaration visitor is
         // run again on every declaration it changed, and the px fallback it wrote was converted again, forever.
         Once(root) {
+            // NEW (2026-11-15), first (it reads the text sizes as written): the small boxes of a rule with a text size
+            root.walkRules((rule) => {
+                if (!setsTextSize(rule)) return
+                for (const decl of rule.nodes) {
+                    if (decl.type !== 'decl' || !BOX_PROPS.has(decl.prop.toLowerCase()) || !decl.value.includes('px') || pxOk(decl)) continue
+                    const next = adaptBox(decl.value)
+                    if (next !== decl.value) decl.value = next
+                }
+            })
             root.walkDecls((decl) => {
                 const prop = decl.prop.toLowerCase()
                 const kind = TEXT_PROPS.has(prop) ? 'text' : isRadiusProp(prop) ? 'radius' : customKind(prop)

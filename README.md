@@ -635,8 +635,14 @@ The build (`tools/appearance-css.mjs`, every `<style>` and `.css` of the widget,
 | `font-size`, `font`, `line-height` | every px (a `clamp()`'s limits too) | `calc(var(--base-font-size, 12px) * 15 / 12)` |
 | `border-radius` and the per-corner forms | every px | `calc(var(--base-radius, 16px) * 8 / 16)` |
 | a custom property named for a size (`--my-font-size`, `--card-radius`) | the same | the same |
+| a rule that sets a px text size (2026-11-15): its `width`, `height`, `min-`/`max-` forms, `inline-`/`block-size`, `flex-basis`, `flex` | each px up to 64 | the same as text |
 
-Everything else (padding, width, gap, icons) stays px. A size that must stay as written says so with `px-ok` in a
+That last row keeps an icon button and its glyph together: `.btn { width: 31px; height: 31px; font-size: 14px }` is
+62px square around a 28px glyph at 200 %. Larger boxes (a panel, a column) stay as written, and so does a box whose
+rule has no text size (give it `--gex-px`, below). Centre a glyph in its box with
+`display: grid; place-items: center; line-height: 1`.
+
+Everything else (padding, gap, larger boxes) stays px. A size that must stay as written says so with `px-ok` in a
 comment on its line (`font-size: 9px; /* px-ok: the ruler's ticks */`). Sizes from the widget's box (`cqw`, `em`,
 `%`) are left alone: a clock's digits that grow with the widget keep doing so.
 
