@@ -907,7 +907,7 @@ declare module 'gexplorer/widgets' {
      * only the point's calls: terminal(), ui().menu / confirm / snack, clipboardSetText, openUrl, platform), from its
      * own copy of your code: never as you, never talking to your own copies. Its contract: it exposes
      * (defineExpose) print(text), run(line), cd(folder), newSession(shell?) (each may return { ok: false, error })
-     * and emits 'exit' (code). It gets the prop hostName.
+     * and emits 'exit' (code). It gets the props hostName and textScale (GEM Shell's Text size, 1 at 100 %).
      * For a widget's point (named after the consuming widget: 'gem.clock.complication') it will run as you.
      */
     export type WidgetProvide = { point: string; component?: unknown; label?: string; props?: Record<string, unknown> }
@@ -941,6 +941,11 @@ declare module 'gexplorer/widgets' {
     export type WidgetParts = {
         /** The providers of a point in your consumes ([] and a console warning for any other point). */
         list(point: string): Promise<PartProvider[]>
+        /**
+         * One part per copy of you, provider and point: mounting it again gives another handle to the SAME part, shown
+         * at the new element (the newest one still on screen; a hidden one's place goes back to the one before). Each
+         * handle's close() ends its own mount; the part closes with the last.
+         */
         mount(el: HTMLElement, point: string, provider: string): Promise<{ ok: true; part: TerminalPartHandle } | { ok: false; error: string; code: PartErrorCode }>
     }
 

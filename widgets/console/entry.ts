@@ -18,12 +18,14 @@
 // 0.1.6: links in the output open on Ctrl+click (GEM Shell's openUrl asks first; a program's own OSC 8 links too).
 // Shell parts it relies on: PhotinoVue1/CONSOLE-SHELL-ADDITIONS.md (A: sessions, B: the SDK and raw keys, C: the
 // navigable role, E: console popovers and the home folder default).
+// 0.2.0: the terminal part GEM Shell shows in other widgets (GEM Forge): TerminalPart.vue
 import Widget from './Widget.vue'
+import TerminalPart from './TerminalPart.vue'
 
 export default {
     api: '1.0',
     id: 'console',
-    version: '0.1.11',   // 0.1.11 (2026-11-15): a move waiting because something was typed goes as soon as it is erased (it waited for Enter; GEM Shell's terminal:ready). 0.1.10 (2026-11-14): the terminal's text follows Text size. 0.1.9 (2026-11-14): GEM Shell's colours and fonts; bars and buttons grow with the text. 0.1.8 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step). 0.1.7 (2026-11-14): "Open console here" hidden in GEM Shell's file dialog (a default rule)
+    version: '0.2.0',   // 0.2.0 (2026-11-15): the terminal part (provides 'shell.terminal': runs as the widget showing it; a "Tool output" tab, run / cd / newSession / print). 0.1.11 (2026-11-15): a move waiting because something was typed goes as soon as it is erased (it waited for Enter; GEM Shell's terminal:ready). 0.1.10 (2026-11-14): the terminal's text follows Text size. 0.1.9 (2026-11-14): GEM Shell's colours and fonts; bars and buttons grow with the text. 0.1.8 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step). 0.1.7 (2026-11-14): "Open console here" hidden in GEM Shell's file dialog (a default rule)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     displayName: 'GEM Console',
@@ -54,6 +56,12 @@ export default {
             // 0.1.7: not offered in GEM Shell's file dialog by default (the user can show it: sys:context-menus)
             contextMenu: { label: 'Open console here', icon: '>_', submenuLabel: 'GEM Console', hideWhen: ['place:dialog'] },
         },
+    ],
+
+    // 0.2.0: GEM Shell's terminal point. The part runs AS THE WIDGET SHOWING IT (its grants, its consoles), from its
+    // own copy of this code: never as GEM Console, never sharing this widget's consoles (TerminalPart.vue).
+    provides: [
+        { point: 'shell.terminal', component: TerminalPart, label: 'Terminal' },
     ],
 
     defaults: { data: {}, view: {} },

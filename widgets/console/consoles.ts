@@ -11,6 +11,9 @@
 //   attach(el) / detach  the active terminal drawn in <el> (one element at a time)
 //
 // Never a path through write(): a folder named `x & del` would run. cd() is the only way.
+// 0.2.0 (2026-11-15, the terminal part, TerminalPart.vue): printOutput(text) (a "Tool output" tab: a terminal with no
+// shell behind it), runLine(line) (session.run in the console in use, started first if none is open, at its first
+// prompt), onExit. A move or a command goes to the active console, else the last one still running.
 import { reactive, markRaw, shallowRef, computed } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -18,6 +21,8 @@ import type { WidgetSdk, WidgetTerminal, TerminalSession, TerminalShellInfo, Ter
 
 export type Tab = {
     key: number
+    /** 0.2.0: 'output': the tool output tab (no shell: rt.session is null). */
+    kind: 'shell' | 'output'
     shell: string
     label: string
     /** Where it is (OSC 9;9); '' until the first prompt. */
@@ -27,8 +32,14 @@ export type Tab = {
     exitCode: number | null
     /** A move waiting for the prompt (a program was running). */
     pending: string | null
+    /** 0.2.0: a prompt was seen (a new console's first one: a command waits for it). */
+    prompted: boolean
+    /** 0.2.0: a command waiting for the new console's first prompt (runLine). */
+    pendingRun: string | null
+    /** 0.2.0: the output tab printed while another tab was shown. */
+    unread: boolean
     /** The xterm.js side, never reactive. */
-    rt: { session: TerminalSession; term: Terminal; fit: FitAddon; offs: Array<() => void> }
+    rt: { session: TerminalSession | null; term: Terminal; fit: FitAddon; offs: Array<() => void> }
 }
 
 export type ConsoleState = 'loading' | 'ready' | 'unavailable' | 'declined' | 'no-api'
@@ -88,6 +99,7 @@ export function reasonText(reason: TerminalReason | string, error?: string): str
         case 'unsafe-name': return 'That folder\'s name can\'t be typed safely in this shell.'
         case 'bad-argument': return error || 'That folder doesn\'t exist.'
         case 'ended': return 'This console has ended.'
+        case 'busy': return 'A command is running in this console, or something is typed at its prompt.'
         default: return error || 'The console could not do that.'
     }
 }
@@ -105,6 +117,8 @@ export type ConsolesOptions = {
     openLink?: (url: string) => void
     /** 0.1.10: GEM Shell's text scale (placement.size.textScale): the terminal's text is 13px at 100 %. */
     textScale?: () => number
+    /** 0.2.0: a console ended (its exit code). */
+    onExit?: (code: number) => void
 }
 
 /** The terminal's text size at 100 % Text size (xterm.js takes a number of px, not CSS). */
@@ -212,6 +226,7 @@ export function createConsoles(sdk: WidgetSdk, opts: ConsolesOptions = {}) {
         const { term, fit } = makeTerminal(isWindowsPath(session.startedIn || '') || session.shell === 'cmd' || session.shell.startsWith('wsl:'))
         const tab: Tab = reactive({
             key: ++seq,
+            kind: 'shell',
             shell: session.shell,
             label: shellLabel(session.shell),
             cwd: '',
@@ -219,6 +234,10 @@ export function createConsoles(sdk: WidgetSdk, opts: ConsolesOptions = {}) {
             ended: session.ended,
             exitCode: session.exitCode,
             pending: null,
+            // A console found again (replay) has shown its prompt; a new one waits for its first
+            prompted: !!replay,
+            pendingRun: null,
+            unread: false,
             rt: markRaw({ session, term, fit, offs: [] as Array<() => void> }),
         }) as Tab
         const rt = tab.rt
@@ -236,7 +255,11 @@ export function createConsoles(sdk: WidgetSdk, opts: ConsolesOptions = {}) {
             return true
         })
         const osc133 = term.parser.registerOscHandler(133, data => {
-            if (!quiet && data.startsWith('A')) queueMicrotask(() => flushPending(tab))
+            if (!quiet && data.startsWith('A')) {
+                tab.prompted = true
+                // 0.2.0: a waiting move first; a waiting command at the prompt after it
+                queueMicrotask(() => { if (tab.pending) flushPending(tab); else flushRun(tab) })
+            }
             return true
         })
         rt.offs.push(() => osc9.dispose(), () => osc133.dispose())
@@ -265,6 +288,8 @@ export function createConsoles(sdk: WidgetSdk, opts: ConsolesOptions = {}) {
             tab.ended = true
             tab.exitCode = code
             tab.pending = null
+            tab.pendingRun = null
+            opts.onExit?.(code)
             term.write(`\r\n\x1b[2m[The console ended${Number.isFinite(code) ? ` (exit code ${code})` : ''}. Restart it or close the tab.]\x1b[0m\r\n`)
             touch()
         }))
@@ -308,7 +333,7 @@ export function createConsoles(sdk: WidgetSdk, opts: ConsolesOptions = {}) {
         }
         tabs.value = adopted
         const was = opts.key ? lastActive.get(opts.key) : undefined
-        st.active = (adopted.find(t => t.rt.session.id === was) ?? adopted[adopted.length - 1])?.key ?? null
+        st.active = (adopted.find(t => t.rt.session?.id === was) ?? adopted[adopted.length - 1])?.key ?? null
         st.state = 'ready'
         if (active.value) redraw()
     }
@@ -347,7 +372,8 @@ export function createConsoles(sdk: WidgetSdk, opts: ConsolesOptions = {}) {
         if (!tab) return
         const changed = st.active !== key
         st.active = key
-        if (opts.key) lastActive.set(opts.key, tab.rt.session.id)
+        if (tab.unread) { tab.unread = false; touch() }
+        if (opts.key && tab.rt.session) lastActive.set(opts.key, tab.rt.session.id)
         redraw()
         if (changed && tab.cwd) opts.onFolder?.(tab.cwd, { replace: true })
     }
@@ -358,7 +384,7 @@ export function createConsoles(sdk: WidgetSdk, opts: ConsolesOptions = {}) {
         const i = tabs.value.indexOf(tab)
         tabs.value = tabs.value.filter(t => t !== tab)
         for (const off of tab.rt.offs) { try { off() } catch { /* gone */ } }
-        try { await tab.rt.session.kill() } catch { /* ended */ }
+        try { await tab.rt.session?.kill() } catch { /* ended */ }
         tab.rt.term.dispose()
         if (st.active === key) {
             const next = tabs.value[Math.min(i, tabs.value.length - 1)] ?? null
@@ -370,7 +396,7 @@ export function createConsoles(sdk: WidgetSdk, opts: ConsolesOptions = {}) {
     /** The ended tab again: a new session of the same shell where it was. */
     async function restart(key: number): Promise<string | null> {
         const tab = find(key)
-        if (!tab) return null
+        if (!tab?.rt.session) return null
         const where = tab.cwd || tab.rt.session.startedIn
         const err = await open(tab.shell, where)
         if (!err) await close(key)
@@ -378,8 +404,15 @@ export function createConsoles(sdk: WidgetSdk, opts: ConsolesOptions = {}) {
     }
 
     /** The active tab to <folder>, typed by GEM Shell at the prompt only; a program running: when it ends. */
+    /** 0.2.0: the console a move or a command goes to: the active one, else the last one still running. */
+    function shellTarget(): Tab | null {
+        const a = active.value
+        if (a && a.kind === 'shell' && !a.ended) return a
+        return [...tabs.value].reverse().find(t => t.kind === 'shell' && !t.ended) ?? null
+    }
+
     async function moveTo(folder: string): Promise<void> {
-        const tab = active.value
+        const tab = shellTarget()
         if (!tab || tab.ended) { st.startIn = folder; return }
         if (samePath(folder, tab.cwd)) { tab.pending = null; touch(); return }
         if (tab.busy) { tab.pending = folder; touch(); return }
@@ -387,6 +420,7 @@ export function createConsoles(sdk: WidgetSdk, opts: ConsolesOptions = {}) {
     }
 
     async function cdNow(tab: Tab, folder: string) {
+        if (!tab.rt.session) return
         const r = await tab.rt.session.cd(folder)
         if (r.ok) { if (tab.pending && samePath(tab.pending, folder)) tab.pending = null; touch(); return }
         if (r.reason === 'busy') { tab.pending = folder; touch(); return }
@@ -401,6 +435,56 @@ export function createConsoles(sdk: WidgetSdk, opts: ConsolesOptions = {}) {
         if (!tab.pending || tab.busy || tab.ended) return
         const to = tab.pending
         void cdNow(tab, to)
+    }
+
+    /** 0.2.0: the command waiting for this console's first prompt. */
+    function flushRun(tab: Tab) {
+        const line = tab.pendingRun
+        if (!line || tab.ended || !tab.rt.session) return
+        tab.pendingRun = null
+        touch()
+        void tab.rt.session.run(line).then(r => { if (!r.ok) opts.notify?.(reasonText(r.reason, r.error)) })
+    }
+
+    /**
+     * 0.2.0: <line> run in the console in use (shown), typed by GEM Shell at its prompt: refused while a command runs
+     * or something is typed. None open: the usual shell starts (where the last move said) and runs it at its first
+     * prompt. Resolves with the failure's text, or null.
+     */
+    async function runLine(line: string): Promise<string | null> {
+        let tab = shellTarget()
+        if (!tab) {
+            const err = await open(null)
+            if (err) return err
+            tab = shellTarget()
+            if (!tab) return 'The console didn\'t start.'
+        } else if (tab.key !== st.active) select(tab.key)
+        if (!tab.prompted) { tab.pendingRun = line; touch(); return null }
+        if (!tab.rt.session) return 'This console has ended.'
+        const r = await tab.rt.session.run(line)
+        return r.ok ? null : reasonText(r.reason, r.error)
+    }
+
+    /**
+     * 0.2.0: text shown in the "Tool output" tab (made the first time and shown then; later, a dot on it while another
+     * tab is shown). Line ends become the terminal's (\r\n). Nothing reaches a shell.
+     */
+    function printOutput(text: string) {
+        let tab = tabs.value.find(t => t.kind === 'output') ?? null
+        let made = false
+        if (!tab) {
+            const { term, fit } = makeTerminal(false)
+            tab = reactive({
+                key: ++seq, kind: 'output', shell: '', label: 'Tool output', cwd: '', busy: false, ended: false,
+                exitCode: null, pending: null, prompted: false, pendingRun: null, unread: false,
+                rt: markRaw({ session: null, term, fit, offs: [] as Array<() => void> }),
+            }) as Tab
+            tabs.value = [...tabs.value, tab]
+            made = true
+        }
+        tab.rt.term.write(text.replace(/\r?\n/g, '\r\n'))
+        if (made) select(tab.key)
+        else if (tab.key !== st.active && !tab.unread) { tab.unread = true; touch() }
     }
 
     function cancelPending() {
@@ -468,6 +552,7 @@ export function createConsoles(sdk: WidgetSdk, opts: ConsolesOptions = {}) {
     return {
         st, tabs, active, api,
         init, open, close, restart, select, moveTo, cancelPending, attach, detach, focus, fitNow, applyTextScale, dispose,
+        runLine, printOutput,
         defaultShell, shellLabel, copySelection,
         captureKeys: (el: HTMLElement) => api?.captureKeys(el) ?? (() => { }),
     }

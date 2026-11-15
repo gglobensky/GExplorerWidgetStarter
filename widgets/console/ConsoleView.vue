@@ -2,7 +2,8 @@
 <!--
     One view of the instance's consoles (consoles.ts): the tabs (＋ the default shell, ▾ another one, ⋯ more), the path
     field and favorites outside a pane (the sidebar, the toolbar's popover), a move waiting for the prompt, and the
-    active terminal. The keys inside the terminal are the console's (sdk.terminal().captureKeys) while you work in it.
+    active terminal. 0.2.0: mode 'part' (TerminalPart.vue, in another widget): no path field, no ★, no fold (the host
+    says where); the "Tool output" tab shows a dot when it printed while hidden. The keys inside the terminal are the console's (sdk.terminal().captureKeys) while you work in it.
 -->
 <template>
     <div class="gc-root" :class="['m-' + mode, { narrow }]">
@@ -12,6 +13,7 @@
                         :class="{ on: t.key === con.st.active, ended: t.ended }" :aria-selected="t.key === con.st.active"
                         :title="tabTip(t)" @click="pick(t.key)" @auxclick="(e: MouseEvent) => e.button === 1 && closeTab(t.key)">
                     <span v-if="t.busy" class="gc-busy" aria-label="Running a command"></span>
+                    <span v-else-if="t.unread" class="gc-unread" aria-label="New output"></span>
                     <span class="gc-tl">{{ tabTitle(t) }}</span>
                     <span class="gc-x" role="button" aria-label="Close" title="Close this console" @click.stop="closeTab(t.key)">×</span>
                 </button>
@@ -28,7 +30,7 @@
             <button v-if="mode === 'toolbar'" class="gc-ib" type="button" title="Fold (the consoles keep running)" aria-label="Fold" @click="emit('fold')">⌃</button>
         </div>
 
-        <div v-if="mode !== 'grid'" class="gc-path">
+        <div v-if="mode === 'sidebar' || mode === 'toolbar'" class="gc-path">
             <gex-path-input class="gc-pin" :model-value="typed" kind="folder" placeholder="Folder (Enter to go there)"
                             @update:model-value="(v: string) => typed = v" @enter="go" />
             <button v-if="hasFavorites" ref="favBtn" class="gc-ib" type="button" title="Go to a favorite" aria-label="Favorites" @click="favorites">★</button>
@@ -81,7 +83,7 @@ import { folderName, isFolderPath, samePath, type Consoles, type Tab } from './c
 
 const props = defineProps<{
     con: Consoles
-    mode: 'grid' | 'sidebar' | 'toolbar'
+    mode: 'grid' | 'sidebar' | 'toolbar' | 'part'
     /** The user's last shell (view.shell). */
     savedShell?: string
 }>()
@@ -121,8 +123,9 @@ const startLabel = computed(() => {
 const newTip = computed(() => defaultId.value && con.st.shells.length ? `New console (${con.shellLabel(defaultId.value)})` : 'New console')
 
 function tabTitle(t: Tab): string {
+    if (t.kind === 'output') return t.label
     const where = t.cwd ? folderName(t.cwd) : ''
-    if (narrow.value || props.mode !== 'grid') return where || shortShell(t.shell)
+    if (narrow.value || (props.mode !== 'grid' && props.mode !== 'part')) return where || shortShell(t.shell)
     return where ? `${shortShell(t.shell)} · ${where}` : t.label
 }
 function tabTip(t: Tab): string {

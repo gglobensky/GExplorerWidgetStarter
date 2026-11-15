@@ -53,6 +53,10 @@
 .gc-busy { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--gc-busy); box-shadow: 0 0 0 2px color-mix(in oklab, var(--gc-busy) 30%, transparent); animation: gc-pulse 1.6s ease-in-out infinite; }
 @keyframes gc-pulse { 50% { opacity: .45; } }
 @media (prefers-reduced-motion: reduce) { .gc-busy { animation: none; } }
+/* 0.2.0: the "Tool output" tab printed while hidden */
+.gc-unread { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--gc-accent); }
+/* 0.2.0: the terminal part (TerminalPart.vue) fills the box GEM Shell draws it in */
+.gc-widget.p-part { flex-direction: column; }
 .gc-ib {
     flex: none; min-width: 24px; padding: 0 5px; border: 0; border-radius: 5px; background: transparent; color: var(--gc-muted);
     cursor: pointer; font: inherit; font-size: 13px; align-self: center; height: calc(var(--gex-px, 1px) * 22);

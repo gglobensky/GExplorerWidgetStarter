@@ -30,6 +30,7 @@ import type { WidgetSdk } from 'gexplorer/widgets'
 import ConsoleView from './ConsoleView.vue'
 import ToolbarPanel from './ToolbarPanel.vue'
 import { createConsoles, isFolderPath, samePath } from './consoles'
+import { termColors } from './termTheme'
 
 const props = defineProps<{
     sourceId: string
@@ -51,40 +52,9 @@ const savedShell = computed<string | undefined>(() => {
 })
 
 // The terminal's colours: the widget's own CSS variables (console.css), resolved by a probe in its box
+// (0.2.0: in termTheme.ts, shared with the terminal part)
 const rootEl = ref<HTMLElement | null>(null)
-function themeColors(): Record<string, string> {
-    const at = rootEl.value
-    if (!at) return {}
-    const probe = document.createElement('span')
-    probe.style.display = 'none'
-    at.appendChild(probe)
-    // As #rrggbb: a theme's colour may compute to oklab() / color(), which xterm.js doesn't read (it drew black)
-    const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true })
-    const hex = (c: string, fallback: string) => {
-        if (!ctx) return fallback
-        ctx.clearRect(0, 0, 1, 1)
-        ctx.fillStyle = fallback
-        ctx.fillStyle = c
-        ctx.fillRect(0, 0, 1, 1)
-        const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data
-        return a === 0 ? fallback : '#' + [r, g, b].map(n => n.toString(16).padStart(2, '0')).join('')
-    }
-    const read = (css: string, fallback: string) => {
-        probe.style.color = ''
-        probe.style.color = css
-        const c = getComputedStyle(probe).color
-        return c && c !== 'rgba(0, 0, 0, 0)' ? hex(c, fallback) : fallback
-    }
-    const out = {
-        background: read('var(--gc-term)', '#151518'),
-        foreground: read('var(--gc-fg)', '#e6e6e6'),
-        cursor: read('var(--gc-accent)', '#5aa9d6'),
-        cursorAccent: read('var(--gc-term)', '#151518'),
-        selectionBackground: 'rgba(90, 169, 214, .35)',
-    }
-    probe.remove()
-    return out
-}
+const themeColors = () => termColors(rootEl.value)
 
 // In a hub's grid the console is a pane: its moves are the pane's (no click needed for its own pane, one folder).
 // Elsewhere the pane isn't ours: nothing is reported.

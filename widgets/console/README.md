@@ -30,6 +30,23 @@ WSL distro GEM Shell finds. Built on xterm.js (MIT, bundled into `index.js`; its
   next one you start begins there. It never opens a new widget.
 - Closing a tab running a command asks first. A console that ended can be restarted (⋯).
 
+## The terminal part (0.2.0)
+
+GEM Console provides GEM Shell's `shell.terminal` point (`TerminalPart.vue`): another widget, such as GEM Forge, shows
+GEM Console's terminal in its own box (`sdk.parts().mount`). There it is **that widget's** terminal:
+
+- It runs as that widget, with its Terminal permission: the first console asks for it in that widget's name, the
+  tray card names it, and its consoles end with it. GEM Console's own consoles are separate.
+- It runs from its own copy of GEM Console's code, with only the calls GEM Shell gives a terminal part (consoles, the
+  menus and questions, copying, links). No path field or ★: the widget showing it says where.
+- Its tabs are consoles, plus a **Tool output** tab for what that widget prints (npm, ESLint): output only, never
+  typed into a shell. It shows a dot when something was printed while another tab was shown.
+- When that widget runs a command, GEM Shell types it at the prompt of the console in use (the active one, else the
+  last one still running), never over what you typed and never while a command runs. With no console open, your usual
+  shell starts where that widget last moved it, and the command runs at its first prompt. It needs your click in
+  that widget.
+- That widget shows one terminal part: showing it in a second place moves the same consoles there.
+
 ## Permissions
 
 - **Terminal:** run consoles. GEM Shell asks the first time you start one, and asks again before Allow.
