@@ -352,6 +352,13 @@ preview. GEM Shell's part: `PhotinoVue1/FORGE-SHELL-ADDITIONS.md` (forge-1 to fo
 - A build's problems in a file that rewrites its imports for the build (shared reach, `?raw`) are no longer taken as
   stale.
 
+## 0.5.2 (2026-11-15): '?raw' declared
+
+- **TypeScript as you type knows `?raw`** in every project (GEM Forge's own declaration, `__forge__/raw.d.ts`), unless
+  the project declares it itself.
+- **A new project gets `env.d.ts`** with that declaration, for other editors (VS Code, an AI's tools); like
+  `widgets-sdk.d.ts`, it isn't built. AGENTS.md mentions it.
+
 Next (claude/forge-dev-tools-design.md): Prettier and the .vue compiler in the same worker, explorer projects in the
 grid preview, a terminal part lent by the Console.
 

@@ -18,14 +18,14 @@ export const TEMPLATES: { kind: TemplateKind; label: string; title: string; name
 ]
 
 /** Files of the guide (never sent to the build). */
-export const GUIDE_FILES = new Set(['AGENTS.md', 'widgets-sdk.d.ts', 'tsconfig.json'])
+export const GUIDE_FILES = new Set(['AGENTS.md', 'widgets-sdk.d.ts', 'tsconfig.json', 'env.d.ts'])
 
 const q = (s: string) => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
 
 /** The files of a new project <name> (its widget's id: <id>). */
 export function templateFiles(kind: TemplateKind, id: string, name: string): SampleFile[] {
     const own = kind === 'clock' ? clockFiles(id, name) : emptyFiles(id, name)
-    return [...own, { path: 'AGENTS.md', text: agentsMd(id, name) }, { path: 'tsconfig.json', text: TSCONFIG }, { path: 'widgets-sdk.d.ts', text: SDK_TYPINGS }]
+    return [...own, { path: 'AGENTS.md', text: agentsMd(id, name) }, { path: 'tsconfig.json', text: TSCONFIG }, { path: 'widgets-sdk.d.ts', text: SDK_TYPINGS }, { path: 'env.d.ts', text: ENV_DTS }]
 }
 
 function emptyFiles(id: string, name: string): SampleFile[] {
@@ -100,6 +100,15 @@ function escHtml(s: string): string {
     return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!)).replace(/[{}]/g, '')
 }
 
+// 0.5.2: what the build understands beyond TypeScript, for editors (GEM Forge's own TypeScript knows it anyway)
+export const ENV_DTS = `// env.d.ts: what the build understands beyond TypeScript (for your editor; not part of the widget).
+// import text from './notes.txt?raw'  ->  the file's text, as a string
+declare module '*?raw' {
+    const text: string
+    export default text
+}
+`
+
 const TSCONFIG = `{
   "compilerOptions": {
     "target": "ES2022",
@@ -131,7 +140,9 @@ show in GEM Forge; the user can copy them for you with *Copy problems*.
   \`sdk.setView\` saved for this copy). Other \`.vue\` / \`.ts\` / \`.css\` files may be imported with relative paths.
 - \`widgets-sdk.d.ts\`: **the whole API, with its rules in the comments: read it before using something.** Import its
   types from \`'gexplorer/widgets'\` (tsconfig.json points there). The SDK itself: \`inject<WidgetSdk>('widgetSdk')\`.
-- This file, \`tsconfig.json\` and \`widgets-sdk.d.ts\` are not part of the widget (GEM Forge doesn't build them).
+- \`env.d.ts\`: what the build understands beyond TypeScript: \`import text from './notes.txt?raw'\` gives a file's text
+  as a string (a file of the project, of a shared library, or of the workspace).
+- This file, \`tsconfig.json\`, \`widgets-sdk.d.ts\` and \`env.d.ts\` are not part of the widget (GEM Forge doesn't build them).
 
 ## The rules GEM Shell enforces
 - **Draw in your own box only.** Never reach the page's own body or html element, never use the browser's top layer

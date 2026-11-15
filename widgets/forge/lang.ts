@@ -18,10 +18,15 @@ import SDK_TYPINGS from '../../types/widgets-sdk.d.ts?raw'
 import { packageOf, SHARED, type Project } from './project'
 import { readPackageTypes, type PackageTypes } from './pkgtypes'
 import { PRETTIER_PREFIX } from './pretty'
+import { ENV_DTS } from './templates'
 
 /** Files TypeScript reads (and GEM Forge asks it about). */
 export const TS_FILE = /\.(ts|mts|js|mjs|vue)$/i
 const SDK_COPY = '__forge__/widgets-sdk.d.ts'
+// 0.5.2: GEM Forge's build understands '?raw' (project.ts): TypeScript knows it too, unless the project declares it
+// (a new project's env.d.ts; two declarations would clash)
+const RAW_COPY = '__forge__/raw.d.ts'
+const RAW_DECLARED = /declare\s+module\s+['"]\*\?raw['"]/
 /** One empty list (GEM Shell keeps the packages' types while it gets the same array). */
 const NO_FILES: { path: string; text: string }[] = []
 
@@ -238,6 +243,7 @@ function createLanguage(project: Project) {
         const aliases: Record<string, string> = {}
         if (project.file('widgets-sdk.d.ts')) aliases['gexplorer/widgets'] = 'widgets-sdk.d.ts'
         else { files.push({ path: SDK_COPY, text: SDK_TYPINGS }); aliases['gexplorer/widgets'] = SDK_COPY }
+        if (!files.some(f => /\.d\.ts$/i.test(f.path) && RAW_DECLARED.test(f.text))) files.push({ path: RAW_COPY, text: ENV_DTS })
         // 0.3.0: a workspace's shared libraries: '@shared/<name>' is the library's index
         for (const lib of s.libraries) {
             const index = ['index.ts', 'index.js'].map(n => `${SHARED}${lib.name}/${n}`).find(p => !!project.file(p))
