@@ -74,7 +74,7 @@ small.gl-steam-says { font-size:9px; font-weight:700; }
 .gl-sd-stores li.main { border-color:color-mix(in srgb,var(--store-accent) 55%,transparent); }
 .gl-sd-stores li.off { opacity:.55; }
 .gl-sd-stores .gl-sticker { padding:3px 6px 2px; font-size:8px; }
-.gl-sd-stores button { min-width:26px; height:24px; margin-left:auto; padding:0 7px; border:1px solid #ffffff1c; border-radius:5px; color:var(--store-text); background:#ffffff0a; cursor:pointer; font-size:10px; }
+.gl-sd-stores button { display:inline-grid; min-width:calc(26 * var(--gex-px, 1px)); height:calc(24 * var(--gex-px, 1px)); place-items:center; line-height:1; margin-left:auto; padding:0 7px; border:1px solid #ffffff1c; border-radius:5px; color:var(--store-text); background:#ffffff0a; cursor:pointer; font-size:10px; }
 .gl-sd-stores button.gl-sd-use { flex:1 0 100%; margin-left:0; font-size:9px; }
 .gl-sd-stores button:hover,.gl-sd-stores button:focus-visible { border-color:var(--store-accent); color:var(--store-accent); outline:0; }
 .gl-activity-note { color:var(--glu-fg); background:#1a1210; }

@@ -182,10 +182,10 @@
 .glu-sd { transition:--store-base 260ms ease,--store-accent 260ms ease,--store-text 260ms ease; }
 .glu-sd { position:absolute; z-index:10; inset:0; display:flex; flex-direction:column; overflow:hidden; color:var(--store-text); background:radial-gradient(circle at 43% 42%,color-mix(in srgb,var(--store-accent) 20%,transparent),transparent 33%),linear-gradient(128deg,#080b0d 0%,color-mix(in srgb,var(--store-base) 62%,#0a0d10) 48%,#07090b 100%); animation:glu-sd-in 220ms ease-out both; }
 .glu-sd-header { position:relative; z-index:5; flex:0 0 auto; display:grid; grid-template-columns:1fr auto 1fr; align-items:center; padding:12px 10px; color:color-mix(in srgb,var(--store-text) 66%,transparent); border-bottom:1px solid #ffffff12; background:color-mix(in srgb,var(--store-base) 40%,#080b0ee8); font-size:11px; letter-spacing:.08em; text-transform:uppercase; }
-.glu-sd-back-button { display:grid; justify-self:start; width:31px; height:31px; padding:0; border:1px solid #ffffff16; border-radius:6px; color:var(--glu-fg); background:#0b1117a8; cursor:pointer; place-items:center; }
+.glu-sd-back-button { display:grid; justify-self:start; width:calc(31 * var(--gex-px, 1px)); height:calc(31 * var(--gex-px, 1px)); padding:0; border:1px solid #ffffff16; border-radius:6px; color:var(--glu-fg); background:#0b1117a8; cursor:pointer; place-items:center; }
 .glu-sd-back-button:hover,.glu-sd-back-button:focus-visible { border-color:color-mix(in srgb,var(--store-accent) 55%,#ffffff16); color:var(--store-accent); outline:0; }
 .glu-sd-back-button span { font-size:17px; line-height:1; }
-.glu-sd-body { display:grid; grid-template-columns:minmax(78px,108px) minmax(180px,460px) minmax(150px,190px); justify-content:center; align-content:safe center; align-items:center; gap:clamp(18px,3vw,42px); width:min(1160px,100%); flex:1 1 auto; min-height:0; margin:0 auto; padding:22px clamp(18px,4vw,55px) 30px; }
+.glu-sd-body { display:grid; grid-template-columns:minmax(calc(78 * var(--gex-px, 1px)),calc(108 * var(--gex-px, 1px))) minmax(180px,460px) minmax(calc(150 * var(--gex-px, 1px)),calc(190 * var(--gex-px, 1px))); justify-content:center; align-content:safe center; overflow:auto; scrollbar-width:thin; align-items:center; gap:clamp(18px,3vw,42px); width:min(1160px,100%); flex:1 1 auto; min-height:0; margin:0 auto; padding:22px clamp(18px,4vw,55px) 30px; }
 .glu-sd-wrap { position:relative; order:2; justify-self:center; width:min(100%,460px,calc((100cqh - 112px) * var(--glu-sd-ratio))); perspective:1400px; }
 .glu-sd-stage { position:relative; width:100%; aspect-ratio:var(--glu-sd-ratio); }
 .glu-sd-case { position:absolute; z-index:2; inset:0; width:100%; padding:0; border:0; background:transparent; cursor:pointer; transform-style:preserve-3d; transition:transform 620ms cubic-bezier(.2,.76,.2,1); }
@@ -210,7 +210,7 @@
 .glu-sd-back-copy>b { margin-top:auto; padding-top:8px; font-size:clamp(7px,.8cqw,10px); font-weight:650; }
 /* Over the box: edit buttons, editors */
 .glu-sd-edit-tools { position:absolute; z-index:9; top:14px; right:14px; display:flex; gap:6px; }
-.glu-sd-edit-tools button { width:31px; height:31px; padding:0; border:1px solid color-mix(in srgb,var(--store-text) 36%,transparent); border-radius:50%; color:var(--store-text); background:color-mix(in srgb,var(--store-base) 92%,#050607); box-shadow:0 5px 15px #000a; cursor:pointer; font-size:11px; font-weight:800; }
+.glu-sd-edit-tools button { display:grid; width:calc(31 * var(--gex-px, 1px)); height:calc(31 * var(--gex-px, 1px)); padding:0; place-items:center; line-height:1; border:1px solid color-mix(in srgb,var(--store-text) 36%,transparent); border-radius:50%; color:var(--store-text); background:color-mix(in srgb,var(--store-base) 92%,#050607); box-shadow:0 5px 15px #000a; cursor:pointer; font-size:11px; font-weight:800; }
 .glu-sd-edit-tools button:hover,.glu-sd-edit-tools button:focus-visible { color:#0b0d0f; border-color:var(--store-accent); background:var(--store-accent); outline:0; }
 .glu-sd-editor { position:absolute; z-index:10; right:7%; bottom:6%; left:7%; display:grid; gap:8px; padding:14px; border:1px solid color-mix(in srgb,var(--store-text) 35%,transparent); border-radius:5px; color:var(--store-text); background:color-mix(in srgb,var(--store-base) 97%,#050607); box-shadow:0 14px 32px #000d; text-align:left; }
 .glu-sd-editor label { font-size:9px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
@@ -221,8 +221,8 @@
 .glu-sd-editor button.quiet { margin-right:auto; }
 .glu-sd-editor.tall { top:18%; }
 /* The left column: big buttons */
-.glu-sd-controls { z-index:3; order:1; display:flex; min-height:0; flex-direction:column; gap:10px; align-items:stretch; align-self:stretch; justify-content:center; }
-.glu-sd-controls>button { display:flex; min-height:86px; flex-direction:column; align-items:center; justify-content:center; gap:7px; padding:10px 8px; border:1px solid #ffffff24; border-radius:7px; color:var(--glu-fg); background:linear-gradient(145deg,#273039,#11171c); box-shadow:0 8px 20px #0007,inset 0 1px #ffffff18; cursor:pointer; transition:transform 140ms ease,border-color 140ms ease; }
+.glu-sd-controls { z-index:3; order:1; display:flex; min-height:0; flex-direction:column; gap:10px; align-items:stretch; align-self:stretch; justify-content:safe center; }
+.glu-sd-controls>button { display:flex; min-height:calc(86 * var(--gex-px, 1px)); flex-direction:column; align-items:center; justify-content:center; gap:7px; padding:10px 8px; border:1px solid #ffffff24; border-radius:7px; color:var(--glu-fg); background:linear-gradient(145deg,#273039,#11171c); box-shadow:0 8px 20px #0007,inset 0 1px #ffffff18; cursor:pointer; transition:transform 140ms ease,border-color 140ms ease; }
 .glu-sd-controls>button:hover,.glu-sd-controls>button:focus-visible { border-color:var(--store-accent); outline:0; transform:translateY(-2px); }
 .glu-sd-controls>button:disabled { cursor:default; opacity:.55; transform:none; }
 .glu-sd-controls>button.primary { color:#100d09; background:linear-gradient(145deg,color-mix(in srgb,var(--store-accent) 82%,#fff),var(--store-accent)); }
@@ -231,7 +231,7 @@
 .glu-sd-controls>button small { margin-top:-3px; opacity:.75; font-size:8px; font-weight:600; }
 /* The right column: the rating box (a <button> when it opens its source, else <div class="static">) */
 .glu-sd-side { order:3; display:flex; align-self:flex-start; min-width:0; max-height:100%; min-height:0; flex-direction:column; gap:14px; text-align:center; }
-.glu-sd-rating { display:flex; width:100%; aspect-ratio:1; flex:0 0 auto; min-height:0; flex-direction:column; align-items:center; justify-content:center; gap:7px; padding:18px 12px; border:1px solid color-mix(in srgb,var(--store-accent) 42%,#ffffff20); border-radius:12px; color:var(--store-text); background:radial-gradient(circle at 50% 10%,color-mix(in srgb,var(--store-accent) 18%,transparent),transparent 55%),#080c0fe0; box-shadow:0 14px 32px #0008,inset 0 1px #ffffff12; font:inherit; }
+.glu-sd-rating { display:flex; width:100%; aspect-ratio:1; flex:0 0 auto; flex-direction:column; align-items:center; justify-content:center; gap:7px; padding:18px 12px; border:1px solid color-mix(in srgb,var(--store-accent) 42%,#ffffff20); border-radius:12px; color:var(--store-text); background:radial-gradient(circle at 50% 10%,color-mix(in srgb,var(--store-accent) 18%,transparent),transparent 55%),#080c0fe0; box-shadow:0 14px 32px #0008,inset 0 1px #ffffff12; font:inherit; }
 button.glu-sd-rating { cursor:pointer; transition:transform 140ms ease; }
 button.glu-sd-rating:hover,button.glu-sd-rating:focus-visible { border-color:var(--store-accent); outline:0; background:radial-gradient(circle at 50% 10%,color-mix(in srgb,var(--store-accent) 28%,transparent),transparent 58%),#0b1115b8; transform:translateY(-2px); }
 .glu-sd-stars { position:relative; display:block; overflow:hidden; color:#ffffff2a; font-size:clamp(15px,1.5vw,21px); letter-spacing:2px; line-height:1; white-space:nowrap; }

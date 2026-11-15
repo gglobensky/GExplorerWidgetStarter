@@ -39,7 +39,7 @@
 .glu-detail:not(.movie-store) .glu-detail-back>small { margin-top:auto; padding-top:18px; font-size:9px; font-weight:600; }
 .glu-detail:not(.movie-store) .glu-detail-back>i { width:68%; height:19px; margin:13px auto 0; opacity:.5; background:repeating-linear-gradient(90deg,#101820 0 2px,transparent 2px 4px); }
 .glu-turn { margin-top:17px; padding:6px 10px; border:1px solid #ffffff25; border-radius:999px; color:var(--glu-muted)!important; background:#0b1117; cursor:pointer; font-size:11px!important; }
-.glu-artwork-edit { position:absolute; z-index:4; top:-12px; right:-12px; width:34px; height:34px; padding:0; border:1px solid #ffffff35; border-radius:50%; color:var(--glu-fg)!important; background:#101820f5; box-shadow:0 5px 16px #0009; cursor:pointer; font-size:17px!important; }
+.glu-artwork-edit { position:absolute; z-index:4; top:-12px; right:-12px; display:grid; width:calc(34 * var(--gex-px, 1px)); height:calc(34 * var(--gex-px, 1px)); padding:0; place-items:center; line-height:1; border:1px solid #ffffff35; border-radius:50%; color:var(--glu-fg)!important; background:#101820f5; box-shadow:0 5px 16px #0009; cursor:pointer; font-size:17px!important; }
 .glu-artwork-edit:hover { color:var(--glu-accent)!important; border-color:var(--glu-accent); }
 .glu-detail-copy { min-width:0; }
 .glu-eyebrow { margin:0 0 9px; color:var(--glu-accent); font-size:10px; font-weight:650; letter-spacing:.14em; text-transform:uppercase; }
@@ -48,7 +48,7 @@
 .glu-meta span { padding:0 6px; color:var(--glu-warm); }
 .glu-synopsis { max-width:620px; margin:20px 0 0; color:color-mix(in srgb,var(--glu-fg) 84%,var(--glu-bg)); font-size:13px; line-height:1.7; }
 .glu-synopsis-row { display:flex; align-items:flex-start; gap:7px; max-width:650px; }
-.glu-edit-icon { flex:0 0 auto; width:25px; height:25px; padding:0!important; border:1px solid transparent; border-radius:50%; color:var(--glu-muted)!important; background:transparent; cursor:pointer; }
+.glu-edit-icon { display:inline-grid; flex:0 0 auto; width:calc(25 * var(--gex-px, 1px)); height:calc(25 * var(--gex-px, 1px)); place-items:center; line-height:1; padding:0!important; border:1px solid transparent; border-radius:50%; color:var(--glu-muted)!important; background:transparent; cursor:pointer; }
 .glu-edit-icon:hover { border-color:var(--glu-border); color:var(--glu-accent)!important; background:var(--glu-panel); }
 .glu-synopsis-row .glu-edit-icon { margin-top:18px; }
 .glu-local-editor { display:flex; gap:7px; margin-top:10px; max-width:650px; }
