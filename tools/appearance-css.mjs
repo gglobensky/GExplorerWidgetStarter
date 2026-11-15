@@ -7,7 +7,7 @@
 //   font-size, the font shorthand, line-height    13px -> calc(var(--base-font-size, 12px) * 13 / 12)   ("13px at 100 %")
 //   border-radius and the per-corner forms         6px -> calc(var(--base-radius, 16px) * 6 / 16)         ("6px at 100 %")
 //   a custom property named for a size            --my-font-size: 12px, --my-radius: 8px: the same
-//   small boxes of a rule with a text size         .btn { width: 31px; font-size: 14px }: the 31px -> calc(var(--base-font-size,
+//   small boxes of a rule with a text size         .btn { width: 31px; font-size: 14px }  (px-ok): the 31px -> calc(var(--base-font-size,
 //     (NEW 2026-11-15)                             12px) * 31 / 12): width, height, their min-/max- forms, inline-/block-size,
 //                                                  flex-basis and flex, each px up to 64 (an icon button grows with its glyph;
 //                                                  a panel or a column, larger, stays)

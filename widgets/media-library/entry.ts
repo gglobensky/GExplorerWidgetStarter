@@ -9,7 +9,7 @@ import tmdbLogo from './assets/tmdb-logo.png?inline'
 export default {
   api:'1.0',
   id:'media-library',
-  version:'0.17.5',   // 0.17.5 (2026-11-15): the detail page's columns and rating card stay compact at large text; the artwork ✎ hides while the back is shown (library-ui 3.8.4). 0.17.4 (2026-11-15): the detail page scrolls when it doesn't fit; the rating box grows to its stars; the edit buttons grow with the text (library-ui 3.8.3). 0.17.3 (2026-11-14): the wall and floor fade with Widget backgrounds; the search box and buttons grow with the text (library-ui 3.8.2). 0.17.2 (2026-11-14): the store's floor follows Widget backgrounds; GEM Shell's colours (library-ui 3.8.1). 0.17.1 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step)
+  version:'0.17.6',   // 0.17.6 (2026-11-15): the detail page's header is shorter and its artwork leaves room for it at large text (library-ui 3.8.5). 0.17.5 (2026-11-15): the detail page's columns and rating card stay compact at large text; the artwork ✎ hides while the back is shown (library-ui 3.8.4). 0.17.4 (2026-11-15): the detail page scrolls when it doesn't fit; the rating box grows to its stars; the edit buttons grow with the text (library-ui 3.8.3). 0.17.3 (2026-11-14): the wall and floor fade with Widget backgrounds; the search box and buttons grow with the text (library-ui 3.8.2). 0.17.2 (2026-11-14): the store's floor follows Widget backgrounds; GEM Shell's colours (library-ui 3.8.1). 0.17.1 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step)
   license:'PolyForm-Noncommercial-1.0.0',
   Component:Widget,
   displayName:'GEM Video Club',
