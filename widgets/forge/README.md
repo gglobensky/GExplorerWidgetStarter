@@ -368,6 +368,15 @@ preview. GEM Shell's part: `PhotinoVue1/FORGE-SHELL-ADDITIONS.md` (forge-1 to fo
   hub: click the preview and the tab's path bar, Back / Forward / Up and Favorites follow it (as an explorer placed
   in that hub). GEM Forge in a window: the preview has its own path bar and ◀ ▶ ▲.
 
+## 0.5.4 (2026-11-15): one preview at a time
+
+- The preview part opened its preview twice when two calls met (the build's watch and the part mounting, or a
+  refused change): the first stayed open under the other, and its explorer pane started over. One opening at a time
+  now; the console's `[forge] preview …` lines say when and why it opens or closes.
+- **0.5.5:** a request arriving while one runs no longer gets dropped (0.5.4 made the preview often not appear: the
+  first request, during the part's setup, had no box yet, and the one after it, which had, was dropped). It now
+  runs once more after the current one.
+
 Next (claude/forge-dev-tools-design.md): Prettier and the .vue compiler in the same worker, explorer projects in the
 grid preview, a terminal part lent by the Console.
 

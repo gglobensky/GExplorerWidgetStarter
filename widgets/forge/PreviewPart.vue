@@ -207,17 +207,40 @@ function sizes(): { width: number | null; height: number | null } {
     return { width: null, height: null }
 }
 
-async function show() {
+// 0.5.4 (2026-11-15): one show() at a time. Two at once (the build's watch and onMounted, or set() refused) each
+// waited, then each opened a preview: the first one stayed open under the other, and GEM Shell's preview pane was
+// a new one (its folder lost). The debug lines say when and why a preview opens or closes.
+// FIXED (0.5.5, Guillaume: "sometimes it doesn't appear"): a call arriving while one runs was DROPPED (it got the
+// running one's promise). The build's watch runs during setup, before this part's box exists: that call returned
+// without opening, and onMounted's, which would have, was dropped with it. Now a call during a run asks for one
+// more run after it (with the state of then).
+let showing: Promise<void> | null = null
+let showAgain = false
+function show(): Promise<void> {
+    if (showing) { showAgain = true; return showing }
+    showing = (async () => {
+        try {
+            do { showAgain = false; await showNow() } while (showAgain)
+        } finally { showing = null }
+    })()
+    return showing
+}
+function closeHandle(why: string) {
+    if (!handle) return
+    console.debug(`[forge] preview of ${shownFor || s.id} closed (${why})`)
+    handle.close()
+    handle = null
+}
+async function showNow() {
     const dev = props.project.dev
     if (!dev || !area.value || !s.build || !s.id) return
     if (handle && shownFor === s.id) return          // a new build remounts it by itself
-    handle?.close()
-    handle = null
+    closeHandle('another project')
     await refreshAllowed()
     if (!allowed.value?.length || handle) return
     const sz = sizes()
     const r = await dev.preview(frame.value ?? area.value, s.id, { context: o.value.context, width: sz.width ?? undefined, height: sz.height ?? undefined })
-    if (r.ok) { handle = r.preview; shownFor = s.id }
+    if (r.ok) { handle = r.preview; shownFor = s.id; console.debug(`[forge] preview of ${s.id} opened (${props.partId ?? 'playground'})`) }
     else props.project.log('warn', `Preview: ${r.error}`)
 }
 function setContext(c: DevPreviewContext) {
@@ -228,7 +251,7 @@ function setContext(c: DevPreviewContext) {
 watch(() => [o.value.context, curH.value, o.value.width] as const, () => {
     if (!handle) return
     const sz = sizes()
-    if (!handle.set({ context: o.value.context, ...sz })) { handle = null; void show() }
+    if (!handle.set({ context: o.value.context, ...sz })) { console.debug('[forge] preview gone: opened again'); handle = null; void show() }
 })
 async function openWindow() {
     // Its title on the window and its card (0.1.5): the playground's result, or the project's preview
@@ -238,12 +261,12 @@ async function openWindow() {
 
 // Shown once the project first runs; closed when another project opens
 watch(() => [s.build, s.id] as const, ([build, id]) => {
-    if (id !== shownFor) { handle?.close(); handle = null; shownFor = '' }
+    if (id !== shownFor) { closeHandle('another project'); shownFor = '' }
     // 0.5.3: a new build may declare other placements (shown already: refreshed here; else show() does it)
     if (build && handle) void refreshAllowed()
     if (build) void show()
 }, { immediate: true })
 // FIXED (0.1c): this part on another page mounts after the project ran: the watch above came before its box
 onMounted(() => { if (s.build) void show() })
-onBeforeUnmount(() => handle?.close())
+onBeforeUnmount(() => closeHandle('its part left the page'))
 </script>
