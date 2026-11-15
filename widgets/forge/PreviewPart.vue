@@ -11,6 +11,9 @@
     0.1.10: in grid, this box is a whole hub (its columns, the user's rows): the widget takes whole cells, its corner
     grip snaps to them (⤢: the whole hub). The size says cells and the px they make here.
     0.1.12: ✥ (its bottom-left grip) moves it to another place in the hub, by whole cells.
+    0.5.3 (2026-11-15): only the placements its entry.ts declares (GEM Shell's rules: an explorer in grid only); a
+    window-only widget: none (⧉). An explorer or navigable project in grid is a pane (GEM Shell F5): linked to the tab
+    when GEM Forge is in that hub (click it: the path bar follows), else with its own path bar.
 -->
 <template>
     <div class="gf-preview">
@@ -18,7 +21,11 @@
             <!-- 0.2.18 (2026-11-14, Guillaume): the label is the group's tooltip: the buttons fit a narrow part -->
             <span class="gf-pv-places" role="group" aria-label="Real placement"
                   v-gex-tooltip="{ content: 'Real placement', detail: 'Where GEM Shell runs the preview: as it would be placed by a user.' }">
-                <button v-for="c in CONTEXTS" :key="c" type="button" class="gf-seg" :class="{ on: o.context === c }" @click="setContext(c)">{{ c }}</button>
+                <!-- 0.5.3 (2026-11-15, Guillaume): the placements its entry.ts doesn't declare are greyed -->
+                <button v-for="c in CONTEXTS" :key="c" type="button" class="gf-seg" :class="{ on: o.context === c, off: !!allowed && !allowed.includes(c) }"
+                        :aria-disabled="!!allowed && !allowed.includes(c)"
+                        v-gex-tooltip="allowed && !allowed.includes(c) ? { content: `Not declared: ${c}`, detail: notDeclaredTip(c) } : undefined"
+                        @click="setContext(c)">{{ c }}</button>
             </span>
             <span class="gf-grow" />
             <button v-if="o.context !== 'grid'" type="button" class="gf-ib" :class="{ on: simOpen }" title="Simulate the space it gets" @click="simOpen = !simOpen">⇕</button>
@@ -49,6 +56,7 @@
             </div>
             <div ref="frame" class="gf-pv-frame" :style="frameStyle">
                 <span v-if="!s.build" class="gf-empty">{{ s.building ? 'Building…' : 'Run the project to see it here.' }}</span>
+                <span v-else-if="allowed && !allowed.length" class="gf-empty">This widget runs in a window only: ⧉ opens it.</span>
             </div>
             <template v-if="o.context === 'grid' && s.build">
                 <span class="gf-pv-grip" :style="gripStyle" title="Drag: the cells it takes in a hub" @pointerdown="startGrip" />
@@ -173,6 +181,25 @@ function startMove(e: PointerEvent) {
 let handle: DevPreviewHandle | null = null
 let shownFor = ''
 
+// ── 0.5.3: the placements the build declares (GEM Shell's rules: sdk.dev().previewContexts) ──────────────────────
+const allowed = ref<DevPreviewContext[] | null>(null)
+function notDeclaredTip(c: DevPreviewContext): string {
+    if (c !== 'grid' && allowed.value?.includes('grid') && !allowed.value.some(x => x !== 'grid'))
+        return `Its entry.ts doesn't declare contexts.${c}, or it's an explorer (explorers work in panes only).`
+    return `Its entry.ts doesn't declare contexts.${c}.`
+}
+/** After a build: which placements it declares; the one chosen, if not among them: the first that is (said in Output). */
+async function refreshAllowed() {
+    const dev = props.project.dev
+    if (!dev || !s.build || !s.id) { allowed.value = null; return }
+    const list = await dev.previewContexts(s.id)
+    allowed.value = list
+    if (list.length && !list.includes(o.value.context)) {
+        props.project.log('info', `Preview: its entry.ts doesn't declare ${o.value.context}: shown in ${list[0]}.`)
+        setOpt({ context: list[0] })
+    }
+}
+
 /** What the preview frame gets: the box (grid), the simulated sidebar height, the toolbar width. */
 function sizes(): { width: number | null; height: number | null } {
     if (o.value.context === 'sidebar') return { width: null, height: curH.value }
@@ -186,12 +213,15 @@ async function show() {
     if (handle && shownFor === s.id) return          // a new build remounts it by itself
     handle?.close()
     handle = null
+    await refreshAllowed()
+    if (!allowed.value?.length || handle) return
     const sz = sizes()
     const r = await dev.preview(frame.value ?? area.value, s.id, { context: o.value.context, width: sz.width ?? undefined, height: sz.height ?? undefined })
     if (r.ok) { handle = r.preview; shownFor = s.id }
     else props.project.log('warn', `Preview: ${r.error}`)
 }
 function setContext(c: DevPreviewContext) {
+    if (allowed.value && !allowed.value.includes(c)) return   // 0.5.3: greyed (its tooltip says why)
     setOpt({ context: c })
 }
 // The options changed (here or restored): the frame follows
@@ -209,6 +239,8 @@ async function openWindow() {
 // Shown once the project first runs; closed when another project opens
 watch(() => [s.build, s.id] as const, ([build, id]) => {
     if (id !== shownFor) { handle?.close(); handle = null; shownFor = '' }
+    // 0.5.3: a new build may declare other placements (shown already: refreshed here; else show() does it)
+    if (build && handle) void refreshAllowed()
     if (build) void show()
 }, { immediate: true })
 // FIXED (0.1c): this part on another page mounts after the project ran: the watch above came before its box

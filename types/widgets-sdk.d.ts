@@ -908,6 +908,14 @@ declare module 'gexplorer/widgets' {
          * project's name in the window's header and on its card in the operations tray.
          */
         preview(el: HTMLElement, project: string, options?: DevPreviewOptions): Promise<{ ok: true; preview: DevPreviewHandle } | { ok: false; error: string }>
+        /**
+         * GEM Shell 2026-11-15: the placements the project's current build declares (its entry.ts contexts, by GEM
+         * Shell's rules: an explorer in grid only, a window-only widget none, none declared: grid). preview() and
+         * set() refuse the others. An explorer or navigable project previewed in grid is a pane: it starts on the
+         * system drive; when your copy is in the active tab's hub, a click in it makes it the tab's focused pane
+         * (the path bar and keys follow it), else it shows its own path bar.
+         */
+        previewContexts(project: string): Promise<DevPreviewContext[]>
         /** What the projects you ran write to the console, and their uncaught errors. Returns the release. */
         onConsole(fn: (m: DevConsoleMessage) => void): () => void
         /**
@@ -1069,7 +1077,8 @@ declare module 'gexplorer/widgets' {
     export type DevPreviewContext = 'grid' | 'sidebar' | 'toolbar'
     export type DevPreviewOptions = { context?: DevPreviewContext; width?: number; height?: number }
     export type DevPreviewHandle = {
-        /** Another context or size (width / height null: the default again). false: it was closed. */
+        /** Another context or size (width / height null: the default again). false: it was closed. A context the
+         *  build doesn't declare is refused (the console says so). */
         set(options: { context?: DevPreviewContext; width?: number | null; height?: number | null }): boolean
         close(): void
     }

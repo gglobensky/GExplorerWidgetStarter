@@ -359,6 +359,15 @@ preview. GEM Shell's part: `PhotinoVue1/FORGE-SHELL-ADDITIONS.md` (forge-1 to fo
 - **A new project gets `env.d.ts`** with that declaration, for other editors (VS Code, an AI's tools); like
   `widgets-sdk.d.ts`, it isn't built. AGENTS.md mentions it.
 
+## 0.5.3 (2026-11-15): placements declared, explorer projects as panes
+
+- **The preview's placements** are the ones the build's entry.ts declares (`sdk.dev().previewContexts`, GEM Shell's
+  rules): the others are greyed with a tooltip. An explorer offers grid only (explorers work in panes); a window-only
+  widget none (⧉ opens it). A build that drops the placement shown switches to the first declared (Output says so).
+- **Explorer and navigable projects in grid** (GEM Shell F5) are a pane starting on the system drive. GEM Forge in a
+  hub: click the preview and the tab's path bar, Back / Forward / Up and Favorites follow it (as an explorer placed
+  in that hub). GEM Forge in a window: the preview has its own path bar and ◀ ▶ ▲.
+
 Next (claude/forge-dev-tools-design.md): Prettier and the .vue compiler in the same worker, explorer projects in the
 grid preview, a terminal part lent by the Console.
 

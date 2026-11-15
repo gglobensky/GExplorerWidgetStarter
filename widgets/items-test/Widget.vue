@@ -2545,4 +2545,4 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand, onMenuI
 .items-filter-chip-open span{ color:var(--accent,#4ea1ff); font-size:.85em; }
 .items-filter-chip-clear{ padding:3px 9px 3px 5px; opacity:.75; }
 .items-filter-chip-clear:hover{ opacity:1; color:var(--accent,#4ea1ff); }
-</style>
+</style>

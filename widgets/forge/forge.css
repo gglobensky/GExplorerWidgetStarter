@@ -116,6 +116,8 @@
 .gf-pv-places { display: inline-flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
 .gf-seg { padding: 2px 8px; font-size: 12px; }
 .gf-seg.on { border-color: var(--gf-accent); color: var(--gf-accent); }
+/* 0.5.3: a placement the build doesn't declare (its tooltip says why) */
+.gf-seg.off { opacity: .4; cursor: not-allowed; }
 .gf-ib { padding: 2px 8px; }
 .gf-pv-banner { flex: none; padding: 4px 8px; border-radius: 5px; font-size: 12px; background: color-mix(in oklab, var(--gf-warn) 18%, transparent); color: var(--gf-warn); }
 .gf-pv-area { flex: 1; min-height: 60px; position: relative; }
