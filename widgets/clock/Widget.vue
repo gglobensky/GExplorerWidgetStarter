@@ -36,8 +36,10 @@ const tick = setInterval(() => {
 }, 10)
 onBeforeUnmount(() => clearInterval(tick))
 
-const width = computed(() => props.placement?.size?.width ?? 300)
-const height = computed(() => props.placement?.size?.height ?? 200)
+// 0.10.2 (2026-11-14): the box "as at 100 %" text (GEM Shell's placement.size.fit): layout.ts's sizes are at 100 %, so
+// at large text the clock picks the layout of a smaller box (fewer pages, the compact calendar...)
+const width = computed(() => props.placement?.size?.fit?.width ?? props.placement?.size?.width ?? 300)
+const height = computed(() => props.placement?.size?.fit?.height ?? props.placement?.size?.height ?? 200)
 const layout = computed(() => clockLayout(width.value, height.value))
 const size = computed(() => layout.value.size)
 const showSeconds = computed(() => props.config?.view?.showSeconds !== false)
@@ -438,7 +440,7 @@ function moveComplication(id: string, delta: number) {
 
 <style scoped>
 .clock-widget { container-type:size; position:relative; display:flex; width:100%; height:100%; min-width:0; min-height:0; flex-direction:column; box-sizing:border-box; overflow:hidden; color:var(--clock-fg,#eef); border:1px solid var(--clock-edge,#ffffff18); border-radius:var(--clock-radius,14px); background:var(--clock-bg,#111); font-family:var(--gex-font,Inter,"Segoe UI",sans-serif); box-shadow:inset 0 1px #fff1; }
-.widget-menu { position:absolute; z-index:30; top:5px; right:6px; display:grid; width:25px; height:24px; padding:0 0 6px; place-items:center; border:1px solid transparent; border-radius:5px; color:var(--clock-muted,#aaa); background:color-mix(in srgb,var(--clock-panel,#111) 90%,transparent); box-shadow:0 2px 8px #0005; font:700 17px/1 sans-serif; cursor:pointer; }
+.widget-menu { position:absolute; z-index:30; top:5px; right:6px; display:grid; width:calc(var(--gex-px, 1px) * 25); height:calc(var(--gex-px, 1px) * 24); padding:0 0 6px; place-items:center; border:1px solid transparent; border-radius:5px; color:var(--clock-muted,#aaa); background:color-mix(in srgb,var(--clock-panel,#111) 90%,transparent); box-shadow:0 2px 8px #0005; font:700 17px/1 sans-serif; cursor:pointer; }
 .widget-menu:hover,.widget-menu:focus-visible { color:var(--clock-fg,#fff); border-color:var(--clock-edge,#ffffff28); outline:none; }
 .tabs { display:flex; min-height:34px; flex:none; align-items:end; gap:3px; padding:5px 8px 0; overflow-x:auto; border-bottom:1px solid var(--clock-edge,#ffffff18); background:var(--clock-panel,#1118); scrollbar-width:none; }
 .tabs button { flex:none; padding:6px clamp(7px,2cqw,11px) 7px; border:0; border-bottom:2px solid transparent; color:var(--clock-muted,#aaa); background:transparent; font:600 11px/1 inherit; cursor:pointer; }
