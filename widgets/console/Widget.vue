@@ -25,7 +25,7 @@
 <script setup lang="ts">
 import '@xterm/xterm/css/xterm.css'
 import './console.css'
-import { ref, computed, inject, onMounted, onBeforeUnmount, markRaw } from 'vue'
+import { ref, computed, inject, onMounted, onBeforeUnmount, markRaw, watch } from 'vue'
 import type { WidgetSdk } from 'gexplorer/widgets'
 import ConsoleView from './ConsoleView.vue'
 import ToolbarPanel from './ToolbarPanel.vue'
@@ -100,7 +100,10 @@ const con = markRaw(createConsoles(sdk, {
     key: props.sourceId,
     // 0.1.6: a link Ctrl+clicked in the output: GEM Shell asks before opening it (the click is the gesture)
     openLink: url => { void sdk.openUrl?.(url) },
+    // 0.1.10: the terminal's text follows GEM Shell's Text size
+    textScale: () => Number(props.placement?.size?.textScale) || 1,
 }))
+watch(() => props.placement?.size?.textScale, () => con.applyTextScale())
 
 // The sidebar sizes its place from the content: the console takes the height GEM Shell measured for the place (the
 // user's choice, within entry.ts minHeight / maxHeight), never less than SIDEBAR_MIN (else only the path field showed).

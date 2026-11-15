@@ -15,8 +15,11 @@
 <template>
     <div class="gf-preview">
         <div class="gf-pv-bar">
-            <span class="gf-dim">Real placement:</span>
-            <button v-for="c in CONTEXTS" :key="c" type="button" class="gf-seg" :class="{ on: o.context === c }" @click="setContext(c)">{{ c }}</button>
+            <!-- 0.2.18 (2026-11-14, Guillaume): the label is the group's tooltip: the buttons fit a narrow part -->
+            <span class="gf-pv-places" role="group" aria-label="Real placement"
+                  v-gex-tooltip="{ content: 'Real placement', detail: 'Where GEM Shell runs the preview: as it would be placed by a user.' }">
+                <button v-for="c in CONTEXTS" :key="c" type="button" class="gf-seg" :class="{ on: o.context === c }" @click="setContext(c)">{{ c }}</button>
+            </span>
             <span class="gf-grow" />
             <button v-if="o.context !== 'grid'" type="button" class="gf-ib" :class="{ on: simOpen }" title="Simulate the space it gets" @click="simOpen = !simOpen">⇕</button>
             <button v-if="o.context === 'grid' && (o.gridCols || o.gridRows || o.gridCol || o.gridRow)" type="button" class="gf-ib" title="The whole hub" @click="setOpt({ gridCols: undefined, gridRows: undefined, gridCol: undefined, gridRow: undefined })">⤢</button>

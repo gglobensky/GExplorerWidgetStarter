@@ -103,7 +103,12 @@ export type ConsolesOptions = {
     key?: string
     /** 0.1.6: a link the user Ctrl+clicked in the output (http / https only): GEM Shell's openUrl (it asks first). */
     openLink?: (url: string) => void
+    /** 0.1.10: GEM Shell's text scale (placement.size.textScale): the terminal's text is 13px at 100 %. */
+    textScale?: () => number
 }
+
+/** The terminal's text size at 100 % Text size (xterm.js takes a number of px, not CSS). */
+const FONT_PX = 13
 
 /** http(s) links in a line of output, without the punctuation that usually ends a sentence after one. */
 const URL_RE = /\bhttps?:\/\/[^\s"'<>`\u0000-\u001f]*[^\s"'<>`\u0000-\u001f.,;:!?)\]}]/g
@@ -158,10 +163,23 @@ export function createConsoles(sdk: WidgetSdk, opts: ConsolesOptions = {}) {
         opts.openLink?.(url)
     }
 
+    /** 0.1.10 (2026-11-14): the terminal's text follows Text size (half px steps). */
+    function fontPx(): number {
+        const s = opts.textScale?.() || 1
+        return Math.round(FONT_PX * s * 2) / 2
+    }
+
+    /** The text size changed: every terminal takes it, the active one is fitted again (columns / rows). */
+    function applyTextScale() {
+        const size = fontPx()
+        for (const t of tabs.value) if (t.rt.term.options.fontSize !== size) t.rt.term.options.fontSize = size
+        fitNow()
+    }
+
     function makeTerminal(windows: boolean): { term: Terminal; fit: FitAddon } {
         const term = new Terminal({
             fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace',
-            fontSize: 13,
+            fontSize: fontPx(),
             cursorBlink: true,
             scrollback: SCROLLBACK,
             allowProposedApi: false,
@@ -447,7 +465,7 @@ export function createConsoles(sdk: WidgetSdk, opts: ConsolesOptions = {}) {
 
     return {
         st, tabs, active, api,
-        init, open, close, restart, select, moveTo, cancelPending, attach, detach, focus, fitNow, dispose,
+        init, open, close, restart, select, moveTo, cancelPending, attach, detach, focus, fitNow, applyTextScale, dispose,
         defaultShell, shellLabel, copySelection,
         captureKeys: (el: HTMLElement) => api?.captureKeys(el) ?? (() => { }),
     }

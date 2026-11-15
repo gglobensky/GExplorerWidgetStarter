@@ -112,7 +112,8 @@
 
 /* Preview */
 .gf-preview { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding: 6px; }
-.gf-pv-bar { display: flex; align-items: center; gap: 4px; flex: none; }
+.gf-pv-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; flex: none; }   /* 0.2.18: wraps in a narrow part */
+.gf-pv-places { display: inline-flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
 .gf-seg { padding: 2px 8px; font-size: 12px; }
 .gf-seg.on { border-color: var(--gf-accent); color: var(--gf-accent); }
 .gf-ib { padding: 2px 8px; }
