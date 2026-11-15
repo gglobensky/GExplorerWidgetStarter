@@ -377,11 +377,24 @@ preview. GEM Shell's part: `PhotinoVue1/FORGE-SHELL-ADDITIONS.md` (forge-1 to fo
   first request, during the part's setup, had no box yet, and the one after it, which had, was dropped). It now
   runs once more after the current one.
 
-Next (claude/forge-dev-tools-design.md): Prettier and the .vue compiler in the same worker, explorer projects in the
-grid preview, a terminal part lent by the Console.
+## 0.6.0 (2026-11-15): the Terminal part
+
+- **＋ Part ▸ Terminal**: a terminal another widget provides (GEM Console's: GEM Shell's `shell.terminal` point),
+  drawn by GEM Shell over the tile. It is **GEM Forge's** terminal: it runs as GEM Forge, the first console asks
+  "GEM Forge: run consoles" (Terminal, now in entry.ts), the tray card names GEM Forge, and its consoles end with
+  GEM Forge. GEM Console's own consoles are separate. Greyed out when no widget you have provides one.
+- Several providers: the tile asks which (remembered; **Change…** in its bar). One you installed (not shipped with
+  GEM Shell): the tile asks you to allow it first, once per version of it.
+- It follows the project's folder (the workspace's, else the project's): a `cd` each time it changes.
+- **npm output here too** (the tile's bar, remembered): npm's output from Packages (install, add, remove, a library's
+  rebuild) also shows in the terminal's **Tool output** tab. Output and Packages keep theirs (the default).
+- The tile coming and going (a tab switch, another page) shows the same terminal; removing the part closes it (its
+  consoles keep running as GEM Forge's until GEM Forge ends: adding it again shows them).
+- **Esc** is now GEM Forge's (`keyboard.claims`): in the terminal it reaches vim or a prompt's own Esc. F6 /
+  Shift+F6 still move the focus out of GEM Forge.
 
 ## Files
 `entry.ts`, `Widget.vue` (the bar, the pages, the lifecycle), `layout.ts` (pages of tiles), `TileGrid.vue`, `project.ts` (the project: files, saving, the watch, running), `Explorer.vue`,
 `CodeEditor.vue`, `PreviewPart.vue`, `Problems.vue`, `Output.vue`, `commands.ts`, `samples.ts`, `templates.ts` (New ▾), `raw.d.ts`, `playground.ts`, `Playground.vue`, `PlayPopover.vue`,
-`zip.ts`, `SearchPart.vue`, `QuickOpen.vue`, `names.ts`, `PackagesPart.vue` (0.2.0), `lang.ts` (0.2.1), `checks.ts` (0.2.10), `pretty.ts` (0.2.12), `forge.css`.
+`zip.ts`, `SearchPart.vue`, `QuickOpen.vue`, `names.ts`, `PackagesPart.vue` (0.2.0), `lang.ts` (0.2.1), `checks.ts` (0.2.10), `pretty.ts` (0.2.12), `terminal.ts` + `TerminalTile.vue` (0.6.0), `forge.css`.
 Bundles CodeMirror 6 (`codemirror`, `@codemirror/lang-*`: MIT).

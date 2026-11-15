@@ -71,6 +71,7 @@ import type { WidgetSdk, WidgetPlacement } from 'gexplorer/widgets'
 import { createProject, projectIdOf, type Project, type Session } from './project'
 import { TEMPLATES, templateFiles, type TemplateKind } from './templates'
 import TileGrid from './TileGrid.vue'
+import { createForgeTerminal, type ForgeTerminal } from './terminal'
 import { checkAll, checkPaths, setSkipped } from './checks'
 import { prettyFor, prettierDone, SUPPORTED } from './pretty'
 import {
@@ -116,6 +117,14 @@ watch(() => [ps.id, ps.files.map(f => f.text.length).join(',')], () => {
 })
 life?.onSuspend(() => { if (playKept) { window.clearTimeout(playTimer); playKept.session = play.project.snapshot() } })
 provide('gfPlay', play)
+
+// ── 0.6.0: the Terminal part (terminal.ts): kept with the project, so the tile coming back shows the same terminal ──
+const terminal: ForgeTerminal = life
+    ? life.persistRef<ForgeTerminal>('gf-terminal', () => markRaw(createForgeTerminal(sdk, project)), { dispose: t => t.release() }).value
+    : createForgeTerminal(sdk, project)
+provide('gfTerminal', terminal)
+// It follows the project's folder
+watch(() => project.packageFolder(), () => terminal.follow())
 // 0.1.7: each preview part's options (its placement, the simulated sizes), kept in the layout (this copy's view)
 provide('gfPreviewOpts', {
     get: (id: string) => previewOpts(layout.value, id),
@@ -208,6 +217,8 @@ sdk.ui?.().setDraft?.({
 // ── The pages (this copy's view) ──────────────────────────────────────────────────────────────────────────────────
 const layout = ref<Layout>(cleanLayout(props.config?.view?.forge))
 watch(() => props.config?.view?.forge, v => { if (v) layout.value = cleanLayout(v) })
+// 0.6.0: the Terminal part left the layout: its terminal closes (GEM Forge's consoles keep running until GEM Forge ends)
+watch(() => layout.value.pages.some(p => p.tiles.some(tl => tl.parts.includes('terminal'))), placed => { if (!placed) terminal.release() })
 function change(l: Layout) {
     layout.value = l
     void sdk.setView?.({ forge: JSON.parse(JSON.stringify(l)) })
@@ -247,6 +258,10 @@ async function partMenu() {
     const l = layout.value
     // 0.1.7: Preview may be there several times (preview, preview:2…): each placed one listed, then "Another preview"
     const placed = new Set(l.pages.flatMap(p => p.tiles.flatMap(t => t.parts)))
+    // 0.6.0: Terminal only when a widget provides one (GEM Console)
+    const terminals = placed.has('terminal') ? null : await (async () => {
+        try { return (await sdk.parts?.().list('shell.terminal')) ?? [] } catch { return [] }
+    })()
     const items = PARTS.flatMap(k => {
         const ids: PartId[] = MULTI.includes(k) ? [...placed].filter(id => id.split(':')[0] === k).sort() : [k]
         if (!ids.length) ids.push(k)
@@ -257,6 +272,7 @@ async function partMenu() {
                 id: pid,
                 label: here ? `✓ ${partTitle(pid)}` : at ? `✓ ${partTitle(pid)} (on ${pageName(l, at.page)})` : PART_TITLES[k],
                 title: here ? 'On this page' : at ? 'On another page: pick it to move it here' : 'Not placed: pick it to add it here',
+                ...(k === 'terminal' && terminals && !terminals.length ? { disabled: true, title: sdk.parts ? 'No widget you have provides a terminal (GEM Console does)' : 'This GEM Shell can\'t show another widget\'s terminal' } : {}),
             }
         })
         if (MULTI.includes(k) && placed.has(k)) rows.push({ id: `new:${k}`, label: `＋ Another ${PART_TITLES[k].toLowerCase()}`, title: 'One more on this page, with its own placement', disabled: !newPartId(l, k) } as any)
@@ -540,6 +556,6 @@ onBeforeUnmount(() => {
     if (kept) kept.session = project.snapshot()
     if (playKept) playKept.session = play.project.snapshot()
     tbPreview?.close()
-    if (!life) { sdk.ui?.().setDraft?.(null); void project.dispose(); void play.project.dispose() }
+    if (!life) { sdk.ui?.().setDraft?.(null); terminal.release(); void project.dispose(); void play.project.dispose() }
 })
 </script>

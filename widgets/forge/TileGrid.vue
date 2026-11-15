@@ -53,6 +53,7 @@ import Explorer from './Explorer.vue'
 import Playground from './Playground.vue'
 import SearchPart from './SearchPart.vue'
 import PackagesPart from './PackagesPart.vue'
+import TerminalTile from './TerminalTile.vue'
 import CodeEditor from './CodeEditor.vue'
 import PreviewPart from './PreviewPart.vue'
 import Problems from './Problems.vue'
@@ -61,7 +62,7 @@ import Output from './Output.vue'
 const props = defineProps<{ project: Project; layout: Layout; arranging: boolean; narrow: boolean }>()
 const emit = defineEmits<{ (e: 'change', l: Layout): void }>()
 const sdk = inject<WidgetSdk>('widgetSdk')!
-const components: Record<PartKind, Component> = { explorer: Explorer, code: CodeEditor, preview: PreviewPart, problems: Problems, output: Output, playground: Playground, search: SearchPart, packages: PackagesPart }
+const components: Record<PartKind, Component> = { explorer: Explorer, code: CodeEditor, preview: PreviewPart, problems: Problems, output: Output, playground: Playground, search: SearchPart, packages: PackagesPart, terminal: TerminalTile }
 
 const root = ref<HTMLElement | null>(null)
 const height = ref(500)

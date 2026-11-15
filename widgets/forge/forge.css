@@ -281,3 +281,10 @@
 .gf-plint { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 .gf-pfile { padding: 6px 8px 1px; font: 12px var(--gf-mono); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gf-pcount { font-family: inherit; font-weight: 400; color: var(--gf-dim); margin-left: 4px; }
+/* 0.6.0: the Terminal part (TerminalTile.vue): GEM Shell draws the terminal over .gf-term-box */
+.gf-term { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.gf-term-bar { flex: none; display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-bottom: 1px solid var(--gf-line); }
+.gf-term-who { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gf-term-box { position: relative; flex: 1; min-height: 0; }
+.gf-term-note { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.gf-term-note p { margin: 0; }

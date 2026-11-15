@@ -1323,6 +1323,11 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
         return true
     }
 
+    // 0.6.0: npm's output also to the Terminal part's Tool output tab (its option: terminal.ts)
+    let toolEcho: ((text: string) => void) | null = null
+    function setToolEcho(fn: ((text: string) => void) | null) { toolEcho = fn }
+    const echo = (text: string) => { try { toolEcho?.(text) } catch (err) { console.error('[forge] terminal echo failed', err) } }
+
     // 0.2.19: the running npm's stop (GEM Shell's Node tools' runner: its output comes while it works)
     let pkgStop: AbortController | null = null
     const PKG_OUTPUT = 64 * 1024
@@ -1342,14 +1347,17 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
             if (!(await ensurePackageJson())) return false
             pkgStop = new AbortController()
             let streamed = ''
+            echo(`\n\x1b[1m${s.pkg.doing}\x1b[0m\n`)
             const r = await dev.packages(kind, packageFolder(), list, {
                 signal: pkgStop.signal,
                 // 0.2.19: npm's output while it works (the last 64 KB kept)
                 onOutput: text => {
                     streamed = (streamed + text).slice(-PKG_OUTPUT)
                     s.pkg.output = streamed
+                    echo(text)
                 },
             })
+            if (!r.ok && !r.cancelled) echo(`\x1b[31mnpm: ${r.error}\x1b[0m\n`)
             s.pkg.output = (streamed || r.output || '').trim()
             if (!r.ok && r.cancelled) { say('npm stopped.'); return false }
             if (r.ok) {
@@ -1524,10 +1532,11 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
         showPart('packages')
         pkgStop = new AbortController()
         let streamed = ''
+        echo(`\n\x1b[1m${s.pkg.doing}\x1b[0m\n`)
         try {
             const r = await dev.runScript(packageFolder(), 'build', ['--lib', name], {
                 signal: pkgStop.signal,
-                onOutput: text => { streamed = (streamed + text).slice(-PKG_OUTPUT); s.pkg.output = streamed },
+                onOutput: text => { streamed = (streamed + text).slice(-PKG_OUTPUT); s.pkg.output = streamed; echo(text) },
             })
             s.pkg.output = (streamed || r.output || '').trim()
             if (!r.ok && r.cancelled) say('The rebuild stopped.')
@@ -1563,7 +1572,7 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
         isStale, freeNameIn, renamePlan, renameFile, deletePaths, duplicatePaths, setTexts, focusSearch, moveFiles, replaceTexts,
         keepMine, takeDisk, run, scheduleRun, asText, log, say, dispose,
         packagesFrom, reloadFile, ensurePackageJson, packagesChanged, setFormatter, packagesOp, cancelPackages, addPackage, showPart,
-        diskPath, packageFolder, packageJsonText, packagePathOf, libraryUsers, sharedSpec,
+        diskPath, packageFolder, packageJsonText, setToolEcho, packagePathOf, libraryUsers, sharedSpec,
         lint, setupEslint, rebuildUsers, isEslintProblem,
     }
 }

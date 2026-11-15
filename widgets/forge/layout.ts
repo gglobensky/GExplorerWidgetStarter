@@ -19,10 +19,11 @@ import { gridSnapshot, gridDrag, gridResize, gridFirstFree } from 'gexplorer/wid
 import type { GridRect, DevPreviewContext } from 'gexplorer/widgets'
 
 // 'playground' (0.1d): the playground, full size (not in the usual layout: ＋ Part ▸ Playground); 'search' (0.1.11):
-// Find in files (Ctrl+Shift+F places it); 'packages' (0.2.0): npm packages (＋ Part ▸ Packages)
-export type PartKind = 'explorer' | 'code' | 'preview' | 'problems' | 'output' | 'playground' | 'search' | 'packages'
-export const PARTS: PartKind[] = ['explorer', 'code', 'preview', 'problems', 'output', 'search', 'packages', 'playground']
-export const PART_TITLES: Record<PartKind, string> = { explorer: 'Explorer', code: 'Code', preview: 'Preview', problems: 'Problems', output: 'Output', playground: 'Playground', search: 'Search', packages: 'Packages' }
+// Find in files (Ctrl+Shift+F places it); 'packages' (0.2.0): npm packages (＋ Part ▸ Packages); 'terminal' (0.6.0):
+// a terminal another widget provides (GEM Console's: GEM Shell's 'shell.terminal' point, TerminalTile.vue)
+export type PartKind = 'explorer' | 'code' | 'preview' | 'problems' | 'output' | 'playground' | 'search' | 'packages' | 'terminal'
+export const PARTS: PartKind[] = ['explorer', 'code', 'preview', 'problems', 'output', 'terminal', 'search', 'packages', 'playground']
+export const PART_TITLES: Record<PartKind, string> = { explorer: 'Explorer', code: 'Code', preview: 'Preview', problems: 'Problems', output: 'Output', playground: 'Playground', search: 'Search', packages: 'Packages', terminal: 'Terminal' }
 /** Kinds a page can hold several of (each its own id). */
 export const MULTI: PartKind[] = ['preview']
 /** A part in the layout: its kind, or kind:n for another one of a MULTI kind. */
