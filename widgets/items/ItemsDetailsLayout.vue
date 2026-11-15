@@ -70,6 +70,8 @@ const emit = defineEmits<{
 /* -----------------------------------------------
    Constants
 ------------------------------------------------ */
+// 0.16.6 (2026-11-14): px at 100 % text; the header grows with the text (36px fixed: at large text its titles were
+// taller than it and the column lines ran into the first row)
 const headerH = 36
 
 /* -----------------------------------------------
@@ -342,7 +344,7 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl, fit })
     class="details-root"
     :data-icons="iconsTick"
     :class="{ 'date-only': fit.dateOnly }"
-    :style="{ '--cols': detailsCols, '--hdrH': headerH + 'px', '--sbw': sbw + 'px', '--padL': padL + 'px', '--padR': padR + 'px' }"
+    :style="{ '--cols': detailsCols, '--hdrH': `calc(var(--gex-px, 1px) * ${headerH})`, '--sbw': sbw + 'px', '--padL': padL + 'px', '--padR': padR + 'px' }"
     ref="detailsRootEl"
   >
     <!-- Header OUTSIDE the scroll container -->
@@ -513,7 +515,7 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl, fit })
   --padY: var(--space-xs);
   --gap:  var(--space-xs);
   --iconW: calc(1em * 1.4);
-  --hdrH: 36px;
+  --hdrH: calc(var(--gex-px, 1px) * 36);
   position: relative;
   display: flex;
   flex-direction: column;

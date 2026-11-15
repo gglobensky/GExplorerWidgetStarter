@@ -69,6 +69,9 @@ const volPop = useVolumePopover({
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
+  /* 1.0.8: a little room on the sides (Guillaume: in a hub's grid, next to another widget, the right border was hidden
+     under it at any text size; the box the grid gives seems a few px wider than its cell) */
+  padding: 0 3px;
 }
 
 .compact-title {
