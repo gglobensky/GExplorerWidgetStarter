@@ -16,7 +16,10 @@ const props = defineProps<{
   tip: (node: Node) => { content: string; detail: string }
   /** 0.5.3: on the clipboard as cut (faded). */
   cut?: (path: string) => boolean
+  /** 0.6.4 (2026-11-14): a row's height in px (30 at 100 % text: TreePanel's rowH). */
+  rowH?: number
 }>()
+const ROW = () => props.rowH || 30
 const emit = defineEmits<{
   (e: 'open', row: TreeRow): void
   (e: 'back', column: number): void
@@ -33,8 +36,8 @@ const emit = defineEmits<{
 
 const scroll = ref<HTMLElement | null>(null), scrollTop = ref(0), viewport = ref(360)
 const id = `tvc-${getCurrentInstance()?.uid}`
-const start = computed(() => Math.max(0, Math.floor(scrollTop.value / 30) - 6))
-const visible = computed(() => props.rows.slice(start.value, start.value + Math.ceil(viewport.value / 30) + 12))
+const start = computed(() => Math.max(0, Math.floor(scrollTop.value / ROW()) - 6))
+const visible = computed(() => props.rows.slice(start.value, start.value + Math.ceil(viewport.value / ROW()) + 12))
 const nodeRows = computed(() => props.rows.filter(row => row.type === 'node'))
 const activeIndex = computed(() => props.rows.findIndex(row => row.type === 'node' && key(row.node.path) === key(props.focused || '')))
 function imageIcon(path: string) { return /^(data:|https?:|blob:|\/)/.test(props.icon?.(path) || '') }
@@ -43,9 +46,9 @@ async function move(row: TreeRow) {
   const index = props.rows.findIndex(candidate => candidate.id === row.id)
   const el = scroll.value
   if (!el || index < 0) return
-  const top = index * 30
+  const top = index * ROW()
   if (top < el.scrollTop) el.scrollTop = top
-  else if (top + 30 > el.scrollTop + el.clientHeight) el.scrollTop = top + 30 - el.clientHeight
+  else if (top + ROW() > el.scrollTop + el.clientHeight) el.scrollTop = top + ROW() - el.clientHeight
   scrollTop.value = el.scrollTop
   await nextTick()
 }
@@ -102,8 +105,8 @@ onBeforeUnmount(() => observer?.disconnect())
     <div class="tv-column-body">
       <button v-if="hasOverflow" class="tv-scroll-hint tv-scroll-up" :disabled="atStart" :aria-label="atStart ? 'At top' : `Scroll ${owner.name} up`" @click="scrollByPage(-1)"><span>{{ atStart ? '—' : '▲' }}</span></button>
       <div ref="scroll" class="tv-tree tv-column-tree" tabindex="0" role="tree" :aria-label="`${owner.name} folders`" :aria-activedescendant="activeIndex >= start && activeIndex < start + visible.length ? `${id}-row-${activeIndex}` : undefined" @focus="focusColumn" @keydown="keydown" @scroll="onScroll">
-        <div :style="{ height: `${rows.length * 30}px`, position: 'relative' }">
-          <div v-for="(row, i) in visible" :id="`${id}-row-${start + i}`" :key="row.id" class="tv-row" :class="{ 'tv-selected': selected && key(selected) === key(row.node.path) && row.type === 'node', 'tv-keyboard': focused && key(focused) === key(row.node.path) && row.type === 'node', 'tv-spine': activeChild && within(activeChild, row.node.path) && row.type === 'node', 'tv-status': row.type !== 'node', 'tv-cut': row.type === 'node' && !!cut?.(row.node.path) }" :style="{ top: `${(start + i) * 30}px`, paddingLeft: '4px' }" :role="row.type === 'node' ? 'treeitem' : undefined" :aria-level="row.type === 'node' ? column + 1 : undefined" :aria-expanded="row.type === 'node' ? expanded(row.node.path) : undefined" :aria-selected="row.type === 'node' ? key(selected || '') === key(row.node.path) : undefined" :aria-posinset="row.pos" :aria-setsize="row.size" @contextmenu.prevent="emit('menu', $event, row.node.path)">
+        <div :style="{ height: `${rows.length * ROW()}px`, position: 'relative' }">
+          <div v-for="(row, i) in visible" :id="`${id}-row-${start + i}`" :key="row.id" class="tv-row" :class="{ 'tv-selected': selected && key(selected) === key(row.node.path) && row.type === 'node', 'tv-keyboard': focused && key(focused) === key(row.node.path) && row.type === 'node', 'tv-spine': activeChild && within(activeChild, row.node.path) && row.type === 'node', 'tv-status': row.type !== 'node', 'tv-cut': row.type === 'node' && !!cut?.(row.node.path) }" :style="{ top: `${(start + i) * ROW()}px`, height: `${ROW()}px`, paddingLeft: '4px' }" :role="row.type === 'node' ? 'treeitem' : undefined" :aria-level="row.type === 'node' ? column + 1 : undefined" :aria-expanded="row.type === 'node' ? expanded(row.node.path) : undefined" :aria-selected="row.type === 'node' ? key(selected || '') === key(row.node.path) : undefined" :aria-posinset="row.pos" :aria-setsize="row.size" @contextmenu.prevent="emit('menu', $event, row.node.path)">
             <template v-if="row.type === 'node'">
               <button class="tv-disclosure" tabindex="-1" :aria-label="active(row) ? `Hide ${row.node.name}` : `Show ${row.node.name}`" @click="disclose(row)">{{ active(row) ? '⌄' : '›' }}</button>
               <button class="tv-name" tabindex="-1" :data-rename-id="row.node.path" :data-rename-value="row.node.name" :data-widget-id="widgetId || undefined" v-gex-tooltip="tip(row.node)" @mouseenter="emit('probe', row.node)" @mouseleave="emit('end-probe', row.node)" @focus="emit('probe', row.node)" @blur="emit('end-probe', row.node)" @click="emit('navigate', row.node.path); scroll?.focus()"><img v-if="imageIcon(row.node.path)" :src="icon?.(row.node.path)" alt="" /><span v-else class="tv-folder">{{ icon?.(row.node.path) || '▱' }}</span><span>{{ row.node.name }}</span><span v-if="row.node.link" class="tv-link" aria-label="(link)">↗</span></button>

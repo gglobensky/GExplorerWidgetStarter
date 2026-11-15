@@ -20,7 +20,7 @@ import {
 type Placement = {
   context: 'grid' | 'sidebar' | 'toolbar' | 'embedded' | 'dialog'
   layout?: string
-  size?: { cols?: number; rows?: number; width?: number; height?: number }
+  size?: { cols?: number; rows?: number; width?: number; height?: number; fit?: { width?: number; height?: number } }
   phase?: 'active' | 'idle'
 }
 
@@ -237,8 +237,10 @@ const view = computed<Record<string, any>>(() => ({
 const showFsType = computed(() => view.value.showFsType !== false)
 const showCapacity = computed(() => view.value.showCapacity !== false)
 const colorByUsage = computed(() => settings?.values.colorByUsage !== false)
-const boxWidth = computed(() => props.placement?.size?.width ?? 0)
-const boxHeight = computed(() => props.placement?.size?.height ?? 0)
+// 0.7.5 (2026-11-14): the box "as at 100 %" text (GEM Shell's placement.size.fit): the densities' sizes are at 100 %,
+// so at large text a box picks the density of a smaller one
+const boxWidth = computed(() => props.placement?.size?.fit?.width ?? props.placement?.size?.width ?? 0)
+const boxHeight = computed(() => props.placement?.size?.fit?.height ?? props.placement?.size?.height ?? 0)
 
 const density = computed<DriveDensity>(() => chooseDensity(
   context.value,
@@ -366,7 +368,7 @@ defineExpose({ onMenuItem, onCommand })
   min-height: 0;
   box-sizing: border-box;
   padding: 8px;
-  color: var(--fg, #eee);
+  color: var(--gex-fg, #eee);
   container-type: size;
   overflow: hidden;
 }
@@ -393,9 +395,9 @@ defineExpose({ onMenuItem, onCommand })
   padding: 10px 11px;
   box-sizing: border-box;
   overflow: hidden;
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border: 1px solid var(--gex-border, rgba(255, 255, 255, 0.12));
   border-radius: var(--radius-md, 8px);
-  background: var(--surface-2, rgba(255, 255, 255, 0.05));
+  background: var(--gex-surface, rgba(255, 255, 255, 0.05));
   color: inherit;
   font: inherit;
   text-align: left;
@@ -405,7 +407,7 @@ defineExpose({ onMenuItem, onCommand })
 
 .drive-item:hover:not(.empty) {
   background: var(--bg-hover, rgba(255, 255, 255, 0.08));
-  border-color: color-mix(in srgb, var(--accent, #4ea1ff) 55%, var(--border, transparent));
+  border-color: color-mix(in srgb, var(--gex-accent, #4ea1ff) 55%, var(--gex-border, transparent));
 }
 
 .drive-item:active:not(.empty) {
@@ -413,7 +415,7 @@ defineExpose({ onMenuItem, onCommand })
 }
 
 .drive-item:focus-visible {
-  outline: 2px solid var(--accent, #4ea1ff);
+  outline: 2px solid var(--gex-accent, #4ea1ff);
   outline-offset: -2px;
 }
 
@@ -468,14 +470,14 @@ defineExpose({ onMenuItem, onCommand })
   height: 6px;
   overflow: hidden;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--fg, #fff) 12%, transparent);
+  background: color-mix(in srgb, var(--gex-fg, #fff) 12%, transparent);
 }
 
 .usage-fill {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--accent, #4ea1ff);
+  background: var(--gex-accent, #4ea1ff);
   transition: width 240ms ease, background-color 160ms ease;
 }
 
@@ -506,7 +508,7 @@ defineExpose({ onMenuItem, onCommand })
   place-items: center;
   width: 100%;
   height: 100%;
-  min-height: 32px;
+  min-height: calc(var(--gex-px, 1px) * 32);
   opacity: 0.65;
   font-size: 12px;
 }
@@ -582,12 +584,12 @@ defineExpose({ onMenuItem, onCommand })
 .context-dialog .drive-list {
   height: auto;
   grid-template-rows: none;
-  grid-auto-rows: minmax(38px, auto);
+  grid-auto-rows: minmax(calc(var(--gex-px, 1px) * 38), auto);
 }
 
 .context-sidebar .drive-item,
 .context-dialog .drive-item {
-  min-height: 38px;
+  min-height: calc(var(--gex-px, 1px) * 38);
 }
 
 .context-toolbar {
@@ -597,7 +599,7 @@ defineExpose({ onMenuItem, onCommand })
 .context-toolbar .drive-item {
   gap: 3px;
   padding-block: 3px;
-  background: color-mix(in srgb, var(--surface-2, #222) 82%, transparent);
+  background: color-mix(in srgb, var(--gex-surface, #222) 82%, transparent);
 }
 
 .context-toolbar.density-expanded .capacity-text,

@@ -19,6 +19,7 @@ const props = defineProps<{
   favorite: (root: Root) => void | Promise<void>
   menu: (event: MouseEvent, path: string, layout: 'tree' | 'columns') => void
   clipboard: (operation: 'copy' | 'cut' | 'paste', path: string) => void | Promise<void>
+  textScale?: number
 }>()
 
 const anchor = ref<HTMLElement | null>(null)
@@ -53,6 +54,7 @@ function contentProps() {
     favorite: props.favorite,
     menu: props.menu,
     clipboard: props.clipboard,
+    textScale: props.textScale,
     close,
   }
 }
@@ -67,12 +69,12 @@ function toggle() {
     component: TreePopover,
     props: contentProps(),
     placement: 'below',
-    maxWidth: 360,
-    maxHeight: 420,
+    maxWidth: Math.round(360 * (props.textScale || 1)),    // 0.6.4: room for the larger text
+    maxHeight: Math.round(420 * (props.textScale || 1)),
     onClose: () => { popover = null; open.value = false },
   })
 }
-watch(() => [props.roots, props.memory.active], () => popover?.update(contentProps()))
+watch(() => [props.roots, props.memory.active, props.textScale], () => popover?.update(contentProps()))
 onBeforeUnmount(close)
 </script>
 
@@ -85,7 +87,7 @@ onBeforeUnmount(close)
 </template>
 
 <style scoped>
-.tv-toolbar { display:flex; flex:1 1 auto; width:100%; height:100%; min-width:150px; min-height:32px; overflow:hidden; color:var(--fg, #dce4eb); font:12px system-ui; }
+.tv-toolbar { display:flex; flex:1 1 auto; width:100%; height:100%; min-width:calc(var(--gex-px, 1px) * 150); min-height:calc(var(--gex-px, 1px) * 32); overflow:hidden; color:var(--gex-fg, #dce4eb); font:12px var(--gex-font, system-ui); }
 .tv-toolbar button { border:0; background:transparent; color:inherit; cursor:pointer; }
 .tv-toolbar button:hover:not(:disabled) { background:color-mix(in srgb, currentColor 9%, transparent); }
 .tv-toolbar button:disabled { color:color-mix(in srgb, currentColor 34%, transparent); cursor:default; }

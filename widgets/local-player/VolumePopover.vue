@@ -53,8 +53,8 @@ function input(e: Event) {
 .vol-mute {
   width: calc(var(--lp-px) * 26); height: calc(var(--lp-px) * 22); padding: 0;
   font-family: inherit; font-size: inherit;
-  border-radius: 4px; border: 1px solid var(--border, #555);
-  background: var(--surface-1, #1a1a1a); color: var(--fg, #eee); cursor: pointer;
+  border-radius: 4px; border: 1px solid var(--gex-border, #555);
+  background: var(--gex-bg, #1a1a1a); color: var(--gex-fg, #eee); cursor: pointer;
 }
-.vol-mute:hover { border-color: var(--accent, #4ea1ff); }
+.vol-mute:hover { border-color: var(--gex-accent, #4ea1ff); }
 </style>

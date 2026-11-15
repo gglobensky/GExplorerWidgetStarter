@@ -5,7 +5,11 @@ import { TreeController, key, label, newState, within, type Node, type Root, typ
 import TreeColumn from './TreeColumn.vue'
 import './tree.css'
 
-const props = defineProps<{ roots: Root[]; source: RootSource; memory: TreeMemory; icon?: (path: string) => string; initialPath?: string | null; context?: string; widgetId?: string; cut?: (path: string) => boolean }>()
+const props = defineProps<{ roots: Root[]; source: RootSource; memory: TreeMemory; icon?: (path: string) => string; initialPath?: string | null; context?: string; widgetId?: string; cut?: (path: string) => boolean; textScale?: number }>()
+// 0.6.4 (2026-11-14): GEM Shell's text scale (placement.size.textScale): rows 30px at 100 % text, and the widths that
+// choose a layout (narrow, columns) compared "as at 100 %"
+const scale = computed(() => props.textScale && props.textScale > 0 ? props.textScale : 1)
+const rowH = computed(() => Math.round(30 * scale.value))
 const emit = defineEmits<{
   (e: 'navigate', path: string): void
   (e: 'favorite', root: Root): void
@@ -31,7 +35,7 @@ function onTreeChange() {
 controller = new TreeController(props.source, onTreeChange)
 const root = computed(() => props.roots.find(r => r.id === props.memory.active))
 const state = computed(() => props.memory.roots[props.memory.active])
-const narrow = computed(() => panelWidth.value < 242)
+const narrow = computed(() => panelWidth.value / scale.value < 242)
 /**
  * The menu's situations for a right-click on <path> (entry.ts menuStates, 0.5.0): items set to
  * "Disable when…" one of them (defaults in entry.ts, the user's choice in sys:context-menus) grey out.
@@ -44,7 +48,7 @@ function menuStatesFor(path: string): string[] {
   else if (key(focus) === key(path)) out.push('this-focused')
   return out
 }
-const columns = computed(() => props.context === 'grid' && panelWidth.value >= 448)
+const columns = computed(() => props.context === 'grid' && panelWidth.value / scale.value >= 448)
 const narrowNode = computed(() => {
   void tick.value
   const path = state.value?.narrowPath
@@ -54,8 +58,8 @@ const rows = computed(() => {
   void tick.value
   return narrow.value && narrowNode.value ? controller.levelRows(narrowNode.value, 1) : controller.rows()
 })
-const start = computed(() => Math.max(0, Math.floor(scrollTop.value / 30) - 6))
-const visible = computed(() => rows.value.slice(start.value, start.value + Math.ceil(viewport.value / 30) + 12))
+const start = computed(() => Math.max(0, Math.floor(scrollTop.value / rowH.value) - 6))
+const visible = computed(() => rows.value.slice(start.value, start.value + Math.ceil(viewport.value / rowH.value) + 12))
 const activePath = computed(() => state.value?.focus || root.value?.path || '')
 const narrowParent = computed(() => {
   const node = narrowNode.value
@@ -93,7 +97,7 @@ const groups = computed(() => {
 function saveScroll(mode = narrow.value) {
   if (!state.value || !scroll.value || pendingRestore) return
   const value = scroll.value.scrollTop
-  const anchor = rows.value[Math.floor(value / 30)]?.id
+  const anchor = rows.value[Math.floor(value / rowH.value)]?.id
   if (mode) { state.value.narrowScroll = value; state.value.narrowAnchor = anchor }
   else { state.value.scroll = value; state.value.anchor = anchor }
 }
@@ -104,7 +108,7 @@ function restoreScroll() {
     : state.value)
   const i = rows.value.findIndex(r => r.id === saved.anchor)
   if (pendingRestore && i < 0 && [...controller.sessions.values()].some(s => s.node.status === 'loading' || s.node.loadingMore)) return
-  scroll.value.scrollTop = i >= 0 ? i * 30 + saved.scroll % 30 : saved.scroll
+  scroll.value.scrollTop = i >= 0 ? i * rowH.value + saved.scroll % rowH.value : saved.scroll
   pendingRestore = null
   scrollTop.value = scroll.value.scrollTop
 }
@@ -353,9 +357,9 @@ async function moveTo(row: TreeRow) {
   const index = rows.value.findIndex(r => r.id === row.id)
   const el = scroll.value
   if (!el) return
-  const top = index * 30
+  const top = index * rowH.value
   if (top < el.scrollTop) el.scrollTop = top
-  else if (top + 30 > el.scrollTop + el.clientHeight) el.scrollTop = top + 30 - el.clientHeight
+  else if (top + rowH.value > el.scrollTop + el.clientHeight) el.scrollTop = top + rowH.value - el.clientHeight
   scrollTop.value = el.scrollTop
   await nextTick()
 }
@@ -435,14 +439,14 @@ watch(narrow, async (value, previous) => {
   await nextTick(); restoreScroll()
 })
 watch(rows, async (next, previous) => {
-  const anchor = previous[Math.floor(scrollTop.value / 30)]?.id
-  const offset = scrollTop.value % 30
+  const anchor = previous[Math.floor(scrollTop.value / rowH.value)]?.id
+  const offset = scrollTop.value % rowH.value
   await nextTick()
   if (!focused.value && next.some(r => r.type === 'node')) focused.value = next.find(r => r.type === 'node')!.node.path
   if (pendingRestore) { restoreScroll(); return }
   if (anchor && scroll.value) {
     const i = next.findIndex(r => r.id === anchor)
-    if (i >= 0) scroll.value.scrollTop = i * 30 + offset
+    if (i >= 0) scroll.value.scrollTop = i * rowH.value + offset
   }
   if (state.value?.anchor && !previous.length) restoreScroll()
 })
@@ -508,15 +512,15 @@ defineExpose({ choose, focusFolder, command, exitFocus, reveal, showCreated, roo
       <div v-if="columns" class="tv-columns-shell">
         <button v-if="columnsHaveOverflow" class="tv-column-page tv-column-page-left" :disabled="columnsAtStart" :aria-label="columnsAtStart ? 'At first folder level' : 'Show previous folder levels'" @click="scrollColumnsByPage(-1)">{{ columnsAtStart ? '│' : '‹' }}</button>
         <div ref="columnsScroll" class="tv-columns-strip">
-          <TreeColumn v-for="(node, index) in columnNodes" :key="node.path" :owner="node" :rows="controller.levelRows(node, index + 1)" :column="index" :active-child="columnNodes[index + 1]?.path" :selected="state?.selected" :focused="focused" :icon="icon" :widget-id="widgetId" :expanded="path => controller.isExpanded(path)" :cut="cut" :tip="folderTip" @open="openColumn" @back="closeColumn" @fold="foldColumn" @navigate="navigate" @focus="focused = $event" @clipboard="(operation, path) => emit('clipboard', operation, path)" @menu="(event, path) => emit('menu', event, path, 'columns', menuStatesFor(path))" @more="controller.more($event)" @retry="controller.retry($event)" @probe="beginCountProbe" @end-probe="endCountProbe" />
+          <TreeColumn v-for="(node, index) in columnNodes" :key="node.path" :owner="node" :rows="controller.levelRows(node, index + 1)" :column="index" :active-child="columnNodes[index + 1]?.path" :selected="state?.selected" :focused="focused" :icon="icon" :widget-id="widgetId" :expanded="path => controller.isExpanded(path)" :cut="cut" :tip="folderTip" :row-h="rowH" @open="openColumn" @back="closeColumn" @fold="foldColumn" @navigate="navigate" @focus="focused = $event" @clipboard="(operation, path) => emit('clipboard', operation, path)" @menu="(event, path) => emit('menu', event, path, 'columns', menuStatesFor(path))" @more="controller.more($event)" @retry="controller.retry($event)" @probe="beginCountProbe" @end-probe="endCountProbe" />
         </div>
         <button v-if="columnsHaveOverflow" class="tv-column-page tv-column-page-right" :disabled="columnsAtEnd" :aria-label="columnsAtEnd ? 'At current folder level' : 'Show deeper folder levels'" @click="scrollColumnsByPage(1)">{{ columnsAtEnd ? '│' : '›' }}</button>
       </div>
       <div v-else class="tv-tree-shell">
         <button v-if="hasOverflow" class="tv-scroll-hint tv-scroll-up" :disabled="atStart" :aria-label="atStart ? 'At top' : 'Scroll up'" @click="scrollByPage(-1)"><span>{{ atStart ? '—' : '▲' }}</span></button>
         <div ref="scroll" class="tv-tree" tabindex="0" role="tree" :aria-label="narrow && narrowNode ? `${narrowNode.name} folders` : root?.label || 'Folders'" :aria-activedescendant="activeRow >= start && activeRow < start + visible.length ? `${treeId}-row-${activeRow}` : undefined" @keydown="keydown" @scroll="onScroll">
-          <div :style="{ height: `${rows.length * 30}px`, position: 'relative' }">
-          <div v-for="(row, i) in visible" :id="`${treeId}-row-${start + i}`" :key="row.id" class="tv-row" :class="{ 'tv-selected': state?.selected && key(state.selected) === key(row.node.path) && row.type === 'node', 'tv-keyboard': focused && key(focused) === key(row.node.path) && row.type === 'node', 'tv-spine': state?.selected && within(state.selected, row.node.path) && row.type === 'node', 'tv-status': row.type !== 'node', 'tv-cut': row.type === 'node' && !!cut?.(row.node.path) }" :style="{ top: `${(start + i) * 30}px`, paddingLeft: `${Math.min(row.depth - 1, 7) * 14 + 4}px` }" :role="row.type === 'node' ? 'treeitem' : undefined" :aria-level="row.type === 'node' ? row.depth : undefined" :aria-expanded="row.type === 'node' ? controller.isExpanded(row.node.path) : undefined" :aria-selected="row.type === 'node' ? key(state?.selected || '') === key(row.node.path) : undefined" :aria-posinset="row.pos" :aria-setsize="row.size" :aria-busy="row.type === 'node' && controller.isExpanded(row.node.path) && row.node.status === 'loading' ? true : undefined" @contextmenu.prevent="emit('menu', $event, row.node.path, 'tree', menuStatesFor(row.node.path))">
+          <div :style="{ height: `${rows.length * rowH}px`, position: 'relative' }">
+          <div v-for="(row, i) in visible" :id="`${treeId}-row-${start + i}`" :key="row.id" class="tv-row" :class="{ 'tv-selected': state?.selected && key(state.selected) === key(row.node.path) && row.type === 'node', 'tv-keyboard': focused && key(focused) === key(row.node.path) && row.type === 'node', 'tv-spine': state?.selected && within(state.selected, row.node.path) && row.type === 'node', 'tv-status': row.type !== 'node', 'tv-cut': row.type === 'node' && !!cut?.(row.node.path) }" :style="{ top: `${(start + i) * rowH}px`, height: `${rowH}px`, paddingLeft: `${Math.min(row.depth - 1, 7) * 14 * scale + 4}px` }" :role="row.type === 'node' ? 'treeitem' : undefined" :aria-level="row.type === 'node' ? row.depth : undefined" :aria-expanded="row.type === 'node' ? controller.isExpanded(row.node.path) : undefined" :aria-selected="row.type === 'node' ? key(state?.selected || '') === key(row.node.path) : undefined" :aria-posinset="row.pos" :aria-setsize="row.size" :aria-busy="row.type === 'node' && controller.isExpanded(row.node.path) && row.node.status === 'loading' ? true : undefined" @contextmenu.prevent="emit('menu', $event, row.node.path, 'tree', menuStatesFor(row.node.path))">
             <template v-if="row.type === 'node'">
               <button class="tv-disclosure" tabindex="-1" :aria-label="narrow ? `Show ${row.node.name}` : `${controller.isExpanded(row.node.path) ? 'Collapse' : 'Expand'} ${row.node.name}`" @click="toggle(row)">{{ narrow ? '›' : controller.isExpanded(row.node.path) ? '⌄' : '›' }}</button>
               <button class="tv-name" tabindex="-1" :data-rename-id="row.node.path" :data-rename-value="row.node.name" :data-widget-id="widgetId || undefined" v-gex-tooltip="folderTip(row.node)" @mouseenter="beginCountProbe(row.node)" @mouseleave="endCountProbe(row.node)" @focus="beginCountProbe(row.node)" @blur="endCountProbe(row.node)" @click="navigate(row.node.path); scroll?.focus()" @auxclick="e => { if (e.button === 1) navigate(row.node.path) }" @mousedown.middle.prevent><img v-if="imageIcon(row.node.path)" :src="icon(row.node.path)" alt="" /><span v-else class="tv-folder">{{ icon(row.node.path) || '▱' }}</span><span>{{ row.node.name }}</span><span v-if="row.node.link" class="tv-link" aria-label="(link)">↗</span></button>

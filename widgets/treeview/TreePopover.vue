@@ -17,6 +17,7 @@ const props = defineProps<{
   favorite: (root: Root) => void | Promise<void>
   menu: (event: MouseEvent, path: string, layout: 'tree' | 'columns') => void
   clipboard: (operation: 'copy' | 'cut' | 'paste', path: string) => void | Promise<void>
+  textScale?: number
 }>()
 const panel = ref<InstanceType<typeof TreePanel> | null>(null)
 
@@ -39,6 +40,7 @@ onBeforeUnmount(() => props.setPanel(null))
       :initial-path="initialPath"
       :widget-id="widgetId"
       context="toolbar"
+      :text-scale="textScale"
       @navigate="close"
       @add="createFolder"
       @refresh-roots="refreshRoots"
@@ -50,6 +52,6 @@ onBeforeUnmount(() => props.setPanel(null))
 </template>
 
 <style scoped>
-.tv-toolbar-popover { display:flex; width:min(340px, calc(100vw - 24px)); height:min(390px, calc(100vh - 24px)); min-height:220px; overflow:hidden; }
+.tv-toolbar-popover { display:flex; width:min(calc(var(--gex-px, 1px) * 340), calc(100vw - 24px)); height:min(calc(var(--gex-px, 1px) * 390), calc(100vh - 24px)); min-height:calc(var(--gex-px, 1px) * 220); overflow:hidden; }
 .tv-toolbar-popover :deep(.tv-panel) { flex:1 1 auto; min-width:0; min-height:0; }
 </style>

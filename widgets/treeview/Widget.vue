@@ -7,7 +7,7 @@ import TreeToolbar from './TreeToolbar.vue'
 import { key, label, newMemory, newState, within, type Root, type RootSource, type TreeMemory } from './tree'
 
 type Config = { data?: { folders?: { path: string; label: string }[] }; view?: Record<string, unknown> }
-const props = defineProps<{ config?: Config; sourceId?: string; placement?: { context: string } }>()
+const props = defineProps<{ config?: Config; sourceId?: string; placement?: { context: string; size?: { textScale?: number } } }>()
 const emit = defineEmits<{ (e: 'event', event: { type: 'update:config'; payload: Config }): void }>()
 const sdk = inject<WidgetSdk>('widgetSdk')
 const ui = sdk?.ui?.()
@@ -272,14 +272,14 @@ onBeforeUnmount(() => { disposed = true; favoriteRequest++; driveStatsRequest++ 
 <template>
   <div class="tv-widget">
     <div v-if="error" key="error" class="tv-error" role="status"><span>{{ error }}</span><button aria-label="Dismiss message" @click="error = ''">×</button></div>
-    <TreeToolbar v-if="available && placement?.context === 'toolbar'" :key="'toolbar' + listKey" :roots="roots" :source="source" :memory="memory" :ui="ui" :icon="folderIcon" :initial-path="initialPath" :widget-id="sourceId" :set-panel="setPanel" :create-folder="createFolder" :refresh-roots="refreshRoots" :favorite="favorite" :menu="menu" :clipboard="clipboard" />
-    <TreePanel v-else-if="available" :key="'panel' + listKey" ref="panel" :roots="roots" :source="source" :memory="memory" :icon="folderIcon" :initial-path="initialPath" :context="placement?.context" :widget-id="sourceId" :cut="isCut" @add="createFolder" @refresh-roots="refreshRoots" @favorite="favorite" @menu="menu" @clipboard="clipboard" />
+    <TreeToolbar v-if="available && placement?.context === 'toolbar'" :key="'toolbar' + listKey" :roots="roots" :source="source" :memory="memory" :ui="ui" :icon="folderIcon" :initial-path="initialPath" :widget-id="sourceId" :set-panel="setPanel" :create-folder="createFolder" :refresh-roots="refreshRoots" :favorite="favorite" :menu="menu" :clipboard="clipboard" :text-scale="placement?.size?.textScale" />
+    <TreePanel v-else-if="available" :key="'panel' + listKey" ref="panel" :roots="roots" :source="source" :memory="memory" :icon="folderIcon" :initial-path="initialPath" :context="placement?.context" :widget-id="sourceId" :cut="isCut" :text-scale="placement?.size?.textScale" @add="createFolder" @refresh-roots="refreshRoots" @favorite="favorite" @menu="menu" @clipboard="clipboard" />
   </div>
 </template>
 <style scoped>
 .tv-widget { display:flex; flex:1 1 auto; flex-direction:column; height:100%; min-height:0; min-width:0; overflow:hidden; }
 .tv-widget :deep(.tv-panel) { flex:1 1 auto; min-height:0; }
-.tv-widget:has(.tv-toolbar) { min-height:32px; }
+.tv-widget:has(.tv-toolbar) { min-height:calc(var(--gex-px, 1px) * 32); }
 .tv-error { display:flex; gap:8px; padding:8px; color:#e7c098; background:#302b25; font:12px system-ui; }
 .tv-error span { flex:1; }
 .tv-error button { background:none; border:0; color:inherit; cursor:pointer; }

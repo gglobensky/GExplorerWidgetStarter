@@ -414,14 +414,14 @@ defineExpose({ controlsEl, queueEl })
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
-  background: var(--surface-2, #222);
-  color: var(--fg, #eee);
-  border: 1px solid var(--border, #555);
+  background: var(--gex-surface, #222);
+  color: var(--gex-fg, #eee);
+  border: 1px solid var(--gex-border, #555);
   border-radius: var(--radius-md, 8px);
   padding: var(--space-sm, 8px);
   box-sizing: border-box;
 }
-.player-root.drag-over { outline: 2px dashed var(--accent, #4ea1ff); outline-offset: -2px; }
+.player-root.drag-over { outline: 2px dashed var(--gex-accent, #4ea1ff); outline-offset: -2px; }
 .player-root.dragging, .player-root.dragging * { user-select: none; }
 
 /* ====================== CONTROLS (FLEX HARD LOCK) ====================== */
@@ -501,17 +501,17 @@ defineExpose({ controlsEl, queueEl })
   line-height: calc(var(--btn-h) - 2px);
   padding: 0 8px;
   border-radius: var(--radius-sm, 6px);
-  border: 1px solid var(--border, #555);
-  background: var(--surface-2, #222);
-  color: var(--fg, #eee);
+  border: 1px solid var(--gex-border, #555);
+  background: var(--gex-surface, #222);
+  color: var(--gex-fg, #eee);
   cursor: pointer;
   transition: all 0.12s ease;
 }
 .player-root.ultra .btn, .player-root.micro .btn { height: var(--btn-h); }
-.btn:hover:not(:disabled) { background: var(--surface-3, #333); border-color: var(--accent, #4ea1ff); }
+.btn:hover:not(:disabled) { background: var(--gex-surface-2, #333); border-color: var(--gex-accent, #4ea1ff); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn.primary { border-color: var(--accent, #4ea1ff); box-shadow: 0 0 0 1px var(--accent, #4ea1ff) inset; }
-.btn.active { color: var(--accent, #4ea1ff); }
+.btn.primary { border-color: var(--gex-accent, #4ea1ff); box-shadow: 0 0 0 1px var(--gex-accent, #4ea1ff) inset; }
+.btn.active { color: var(--gex-accent, #4ea1ff); }
 .btn.narrow { padding: 0 6px; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
 .btn.loading { animation: pulse 0.6s ease-in-out infinite; }
@@ -530,17 +530,17 @@ defineExpose({ controlsEl, queueEl })
 .queue-head { margin-top: 8px; min-width: 0; }
 .queue-head .gex-fold-header {
   height: calc(var(--lp-px) * 28); padding: 0 4px 0 8px; font-size: 13px; font-weight: 600; letter-spacing: 0;
-  opacity: 1; border: 1px solid var(--border, #555); border-radius: var(--radius-sm, 6px);
-  background: var(--surface-1, #1a1a1a);
+  opacity: 1; border: 1px solid var(--gex-border, #555); border-radius: var(--radius-sm, 6px);
+  background: var(--gex-bg, #1a1a1a);
 }
-.queue-head .gex-fold-header.folded { border-bottom-color: var(--border, #555); }
-.queue-head .gex-fold-header:hover { background: var(--surface-3, #333); }
+.queue-head .gex-fold-header.folded { border-bottom-color: var(--gex-border, #555); }
+.queue-head .gex-fold-header:hover { background: var(--gex-surface-2, #333); }
 .icon-btn { width: calc(var(--lp-px) * 22); height: calc(var(--lp-px) * 22); border-radius: 4px;
-  font-family: inherit; font-size: inherit; border: 1px solid var(--border, #555);
-  display: grid; place-items: center; background: var(--surface-2, #222); color: var(--fg, #eee);
+  font-family: inherit; font-size: inherit; border: 1px solid var(--gex-border, #555);
+  display: grid; place-items: center; background: var(--gex-surface, #222); color: var(--gex-fg, #eee);
   cursor: pointer; transition: all 0.12s ease;
 }
-.icon-btn:hover { background: var(--surface-3, #333); border-color: var(--accent, #4ea1ff); }
+.icon-btn:hover { background: var(--gex-surface-2, #333); border-color: var(--gex-accent, #4ea1ff); }
 
 /* ====================== QUEUE TOOLS ====================== */
 /* 🗑 | ➕ 💾 under the head */
@@ -562,11 +562,11 @@ defineExpose({ controlsEl, queueEl })
   padding: 6px 8px;
   border-top: none;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
-  background: var(--surface-2, #222);
+  background: var(--gex-surface, #222);
   transition: border-color 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease;
 }
 .row.header {
-  background: var(--surface-2, #222);
+  background: var(--gex-surface, #222);
   font-weight: 600; border-top: none; box-shadow: none;
 }
 .row.item { cursor: grab; position: relative; }
@@ -575,29 +575,29 @@ defineExpose({ controlsEl, queueEl })
 .row-x {
   position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
   opacity: 0; pointer-events: none; transition: opacity .12s ease;
-  box-shadow: -10px 0 10px var(--surface-2, #222);
+  box-shadow: -10px 0 10px var(--gex-surface, #222);
 }
 .row.item:hover .row-x,
 .row.item.selected .row-x { opacity: 1; pointer-events: auto; }
 .row.item:active { cursor: grabbing; }
-.row.item.selected { outline: 2px solid var(--accent, #4ea1ff); outline-offset: -2px; }
+.row.item.selected { outline: 2px solid var(--gex-accent, #4ea1ff); outline-offset: -2px; }
 .row.item.current {
   position: relative; background: linear-gradient(90deg, rgba(78,161,255,0.10), transparent 60%);
   box-shadow: inset 0 0 0 1px rgba(78,161,255,0.28);
 }
 .row.item.current::before {
   content: ""; position: absolute; inset: 0 auto 0 0; width: 3px;
-  background: var(--accent, #4ea1ff); border-radius: 2px;
+  background: var(--gex-accent, #4ea1ff); border-radius: 2px;
 }
 .row.item.current .title { font-weight: 600; color: #d9ecff; }
-.row.item.is-dragging { border: 2px solid var(--accent, #4ea1ff); box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28); opacity: 1; z-index: 10; }
+.row.item.is-dragging { border: 2px solid var(--gex-accent, #4ea1ff); box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28); opacity: 1; z-index: 10; }
 
 /* "X" remove only on hover/selection */
 .row.item .act .icon-btn { opacity: 0; pointer-events: none; transition: opacity .12s ease; }
 .row.item:hover .act .icon-btn,
 .row.item.selected .act .icon-btn { opacity: 1; pointer-events: auto; }
 
-.player-root.pressing .row.item:hover { background: rgba(78, 161, 255, 0.12); outline: 1px solid var(--accent, #4ea1ff); outline-offset: -1px; }
+.player-root.pressing .row.item:hover { background: rgba(78, 161, 255, 0.12); outline: 1px solid var(--gex-accent, #4ea1ff); outline-offset: -1px; }
 
 .idx { opacity: 0.6; }
 .title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; display: block; min-width: 0; }

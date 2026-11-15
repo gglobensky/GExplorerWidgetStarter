@@ -75,8 +75,8 @@ const volPop = useVolumePopover({
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  background: var(--surface-1, #1a1a1a);
-  border: 1px solid var(--border, #555);
+  background: var(--gex-bg, #1a1a1a);
+  border: 1px solid var(--gex-border, #555);
   border-radius: var(--radius-sm, 6px);
 }
 
@@ -103,16 +103,16 @@ const volPop = useVolumePopover({
   height: calc(var(--lp-px) * 28);
   padding: 0 8px;
   border-radius: var(--radius-sm, 6px);
-  border: 1px solid var(--border, #555);
-  background: var(--surface-2, #222);
-  color: var(--fg, #eee);
+  border: 1px solid var(--gex-border, #555);
+  background: var(--gex-surface, #222);
+  color: var(--gex-fg, #eee);
   cursor: pointer;
   transition: all 0.12s ease;
 }
 
 .btn:hover:not(:disabled) {
-  background: var(--surface-3, #333);
-  border-color: var(--accent, #4ea1ff);
+  background: var(--gex-surface-2, #333);
+  border-color: var(--gex-accent, #4ea1ff);
 }
 
 .btn:disabled {
@@ -121,7 +121,7 @@ const volPop = useVolumePopover({
 }
 
 .btn.active {
-  border-color: var(--accent, #4ea1ff);
-  box-shadow: 0 0 0 1px var(--accent, #4ea1ff) inset;
+  border-color: var(--gex-accent, #4ea1ff);
+  box-shadow: 0 0 0 1px var(--gex-accent, #4ea1ff) inset;
 }
 </style>

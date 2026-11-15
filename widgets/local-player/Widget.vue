@@ -235,7 +235,9 @@ watch(hostWidth, (w) => {
 })
 
 const layoutClass = computed(() => {
-    const w = containerWidth.value || hostWidth.value || 0
+    // 1.0.6 (2026-11-14): "as at 100 %" text (the thresholds below are at 100 %; GEM Shell's placement.size.textScale)
+    const scale = props.placement?.size?.textScale || 1
+    const w = (containerWidth.value || hostWidth.value || 0) / scale
     if (w <= 160) return 'micro'
     if (w <= 260) return 'ultra'
     if (w <= 320) return 'narrow'

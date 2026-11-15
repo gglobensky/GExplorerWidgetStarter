@@ -91,15 +91,15 @@ onBeforeUnmount(() => {
 .pc-row { display: flex; align-items: center; gap: 4px; }
 .pc-btn {
   width: calc(var(--lp-px) * 26); height: calc(var(--lp-px) * 22); padding: 0;
-  border: 1px solid var(--border, #555); border-radius: 4px;
+  border: 1px solid var(--gex-border, #555); border-radius: 4px;
   font-family: inherit;
-  background: transparent; color: var(--fg, #eee);
+  background: transparent; color: var(--gex-fg, #eee);
   font-size: 11px; line-height: 1; cursor: pointer;
 }
-.pc-btn:hover, .pc-btn:focus-visible { background: var(--surface-3, #333); border-color: var(--accent, #4ea1ff); }
+.pc-btn:hover, .pc-btn:focus-visible { background: var(--gex-surface-2, #333); border-color: var(--gex-accent, #4ea1ff); }
 .pc-btn--main { width: calc(var(--lp-px) * 32); }
 .pc-state { margin-left: auto; font-size: 11px; opacity: .6; }
 .pc-bar { height: 3px; border-radius: 2px; background: var(--gex-op-bar-bg, rgba(255,255,255,.12)); overflow: hidden; }
-.pc-fill { height: 100%; background: var(--accent, #4ea1ff); transition: width 200ms linear; }
+.pc-fill { height: 100%; background: var(--gex-accent, #4ea1ff); transition: width 200ms linear; }
 @media (prefers-reduced-motion: reduce) { .pc-fill { transition: none; } }
 </style>
