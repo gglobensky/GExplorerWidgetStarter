@@ -209,9 +209,10 @@ function createLanguage(project: Project) {
             // 0.2.9: handed to TypeScript now, which parses them a few at a time between frames (GEM Shell
             // 2026-11-08: preparing()); the file shown is checked once they're ready, the page drawn meanwhile
             const l = await service()
-            if (l && sync(l) && l.preparing) {
-                while (typesKey === key && l.preparing() > 0) {
-                    s.typesNote = `Preparing the packages' types (${l.preparing()} files left)…`
+            if (l && await sync(l)) {
+                // 0.5.0: TypeScript works in GEM Shell's worker: asked how far it is (the page keeps drawing anyway)
+                for (let left = await l.preparing(); typesKey === key && left > 0; left = await l.preparing()) {
+                    s.typesNote = `Preparing the packages' types (${left} files left)…`
                     await new Promise(res => window.setTimeout(res, 120))
                 }
             }
@@ -224,7 +225,7 @@ function createLanguage(project: Project) {
     }
     /** The files sent as they are now; <override>: a file's text newer than the project's (the editor's). Too many
      *  or too big: the rest left out (package-lock.json always), not the whole project refused. */
-    function sync(l: DevLanguageService, override?: { path: string; text: string }): boolean {
+    async function sync(l: DevLanguageService, override?: { path: string; text: string }): Promise<boolean> {
         const files: { path: string; text: string }[] = []
         let total = 0
         for (const f of s.files) {
@@ -258,7 +259,13 @@ function createLanguage(project: Project) {
         // 0.2.8: the packages' own types (read in the background; meanwhile, and without types: any)
         const names = packageNames()
         const types = packageTypes(names)
-        const r = l.sync(files, { aliases, untyped: types ? types.untyped : names, packages: types?.files ?? lastTypes?.files ?? NO_FILES })
+        let r: { ok: boolean; error?: string }
+        try { r = await l.sync(files, { aliases, untyped: types ? types.untyped : names, packages: types?.files ?? lastTypes?.files ?? NO_FILES }) }
+        catch (err) {
+            r = { ok: false, error: String((err as Error)?.message ?? err) }
+            // 0.5.0: GEM Shell's worker stopped (said in the console and here): a new service the next time
+            if (svc === l) { svc = null; loading = null }
+        }
         if (!r.ok && r.error !== lastError) project.log('warn', `TypeScript: ${r.error}`)
         lastError = r.ok ? '' : r.error ?? ''
         return r.ok
@@ -266,13 +273,13 @@ function createLanguage(project: Project) {
 
     async function ready(path: string, text: string): Promise<DevLanguageService | null> {
         const l = await service()
-        return l && sync(l, { path, text }) ? l : null
+        return l && await sync(l, { path, text }) ? l : null
     }
 
     // ── Completions ──────────────────────────────────────────────────────────────────────────────────────────────
     function details(l: DevLanguageService, path: string, pos: number, it: DevCompletion) {
-        return () => {
-            const d = l.completionDetails(path, pos, it)
+        return async () => {
+            const d = await l.completionDetails(path, pos, it).catch(() => null)
             if (!d || (!d.detail && !d.documentation)) return null
             const el = document.createElement('div')
             el.className = 'gf-ts-info'
@@ -298,18 +305,22 @@ function createLanguage(project: Project) {
         if (!ctx.explicit && !word?.text && before !== '.') return null
         const l = await ready(path, ctx.state.doc.toString())
         if (!l || ctx.aborted) return null
-        const r = l.completions(path, ctx.pos)
-        if (!r || !r.items.length) return null
+        const r = await l.completions(path, ctx.pos).catch(() => null)
+        if (!r || !r.items.length || ctx.aborted) return null
         const options: Completion[] = r.items.map(it => ({
             label: it.name,
             type: KINDS[it.kind] ?? 'variable',
             boost: boostOf(it.sort),
             ...(it.modifiers.includes('optional') ? { detail: '?' } : {}),
             // 0.2.6: another module's export: picked, its import is added too
+            // 0.5.0: the name goes in at once; its import follows when TypeScript (in GEM Shell's worker) gives it (the
+            // import's place is before the name: unchanged by it)
             ...(it.module ? { detail: `from ${it.module}`, apply: (view: EditorView, _c: Completion, f: number, to: number) => {
-                const d = l.completionDetails(path, ctx.pos, it)
-                const extra = (d?.edits ?? []).filter(e => e.path === path && e.to <= f)
-                view.dispatch({ changes: [...extra.map(e => ({ from: e.from, to: e.to, insert: e.text })), { from: f, to, insert: it.insert ?? it.name }], userEvent: 'input.complete' })
+                view.dispatch({ changes: { from: f, to, insert: it.insert ?? it.name }, userEvent: 'input.complete' })
+                void l.completionDetails(path, ctx.pos, it).then(d => {
+                    const extra = (d?.edits ?? []).filter(e => e.path === path && e.to <= f)
+                    if (extra.length) view.dispatch({ changes: extra.map(e => ({ from: e.from, to: e.to, insert: e.text })), userEvent: 'input.complete' })
+                }).catch(() => { })
             } } : {}),
             ...(it.module ? {} : it.replace
                 ? { apply: (view: EditorView, _c: Completion, _f: number, to: number) => view.dispatch({ changes: { from: it.replace!.from, to: Math.max(it.replace!.to, to), insert: it.insert ?? it.name }, userEvent: 'input.complete' }) }
@@ -339,7 +350,7 @@ function createLanguage(project: Project) {
             const text = view.state.doc.toString()
             if (path.toLowerCase().endsWith('.vue') && !inScript(text, pos)) return null
             const l = await ready(path, text)
-            const h = l?.hover(path, pos)
+            const h = l ? await l.hover(path, pos).catch(() => null) : null
             if (!h || !h.text) return null
             return {
                 pos: h.from, end: h.to, above: true,
@@ -368,8 +379,9 @@ function createLanguage(project: Project) {
         const l = await ready(path, text)
         if (!l) return []
         // 0.2.9: the packages' types still being prepared: checked once they are (null: keep what's shown)
-        if ((l.preparing?.() ?? 0) > 0) return null
-        const list = l.problems(path).filter(p => p.severity !== 'info')
+        if ((await l.preparing().catch(() => 0)) > 0) return null
+        let list
+        try { list = (await l.problems(path)).filter(p => p.severity !== 'info') } catch { return null }
         if (s.typesNote.startsWith('Checking')) s.typesNote = ''
         // Problems lists them (lines and columns, 1-based)
         s.typeProblems = { path, items: asProblems(path, text, list) }
@@ -391,15 +403,15 @@ function createLanguage(project: Project) {
         const text = project.file(path)?.text
         if (text == null) return []
         const l = await ready(path, text)
-        if (!l || (l.preparing?.() ?? 0) > 0) return null
-        return asProblems(path, text, l.problems(path).filter(p => p.severity !== 'info'))
+        if (!l || (await l.preparing().catch(() => 0)) > 0) return null
+        try { return asProblems(path, text, (await l.problems(path)).filter(p => p.severity !== 'info')) } catch { return null }
     }
 
     // ── Go to definition ─────────────────────────────────────────────────────────────────────────────────────────
     async function goToDefinition(path: string, text: string, pos: number): Promise<boolean> {
         const l = await ready(path, text)
         if (!l) { project.say('Go to definition needs TypeScript (GEM Shell 2026-11-07 or later).', false); return false }
-        const defs = l.definition(path, pos)
+        const defs = await l.definition(path, pos).catch(() => [])
         const own = defs.find(d => d.path && d.path !== SDK_COPY)
         if (own?.path) {
             const t = project.file(own.path)?.text ?? ''
@@ -418,7 +430,7 @@ function createLanguage(project: Project) {
     /** TypeScript's formatting edits for <path> (its text as given), in order; null: no TypeScript here. */
     async function format(path: string, text: string): Promise<{ from: number; to: number; text: string }[] | null> {
         const l = await ready(path, text)
-        return l?.format ? l.format(path, { indent: 4 }) : null
+        return l ? l.format(path, { indent: 4 }).catch(() => null) : null
     }
 
     // ── Rename symbol, references (0.2.6) ────────────────────────────────────────────────────────────────────────
@@ -429,15 +441,15 @@ function createLanguage(project: Project) {
      */
     async function renameSymbol(path: string, text: string, pos: number): Promise<void> {
         const l = await ready(path, text)
-        if (!l?.renameInfo || !l.rename) { project.say('Rename symbol needs TypeScript (GEM Shell 2026-11-08 or later).', false); return }
-        const info = l.renameInfo(path, pos)
+        if (!l) { project.say('Rename symbol needs TypeScript (it didn\'t start: see the console).', false); return }
+        const info = await l.renameInfo(path, pos).catch(err => ({ ok: false as const, error: String(err?.message ?? err) }))
         if (!info.ok) { project.say(info.error, false); return }
         const name = await project.sdk.ui?.().prompt(`Rename ${info.name} (everywhere in the project) to:`, {
             value: info.name,
             validate: (v: string) => (/^[\p{L}_$][\p{L}\p{N}_$]*$/u.test(v.trim()) ? null : 'A name: letters, digits, _ or $, not starting with a digit.'),
         })
         if (!name || name.trim() === info.name) return
-        const r = l.rename(path, pos, name.trim())
+        const r = await l.rename(path, pos, name.trim()).catch(err => ({ ok: false as const, error: String(err?.message ?? err) }))
         if (!r.ok) { project.say(r.error, false); return }
         // The new texts, file by file (the edits from the last to the first)
         const texts: Record<string, string> = {}
@@ -457,8 +469,8 @@ function createLanguage(project: Project) {
     /** The references of the name at <pos>: a menu (file:line and the line), picked: opened there. */
     async function findReferences(path: string, text: string, pos: number, anchor: HTMLElement): Promise<void> {
         const l = await ready(path, text)
-        if (!l?.references) { project.say('Find references needs TypeScript (GEM Shell 2026-11-08 or later).', false); return }
-        const refs = l.references(path, pos)
+        if (!l) { project.say('Find references needs TypeScript (it didn\'t start: see the console).', false); return }
+        const refs = await l.references(path, pos).catch(() => [])
         if (!refs.length) { project.say('No references found here.', false); return }
         const items = refs.slice(0, 60).map((r, i) => {
             const t = r.path === path ? text : project.file(r.path)?.text ?? ''
@@ -495,9 +507,10 @@ function createLanguage(project: Project) {
                 const text = u.state.doc.toString()
                 if (path.toLowerCase().endsWith('.vue') && !inScript(text, pos)) return
                 const mine = ++seq
-                void ready(path, text).then(l => {
+                void ready(path, text).then(async l => {
                     if (mine !== seq) return
-                    const h = l?.signature?.(path, pos) ?? null
+                    const h = l ? await l.signature(path, pos).catch(() => null) : null
+                    if (mine !== seq) return
                     const tip = h ? sigTooltip(h, pos) : null
                     if (tip || view.state.field(field)) view.dispatch({ effects: setSig.of(tip) })
                 })

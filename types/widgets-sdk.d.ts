@@ -1001,7 +1001,11 @@ declare module 'gexplorer/widgets' {
     export type DevPackagesResult =
         | { ok: true; node?: string; npm?: string; output?: string }
         | { ok: false; error: string; code?: string; output?: string; cancelled?: boolean }
-    /** GEM Shell 2026-11-07: sdk.dev().language()'s service (TypeScript). Paths relative, with /; offsets in the file's text. */
+    /**
+     * GEM Shell 2026-11-07: sdk.dev().language()'s service (TypeScript). Paths relative, with /; offsets in the file's text.
+     * CHANGED (GEM Shell 2026-11-15): it runs in GEM Shell's developer-tools worker: every method answers a Promise
+     * (a long type check no longer stops the page); all of them are there.
+     */
     export type DevLanguageService = {
         /** TypeScript's version. */
         readonly version: string
@@ -1011,28 +1015,28 @@ declare module 'gexplorer/widgets' {
          * whose imports are any. packages (GEM Shell 2026-11-08): the npm packages' own types read from node_modules
          * ('node_modules/<name>/….d.ts' and package.json; 4000 files, 32 MB; the same array again: not read again).
          */
-        sync(files: { path: string; text: string }[], options?: { aliases?: Record<string, string>; untyped?: string[]; packages?: { path: string; text: string }[] }): { ok: boolean; error?: string }
-        completions(path: string, offset: number): { isMember: boolean; items: DevCompletion[] } | null
+        sync(files: { path: string; text: string }[], options?: { aliases?: Record<string, string>; untyped?: string[]; packages?: { path: string; text: string }[] }): Promise<{ ok: boolean; error?: string }>
+        completions(path: string, offset: number): Promise<{ isMember: boolean; items: DevCompletion[] } | null>
         /** 2026-11-08: edits: an auto-import's import to add (an item with module). */
-        completionDetails(path: string, offset: number, item: DevCompletion): { detail: string; documentation: string; edits?: DevLanguageEdit[] } | null
-        hover(path: string, offset: number): { from: number; to: number; text: string; documentation: string } | null
+        completionDetails(path: string, offset: number, item: DevCompletion): Promise<{ detail: string; documentation: string; edits?: DevLanguageEdit[] } | null>
+        hover(path: string, offset: number): Promise<{ from: number; to: number; text: string; documentation: string } | null>
         /** TypeScript's problems in the file (syntax and types), as you type. */
-        problems(path: string): DevLanguageProblem[]
+        problems(path: string): Promise<DevLanguageProblem[]>
         /** Where the name at offset is declared: a project file (path), or outside it (external: 'lib.dom.d.ts', 'vue'). */
-        definition(path: string, offset: number): { path?: string; external?: string; from: number; to: number }[]
+        definition(path: string, offset: number): Promise<{ path?: string; external?: string; from: number; to: number }[]>
         /** GEM Shell 2026-11-08: TypeScript's formatting (indentation, spaces; quotes and semicolons as written): edits
          *  on the file's text, in order (apply them from the last one to the first). A .vue file: inside its scripts only. */
-        format?(path: string, options?: { indent?: number; tabs?: boolean }): { from: number; to: number; text: string }[]
+        format(path: string, options?: { indent?: number; tabs?: boolean }): Promise<{ from: number; to: number; text: string }[]>
         /** GEM Shell 2026-11-08: whether the name at offset can be renamed (its name and place), or why not. */
-        renameInfo?(path: string, offset: number): { ok: true; name: string; from: number; to: number } | { ok: false; error: string }
+        renameInfo(path: string, offset: number): Promise<{ ok: true; name: string; from: number; to: number } | { ok: false; error: string }>
         /** GEM Shell 2026-11-08: the edits renaming it in the project's files (a .vue file's scripts; its template: yours). */
-        rename?(path: string, offset: number, newName: string): { ok: true; edits: DevLanguageEdit[] } | { ok: false; error: string }
+        rename(path: string, offset: number, newName: string): Promise<{ ok: true; edits: DevLanguageEdit[] } | { ok: false; error: string }>
         /** GEM Shell 2026-11-08: its references in the project's files (its declaration marked). */
-        references?(path: string, offset: number): { path: string; from: number; to: number; definition: boolean }[]
+        references(path: string, offset: number): Promise<{ path: string; from: number; to: number; definition: boolean }[]>
         /** GEM Shell 2026-11-08: the call's signatures around offset (while typing its arguments). */
-        signature?(path: string, offset: number): DevSignatureHelp | null
+        signature(path: string, offset: number): Promise<DevSignatureHelp | null>
         /** GEM Shell 2026-11-08: the packages' type files still being prepared (parsed between frames); 0: ready. */
-        preparing?(): number
+        preparing(): Promise<number>
         dispose(): void
     }
     /** GEM Shell 2026-11-08: a change in one of the project's files (offsets in its text). */

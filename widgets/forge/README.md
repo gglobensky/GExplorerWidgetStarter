@@ -332,7 +332,15 @@ preview. GEM Shell's part: `PhotinoVue1/FORGE-SHELL-ADDITIONS.md` (forge-1 to fo
   build script: `npm run build -- --lib <name>`; its output in Packages, Cancel there), with "Remember my choice".
   Settings ▸ GEM Forge: Ask / Rebuild them / Don't, and Forget the remembered answer.
 
-Next (claude/forge-dev-tools-design.md): TypeScript and Prettier in a background worker, explorer projects in the
+## 0.5.0 (2026-11-15): TypeScript in a worker
+
+- **TypeScript runs in GEM Shell's developer-tools worker**, not in the page: a big package's final check no longer
+  pauses typing or the rest of GEM Shell. Completions, hovers, problems, go to definition, rename, references and
+  signatures ask it and wait for the answer (each a Promise); an auto-import's name goes in at once, its import a
+  moment after. If the worker can't start, GEM Forge says why (Output and the console): no TypeScript, no silent
+  fallback.
+
+Next (claude/forge-dev-tools-design.md): Prettier and the .vue compiler in the same worker, explorer projects in the
 grid preview, a terminal part lent by the Console.
 
 ## Files

@@ -1,4 +1,4 @@
-﻿// widgets/forge/templates.ts
+// widgets/forge/templates.ts
 //
 // GEM FORGE 0.1c: what New project writes in the folder it makes. Every project starts as a real folder (no project in
 // memory any more): Save writes there, the folder watch follows what an AI writes there.
