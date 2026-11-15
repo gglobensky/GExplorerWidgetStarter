@@ -648,16 +648,18 @@
 }
 .fav-pane-count {
   position: absolute;
-  right: -5px;
-  bottom: -4px;
-  min-width: 11px;
-  height: 11px;
-  padding: 0 2px;
+  /* 0.3.10 (2026-11-14): sized from its own text (8px at 100 %), so the dot and the number grow together: its box was
+     11px while the number grew with Text size, and the number sat outside the dot */
+  right: -0.625em;
+  bottom: -0.5em;
+  min-width: 1.375em;
+  height: 1.375em;
+  padding: 0 0.25em;
   box-sizing: border-box;
-  border-radius: 6px;
+  border-radius: 0.6875em;
   background: var(--gex-accent, #4ea1ff);
   color: #081018;
-  font: 700 8px/11px system-ui, sans-serif;
+  font: 700 8px/1.375 var(--gex-font, system-ui, sans-serif);
   text-align: center;
   pointer-events: none;
 }

@@ -14,7 +14,7 @@ export default {
   // 0.3.0 (GEM Shell E5c-2, 2026-11-03): the folder menus are GEM Shell's popovers (a level per folder, sub-folders
   // opening on hover, never over their parent), the drag ghost GEM Shell's (ui.dragGhost): nothing drawn outside the
   // widget's box any more.
-  version: '0.3.9',   // 0.3.9 (2026-11-14): icons sized from the text (no overlap at large text); GEM Shell's colours; transparent in the toolbar / sidebar. 0.3.8: sizes follow Appearance (built with the Text size / Roundness step). 0.3.7 (2026-11-14): in GEM Shell's file dialog (contexts.dialog: the list)
+  version: '0.3.10',   // 0.3.10 (2026-11-14): the several-panes badge sized from its text. 0.3.9 (2026-11-14): icons sized from the text (no overlap at large text); GEM Shell's colours; transparent in the toolbar / sidebar. 0.3.8: sizes follow Appearance (built with the Text size / Roundness step). 0.3.7 (2026-11-14): in GEM Shell's file dialog (contexts.dialog: the list)
                       // 0.3.6 (2026-11-14): role 'favorites'
                       // 0.3.5 (2026-11-13): the hand on a favorite (one click opens it; GEM Shell's cursor handles)
                       // 0.3.4 (2026-11-05): middle-click opens a favorite in a new tab (GEM Shell's "Open where?")

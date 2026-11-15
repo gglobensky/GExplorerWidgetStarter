@@ -65,6 +65,10 @@ const volPop = useVolumePopover({
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* 1.0.7 (2026-11-14): never wider than the widget's box (its right edge was cut off): every part may shrink */
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
 }
 
 .compact-title {
@@ -72,6 +76,8 @@ const volPop = useVolumePopover({
   text-align: center;
   font-weight: 600;
   padding: 2px calc(var(--lp-px) * 36);
+  box-sizing: border-box;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -92,7 +98,7 @@ const volPop = useVolumePopover({
 
 .compact-controls {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--space-sm, 8px);
   align-items: stretch;
   justify-items: stretch;
@@ -101,6 +107,8 @@ const volPop = useVolumePopover({
 .btn {
   font-family: inherit; font-size: inherit;   /* a <button> doesn't inherit the text size by itself */
   height: calc(var(--lp-px) * 28);
+  box-sizing: border-box;
+  min-width: 0;
   padding: 0 8px;
   border-radius: var(--radius-sm, 6px);
   border: 1px solid var(--gex-border, #555);
