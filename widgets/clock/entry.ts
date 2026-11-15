@@ -16,7 +16,7 @@ export default {
     description: 'A skinnable clock, paper calendar, timers and time tools.',
     category: 'tools',
     icon: '◷',
-    version: '0.10.0',
+    version: '0.10.1',   // 0.10.1 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     instance: 'global',

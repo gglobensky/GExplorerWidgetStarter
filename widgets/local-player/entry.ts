@@ -10,7 +10,7 @@ const PLAYER_EXTENSIONS = [...AUDIO_EXTS, ...PLAYLIST_EXTS].map(e => `.${e}`)
 export default {
     api:     '1.0',
     id:      'local-player',
-    version: '1.0.4',   // 1.0.4: the compact 🔊 fits its strip; 1.0.3 (2026-11-14): buttons and rows follow Text size; no :root variables; 1.0.2: type fixes
+    version: '1.0.5',   // 1.0.5 (2026-11-14): --gex-px, GEM Shell's one px at 100 % text. 1.0.4: the compact 🔊 fits its strip; 1.0.3 (2026-11-14): buttons and rows follow Text size; no :root variables; 1.0.2: type fixes
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
 

@@ -12,7 +12,7 @@ import { COMMANDS, GESTURES } from './commands'
 export default {
     api: '1.0',
     id: 'corkboard',
-    version: '0.2.5',
+    version: '0.2.6',   // 0.2.6 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     displayName: 'GEM Corkboard',

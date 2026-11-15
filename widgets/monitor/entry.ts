@@ -19,7 +19,7 @@ import RecordingCard from './RecordingCard.vue'
 export default {
     api: '1.0',
     id: 'monitor',
-    version: '1.0.0',
+    version: '1.0.1',   // 1.0.1 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     displayName: 'GEM Monitor',

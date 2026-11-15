@@ -3,7 +3,7 @@ import Widget from './Widget.vue'
 export default {
   api: '1.0',
   id: 'gem-bugle',
-  version: '0.4.0',
+  version: '0.4.1',   // 0.4.1 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step)
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
   about: `# The GEM Bugle

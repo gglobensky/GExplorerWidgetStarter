@@ -5,7 +5,7 @@ export default {
   id: 'drives',
   // NEW (2026-11-14, 0.7.2; GEM Shell G2b): GEM Shell's drives role (widgets/roles.ts)
   role: 'drives',
-  version: '0.7.3',   // 0.7.3 (2026-11-14): in GEM Shell's file dialog (contexts.dialog: a compact list)
+  version: '0.7.4',   // 0.7.4 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step). 0.7.3 (2026-11-14): in GEM Shell's file dialog (contexts.dialog: a compact list)
                       // 0.7.2 (2026-11-14): role 'drives'
                       // 0.7.1 (2026-11-13): GEM Shell's cursor handles (the hand: one click opens a drive)
                       // 0.7.0 (2026-11-13, GEM Shell drive properties): a drive's menu (Open, Open in a new tab,

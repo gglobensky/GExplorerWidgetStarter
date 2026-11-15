@@ -15,7 +15,7 @@ import { LOOKUP_JOB } from './online/lookup-job'
 export default {
   api: '1.0',
   id: 'game-library',
-  version: '0.23.1',
+  version: '0.23.2',   // 0.23.2 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step)
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
   displayName: 'GEM Game Shop',

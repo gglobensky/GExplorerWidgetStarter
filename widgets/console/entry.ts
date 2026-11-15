@@ -23,7 +23,7 @@ import Widget from './Widget.vue'
 export default {
     api: '1.0',
     id: 'console',
-    version: '0.1.7',   // 0.1.7 (2026-11-14): "Open console here" hidden in GEM Shell's file dialog (a default rule)
+    version: '0.1.8',   // 0.1.8 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step). 0.1.7 (2026-11-14): "Open console here" hidden in GEM Shell's file dialog (a default rule)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     displayName: 'GEM Console',

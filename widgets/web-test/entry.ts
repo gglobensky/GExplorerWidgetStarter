@@ -4,7 +4,7 @@ import Widget from './Widget.vue'
 export default {
   api: '1.0',
   id: 'web-test',
-  version: '0.1.0',
+  version: '0.1.1',   // 0.1.1 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step)
   Component: Widget,
   about: `# Web surface test
 

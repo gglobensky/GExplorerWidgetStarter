@@ -68,7 +68,7 @@ import { COMMANDS } from './commands'
 export default {
     api: '1.0',
     id: 'forge',
-    version: '0.2.15',   // 0.2.15 (2026-11-14): "Open in GEM Forge" hidden in GEM Shell's file dialog (a default rule)
+    version: '0.2.16',   // 0.2.16 (2026-11-14): the editor's text follows Text size (textPx); sizes follow Appearance. 0.2.15 (2026-11-14): "Open in GEM Forge" hidden in GEM Shell's file dialog (a default rule)
                          // 0.2.14 (2026-11-13): New project / a try as a project ask GEM Shell for an empty folder (require)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,

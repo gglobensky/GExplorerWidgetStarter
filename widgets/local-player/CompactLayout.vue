@@ -59,7 +59,7 @@ const volPop = useVolumePopover({
 
 <style scoped>
 .compact {
-  --lp-px: calc(var(--base-font-size, 12px) / 12);   /* one px at 100 % Text size (ExpandedLayout.vue says why) */
+  --lp-px: var(--gex-px, 1px);   /* one px at 100 % Text size (ExpandedLayout.vue says why) */
   position: relative;
   overflow: visible;
   display: flex;

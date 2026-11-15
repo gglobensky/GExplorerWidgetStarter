@@ -86,7 +86,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.pc { --lp-px: calc(var(--base-font-size, 12px) / 12); display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.pc { --lp-px: var(--gex-px, 1px); display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .pc-track { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: .9; }
 .pc-row { display: flex; align-items: center; gap: 4px; }
 .pc-btn {

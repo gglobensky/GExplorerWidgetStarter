@@ -45,7 +45,7 @@
 
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useSortable } from 'gexplorer/widgets'
+import { useSortable, textPx } from 'gexplorer/widgets'
 import type { WidgetSdk } from 'gexplorer/widgets'
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, highlightSpecialChars, rectangularSelection, tooltips } from '@codemirror/view'
 import { EditorState, Compartment, type Extension } from '@codemirror/state'
@@ -302,7 +302,8 @@ const darkHighlight = HighlightStyle.define([
 ])
 
 const darkTheme = EditorView.theme({
-    '&': { height: '100%', fontSize: '13px', backgroundColor: 'transparent', color: 'var(--fg, #e6e6e6)' },
+    // fontSize: textPx (2026-11-14): 13px at 100 %, following Text size (a theme is set from code: the build doesn't see it)
+    '&': { height: '100%', fontSize: textPx(13), backgroundColor: 'transparent', color: 'var(--fg, #e6e6e6)' },
     '.cm-scroller': { fontFamily: 'var(--gex-font-mono, "Cascadia Mono", Consolas, monospace)', lineHeight: '1.5' },
     '.cm-gutters': { backgroundColor: 'transparent', color: 'color-mix(in oklab, currentColor 40%, transparent)', border: 'none' },
     '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'color-mix(in oklab, currentColor 6%, transparent)' },

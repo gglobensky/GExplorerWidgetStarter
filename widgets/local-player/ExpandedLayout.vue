@@ -408,7 +408,7 @@ defineExpose({ controlsEl, queueEl })
 
 /* ====================== ROOT ====================== */
 .player-root {
-  --lp-px: calc(var(--base-font-size, 12px) / 12);
+  --lp-px: var(--gex-px, 1px);
   --btn-h: calc(var(--lp-px) * 32);
   display: flex;
   flex-direction: column;

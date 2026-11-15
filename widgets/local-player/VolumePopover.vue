@@ -41,7 +41,7 @@ function input(e: Event) {
 
 <style scoped>
 .vol-pop {
-  --lp-px: calc(var(--base-font-size, 12px) / 12);   /* one px at 100 % Text size (it shows in the shell's popover, outside the player) */
+  --lp-px: var(--gex-px, 1px);   /* one px at 100 % Text size (it shows in the shell's popover, outside the player) */
   display: flex;
   flex-direction: column;
   align-items: center;

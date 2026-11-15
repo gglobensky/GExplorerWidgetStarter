@@ -9,7 +9,7 @@ import tmdbLogo from './assets/tmdb-logo.png?inline'
 export default {
   api:'1.0',
   id:'media-library',
-  version:'0.17.0',
+  version:'0.17.1',   // 0.17.1 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step)
   license:'PolyForm-Noncommercial-1.0.0',
   Component:Widget,
   displayName:'GEM Video Club',
