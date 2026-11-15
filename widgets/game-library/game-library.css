@@ -9,15 +9,15 @@
 .gl-brand { display:grid; flex:0 0 auto; margin-left:4px; line-height:1; transform:skew(-6deg); }
 .gl-brand i { color:var(--glu-warm); font:800 7px/1 Impact,"Arial Black",sans-serif; font-style:normal; letter-spacing:.3em; }
 .gl-brand b { color:#bff6f2; font:400 13px/1 Impact,"Arial Black",sans-serif; letter-spacing:.06em; white-space:nowrap; text-shadow:1px 2px #05080b,0 0 10px #3fd0c955; }
-.gl-icon-button { display:grid; width:31px; height:31px; flex:0 0 31px; padding:0; border:1px solid #ffffff16; border-radius:6px; color:var(--glu-fg); background:#0b1117a8; cursor:pointer; place-items:center; font-size:14px; }
+.gl-icon-button { display:grid; width:calc(31 * var(--gex-px, 1px)); height:calc(31 * var(--gex-px, 1px)); flex:0 0 calc(31 * var(--gex-px, 1px)); line-height:1; padding:0; border:1px solid #ffffff16; border-radius:6px; color:var(--glu-fg); background:#0b1117a8; cursor:pointer; place-items:center; font-size:14px; }
 .gl-icon-button:hover:not(:disabled),.gl-icon-button:focus-visible { border-color:color-mix(in srgb,var(--glu-accent) 55%,var(--glu-border)); color:var(--glu-accent); outline:0; }
 .gl-icon-button:disabled { opacity:.35; cursor:default; }
-.gl-search { display:grid; grid-template-columns:20px minmax(0,1fr) 20px; align-items:center; min-width:0; height:34px; padding:0 7px; border:1px solid color-mix(in srgb,var(--glu-border) 75%,transparent); border-radius:7px; background:#0b1117c9; }
+.gl-search { display:grid; grid-template-columns:calc(20 * var(--gex-px, 1px)) minmax(0,1fr) calc(20 * var(--gex-px, 1px)); align-items:center; min-width:0; height:calc(34 * var(--gex-px, 1px)); padding:0 7px; border:1px solid color-mix(in srgb,var(--glu-border) 75%,transparent); border-radius:7px; background:#0b1117c9; }
 .gl-search:focus-within { border-color:var(--glu-accent); box-shadow:0 0 0 1px var(--glu-accent); }
-.gl-search>span { color:var(--glu-muted); font-size:18px; }
+.gl-search>span { color:var(--glu-muted); font-size:18px; line-height:1; text-align:center; }
 .gl-search input { width:100%; min-width:0; padding:5px 3px; border:0; outline:0; color:var(--glu-fg); background:transparent; font-size:12px; }
 .gl-search input::placeholder { color:var(--glu-muted); }
-.gl-search button { padding:0; border:0; color:var(--glu-muted); background:transparent; cursor:pointer; font-size:17px; }
+.gl-search button { padding:0; line-height:1; border:0; color:var(--glu-muted); background:transparent; cursor:pointer; font-size:17px; }
 .gl-tools { display:flex; justify-self:end; align-items:center; gap:7px; }
 .gl-activity { display:flex; flex:0 0 auto; align-items:center; gap:7px; min-height:22px; padding:3px 16px; color:var(--glu-muted); background:#0b1117; font-size:10px; }
 .gl-activity>span { color:var(--glu-accent); animation:gl-spin 900ms linear infinite; }

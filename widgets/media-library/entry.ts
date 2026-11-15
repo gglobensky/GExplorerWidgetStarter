@@ -9,7 +9,7 @@ import tmdbLogo from './assets/tmdb-logo.png?inline'
 export default {
   api:'1.0',
   id:'media-library',
-  version:'0.17.2',   // 0.17.2 (2026-11-14): the store's floor follows Widget backgrounds; GEM Shell's colours (library-ui 3.8.1). 0.17.1 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step)
+  version:'0.17.3',   // 0.17.3 (2026-11-14): the wall and floor fade with Widget backgrounds; the search box and buttons grow with the text (library-ui 3.8.2). 0.17.2 (2026-11-14): the store's floor follows Widget backgrounds; GEM Shell's colours (library-ui 3.8.1). 0.17.1 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step)
   license:'PolyForm-Noncommercial-1.0.0',
   Component:Widget,
   displayName:'GEM Video Club',

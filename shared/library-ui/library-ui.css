@@ -16,7 +16,11 @@
 }
 /* 3.0.0, skins (skins.ts): a skinned surface is the store's room: the wall, the light pooling on it (twice the
    classes: over the widgets' own background rules) */
-.gem-library-surface.glu-skinned.glu-skinned { --glu-bg:var(--skin-wall); background:var(--skin-wall-light, none), var(--skin-wall-pattern, none), var(--skin-wall); }
+.gem-library-surface.glu-skinned.glu-skinned { --glu-bg:var(--skin-wall); position:relative; isolation:isolate; background:none; }
+/* 3.8.2 (2026-11-14): the wall is its own layer under everything, so Widget backgrounds (GEM Shell's
+   --gex-widget-bg-opacity) can fade it, pattern and light included, down to the hub's wallpaper; the racks, boxes and
+   bars stay solid */
+.gem-library-surface.glu-skinned.glu-skinned::before { content:""; position:absolute; z-index:-1; inset:0; border-radius:inherit; background:var(--skin-wall-light, none), var(--skin-wall-pattern, none), var(--skin-wall); opacity:var(--gex-widget-bg-opacity, 1); pointer-events:none; }
 .gem-library-surface *, .gem-library-surface *::before, .gem-library-surface *::after { box-sizing:border-box; }
 .gem-library-surface button, .gem-library-surface input, .gem-library-surface select { color:inherit; font:inherit; }
 .gem-library-surface button:focus-visible, .gem-library-surface input:focus-visible, .gem-library-surface select:focus-visible, .gem-library-surface summary:focus-visible { outline:2px solid var(--glu-accent); outline-offset:3px; }
@@ -104,7 +108,7 @@
 /* The showroom bleeds over the scroller's padding (the widget's --glu-bleed-x / --glu-bleed-b, default the 17px / 34px
    both shops use), so the floor runs to the widget's edges and its bottom */
 .glu-skinned .glu-floor:not(.focused) { margin:0 calc(-1 * var(--glu-bleed-x, 17px)) calc(-1 * var(--glu-bleed-b, 34px)); padding:0 var(--glu-bleed-x, 17px); height:calc(100% + var(--glu-bleed-b, 34px)); }
-.glu-skinned .glu-floor:not(.focused) .glu-floor-aisle::after { content:""; position:absolute; z-index:0; right:calc(-1 * var(--glu-bleed-x, 17px)); bottom:0; left:calc(-1 * var(--glu-bleed-x, 17px)); height:var(--skin-floor-height, 0px); background:var(--skin-floor, none); box-shadow:inset 0 14px 18px #000a; pointer-events:none; }
+.glu-skinned .glu-floor:not(.focused) .glu-floor-aisle::after { content:""; position:absolute; z-index:0; right:calc(-1 * var(--glu-bleed-x, 17px)); bottom:0; left:calc(-1 * var(--glu-bleed-x, 17px)); height:var(--skin-floor-height, 0px); background:var(--skin-floor, none); box-shadow:inset 0 14px 18px #000a; opacity:var(--gex-widget-bg-opacity, 1); pointer-events:none; }   /* 3.8.2: fades with the wall */
 .glu-skinned .glu-floor-rack-grid { position:relative; z-index:1; }
 .glu-skinned .glu-floor-rack { border-radius:2px 2px 0 0; border-color:var(--skin-unit-edge, #ffffff12); box-shadow:0 10px 14px -4px #000c, 0 18px 26px #0007; }
 .glu-floor-rack-sign small { flex:0 0 auto; color:var(--glu-muted); font-size:7px; letter-spacing:.06em; text-transform:uppercase; }
@@ -279,7 +283,7 @@ button.glu-sd-rating:hover,button.glu-sd-rating:focus-visible { border-color:var
 .glu-picker option,.glu-picker optgroup { color:var(--glu-fg); background:var(--glu-panel); }
 .glu-picker:focus-within { border-color:color-mix(in srgb,var(--glu-accent) 60%,var(--glu-border)); }
 .glu-menu { position:relative; }
-.glu-menu>summary { display:grid; width:34px; height:32px; border:1px solid color-mix(in srgb,var(--glu-border) 75%,transparent); border-radius:6px; background:#0b1117c9; cursor:pointer; font-size:16px; list-style:none; place-items:center; }
+.glu-menu>summary { display:grid; width:calc(34 * var(--gex-px, 1px)); height:calc(32 * var(--gex-px, 1px)); line-height:1; border:1px solid color-mix(in srgb,var(--glu-border) 75%,transparent); border-radius:6px; background:#0b1117c9; cursor:pointer; font-size:16px; list-style:none; place-items:center; }
 .glu-menu>summary::-webkit-details-marker { display:none; }
 .glu-menu[open]>summary { border-color:color-mix(in srgb,var(--glu-accent) 65%,var(--glu-border)); color:var(--glu-accent); background:color-mix(in srgb,var(--glu-panel-high) 84%,#000); }
 .glu-menu-panel { position:absolute; z-index:30; top:39px; right:0; display:flex; width:min(300px,calc(100cqw - 24px)); max-height:min(650px,calc(100cqh - 75px)); overflow:hidden; flex-direction:column; border:1px solid color-mix(in srgb,var(--glu-border) 85%,transparent); border-radius:9px; background:linear-gradient(145deg,#202b34,#121a21); box-shadow:0 18px 45px #000c,inset 0 1px #ffffff0d; }
