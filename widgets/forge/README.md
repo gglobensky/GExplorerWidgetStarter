@@ -340,6 +340,18 @@ preview. GEM Shell's part: `PhotinoVue1/FORGE-SHELL-ADDITIONS.md` (forge-1 to fo
   moment after. If the worker can't start, GEM Forge says why (Output and the console): no TypeScript, no silent
   fallback.
 
+## 0.5.1 (2026-11-15): '?raw' imports, problems that follow the text
+
+- **A `?raw` import builds** (Vite's: the file's text as a string, e.g. `templates.ts`'s SDK typings). The build gets
+  a module GEM Forge makes (`.gem-raw/<n>.ts`); the file is the project's or a shared library's (as edited), or, in a
+  workspace, any of its files (read from the disk). Not found or outside: the build says it can't resolve it and
+  Output says why.
+- **TypeScript's problems as you type** are listed only for the text the file has: a check that answers after more
+  typing is dropped (the next one is listed). With GEM Shell's fix to the worker's sync order, the "no exported
+  member 'C'" kind of problem, left from a half-typed name, goes away.
+- A build's problems in a file that rewrites its imports for the build (shared reach, `?raw`) are no longer taken as
+  stale.
+
 Next (claude/forge-dev-tools-design.md): Prettier and the .vue compiler in the same worker, explorer projects in the
 grid preview, a terminal part lent by the Console.
 

@@ -383,6 +383,8 @@ function createLanguage(project: Project) {
         let list
         try { list = (await l.problems(path)).filter(p => p.severity !== 'info') } catch { return null }
         if (s.typesNote.startsWith('Checking')) s.typesNote = ''
+        // 0.5.1: computed for a text the file no longer has (typed meanwhile): not listed (the next check is)
+        if (project.file(path)?.text !== text) return null
         // Problems lists them (lines and columns, 1-based)
         s.typeProblems = { path, items: asProblems(path, text, list) }
         // 0.2.10: Check all's list follows this file (when TypeScript is one of the checks)

@@ -751,10 +751,12 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
         if (!dev || !s.id || s.building) { if (s.building) scheduleRun(); return false }
         s.building = true
         try {
-            const prep = opts.prepare ? opts.prepare(buildFiles()) : { files: buildFiles() }
-            const built = buildFiles()
+            // 0.5.1: the texts as they are now (the build's own: a '?raw' import, the shared reach, rewritten)
+            const seen = builtSources()
+            const built = await buildFiles()
+            const prep = opts.prepare ? opts.prepare(built) : { files: built }
             const r = await dev.build(prep.files, { project: s.id, packagesFrom: packagesFrom() })
-            keepBuilt(built)
+            keepBuilt(seen)
             s.errors = prep.map ? r.errors.map(prep.map) : r.errors
             s.warnings = prep.map ? r.warnings.map(prep.map) : r.warnings
             s.notes = r.notes
@@ -846,10 +848,89 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
     }
 
     // ── New project, install (0.1c) ─────────────────────────────────────────────────────────────────────────────
-    /** The files sent to the build. */
-    function buildFiles() {
-        return s.files.filter(f => isBuilt(f.path)).map(f => (f.base64 !== undefined ? { path: f.path, base64: f.base64 }
-            : { path: f.path, text: libOf(f.path) || !s.workspace ? f.text : withSharedReach(f.path, f.text) }))
+    /** 0.5.1: the built files' texts as the project has them (a build's problems are stale once one of them changes). */
+    const builtSources = () => s.files.filter(f => isBuilt(f.path) && f.base64 === undefined).map(f => ({ path: f.path, text: f.text }))
+
+    /** The files sent to the build. 0.5.1: async (a '?raw' import's file can be read from the workspace). */
+    async function buildFiles(): Promise<BuildFile[]> {
+        const raws = new Map<string, { path: string; text: string }>()
+        const out: BuildFile[] = []
+        for (const f of s.files) {
+            if (!isBuilt(f.path)) continue
+            if (f.base64 !== undefined) { out.push({ path: f.path, base64: f.base64 }); continue }
+            let text = await withRawImports(f.path, f.text, raws)
+            if (!libOf(f.path) && s.workspace) text = withSharedReach(f.path, text)
+            out.push({ path: f.path, text })
+        }
+        return [...out, ...raws.values()]
+    }
+
+    // ── '?raw' imports (0.5.1) ───────────────────────────────────────────────────────────────────────────────────
+    // Vite's (the starter's build): the file's text as a string (templates.ts: the SDK's typings). esbuild has no such
+    // suffix: the build gets a module GEM Forge makes, .gem-raw/<n>.ts (export default "<the text>"), and the import
+    // points at it. The file: the project's or a shared library's (as the editor has it), or another of the workspace's
+    // (read from the disk). Not read: the import is left as written (the build can't resolve it) and Output says why.
+    const RAW_DIR = '.gem-raw/'
+    const RAW_IMPORT = /(\bfrom\s*|\bimport\s*\(\s*)(['"])([^'"\n]+)\?raw\2/g
+    /** <spec> (a '?raw' import's path, without '?raw') from the file <fromRel>: a project or library file, or a
+     *  workspace path ('types/x.d.ts'); error: why it can't be. */
+    function rawTarget(fromRel: string, spec: string): { rel: string } | { ws: string } | { error: string } {
+        const ws = s.workspace
+        const own = ws ? s.folder.slice(ws.length).replace(/^[\\/]+/, '').split(/[\\/]/).filter(Boolean) : []
+        let parts: string[]
+        if (spec.startsWith(SHARED)) parts = ['shared', ...spec.slice(SHARED.length).split('/')]
+        else if (/^\.\.?\//.test(spec)) {
+            const dirs = fromRel.split('/').slice(0, -1)
+            parts = libOf(fromRel) ? ['shared', ...dirs.slice(1)] : [...own, ...dirs]
+            for (const seg of spec.split('/')) {
+                if (seg === '.' || seg === '') continue
+                if (seg !== '..') parts.push(seg)
+                else if (parts.length) parts.pop()
+                else return { error: ws ? 'outside the workspace' : 'outside the project' }
+            }
+        } else return { error: 'not a relative path or @shared/…' }
+        parts = parts.filter(p => p !== '.' && p !== '')
+        if (!parts.length) return { error: 'not a file' }
+        let rel: string | null = null
+        if (!ws) rel = parts.join('/')
+        else if (own.every((seg, i) => parts[i] === seg) && parts.length > own.length) rel = parts.slice(own.length).join('/')
+        else if (parts[0] === 'shared' && parts.length > 2 && s.libraries.some(l => l.name === parts[1])) rel = SHARED + parts.slice(1).join('/')
+        if (rel !== null && file(rel)) return { rel }
+        if (ws) return { ws: parts.join('/') }
+        return { error: 'not one of the project\'s files' }
+    }
+    /** <text> (the file <path>'s) with its '?raw' imports pointing at the modules made in <raws> (for the build only). */
+    async function withRawImports(path: string, text: string, raws: Map<string, { path: string; text: string }>): Promise<string> {
+        if (!/\.(ts|mts|js|mjs|vue)$/i.test(path) || !text.includes('?raw')) return text
+        const subs = new Map<string, string>()
+        const depth = path.split('/').length - 1
+        for (const m of text.matchAll(RAW_IMPORT)) {
+            const spec = m[3]
+            if (subs.has(spec)) continue
+            const target = rawTarget(path, spec)
+            let content: string | null = null
+            let why = ''
+            if ('error' in target) why = target.error
+            else if ('rel' in target) {
+                const f = file(target.rel)!
+                if (f.base64 === undefined) content = f.text
+                else why = 'not a text file'
+            } else if (!sdk.fsReadText) why = 'GEM Forge can\'t read files here'
+            else {
+                try { content = (await sdk.fsReadText(joinPath(s.workspace, target.ws), { maxBytes: MAX_TEXT })).text.replace(/^\ufeff/, '') }
+                catch (err) { why = String((err as Error)?.message ?? err) }
+            }
+            if (content === null) { log('warn', `${path}: '${spec}?raw' not read (${why}).`); continue }
+            const key = 'rel' in target ? target.rel : `\u0000${(target as { ws: string }).ws}`
+            let made = raws.get(key)
+            if (!made) { made = { path: `${RAW_DIR}${raws.size}.ts`, text: `export default ${JSON.stringify(content)}\n` }; raws.set(key, made) }
+            subs.set(spec, (depth ? '../'.repeat(depth) : './') + made.path)
+        }
+        if (!subs.size) return text
+        return text.replace(RAW_IMPORT, (m, lead: string, q: string, spec: string) => {
+            const to = subs.get(spec)
+            return to ? `${lead}${q}${to}${q}` : m
+        })
     }
 
     /**
@@ -1174,12 +1255,13 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
     /** Built as the widget it will be (its own id), kept while the files don't change. */
     async function buildForInstall(): Promise<{ type: string; code: string } | null> {
         if (!dev) return null
-        const files = buildFiles()
+        const seen = builtSources()
+        const files = await buildFiles()
         const from = packagesFrom()
         const print = `${fingerprint(files)}:${pkgRev}:${from ?? ''}`
         if (installBuild?.print === print) return installBuild
         const r = await dev.build(files, { packagesFrom: from })
-        keepBuilt(files)
+        keepBuilt(seen)
         s.errors = r.errors
         s.warnings = r.warnings
         if (!r.code || !r.type) {
