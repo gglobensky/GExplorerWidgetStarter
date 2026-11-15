@@ -1,19 +1,19 @@
 import { computed, ref, watch, type ComputedRef } from 'vue'
-import { useSlotProviders } from 'gexplorer/widgets'
-import type { SlotProvider, WidgetSdk } from 'gexplorer/widgets'
-import { CALENDAR_PROVIDER_POINT } from './calendarProvider'
+import type { PartProvider, WidgetSdk } from 'gexplorer/widgets'
+import { CALENDAR_PANEL_POINT, CALENDAR_PROVIDER_POINT } from './calendarProvider'
 import { resolveCalendarSelection } from './calendarSelection'
 import { useCalendarProvider, type ResolvedCalendarProvider } from './useCalendarProvider'
+import { partKey, useClockParts } from './useClockParts'
 import { withOccurrenceRemoval, withOccurrenceUpdate, withSeriesUpdate, type ClockCalendar, type ClockEvent } from './useClockCalendar'
 
 export function useCalendarSource(sdk: WidgetSdk | undefined, local: ClockCalendar, preference: ComputedRef<string>) {
-  const panelProviders = useSlotProviders('gem.clock.calendar-panel')
-  const dataProviderSlots = useSlotProviders(CALENDAR_PROVIDER_POINT)
+  const panelProviders = useClockParts(sdk, CALENDAR_PANEL_POINT)
+  const dataProviderSlots = useClockParts(sdk, CALENDAR_PROVIDER_POINT)
   const selected = ref('local')
   const selectedDataProvider = computed(() => selected.value.startsWith('data:') ? selected.value.slice(5) : '')
   const external = useCalendarProvider(sdk, dataProviderSlots, selectedDataProvider)
-  const legacyProvider = computed<Readonly<SlotProvider> | null>(() => selected.value.startsWith('panel:')
-    ? panelProviders.value.find(provider => (provider.key || provider.id) === selected.value.slice(6)) ?? null : null)
+  const legacyProvider = computed<PartProvider | null>(() => selected.value.startsWith('panel:')
+    ? panelProviders.value.find(provider => partKey(provider) === selected.value.slice(6)) ?? null : null)
   const events = computed(() => selected.value.startsWith('data:') ? external.events.value : selected.value === 'local' ? local.events.value : [])
   const isLocal = computed(() => selected.value === 'local')
   const isExternal = computed(() => selected.value.startsWith('data:'))
@@ -22,7 +22,8 @@ export function useCalendarSource(sdk: WidgetSdk | undefined, local: ClockCalend
   const canRemove = computed(() => isLocal.value || (external.online.value && external.capabilities.value.remove === true))
 
   watch([preference, external.available, panelProviders], () => {
-    const choice = resolveCalendarSelection(preference.value, external.available.value as readonly ResolvedCalendarProvider[], panelProviders.value)
+    const panels = panelProviders.value.map(provider => ({ key: partKey(provider), widgetType: provider.type }))
+    const choice = resolveCalendarSelection(preference.value, external.available.value as readonly ResolvedCalendarProvider[], panels)
     selected.value = choice.kind === 'local' ? 'local' : `${choice.kind}:${choice.key}`
   }, { immediate: true })
 

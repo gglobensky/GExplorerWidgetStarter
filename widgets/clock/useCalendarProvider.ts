@@ -1,8 +1,9 @@
 import { computed, onBeforeUnmount, ref, watch, type ComputedRef, type Ref } from 'vue'
-import type { ScopedMessaging, SlotProvider, WidgetSdk } from 'gexplorer/widgets'
+import type { PartProvider, ScopedMessaging, WidgetSdk } from 'gexplorer/widgets'
 import { CALENDAR_CONTRACT, CALENDAR_CONTRACT_VERSION, CALENDAR_TOPICS, providerEventId, providerOriginalEventId,
   readCalendarProviderDeclaration, type CalendarProviderCapabilities, type CalendarProviderCommand, type CalendarProviderSnapshot } from './calendarProvider'
 import { normalizeClockEvents, type ClockEvent } from './useClockCalendar'
+import { partKey } from './useClockParts'
 
 export type ResolvedCalendarProvider = {
   key: string
@@ -12,14 +13,14 @@ export type ResolvedCalendarProvider = {
   declared: CalendarProviderCapabilities
 }
 
-export function useCalendarProvider(sdk: WidgetSdk | undefined, providers: Ref<readonly SlotProvider[]> | ComputedRef<readonly SlotProvider[]>, selected: Ref<string>) {
+export function useCalendarProvider(sdk: WidgetSdk | undefined, providers: Ref<readonly PartProvider[]> | ComputedRef<readonly PartProvider[]>, selected: Ref<string>) {
   const events = ref<ClockEvent[]>([]), online = ref(false), error = ref(''), revision = ref<string | number | null>(null)
   const targetInstance = ref<string | null>(null), negotiated = ref<CalendarProviderCapabilities>({})
   const messaging: ScopedMessaging | null = sdk?.messaging?.() ?? null
   let requestId = '', timeout: ReturnType<typeof setTimeout> | null = null
   const available = computed<ResolvedCalendarProvider[]>(() => providers.value.flatMap(provider => {
     const contract = readCalendarProviderDeclaration(provider.props?.calendarContract)
-    return contract ? [{ key: provider.key || `${provider.widgetType}::calendar`, widgetType: provider.widgetType,
+    return contract ? [{ key: partKey(provider), widgetType: provider.type,
       label: contract.label, description: contract.description, declared: contract.capabilities ?? {} }] : []
   }))
   const active = computed(() => available.value.find(p => p.key === selected.value) ?? null)

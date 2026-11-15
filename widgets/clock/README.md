@@ -1,5 +1,18 @@
 # GEM Clock
 
+## 0.11.2 — other widgets' parts through GEM Shell (2026-11-15)
+
+- Clock's three points (`gem.clock.calendar-provider`, `gem.clock.calendar-panel`, `gem.clock.complication`, all
+  in `consumes`) are read with `sdk.parts().list(point)`: the providers and their static `props`. GEM Shell's older
+  `useSlotProviders` (the provider's component drawn inside Clock with Clock's own SDK) is gone.
+- Calendar providers work as before: their `props.calendarContract` comes from the list, and their data still comes
+  over scoped messaging under the provider's own identity.
+- Complications and calendar panels show in a `PartSlot` (`PartSlot.vue`): GEM Shell draws the provider's part over
+  that box from the provider's own code (`sdk.parts().mount`), never in Clock's tree. Widget points run as their
+  provider, which GEM Shell doesn't show yet: the slot says so (`E_LATER`) instead of drawing anything.
+- The list is read when Clock mounts: a provider installed later shows after Clock reloads.
+- Saved complication layouts and the calendar choice keep their `type::point` keys.
+
 ## 0.10.0 — Alarm sounds and quick appointment entry
 
 - Timers and calendar reminders share a persisted Clock alarm sound. Bright chime, desk bell, digital pulse and a
@@ -157,7 +170,7 @@ Clock, Calendar, Timers and Stopwatch tabs without requiring another window.
   paper, ink, rules, handwritten marks and today's pencil circle.
 - Calendar marks have an agenda editor, duration, notes, IANA time zone and daily/weekly/monthly/yearly recurrence.
   Recurring wall times remain stable through daylight-saving changes and each occurrence gets its own reminder id.
-- `gem.clock.calendar-provider` is a versioned data-provider slot; Clock's Control Panel setting chooses Clock
+- `gem.clock.calendar-provider` is a versioned data-provider point; Clock's Control Panel setting chooses Clock
   storage, the latest installed provider, or one named provider and can merge Clock's marks into providers that advertise import support.
   The earlier `gem.clock.calendar-panel` remains as a compatible visual-panel option.
 - `gem.clock.complication` (multiple) lets other widgets contribute small components. Users can show, hide and order
@@ -186,7 +199,7 @@ provider over scoped widget messaging with `gem.calendar.v1.discover`. A mounted
 `gem.calendar.v1.snapshot`; Clock targets mutations to the answering instance on `gem.calendar.v1.command` and
 refreshes after `gem.calendar.v1.changed`. The payload and command types live in `calendarProvider.ts`.
 
-This split is deliberate: the slot makes an installed provider discoverable and supplies its label/capabilities;
+This split is deliberate: the point makes an installed provider discoverable and supplies its label/capabilities;
 the message bus keeps data and mutations under the provider widget's own identity. Unsupported contract versions
 are ignored, an offline provider is shown clearly, and the local calendar is never deleted when another source is
 selected.

@@ -142,6 +142,18 @@ declare module 'gexplorer/widgets' {
          */
         dev?: () => WidgetDev
         /**
+         * GEM Shell 2026-11-15: parts other widgets provide for a point in your entry.ts `consumes` (WidgetConsume).
+         * list(point) → the providers (built-ins first, with their static props); mount(el, point, provider) → the
+         * part drawn by GEM Shell over el (an element of your own box or window: it follows el, clipped to your box,
+         * your menus above it) and a typed handle. Never in your own component tree.
+         * GEM Shell's points ('shell.terminal', GEM Console's): the part runs AS YOU, your grants (Terminal declared;
+         * its consoles are yours), the point's calls only. A provider the user installed (not shipped with GEM Shell)
+         * is asked about once, right after your user's click (E_ASK until then), and again for another build of it.
+         * A widget's own points ('gem.clock.complication'): the part will run as its provider; E_LATER today, while
+         * list() already gives you their props. To provide one: entry.ts `provides` (WidgetProvide).
+         */
+        parts?: () => WidgetParts
+        /**
          * 2026-10-30: the values of the settings this widget declares (entry.ts `settings`), which the user sets on its
          * page in GEM Shell's Settings (drawn by the shell). One set for every copy of the widget. Only for widgets
          * declaring settings. Same object on every call.
@@ -877,6 +889,53 @@ declare module 'gexplorer/widgets' {
     export type DevRunResult =
         | { ok: true; type: string; build: number; reopened: number }
         | { ok: false; error: string; code?: string }
+    // ── Parts: provides / consumes (GEM Shell 2026-11-15) ───────────────────────────────────────────────────────
+    /** GEM Shell's own points: their parts run as the consumer (shell.terminal: Terminal declared). */
+    export type ShellPoint = 'shell.terminal'
+    /**
+     * entry.ts `provides: WidgetProvide[]`: a part you provide for a point (dotted, lower case), with static data
+     * (props: plain JSON, 16 KB at most) consumers read from list().
+     * For 'shell.terminal' (a component is required) it runs as THE CONSUMER (its grants, an SDK made for it with
+     * only the point's calls: terminal(), ui().menu / confirm / snack, clipboardSetText, openUrl, platform), from its
+     * own copy of your code: never as you, never talking to your own copies. Its contract: it exposes
+     * (defineExpose) print(text), run(line), cd(folder), newSession(shell?) (each may return { ok: false, error })
+     * and emits 'exit' (code). It gets the prop hostName.
+     * For a widget's point (named after the consuming widget: 'gem.clock.complication') it will run as you.
+     */
+    export type WidgetProvide = { point: string; component?: unknown; label?: string; props?: Record<string, unknown> }
+    /** entry.ts `consumes: WidgetConsume[]`: the points you show parts of (multiple: more than one at a time). */
+    export type WidgetConsume = { point: string; multiple?: boolean }
+    export type PartProvider = {
+        type: string
+        name: string
+        point: string
+        label: string
+        version: string
+        builtin: boolean
+        /** entry.ts provides[].props of that provider (static data). */
+        props?: Readonly<Record<string, unknown>>
+    }
+    export type PartErrorCode = 'E_ASK' | 'E_ARG' | 'E_DECL' | 'E_CAP' | 'E_PROVIDER' | 'E_LOAD' | 'E_LATER'
+    export type PartResult = { ok: true } | { ok: false; error: string }
+    export type TerminalPartHandle = {
+        readonly provider: string
+        /** Shown in the terminal, not typed (a tool's output). Control sequences besides colours are dropped. */
+        print(text: string): Promise<PartResult>
+        /** One line typed and run, at the prompt only (refused while a command runs). After your user's own click. */
+        run(line: string): Promise<PartResult>
+        /** The terminal to a folder (quoted for its shell, at the prompt only). */
+        cd(folder: string): Promise<PartResult>
+        /** A new console in it (a shell's id, or the usual one). After your user's own click. */
+        newSession(shell?: string): Promise<PartResult>
+        onExit(fn: (code: number) => void): () => void
+        close(): void
+    }
+    export type WidgetParts = {
+        /** The providers of a point in your consumes ([] and a console warning for any other point). */
+        list(point: string): Promise<PartProvider[]>
+        mount(el: HTMLElement, point: string, provider: string): Promise<{ ok: true; part: TerminalPartHandle } | { ok: false; error: string; code: PartErrorCode }>
+    }
+
     export type WidgetDev = {
         /**
          * The packaging check, the .vue files compiled, the bundle made by GEM Shell's esbuild: the starter's build,
@@ -1807,22 +1866,6 @@ declare module 'gexplorer/widgets' {
         sourcePath?: string
         /** When the stream URL expires (ISO or ms), null: no expiry. */
         expiresAt?: string | number | null
-    }
-
-    // ── Slot providers ─────────────────────────────────────────────────────
-
-    export type SlotProvider = {
-        /** Widget type that registered this provision. */
-        widgetType: string
-        /** Stable widgetType + point key. */
-        key: string
-        /** Legacy alias used by older providers. */
-        id?: string
-        label?: string
-        component?: any
-        props?: Record<string, any>
-        order?: number
-        [key: string]: any
     }
 
     // ── Free utilities and composables ─────────────────────────────────────
@@ -3285,7 +3328,7 @@ declare module 'gexplorer/widgets' {
     export function getEntryStyle(entry: any): VfsStateStyle | null
     // useDialog removed 2026-10-09: sdk.ui().openFiles / saveFile / pickFolder.
 
-    export function useSlotProviders(slotId: string): ComputedRef<SlotProvider[]>
+    // useSlotProviders / SlotProvider removed 2026-11-15: sdk.parts() (provides / consumes points).
 
     // ── Message boxes and snackbars: sdk.ui() ───────────────────────────────
     // The free show / showOnce / dismiss were removed (2026-10-08): use sdk.ui().snack...

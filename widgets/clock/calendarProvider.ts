@@ -1,6 +1,8 @@
 import type { ClockEvent } from './useClockCalendar'
 
 export const CALENDAR_PROVIDER_POINT = 'gem.clock.calendar-provider'
+export const CALENDAR_PANEL_POINT = 'gem.clock.calendar-panel'
+export const COMPLICATION_POINT = 'gem.clock.complication'
 export const CALENDAR_CONTRACT = 'gem.calendar'
 export const CALENDAR_CONTRACT_VERSION = 1
 export const CALENDAR_TOPICS = {

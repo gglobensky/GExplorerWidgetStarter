@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
-import type { SlotProvider, WidgetPlacement, WidgetSdk } from 'gexplorer/widgets'
-import { useSlotProviders } from 'gexplorer/widgets'
+import type { PartProvider, WidgetPlacement, WidgetSdk } from 'gexplorer/widgets'
 import CalendarSurface from './CalendarSurface.vue'
+import PartSlot from './PartSlot.vue'
+import { partKey, useClockParts } from './useClockParts'
+import { COMPLICATION_POINT } from './calendarProvider'
 import ClockFace from './ClockFace.vue'
 import { CITIES, fmt, TIME_ZONES, timeZoneLabel } from './zones'
 import { timepieceSkinStyle } from './skins'
@@ -53,18 +55,18 @@ const date = computed(() => now.value.toLocaleDateString([], { weekday: 'long', 
 const chosenTimeZones = ref((props.config?.view?.timeZones?.length ? props.config.view.timeZones : CITIES.map(([, zone]) => zone)).slice(0, 3))
 const editingZoneIndex = ref(-1)
 const zones = computed(() => chosenTimeZones.value.map(timeZone => ({ city: timeZoneLabel(timeZone), timeZone, time: fmt(now.value, timeZone) })))
-const complicationProviders = useSlotProviders('gem.clock.complication')
+const complicationProviders = useClockParts(sdk, COMPLICATION_POINT)
 const calendarPreference = computed(() => String(settings?.values.calendarProvider ?? props.config?.view?.calendarProvider ?? 'latest'))
 const calendarSource = useCalendarSource(sdk, calendar, calendarPreference)
 const { selected: selectedCalendarProvider, events: activeCalendarEvents, canCreate: calendarCanCreate, canUpdate: calendarCanUpdate,
   canRemove: calendarCanRemove, legacyProvider, external: externalCalendar } = calendarSource
 const complicationLayout = ref<Record<string, string[]>>({ ...(props.config?.view?.complications ?? {}) })
 const arrangingComplications = ref(false)
-const complicationId = (provider: Readonly<SlotProvider>) => String(provider.key || provider.id)
+const complicationId = (provider: PartProvider) => partKey(provider)
 const selectedComplicationIds = computed(() => complicationLayout.value[skin.value.id] ?? complicationProviders.value.slice(0, 3).map(complicationId))
 const shownComplications = computed(() => selectedComplicationIds.value
   .map(id => complicationProviders.value.find(provider => complicationId(provider) === id))
-  .filter((provider): provider is SlotProvider => Boolean(provider)).slice(0, 3))
+  .filter((provider): provider is PartProvider => Boolean(provider)).slice(0, 3))
 const hiddenComplications = computed(() => complicationProviders.value.filter(p => !selectedComplicationIds.value.includes(complicationId(p))))
 const timerMinutes = ref(10)
 const timerLabel = ref('Kitchen timer')
@@ -330,16 +332,16 @@ function moveComplication(id: string, delta: number) {
         </li>
       </ul>
       <aside v-if="size === 'l' && complicationProviders.length" class="complications" aria-label="Clock complications">
-        <component v-for="provider in shownComplications" :key="provider?.key || provider?.id" :is="provider?.component" v-bind="provider?.props" />
+        <PartSlot v-for="provider in shownComplications" :key="complicationId(provider)" :point="COMPLICATION_POINT" :provider="provider" />
         <button type="button" class="arrange-button" @click="arrangingComplications = !arrangingComplications">{{ arrangingComplications ? 'Done' : 'Arrange' }}</button>
         <div v-if="arrangingComplications" class="complication-picker">
-          <div v-for="(provider, index) in shownComplications" :key="provider?.key || provider?.id">
-            <span>{{ provider?.props?.label || provider?.widgetType }}</span>
+          <div v-for="(provider, index) in shownComplications" :key="complicationId(provider)">
+            <span>{{ provider.label || provider.name }}</span>
             <button type="button" :disabled="index === 0" title="Move up" @click="moveComplication(complicationId(provider), -1)">↑</button>
             <button type="button" :disabled="index === shownComplications.length - 1" title="Move down" @click="moveComplication(complicationId(provider), 1)">↓</button>
             <button type="button" title="Hide" @click="removeComplication(complicationId(provider))">×</button>
           </div>
-          <button v-for="provider in hiddenComplications" :key="provider.key || provider.id" type="button" :disabled="shownComplications.length >= 3" @click="addComplication(complicationId(provider))">+ {{ provider.props?.label || provider.widgetType }}</button>
+          <button v-for="provider in hiddenComplications" :key="complicationId(provider)" type="button" :disabled="shownComplications.length >= 3" @click="addComplication(complicationId(provider))">+ {{ provider.label || provider.name }}</button>
           <small>Saved for {{ skin.name }} only</small>
         </div>
       </aside>

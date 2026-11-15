@@ -16,7 +16,7 @@ export default {
     description: 'A skinnable clock, paper calendar, timers and time tools.',
     category: 'tools',
     icon: '◷',
-    version: '0.11.1',   // 0.11.1: Skin Studio scrolls once (the dialog's), sized from the text. 0.11.0 (2026-11-14): the GEM Shell skin (your theme), the default; timer columns grow with the text. 0.10.2 (2026-11-14): layouts chosen as at 100 % text. 0.10.1 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step)
+    version: '0.11.2',   // 0.11.2 (2026-11-15): other widgets' parts through sdk.parts() (GEM Shell's provides / consumes points), shown by GEM Shell over Clock's own boxes; useSlotProviders is gone. 0.11.1: Skin Studio scrolls once (the dialog's), sized from the text. 0.11.0 (2026-11-14): the GEM Shell skin (your theme), the default; timer columns grow with the text. 0.10.2 (2026-11-14): layouts chosen as at 100 % text. 0.10.1 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     instance: 'global',
