@@ -1714,8 +1714,9 @@ function openProperties(req: { paths: string[]; count: number; folder: boolean; 
       onRenamed: (from: string, to: string) => followRename(from, to),   // 0.16.1
     },
     title,
-    width: 420,
-    height: 540,
+    // 0.16.8 (2026-11-14, Guillaume): 420 x 540 at 100 % text, larger with it (its content grows; no scrollbar)
+    width: Math.round(420 * textScale.value),
+    height: Math.round(540 * textScale.value),
     // 0.12.1: GEM Shell's Discard / Save footer (the attribute boxes are a draft)
     saveFooter: true,
   })

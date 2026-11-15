@@ -19,7 +19,7 @@ const ARRANGES = [
 export default {
     api:     '1.0',
     id:      'items',
-    version: '0.16.7',   // 0.16.7 (2026-11-14): GEM Shell's colours; icon cells wider at large text; rows remeasured on a text size change. 0.16.6 (2026-11-14): the details header grows with the text. 0.16.5 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step). 0.16.4 (2026-11-13): the arrow on files and folders (GEM Shell's --gex-cursor-item), no grab hands
+    version: '0.16.8',   // 0.16.8 (2026-11-14): the Properties window sized for the text. 0.16.7 (2026-11-14): GEM Shell's colours; icon cells wider at large text; rows remeasured on a text size change. 0.16.6 (2026-11-14): the details header grows with the text. 0.16.5 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step). 0.16.4 (2026-11-13): the arrow on files and folders (GEM Shell's --gex-cursor-item), no grab hands
                          // 0.16.3 (2026-11-13): fragmentation in colours: green under 10 %, amber to 30 %, red beyond
                          // 0.16.2 (2026-11-13, GEM Shell D4): a drive's fragmentation / last optimization, as Windows'
                          // optimizer last measured it (General), its last full run (Hardware)
