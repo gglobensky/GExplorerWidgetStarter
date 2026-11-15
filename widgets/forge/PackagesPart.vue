@@ -6,6 +6,7 @@
     is bundled into the widget when it builds (build's packagesFrom); their licences go into its notices.
     0.2.3: a moving bar and the seconds while npm works (it says nothing until it's done; its output follows).
     0.2.4: npm runs in the project (project.packagesOp), so Problems' "＋ Add date-fns" uses it too; this part shows it.
+    0.2.19: npm's output comes while it works (GEM Shell's Node tools' runner); Cancel stops it at once.
 -->
 <template>
     <div class="gf-pkgs">
@@ -29,16 +30,17 @@
                 <button type="button" class="gf-btn" :disabled="pkg.busy || !npmOk || !deps.length" title="npm install: what package.json lists" @click="installAll">Install all</button>
                 <span class="gf-grow" />
                 <span class="gf-dim">{{ pkg.busy ? `${pkg.doing}… ${elapsed} s` : '' }}</span>
+                <button v-if="pkg.busy" type="button" class="gf-btn" title="Stop npm now" @click="project.cancelPackages()">Cancel</button>
             </div>
-            <!-- npm says nothing until it's done: a bar that moves meanwhile -->
+            <!-- a bar that moves while npm works (it can stay quiet for a while) -->
             <div v-if="pkg.busy" class="gf-pkgs-bar" role="progressbar" :aria-label="pkg.doing"><span /></div>
-            <pre v-if="pkg.output" class="gf-pkgs-out">{{ pkg.output }}</pre>
+            <pre v-if="pkg.output" ref="out" class="gf-pkgs-out">{{ pkg.output }}</pre>
         </template>
     </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Project } from './project'
 
 const props = defineProps<{ project: Project }>()
@@ -68,6 +70,16 @@ function count() {
     tick = window.setInterval(at, 500)
 }
 watch(() => pkg.busy, count, { immediate: true })
+
+// 0.2.19: the output follows npm while it works (unless the user scrolled up to read)
+const out = ref<HTMLElement | null>(null)
+watch(() => pkg.output, async () => {
+    const el = out.value
+    if (!el || !pkg.busy) return
+    const atEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 24
+    await nextTick()
+    if (atEnd) el.scrollTop = el.scrollHeight
+})
 onBeforeUnmount(() => window.clearInterval(tick))
 
 /** package.json's dependencies (and devDependencies), as GEM Forge has it. */

@@ -1009,6 +1009,12 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
         return true
     }
 
+    // 0.2.19: the running npm's stop (GEM Shell's Node tools' runner: its output comes while it works)
+    let pkgStop: AbortController | null = null
+    const PKG_OUTPUT = 64 * 1024
+    /** 0.2.19: stops the running npm at once (the Packages part's Cancel). */
+    function cancelPackages() { pkgStop?.abort() }
+
     /** 0.2.4: npm, for the Packages part and Problems' "＋ Add <name>" (a click: GEM Shell asks first). */
     async function packagesOp(kind: 'install' | 'add' | 'remove', list: string[] = []): Promise<boolean> {
         if (!dev?.packages) { say('This GEM Shell has no npm packages yet.', false); return false }
@@ -1020,8 +1026,18 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
         try {
             // package.json made (a minimal one) or saved first: npm writes in it
             if (!(await ensurePackageJson())) return false
-            const r = await dev.packages(kind, s.folder, list)
-            s.pkg.output = (r.output ?? '').trim()
+            pkgStop = new AbortController()
+            let streamed = ''
+            const r = await dev.packages(kind, s.folder, list, {
+                signal: pkgStop.signal,
+                // 0.2.19: npm's output while it works (the last 64 KB kept)
+                onOutput: text => {
+                    streamed = (streamed + text).slice(-PKG_OUTPUT)
+                    s.pkg.output = streamed
+                },
+            })
+            s.pkg.output = (streamed || r.output || '').trim()
+            if (r.cancelled) { say('npm stopped.'); return false }
             if (r.ok) {
                 say(kind === 'remove' ? `Removed: ${list.join(', ')}.` : kind === 'add' ? `Added: ${list.join(', ')}. Import it in your code.` : 'Packages installed.')
                 await reloadFile('package.json')
@@ -1032,6 +1048,7 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
             return false
         } finally {
             s.pkg.busy = false
+            pkgStop = null
         }
     }
     /** 0.2.4: Problems' "＋ Add <name>": the Packages part shown, npm adds it. */
@@ -1095,7 +1112,7 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
         orderedTabs, closeTabs, closeOthers, closeToTheRight, closeSaved, togglePin, reorderTabs, setTabRows, revealInExplorer,
         isStale, freeNameIn, renamePlan, renameFile, deletePaths, duplicatePaths, setTexts, focusSearch, moveFiles, replaceTexts,
         keepMine, takeDisk, run, scheduleRun, asText, log, say, dispose,
-        packagesFrom, reloadFile, ensurePackageJson, packagesChanged, setFormatter, packagesOp, addPackage, showPart,
+        packagesFrom, reloadFile, ensurePackageJson, packagesChanged, setFormatter, packagesOp, cancelPackages, addPackage, showPart,
     }
 }
 

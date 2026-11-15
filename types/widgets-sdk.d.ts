@@ -938,8 +938,11 @@ declare module 'gexplorer/widgets' {
          * package.json, its node_modules). 'version': Node's and npm's versions (no question). 'install' (what
          * package.json lists), 'add' (names, or name@version: saved in package.json), 'remove': right after the user's
          * click or key press, after GEM Shell's question and the folder's Write grant. Install scripts never run.
+         * GEM Shell 2026-11-15: options.onOutput(text) gets npm's output while it works (in pieces, as it comes);
+         * options.signal (an AbortController's) stops it at once ({ ok: false, cancelled: true }). One npm per project
+         * folder at a time (two projects can work side by side).
          */
-        packages?(op: DevPackagesOp, folder?: string, names?: string[]): Promise<DevPackagesResult>
+        packages?(op: DevPackagesOp, folder?: string, names?: string[], options?: DevToolRunOptions): Promise<DevPackagesResult>
         /**
          * GEM Shell 2026-11-07: TypeScript over the project's files, in the page (loaded the first time: a few MB, once
          * per GEM Shell run). sync() the files (unsaved edits included) before asking; offsets are the file's own
@@ -975,6 +978,8 @@ declare module 'gexplorer/widgets' {
         check(path: string, text: string, options?: DevPrettierOptions): Promise<{ ok: true; formatted: boolean } | DevPrettierError>
     }
     export type DevPackagesOp = 'version' | 'install' | 'add' | 'remove'
+    /** GEM Shell 2026-11-15: a Node tool's run (npm): its output while it works, and a signal that stops it. */
+    export type DevToolRunOptions = { onOutput?: (text: string) => void; signal?: AbortSignal }
     export type DevPackagesResult =
         | { ok: true; node?: string; npm?: string; output?: string }
         | { ok: false; error: string; code?: string; output?: string; cancelled?: boolean }

@@ -68,7 +68,7 @@ import { COMMANDS } from './commands'
 export default {
     api: '1.0',
     id: 'forge',
-    version: '0.2.18',   // 0.2.18 (2026-11-14): the preview's placement buttons without a label (a tooltip), wrapping. 0.2.17 (2026-11-14): GEM Shell's colours and fonts; tabs and buttons grow with the text. 0.2.16 (2026-11-14): the editor's text follows Text size (textPx); sizes follow Appearance. 0.2.15 (2026-11-14): "Open in GEM Forge" hidden in GEM Shell's file dialog (a default rule)
+    version: '0.2.19',   // 0.2.19 (2026-11-15): npm's output shows while it works, with Cancel (GEM Shell's Node tools' runner). 0.2.18 (2026-11-14): the preview's placement buttons without a label (a tooltip), wrapping. 0.2.17 (2026-11-14): GEM Shell's colours and fonts; tabs and buttons grow with the text. 0.2.16 (2026-11-14): the editor's text follows Text size (textPx); sizes follow Appearance. 0.2.15 (2026-11-14): "Open in GEM Forge" hidden in GEM Shell's file dialog (a default rule)
                          // 0.2.14 (2026-11-13): New project / a try as a project ask GEM Shell for an empty folder (require)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,

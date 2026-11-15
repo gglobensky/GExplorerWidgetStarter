@@ -298,7 +298,14 @@ preview. GEM Shell's part: `PhotinoVue1/FORGE-SHELL-ADDITIONS.md` (forge-1 to fo
   update as you type.
 - **⊘ in the Explorer** on a file or folder left out of Check all; what's inside a folder left out is dimmed.
 
-Next: ESLint (the project's own, run by Node), a .vue template's checks, contributed parts (a git part from a git widget) (claude/plan-2026-11-07-forge-0-3.md).
+## 0.2.19 (2026-11-15)
+
+- **npm's output while it works, and Cancel:** the Packages part shows what npm says as it says it (it follows the
+  end unless you scroll up), and a Cancel button stops npm at once. npm now runs through GEM Shell's runner for Node
+  tools: one npm per project folder, so two projects (two GEM Forge copies) can install side by side.
+
+Next (claude/forge-dev-tools-design.md): ESLint (the project's own, run by Node), TypeScript and Prettier in a
+background worker, explorer projects in the grid preview, a terminal part lent by the Console.
 
 ## Files
 `entry.ts`, `Widget.vue` (the bar, the pages, the lifecycle), `layout.ts` (pages of tiles), `TileGrid.vue`, `project.ts` (the project: files, saving, the watch, running), `Explorer.vue`,
