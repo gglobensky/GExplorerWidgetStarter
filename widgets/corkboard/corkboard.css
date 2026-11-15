@@ -4,14 +4,18 @@
    Ink Free / Segoe Print (nothing downloaded). Every class is cb-*: the dialogs live in GEM Shell's popovers. */
 
 .cb-root, .cb-dlg, .cb-panel, .cb-ghost {
-    --cb-fg: var(--fg, #e8e4dc);
+    /* 0.3.0 (2026-11-14): the chrome on GEM Shell's public variables (the starter README "Colours and fonts") */
+    --cb-fg: var(--gex-fg, #e8e4dc);
     --cb-muted: color-mix(in oklab, var(--cb-fg) 62%, transparent);
-    --cb-chrome: var(--surface-1, #1d1b18);
-    --cb-field: var(--surface-2, #262320);
-    --cb-line: var(--border, rgba(255, 255, 255, .14));
-    --cb-accent: var(--accent, #5aa9d6);
+    --cb-chrome: var(--gex-bg, #1d1b18);
+    --cb-field: var(--gex-surface, #262320);
+    --cb-line: var(--gex-border, rgba(255, 255, 255, .14));
+    --cb-accent: var(--gex-accent, #5aa9d6);
     --cb-hand: "Ink Free", "Segoe Print", "Comic Sans MS", cursive;
-    --cb-mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    --cb-mono: var(--gex-font-mono, ui-monospace, "Cascadia Mono", Consolas, monospace);
+    /* 0.3.0: how opaque the board's surface is (GEM Shell's Widget backgrounds: Settings ▸ Hubs & grid, a hub's own in
+       Edit Layout). Only the surface fades: the bar, the notes and the pictures stay as they are. */
+    --cb-surf-alpha: calc(var(--gex-widget-bg-opacity, 1) * 100%);
     --cb-paper-fg: #29241f;
     --cb-sun: #f6e6a8; --cb-rose: #f3cdd1; --cb-mint: #cde7d3; --cb-sky: #cfe0f1; --cb-lilac: #ddd4f0; --cb-kraft: #e2cdaa; --cb-chalk: #f7f5ef;
     --cb-rule: rgba(44, 80, 130, .17);
@@ -33,7 +37,7 @@
 .p-red { --pinc: var(--cb-pin-red); } .p-blue { --pinc: var(--cb-pin-blue); } .p-green { --pinc: var(--cb-pin-green); }
 .p-yellow { --pinc: var(--cb-pin-yellow); } .p-black { --pinc: var(--cb-pin-black); }
 
-.cb-root { position: relative; height: 100%; display: flex; flex-direction: column; color: var(--cb-fg); background: var(--cb-surf); container-type: inline-size; container-name: cb; outline: none; font-size: 13px; }
+.cb-root { position: relative; height: 100%; display: flex; flex-direction: column; color: var(--cb-fg); background: color-mix(in srgb, var(--cb-surf) var(--cb-surf-alpha), transparent); container-type: inline-size; container-name: cb; outline: none; font-size: 13px; }
 .cb-root *, .cb-dlg *, .cb-panel * { box-sizing: border-box; }
 .cb-root button, .cb-dlg button, .cb-panel button { font: inherit; color: inherit; }
 .cb-root :focus-visible, .cb-dlg :focus-visible, .cb-panel :focus-visible { outline: 2px solid var(--cb-accent); outline-offset: 2px; }
@@ -63,8 +67,8 @@
 .cb-ib { width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 7px; background: none; cursor: pointer; flex: none; font-size: 15px; }
 .cb-ib:hover { background: color-mix(in oklab, var(--cb-fg) 9%, transparent); }
 .cb-ib[aria-pressed="true"] { background: color-mix(in oklab, var(--cb-accent) 24%, transparent); color: var(--cb-accent); }
-.cb-main { flex: 1; min-height: 0; position: relative; background-color: var(--cb-surf);
-    background-image: radial-gradient(circle at 30% 40%, var(--cb-fleck) 0 1px, transparent 1.6px), radial-gradient(circle at 70% 70%, var(--cb-light) 0 1px, transparent 1.6px), radial-gradient(circle at 50% 10%, var(--cb-fleck) 0 .8px, transparent 1.4px);
+.cb-main { flex: 1; min-height: 0; position: relative; background-color: transparent;   /* 0.3.0: the surface is .cb-root's (faded once) */
+    background-image: radial-gradient(circle at 30% 40%, color-mix(in srgb, var(--cb-fleck) var(--cb-surf-alpha), transparent) 0 1px, transparent 1.6px), radial-gradient(circle at 70% 70%, color-mix(in srgb, var(--cb-light) var(--cb-surf-alpha), transparent) 0 1px, transparent 1.6px), radial-gradient(circle at 50% 10%, color-mix(in srgb, var(--cb-fleck) var(--cb-surf-alpha), transparent) 0 .8px, transparent 1.4px);
     background-size: 9px 11px, 13px 7px, 17px 19px; }
 
 /* board */

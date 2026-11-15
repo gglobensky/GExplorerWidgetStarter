@@ -102,15 +102,15 @@ onBeforeUnmount(() => {
 .mlc { display:flex; flex-direction:column; gap:5px; min-width:0; }
 .mlc-title { overflow:hidden; font-size:12px; opacity:.9; text-overflow:ellipsis; white-space:nowrap; }
 .mlc-row { display:flex; align-items:center; gap:4px; }
-.mlc-btn { width:26px; height:22px; padding:0; border:1px solid var(--border, #555); border-radius:4px; color:var(--fg, #eee); background:transparent; cursor:pointer; font-size:11px; line-height:1; }
-.mlc-btn:hover, .mlc-btn:focus-visible { border-color:var(--accent, #4ea1ff); background:var(--surface-3, #333); }
+.mlc-btn { width:26px; height:22px; padding:0; border:1px solid var(--gex-border, #555); border-radius:4px; color:var(--gex-fg, #eee); background:transparent; cursor:pointer; font-size:11px; line-height:1; }
+.mlc-btn:hover, .mlc-btn:focus-visible { border-color:var(--gex-accent, #4ea1ff); background:var(--gex-surface-2, #333); }
 .mlc-main { width:32px; }
-.mlc-btn.active { border-color:var(--accent, #4ea1ff); color:var(--accent, #4ea1ff); }
+.mlc-btn.active { border-color:var(--gex-accent, #4ea1ff); color:var(--gex-accent, #4ea1ff); }
 .mlc-picture { aspect-ratio:16 / 9; max-height:240px; overflow:hidden; border-radius:4px; background:#000; cursor:pointer; }
 .mlc-picture :deep(.gex-video-surface > video) { pointer-events:none; }
 .mlc-time { margin-left:auto; font-size:11px; font-variant-numeric:tabular-nums; opacity:.65; }
 .mlc-bar { height:3px; overflow:hidden; border-radius:2px; background:var(--gex-op-bar-bg, rgba(255,255,255,.12)); }
-.mlc-fill { height:100%; background:var(--accent, #4ea1ff); transition:width 200ms linear; }
+.mlc-fill { height:100%; background:var(--gex-accent, #4ea1ff); transition:width 200ms linear; }
 .mlc-note { font-size:10px; opacity:.55; }
 @media (prefers-reduced-motion: reduce) { .mlc-fill { transition:none; } }
 </style>

@@ -1,15 +1,18 @@
 .gem-library-surface {
-  --glu-bg: var(--surface-1, #111820);
-  --glu-panel: var(--skin-panel, var(--surface-2, #19232c));
-  --glu-panel-high: var(--skin-panel-high, var(--surface-3, #24313b));
-  --glu-fg: var(--skin-fg, var(--fg, #edf2f4));
+  --glu-bg: var(--gex-bg, #111820);
+  --glu-panel: var(--skin-panel, var(--gex-surface, #19232c));
+  --glu-panel-high: var(--skin-panel-high, var(--gex-surface-2, #24313b));
+  --glu-fg: var(--skin-fg, var(--gex-fg, #edf2f4));
   --glu-muted: var(--skin-muted, color-mix(in srgb, var(--glu-fg) 62%, var(--glu-bg)));
-  --glu-border: var(--border, #40505e);
-  --glu-accent: var(--skin-accent, var(--accent, #70b8d8));
+  --glu-border: var(--gex-border, #40505e);
+  --glu-accent: var(--skin-accent, var(--gex-accent, #70b8d8));
   --glu-warm: var(--skin-warm, #d29a55);
+  /* 3.8.1 (2026-11-14): the store's floor fades with GEM Shell's Widget backgrounds (Settings ▸ Hubs & grid, a hub's
+     own in Edit Layout): only this surface; the shelves, boxes, panels and bars stay as they are */
+  --glu-bg-alpha: calc(var(--gex-widget-bg-opacity, 1) * 100%);
   color: var(--glu-fg);
-  background: var(--glu-bg);
-  font: 14px/1.4 "Segoe UI", system-ui, sans-serif;
+  background: color-mix(in srgb, var(--glu-bg) var(--glu-bg-alpha), transparent);
+  font: 14px/1.4 var(--gex-font, "Segoe UI", system-ui, sans-serif);
 }
 /* 3.0.0, skins (skins.ts): a skinned surface is the store's room: the wall, the light pooling on it (twice the
    classes: over the widgets' own background rules) */

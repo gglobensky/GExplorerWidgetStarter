@@ -34,7 +34,7 @@ const percent = computed(() => total.value ? Math.min(100, (done.value / total.v
 .mtc-title { overflow:hidden; opacity:.9; text-overflow:ellipsis; white-space:nowrap; }
 .mtc-count { flex:0 0 auto; margin-left:auto; font-size:11px; font-variant-numeric:tabular-nums; opacity:.7; }
 .mtc-bar { height:3px; overflow:hidden; border-radius:2px; background:var(--gex-op-bar-bg, rgba(255,255,255,.12)); }
-.mtc-fill { height:100%; background:var(--accent, #4ea1ff); transition:width 200ms linear; }
+.mtc-fill { height:100%; background:var(--gex-accent, #4ea1ff); transition:width 200ms linear; }
 .mtc-note { font-size:10px; opacity:.55; }
 @media (prefers-reduced-motion: reduce) { .mtc-fill { transition:none; } }
 </style>

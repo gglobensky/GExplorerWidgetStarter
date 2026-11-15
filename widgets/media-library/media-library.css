@@ -4,7 +4,7 @@
 @font-face { font-family:"Tilt Neon Video Club"; src:url("./assets/TiltNeon-Regular-VariableFont_XROT,YROT.ttf") format("truetype"); font-display:swap; font-style:normal; font-weight:400; }
 
 .media-library { position:relative; display:flex; flex-direction:column; width:100%; height:100%; min-width:0; min-height:0; overflow:hidden; border-radius:12px; container-type:size; }
-.media-library.atmosphere { background:radial-gradient(ellipse at 84% -15%,#c98e3d20,transparent 38%), radial-gradient(ellipse at -12% 15%,color-mix(in srgb,var(--glu-accent) 18%,transparent),transparent 42%), var(--glu-bg); }
+.media-library.atmosphere { background:radial-gradient(ellipse at 84% -15%,color-mix(in srgb,#c98e3d20 var(--glu-bg-alpha),transparent),transparent 38%), radial-gradient(ellipse at -12% 15%,color-mix(in srgb,var(--glu-accent) calc(18% * var(--gex-widget-bg-opacity, 1)),transparent),transparent 42%), color-mix(in srgb,var(--glu-bg) var(--glu-bg-alpha),transparent); }   /* 0.17.2: the floor fades */
 .media-library-topbar { position:sticky; z-index:9; top:0; display:grid; flex:0 0 auto; grid-template-columns:minmax(180px,1fr) minmax(190px,360px) minmax(150px,1fr); gap:18px; align-items:center; min-height:61px; padding:9px 16px; border-bottom:1px solid #ffffff13; background:var(--skin-bar, linear-gradient(#17212af5,#111820f0)); box-shadow:0 8px 18px #0005; backdrop-filter:blur(15px); }
 .media-library-navigation { display:flex; align-items:center; gap:5px; min-width:0; }
 .media-library-navigation>button { display:grid; width:31px; height:31px; flex:0 0 31px; padding:0; border:1px solid #ffffff16; border-radius:6px; color:var(--glu-fg); background:#0b1117a8; cursor:pointer; place-items:center; }

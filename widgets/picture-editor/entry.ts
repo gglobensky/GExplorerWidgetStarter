@@ -13,7 +13,7 @@ import { COMMANDS, GESTURES } from './commands'
 export default {
     api: '1.0',
     id: 'picture-editor',
-    version: '0.3.1',   // 0.3.1 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step)
+    version: '0.3.2',   // 0.3.2 (2026-11-14): GEM Shell's colours. 0.3.1 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     displayName: 'Picture Editor',

@@ -1,6 +1,6 @@
 /* GEM Game Shop (0.2.0, 2026-10-31). The shared library's look (library-ui: boxes, shelves, the store floor) plus
    the shop's frame: a 90s computer store, teal and magenta neon instead of the Video Club's amber. Classes: gl-*. */
-.game-library { --glu-accent:var(--skin-accent, #3fd0c9); --glu-warm:var(--skin-warm, #e05bb4); --glu-box-side:#7a5a34; position:relative; display:flex; flex-direction:column; width:100%; height:100%; min-width:0; min-height:0; overflow:hidden; border-radius:12px; container-type:size; background:radial-gradient(ellipse at 85% -20%,#e05bb41f,transparent 40%),radial-gradient(ellipse at -10% 20%,#3fd0c91a,transparent 42%),var(--glu-bg); }
+.game-library { --glu-accent:var(--skin-accent, #3fd0c9); --glu-warm:var(--skin-warm, #e05bb4); --glu-box-side:#7a5a34; position:relative; display:flex; flex-direction:column; width:100%; height:100%; min-width:0; min-height:0; overflow:hidden; border-radius:12px; container-type:size; background:radial-gradient(ellipse at 85% -20%,color-mix(in srgb,#e05bb41f var(--glu-bg-alpha),transparent),transparent 40%),radial-gradient(ellipse at -10% 20%,color-mix(in srgb,#3fd0c91a var(--glu-bg-alpha),transparent),transparent 42%),color-mix(in srgb,var(--glu-bg) var(--glu-bg-alpha),transparent); }   /* 0.23.3: the floor fades (library-ui's --glu-bg-alpha) */
 .game-library.sidebar { height:100vh; }
 
 /* The top bar */

@@ -725,8 +725,8 @@ defineExpose({ onCommand })
         height: 100%;
         min-height: 0;
         outline: none;
-        color: var(--fg, #e8e8e8);
-        background: var(--surface-1, #151515);
+        color: var(--gex-fg, #e8e8e8);
+        background: var(--gex-bg, #151515);
         font-size: 12px;
     }
     .pe-bar {
@@ -735,8 +735,8 @@ defineExpose({ onCommand })
         align-items: center;
         gap: 6px 10px;
         padding: 6px 8px;
-        border-bottom: 1px solid var(--border, #333);
-        background: var(--surface-2, #1d1d1d);
+        border-bottom: 1px solid var(--gex-border, #333);
+        background: var(--gex-surface, #1d1d1d);
     }
     .pe-group { display: flex; align-items: center; gap: 2px; }
     .pe-sp { flex: 1 1 auto; }
@@ -753,10 +753,10 @@ defineExpose({ onCommand })
         cursor: pointer;
     }
     .pe-size, .pe-zl, .pe-btn { font-size: 12px; }
-    .pe-btn { border-color: var(--border, #444); padding: 0 10px; }
-    .pe-btn--primary:not(:disabled) { border-color: var(--accent, #3b82f6); background: var(--accent, #3b82f6); color: #fff; }
+    .pe-btn { border-color: var(--gex-border, #444); padding: 0 10px; }
+    .pe-btn--primary:not(:disabled) { border-color: var(--gex-accent, #3b82f6); background: var(--gex-accent, #3b82f6); color: #fff; }
     .pe-tool:hover:not(:disabled), .pe-size:hover, .pe-zl:hover, .pe-btn:hover:not(:disabled) { background: rgba(255, 255, 255, .08); }
-    .pe-tool[aria-pressed="true"], .pe-size[aria-pressed="true"] { border-color: var(--accent, #3b82f6); background: rgba(59, 130, 246, .18); }
+    .pe-tool[aria-pressed="true"], .pe-size[aria-pressed="true"] { border-color: var(--gex-accent, #3b82f6); background: rgba(59, 130, 246, .18); }
     button:disabled { opacity: .4; cursor: default; }
     .pe-swatch {
         width: 18px;
@@ -768,7 +768,7 @@ defineExpose({ onCommand })
         background: var(--c);
         cursor: pointer;
     }
-    .pe-swatch[aria-pressed="true"] { border-color: #fff; box-shadow: 0 0 0 2px var(--accent, #3b82f6); }
+    .pe-swatch[aria-pressed="true"] { border-color: #fff; box-shadow: 0 0 0 2px var(--gex-accent, #3b82f6); }
     .pe-custom { display: inline-flex; width: 22px; height: 22px; overflow: hidden; border-radius: 50%; cursor: pointer; }
     .pe-custom input { width: 34px; height: 34px; margin: -6px; padding: 0; border: 0; cursor: pointer; }
     .pe-main { display: flex; flex: 1 1 auto; min-height: 0; }
@@ -805,8 +805,8 @@ defineExpose({ onCommand })
         flex: 0 0 300px;
         min-width: 220px;
         padding: 8px 10px;
-        border-left: 1px solid var(--border, #333);
-        background: var(--surface-2, #1d1d1d);
+        border-left: 1px solid var(--gex-border, #333);
+        background: var(--gex-surface, #1d1d1d);
         overflow: auto;
     }
     .pe-row { display: flex; align-items: center; gap: 6px; }
@@ -817,9 +817,9 @@ defineExpose({ onCommand })
         flex: 1 1 auto;
         min-width: 0;
         height: 26px;
-        border: 1px solid var(--border, #444);
+        border: 1px solid var(--gex-border, #444);
         border-radius: 4px;
-        background: var(--surface-1, #151515);
+        background: var(--gex-bg, #151515);
         color: inherit;
         font: inherit;
     }
@@ -828,13 +828,13 @@ defineExpose({ onCommand })
         min-height: 160px;
         resize: none;
         padding: 6px 8px;
-        border: 1px solid var(--border, #444);
+        border: 1px solid var(--gex-border, #444);
         border-radius: 4px;
-        background: var(--surface-1, #151515);
+        background: var(--gex-bg, #151515);
         color: inherit;
         font: 13px/1.45 'Segoe UI', system-ui, sans-serif;
     }
-    .pe-textarea:focus, .pe-lang select:focus { outline: 2px solid var(--accent, #3b82f6); outline-offset: -1px; }
+    .pe-textarea:focus, .pe-lang select:focus { outline: 2px solid var(--gex-accent, #3b82f6); outline-offset: -1px; }
     .pe-loading, .pe-msg { padding: 24px; opacity: .8; font-size: 13px; }
     .pe-msg { flex: 1 1 auto; }
     .pe-status {
@@ -842,8 +842,8 @@ defineExpose({ onCommand })
         gap: 6px;
         align-items: center;
         padding: 4px 10px;
-        border-top: 1px solid var(--border, #333);
+        border-top: 1px solid var(--gex-border, #333);
         opacity: .8;
     }
-    .pe-dirty { color: var(--accent, #4ea1ff); }
+    .pe-dirty { color: var(--gex-accent, #4ea1ff); }
 </style>

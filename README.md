@@ -702,6 +702,7 @@ To look native and follow the user's theme, use these public variables (with a f
 | `--gex-font`, `--gex-font-mono` | the interface font (yours by default); a monospace one |
 | `--gex-widget-bg`, `--gex-widget-backdrop` | your widget's own background and its backdrop filter (the surface and none today; transparent / glass once hubs get wallpapers) |
 | `--gex-px` | one px at 100 % Text size (above) |
+| `--gex-widget-bg-opacity` | 0..1: how opaque a background of your own should be (below) |
 
 ```css
 .card { background: var(--gex-widget-bg, #2a2a2a); color: var(--gex-fg, #eaeaea);
@@ -711,6 +712,17 @@ To look native and follow the user's theme, use these public variables (with a f
 
 A widget with a design of its own keeps it: hard-coded colours and its own fonts are fine (a handwriting font on a
 corkboard). Set `font-family` on your elements; the host's `--gex-font` is only the default.
+
+**A background of your own fades with the user's choice** (GEM Shell 2026-11-14). Settings ▸ Hubs & grid ▸ "Widget
+backgrounds", and per hub in Edit Layout ("Backgrounds"), set `--gex-widget-bg-opacity` (1 opaque, 0 none: a hub's
+wallpaper shows through, later). Fade only the surface you draw behind your content, never what must stay readable
+(notes, a newspaper page):
+
+```css
+.board { background: color-mix(in srgb, #b9966a calc(var(--gex-widget-bg-opacity, 1) * 100%), transparent); }
+```
+
+(GEM Corkboard fades its cork this way; its bar and notes stay.)
 
 ## GEM Shell's file preferences
 

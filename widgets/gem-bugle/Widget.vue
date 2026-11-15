@@ -103,9 +103,11 @@ const pageLabel = computed(() => currentPage.value === 'front'
 const enabledSources = computed(() => sources.value.filter(source => source.enabled))
 const dateLabel = computed(() => new Intl.DateTimeFormat(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }).format(now.value))
 const hostStyle = computed(() => ({
-  '--bugle-host-fg': props.theme?.fg || 'var(--fg, #201c16)',
-  '--bugle-host-bg': props.theme?.bg || 'var(--surface-1, #f1ead8)',
-  '--bugle-host-border': props.theme?.border || 'var(--border, #766c59)',
+  // 0.4.2 (2026-11-14): GEM Shell's public colours. The page is the widget: it never fades (Widget backgrounds is for
+  // a surface around content; a see-through newspaper page wouldn't read)
+  '--bugle-host-fg': props.theme?.fg || 'var(--gex-fg, #201c16)',
+  '--bugle-host-bg': props.theme?.bg || 'var(--gex-bg, #f1ead8)',
+  '--bugle-host-border': props.theme?.border || 'var(--gex-border, #766c59)',
 }))
 
 function needNetwork(): NonNullable<WidgetSdk['networkFetch']> {

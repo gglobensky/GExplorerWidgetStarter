@@ -32,7 +32,7 @@ const percent = computed(() => total.value ? Math.min(100, (done.value / total.v
 .glc-row { display:flex; align-items:baseline; gap:8px; opacity:.9; }
 .glc-count { margin-left:auto; font-size:11px; font-variant-numeric:tabular-nums; opacity:.7; }
 .glc-bar { height:3px; overflow:hidden; border-radius:2px; background:var(--gex-op-bar-bg, rgba(255,255,255,.12)); }
-.glc-fill { height:100%; background:var(--accent, #4ea1ff); transition:width 200ms linear; }
+.glc-fill { height:100%; background:var(--gex-accent, #4ea1ff); transition:width 200ms linear; }
 .glc-note { font-size:10px; opacity:.55; }
 @media (prefers-reduced-motion: reduce) { .glc-fill { transition:none; } }
 </style>
