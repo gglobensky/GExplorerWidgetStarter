@@ -101,9 +101,9 @@ function keyOf(i: number): string {
 <style scoped>
 .row.folder-drop-target {
   /* Inset ring in accent color — matches .row.selected but distinct */
-  box-shadow: inset 0 0 0 2px var(--accent, #4ea1ff),
-              inset 0 0 0 4px color-mix(in oklab, var(--accent, #4ea1ff) 25%, transparent) !important;
-  background: color-mix(in oklab, var(--accent, #4ea1ff) 10%, transparent) !important;
+  box-shadow: inset 0 0 0 2px var(--gex-accent, #4ea1ff),
+              inset 0 0 0 4px color-mix(in oklab, var(--gex-accent, #4ea1ff) 25%, transparent) !important;
+  background: color-mix(in oklab, var(--gex-accent, #4ea1ff) 10%, transparent) !important;
 }
 
 /* ================ LIST CONTAINER ================ */
@@ -161,7 +161,7 @@ function keyOf(i: number): string {
   padding: 1px 2px;
   border-radius: 3px;
   background: var(--items-bg, #111);
-  color: var(--accent, #4ea1ff);
+  color: var(--gex-accent, #4ea1ff);
   pointer-events: auto;
 }
 
@@ -196,7 +196,7 @@ function keyOf(i: number): string {
 
 
 .row.selected {
-  box-shadow: inset 0 0 0 2px var(--accent, #4ea1ff) !important;
+  box-shadow: inset 0 0 0 2px var(--gex-accent, #4ea1ff) !important;
 }
 
 .name {
@@ -221,7 +221,7 @@ function keyOf(i: number): string {
   padding: 1px 2px;
   border-radius: 3px;
   background: var(--items-bg, #111);
-  color: var(--muted, #9aa4ae);
+  color: var(--gex-fg-muted, #9aa4ae);
   pointer-events: auto;
 }
 .hid-badge.protected { color: var(--warning, #e0a800); }

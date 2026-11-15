@@ -774,10 +774,10 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .ipw {
-  --ipw-muted: color-mix(in oklab, var(--fg, #e8e8e8) 55%, transparent);
+  --ipw-muted: color-mix(in oklab, var(--gex-fg, #e8e8e8) 55%, transparent);
   display: flex; flex-direction: column; gap: 14px;
   padding: 10px 14px 14px; box-sizing: border-box;
-  color: var(--fg, #e8e8e8); font-size: var(--local-font-sm, 12px);
+  color: var(--gex-fg, #e8e8e8); font-size: var(--local-font-sm, 12px);
 }
 .ipw section { display: flex; flex-direction: column; gap: 6px; }
 /* 0.12.1: the tabs */
@@ -787,8 +787,8 @@ onBeforeUnmount(() => {
   font-size: 12px; opacity: .7; cursor: pointer;
 }
 .ipw-tab:hover { opacity: 1; }
-.ipw-tab.on { opacity: 1; border-bottom-color: var(--accent, #4ea1ff); font-weight: 600; }
-.ipw h3 { margin: 0; color: color-mix(in oklab, var(--fg, #e8e8e8) 62%, transparent); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.ipw-tab.on { opacity: 1; border-bottom-color: var(--gex-accent, #4ea1ff); font-weight: 600; }
+.ipw h3 { margin: 0; color: color-mix(in oklab, var(--gex-fg, #e8e8e8) 62%, transparent); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .ipw h4 { margin: 4px 0 0; color: var(--ipw-muted); font-size: 11px; font-weight: 600; }
 .ipw p { margin: 0; }
 .ipw-note, .ipw-muted { color: var(--ipw-muted); font-size: 11px; }
@@ -804,38 +804,38 @@ onBeforeUnmount(() => {
 .ipw-hash .ipw-mono { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; user-select: text; }
 .ipw-btn {
   flex: 0 0 auto; padding: 2px 8px; border: 1px solid var(--items-border, #ffffff24); border-radius: 4px;
-  background: color-mix(in oklab, var(--fg, #fff) 6%, transparent); color: inherit; font-size: 11px; cursor: pointer;
+  background: color-mix(in oklab, var(--gex-fg, #fff) 6%, transparent); color: inherit; font-size: 11px; cursor: pointer;
 }
-.ipw-btn:hover { background: color-mix(in oklab, var(--fg, #fff) 12%, transparent); }
+.ipw-btn:hover { background: color-mix(in oklab, var(--gex-fg, #fff) 12%, transparent); }
 .ipw-checks { display: flex; gap: 16px; }
 .ipw-check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
-.ipw-check input { margin: 0; accent-color: var(--accent, #4ea1ff); }
+.ipw-check input { margin: 0; accent-color: var(--gex-accent, #4ea1ff); }
 .ipw-acl { width: 100%; border-collapse: collapse; font-size: 11px; }
 .ipw-acl th { text-align: left; color: var(--ipw-muted); font-weight: 600; padding: 2px 6px 2px 0; }
 .ipw-acl td { padding: 2px 6px 2px 0; border-top: 1px solid var(--items-border, #ffffff14); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ipw-acl tr.deny td { color: #fca5a5; }
 .ipw-hash-bar { display: flex; align-items: center; gap: 8px; }
-.ipw-progress { flex: 1 1 auto; height: 8px; accent-color: var(--accent, #4ea1ff); }
+.ipw-progress { flex: 1 1 auto; height: 8px; accent-color: var(--gex-accent, #4ea1ff); }
 .ipw-compare { display: flex; align-items: center; gap: 8px; }
 .ipw-compare span { color: var(--ipw-muted); white-space: nowrap; }
 /* 0.16.0: the name field, a drive's space */
 .ipw-name {
   width: 100%; box-sizing: border-box; padding: 3px 6px; border: 1px solid var(--items-border, #ffffff24); border-radius: 4px;
-  background: color-mix(in oklab, var(--fg, #fff) 4%, transparent); color: inherit; font: inherit; font-weight: 600;
+  background: color-mix(in oklab, var(--gex-fg, #fff) 4%, transparent); color: inherit; font: inherit; font-weight: 600;
 }
-.ipw-name:focus { outline: none; border-color: var(--accent, #4ea1ff); }
+.ipw-name:focus { outline: none; border-color: var(--gex-accent, #4ea1ff); }
 .ipw-name.bad { border-color: #f87171; }
 .ipw-space { display: flex; align-items: center; gap: 16px; }
 .ipw-pie { flex: 0 0 auto; width: 88px; height: 88px; transform: rotate(-90deg); }
 .ipw-pie circle { fill: none; stroke-width: 6; }
-.ipw-pie-free { stroke: color-mix(in oklab, var(--fg, #fff) 14%, transparent); }
-.ipw-pie-used { stroke: var(--accent, #4ea1ff); stroke-dashoffset: 0; }
+.ipw-pie-free { stroke: color-mix(in oklab, var(--gex-fg, #fff) 14%, transparent); }
+.ipw-pie-used { stroke: var(--gex-accent, #4ea1ff); stroke-dashoffset: 0; }
 .ipw-pie-text { transform: rotate(90deg); transform-origin: 18px 18px; fill: currentColor; font-size: 7px; font-weight: 600; }
 .ipw-pie-used.normal, .ipw-key.used.normal { stroke: #22c55e; background: #22c55e; }
 .ipw-pie-used.warning, .ipw-key.used.warning { stroke: #f59e0b; background: #f59e0b; }
 .ipw-pie-used.critical, .ipw-key.used.critical { stroke: #ef4444; background: #ef4444; }
-.ipw-key { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 2px; background: var(--accent, #4ea1ff); }
-.ipw-key.free { background: color-mix(in oklab, var(--fg, #fff) 14%, transparent); }
+.ipw-key { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 2px; background: var(--gex-accent, #4ea1ff); }
+.ipw-key.free { background: color-mix(in oklab, var(--gex-fg, #fff) 14%, transparent); }
 .ipw-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ipw-warn { color: #f59e0b; }
 .ipw-good { color: #22c55e; }
@@ -843,6 +843,6 @@ onBeforeUnmount(() => {
 .ipw-btn:disabled { opacity: .5; cursor: default; }
 .ipw-compare input {
   flex: 1 1 auto; min-width: 0; padding: 3px 6px; border: 1px solid var(--items-border, #ffffff24); border-radius: 4px;
-  background: color-mix(in oklab, var(--fg, #fff) 4%, transparent); color: inherit; font-family: Consolas, 'Cascadia Mono', monospace; font-size: 11px;
+  background: color-mix(in oklab, var(--gex-fg, #fff) 4%, transparent); color: inherit; font-family: Consolas, 'Cascadia Mono', monospace; font-size: 11px;
 }
 </style>

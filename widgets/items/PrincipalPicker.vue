@@ -57,21 +57,21 @@ function kindOf(p: FsPrincipal): string {
 <style scoped>
 .ipp {
   display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--items-border, #ffffff24);
-  border-radius: 6px; background: color-mix(in oklab, var(--fg, #fff) 3%, transparent);
+  border-radius: 6px; background: color-mix(in oklab, var(--gex-fg, #fff) 3%, transparent);
 }
 .ipp-head { display: flex; align-items: center; justify-content: space-between; font-weight: 600; }
 .ipp-input {
   padding: 3px 6px; border: 1px solid var(--items-border, #ffffff24); border-radius: 4px;
-  background: color-mix(in oklab, var(--fg, #fff) 4%, transparent); color: inherit; font-size: 12px;
+  background: color-mix(in oklab, var(--gex-fg, #fff) 4%, transparent); color: inherit; font-size: 12px;
 }
 .ipp-list { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; scrollbar-width: thin; }
 .ipp-item {
   display: flex; width: 100%; align-items: baseline; gap: 8px; padding: 3px 6px; border: 0; border-radius: 4px;
   background: transparent; color: inherit; font-size: 12px; text-align: left; cursor: pointer;
 }
-.ipp-item:hover, .ipp-item:focus-visible { background: color-mix(in oklab, var(--fg, #fff) 10%, transparent); }
+.ipp-item:hover, .ipp-item:focus-visible { background: color-mix(in oklab, var(--gex-fg, #fff) 10%, transparent); }
 .ipp-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ipp-kind { flex: 0 0 auto; color: color-mix(in oklab, var(--fg, #e8e8e8) 55%, transparent); font-size: 11px; }
+.ipp-kind { flex: 0 0 auto; color: color-mix(in oklab, var(--gex-fg, #e8e8e8) 55%, transparent); font-size: 11px; }
 .ipp-admin {
   flex: 0 0 auto; padding: 0 5px; border: 1px solid color-mix(in oklab, #fbbf24 60%, transparent); border-radius: 8px;
   color: #fbbf24; font-size: 10px; line-height: 14px;
@@ -79,9 +79,9 @@ function kindOf(p: FsPrincipal): string {
 .ipp-typed { align-self: flex-start; }
 .ipw-btn {
   flex: 0 0 auto; padding: 2px 8px; border: 1px solid var(--items-border, #ffffff24); border-radius: 4px;
-  background: color-mix(in oklab, var(--fg, #fff) 6%, transparent); color: inherit; font-size: 11px; cursor: pointer;
+  background: color-mix(in oklab, var(--gex-fg, #fff) 6%, transparent); color: inherit; font-size: 11px; cursor: pointer;
 }
-.ipw-btn:hover { background: color-mix(in oklab, var(--fg, #fff) 12%, transparent); }
-.ipw-muted, .ipw-note { margin: 0; color: color-mix(in oklab, var(--fg, #e8e8e8) 55%, transparent); font-size: 11px; }
+.ipw-btn:hover { background: color-mix(in oklab, var(--gex-fg, #fff) 12%, transparent); }
+.ipw-muted, .ipw-note { margin: 0; color: color-mix(in oklab, var(--gex-fg, #e8e8e8) 55%, transparent); font-size: 11px; }
 .ipw-error { margin: 0; color: #f87171; font-size: 11px; }
 </style>

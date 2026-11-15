@@ -198,9 +198,9 @@ const sizerStyle = computed((): Record<string, string> => (inColumns.value
 <style scoped>
 .row.folder-drop-target {
   /* Inset ring in accent color — matches .row.selected but distinct */
-  box-shadow: inset 0 0 0 2px var(--accent, #4ea1ff),
-              inset 0 0 0 4px color-mix(in oklab, var(--accent, #4ea1ff) 25%, transparent) !important;
-  background: color-mix(in oklab, var(--accent, #4ea1ff) 10%, transparent) !important;
+  box-shadow: inset 0 0 0 2px var(--gex-accent, #4ea1ff),
+              inset 0 0 0 4px color-mix(in oklab, var(--gex-accent, #4ea1ff) 25%, transparent) !important;
+  background: color-mix(in oklab, var(--gex-accent, #4ea1ff) 10%, transparent) !important;
 }
 
 /* ================ GRID CONTAINER ================ */
@@ -257,7 +257,7 @@ const sizerStyle = computed((): Record<string, string> => (inColumns.value
   padding: 1px 2px;
   border-radius: 3px;
   background: var(--items-bg, #111);
-  color: var(--accent, #4ea1ff);
+  color: var(--gex-accent, #4ea1ff);
   pointer-events: auto;
 }
 
@@ -285,7 +285,7 @@ const sizerStyle = computed((): Record<string, string> => (inColumns.value
   height: auto;
   border-radius: 3px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, .45), 0 0 0 1px rgba(255, 255, 255, .06);
-  background: color-mix(in oklab, var(--fg, #fff) 4%, transparent);
+  background: color-mix(in oklab, var(--gex-fg, #fff) 4%, transparent);
 }
 
 /* A cell: icon on top, the name centred under it (two lines' room, always) */
@@ -308,8 +308,8 @@ const sizerStyle = computed((): Record<string, string> => (inColumns.value
   cursor: var(--gex-cursor-item, default);   /* 0.16.4: the arrow on what you select (GEM Shell's cursor handle) */
 }
 .row:not(.placeholder):hover {
-  background: color-mix(in oklab, var(--fg, #fff) 6%, transparent);
-  border-color: color-mix(in oklab, var(--fg, #fff) 8%, transparent);
+  background: color-mix(in oklab, var(--gex-fg, #fff) 6%, transparent);
+  border-color: color-mix(in oklab, var(--gex-fg, #fff) 8%, transparent);
 }
 
 .row:focus,
@@ -319,8 +319,8 @@ const sizerStyle = computed((): Record<string, string> => (inColumns.value
 
 
 .row.selected {
-  background: color-mix(in oklab, var(--accent, #4ea1ff) 18%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent, #4ea1ff) 70%, transparent) !important;
+  background: color-mix(in oklab, var(--gex-accent, #4ea1ff) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--gex-accent, #4ea1ff) 70%, transparent) !important;
 }
 
 /* Two lines, then an ellipsis; the room is kept for one-line names so every cell is as tall */
@@ -349,7 +349,7 @@ const sizerStyle = computed((): Record<string, string> => (inColumns.value
   padding: 1px 2px;
   border-radius: 3px;
   background: var(--items-bg, #111);
-  color: var(--muted, #9aa4ae);
+  color: var(--gex-fg-muted, #9aa4ae);
   pointer-events: auto;
 }
 .hid-badge.protected { color: var(--warning, #e0a800); }

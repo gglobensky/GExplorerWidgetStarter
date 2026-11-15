@@ -100,7 +100,7 @@ const props = defineProps<{
   theme?: Record<string, string>
   placement?: {
     context: 'grid' | 'sidebar' | 'embedded' | 'dialog'
-    size: { cols?: number; rows?: number; width?: number; height?: number }
+    size: { cols?: number; rows?: number; width?: number; height?: number; textScale?: number }
   }
   editMode?: boolean
 }>()
@@ -275,6 +275,10 @@ const paneHeight = ref(0)
 const cellHeight = ref(0)
 const iconSize = computed<IconSize>(() => iconSizeOf(merged.value.itemSize))
 const iconMetrics = computed(() => (isMedia.value ? MEDIA_SIZES : ICON_SIZES)[iconSize.value])
+/** 0.16.7 (2026-11-14): GEM Shell's text scale (2 at 200 % Text size). */
+const textScale = computed(() => Number(props.placement?.size?.textScale) || 1)
+/** A cell's width: the size's width at 100 % text, wider at large text (its two lines of name grow; the icon doesn't). */
+const cellWidth = computed(() => Math.round(iconMetrics.value.cell * textScale.value))
 /** The system icons' size: in Media, folders and other files show their icon at half the thumbnail box. */
 const shownIconPx = computed(() => (isMedia.value ? mediaIconOf(iconMetrics.value.icon) : iconMetrics.value.icon))
 const iconPx = computed(() => requestPx(shownIconPx.value, pixelRatio()))
@@ -282,7 +286,7 @@ const iconPx = computed(() => requestPx(shownIconPx.value, pixelRatio()))
 const cols = computed(() => {
   if (!isGrid.value) return 1
   if (arrange.value === 'columns') return lanesFor(paneHeight.value - 2 * S.value.gap, cellHeight.value, S.value.gap)
-  return columnsFor(paneWidth.value - 2 * S.value.gap, iconMetrics.value.cell, S.value.gap)
+  return columnsFor(paneWidth.value - 2 * S.value.gap, cellWidth.value, S.value.gap)
 })
 
 // ---- PathBar ownership announce ----
@@ -619,7 +623,8 @@ function ensureItems(first: number, end: number) {
 watch(pageStart, () => ensureItems(vflow.first.value, vflow.end.value))
 
 // Re-measure when the layout, item size or column count changes the rows.
-watch([layout, () => merged.value.itemSize, cols, arrange], () => nextTick(() => vlist.measure()))
+// (0.16.7: and the text size: a row's height follows it)
+watch([layout, () => merged.value.itemSize, cols, arrange, textScale], () => nextTick(() => vlist.measure()))
 
 /** Line (in the current page window) of source index `i`. */
 function localRow(i: number): number {
@@ -2235,9 +2240,9 @@ const readingText = computed(() => {
    Theme
 ------------------------------------------------ */
 const hostVars = computed(() => ({
-  '--items-border':     props.theme?.border    || 'var(--border, #555)',
-  '--items-fg':         props.theme?.fg        || 'var(--fg, #eee)',
-  '--items-bg':         props.theme?.bg        || 'var(--surface-2, transparent)',
+  '--items-border':     props.theme?.border    || 'var(--gex-border, #555)',
+  '--items-fg':         props.theme?.fg        || 'var(--gex-fg, #eee)',
+  '--items-bg':         props.theme?.bg        || 'var(--gex-surface, transparent)',
   '--items-header-sep': props.theme?.headerSep || 'rgba(255,255,255,.22)',
 }) as Record<string, string>)
 
@@ -2453,7 +2458,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand, onMenuI
         :source-id="props.sourceId"
         :columns="cols"
         :order="arrange"
-        :cell-width="iconMetrics.cell"
+        :cell-width="cellWidth"
         :icon-px="iconPx"
         :icon-size="iconMetrics.icon"
         :sys-icon-size="shownIconPx"
@@ -2495,7 +2500,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand, onMenuI
   --items-gutter-right: 5%;
 
   /* column separator color */
-  --items-col-sep: color-mix(in oklab, var(--fg, #fff) 12%, transparent);
+  --items-col-sep: color-mix(in oklab, var(--gex-fg, #fff) 12%, transparent);
 
   /* Alignment hooks (app can override per-widget via CSS vars) */
   --items-row-text-align: left;
@@ -2543,8 +2548,8 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand, onMenuI
   box-sizing: border-box;
   pointer-events: none;
   z-index: 2;
-  border: 1px solid var(--accent,#4ea1ff);
-  background: color-mix(in oklab, var(--accent,#4ea1ff) 18%, transparent);
+  border: 1px solid var(--gex-accent,#4ea1ff);
+  background: color-mix(in oklab, var(--gex-accent,#4ea1ff) 18%, transparent);
   border-radius: 4px;
 }
 
@@ -2565,7 +2570,7 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand, onMenuI
   padding:4px 10px;
   border-radius:999px;
   font-size:var(--local-font-sm);
-  background:color-mix(in oklab, var(--surface-2, #1a1a1a) 88%, transparent);
+  background:color-mix(in oklab, var(--gex-surface, #1a1a1a) 88%, transparent);
   border:1px solid var(--items-border);
   box-shadow:0 2px 8px rgba(0,0,0,.35);
 }
@@ -2581,15 +2586,15 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand, onMenuI
   display:flex;
   align-items:center;
   max-width:calc(100% - 28px);
-  border:1px solid color-mix(in oklab, var(--accent,#4ea1ff) 55%, transparent);
+  border:1px solid color-mix(in oklab, var(--gex-accent,#4ea1ff) 55%, transparent);
   border-radius:999px;
-  background:color-mix(in oklab, var(--accent,#4ea1ff) 14%, var(--surface-2,#1a1a1a));
+  background:color-mix(in oklab, var(--gex-accent,#4ea1ff) 14%, var(--gex-surface,#1a1a1a));
   box-shadow:0 2px 8px rgba(0,0,0,.35);
   font-size:var(--local-font-sm);
 }
 .items-filter-chip button{ border:0; background:transparent; color:inherit; cursor:pointer; font:inherit; }
 .items-filter-chip-open{ display:flex; gap:5px; align-items:center; min-width:0; padding:3px 4px 3px 10px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-.items-filter-chip-open span{ color:var(--accent,#4ea1ff); font-size:.85em; }
+.items-filter-chip-open span{ color:var(--gex-accent,#4ea1ff); font-size:.85em; }
 .items-filter-chip-clear{ padding:3px 9px 3px 5px; opacity:.75; }
-.items-filter-chip-clear:hover{ opacity:1; color:var(--accent,#4ea1ff); }
+.items-filter-chip-clear:hover{ opacity:1; color:var(--gex-accent,#4ea1ff); }
 </style>

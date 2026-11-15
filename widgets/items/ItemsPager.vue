@@ -148,10 +148,10 @@ defineExpose({ focusInput })
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border, #666);
+  border: 1px solid var(--gex-border, #666);
   border-radius: 6px;
-  background: var(--bg, #1b1b1b);
-  color: var(--fg, #eee);
+  background: var(--gex-bg, #1b1b1b);
+  color: var(--gex-fg, #eee);
   cursor: pointer;
 }
 
@@ -160,7 +160,7 @@ defineExpose({ focusInput })
 .pg-b { width: 20px; }
 .pg-b svg { width: 11px; height: 11px; }
 
-.pg:hover:not(:disabled) { border-color: var(--accent, #4ea1ff); }
+.pg:hover:not(:disabled) { border-color: var(--gex-accent, #4ea1ff); }
 .pg:disabled { opacity: .45; cursor: default; }
 
 .pg-field {
@@ -169,14 +169,14 @@ defineExpose({ focusInput })
   align-items: center;
   gap: 4px;
   padding: 0 6px;
-  border: 1px solid var(--border, #666);
+  border: 1px solid var(--gex-border, #666);
   border-radius: 6px;
-  background: var(--bg, #1b1b1b);
-  color: var(--fg, #eee);
+  background: var(--gex-bg, #1b1b1b);
+  color: var(--gex-fg, #eee);
   cursor: text;
 }
 
-.pg-field:focus-within { border-color: var(--accent, #4ea1ff); }
+.pg-field:focus-within { border-color: var(--gex-accent, #4ea1ff); }
 
 .pg-input {
   min-width: 2ch;
@@ -200,8 +200,8 @@ defineExpose({ focusInput })
 .pg-badge {
   padding: 1px 8px;
   border-radius: 10px;
-  background: color-mix(in oklab, var(--bg, #1b1b1b) 80%, transparent);
-  border: 1px solid color-mix(in oklab, var(--border, #666) 70%, transparent);
+  background: color-mix(in oklab, var(--gex-bg, #1b1b1b) 80%, transparent);
+  border: 1px solid color-mix(in oklab, var(--gex-border, #666) 70%, transparent);
   font-size: .85em;
   opacity: .8;
   font-variant-numeric: tabular-nums;

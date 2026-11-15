@@ -465,9 +465,9 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl, fit })
 
 <style scoped>
 .row.folder-drop-target {
-  box-shadow: inset 0 0 0 2px var(--accent, #4ea1ff),
-              inset 0 0 0 4px color-mix(in oklab, var(--accent, #4ea1ff) 25%, transparent) !important;
-  background: color-mix(in oklab, var(--accent, #4ea1ff) 10%, transparent) !important;
+  box-shadow: inset 0 0 0 2px var(--gex-accent, #4ea1ff),
+              inset 0 0 0 4px color-mix(in oklab, var(--gex-accent, #4ea1ff) 25%, transparent) !important;
+  background: color-mix(in oklab, var(--gex-accent, #4ea1ff) 10%, transparent) !important;
 }
 
 /* ── VFS state CSS hooks ──────────────────────────────────────────────────────
@@ -491,8 +491,8 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl, fit })
   font-weight:     600;
   flex-shrink:     0;
   margin-right:    3px;
-  background:      color-mix(in oklab, var(--accent, #4ea1ff) 15%, transparent);
-  color:           var(--accent, #4ea1ff);
+  background:      color-mix(in oklab, var(--gex-accent, #4ea1ff) 15%, transparent);
+  color:           var(--gex-accent, #4ea1ff);
   user-select:     none;
   cursor:          default;
 }
@@ -548,7 +548,7 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl, fit })
   align-items: center;
   padding: 0 var(--padX);
   min-width: 0;
-  background: var(--items-header-bg, var(--surface-2, #222));
+  background: var(--items-header-bg, var(--gex-surface, #222));
   border: 1px solid transparent;   /* as wide as a row: rows have a 1px border */
   border-radius: var(--local-radius);
   box-sizing: border-box;
@@ -585,11 +585,11 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl, fit })
 .resize-handle::after {
   content: ""; position: absolute; top: 0; bottom: 0; left: 50%;
   transform: translateX(-0.5px); width: 1px;
-  background: color-mix(in oklab, var(--fg, #fff) 28%, transparent);
+  background: color-mix(in oklab, var(--gex-fg, #fff) 28%, transparent);
 }
 
 .th:hover .resize-handle::after {
-  background: color-mix(in oklab, var(--accent, #4ea1ff) 55%, transparent);
+  background: color-mix(in oklab, var(--gex-accent, #4ea1ff) 55%, transparent);
 }
 
 .details-scroll {
@@ -640,7 +640,7 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl, fit })
 .placeholder { opacity: 0.35; }
 
 .row:focus, .row:focus-visible { outline: none !important; }
-.row.selected { box-shadow: inset 0 0 0 2px var(--accent, #4ea1ff) !important; }
+.row.selected { box-shadow: inset 0 0 0 2px var(--gex-accent, #4ea1ff) !important; }
 
 .td-name { display: flex; align-items: center; gap: var(--space-sm); min-width: 0; }
 
@@ -682,7 +682,7 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl, fit })
   padding: 1px 2px;
   border-radius: 3px;
   background: var(--items-bg, #111);
-  color: var(--accent, #4ea1ff);
+  color: var(--gex-accent, #4ea1ff);
   pointer-events: auto;
 }
 
@@ -703,8 +703,8 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl, fit })
 
 .marquee {
   position: absolute; box-sizing: border-box; pointer-events: none; z-index: 2;
-  border: 1px solid var(--accent, #4ea1ff);
-  background: color-mix(in oklab, var(--accent, #4ea1ff) 18%, transparent);
+  border: 1px solid var(--gex-accent, #4ea1ff);
+  background: color-mix(in oklab, var(--gex-accent, #4ea1ff) 18%, transparent);
   border-radius: 4px;
 }
 
@@ -720,7 +720,7 @@ defineExpose({ detailsScrollEl, detailsRootEl, headerEl, padEl, fit })
   padding: 1px 2px;
   border-radius: 3px;
   background: var(--items-bg, #111);
-  color: var(--muted, #9aa4ae);
+  color: var(--gex-fg-muted, #9aa4ae);
   pointer-events: auto;
 }
 .hid-badge.protected { color: var(--warning, #e0a800); }
