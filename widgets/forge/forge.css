@@ -272,5 +272,8 @@
 /* 0.2.13: the Explorer's rows left out of Check all */
 .gf-skip { flex: none; margin-left: 4px; color: var(--gf-dim); font-size: 11px; }
 .gf-name.gf-skipped { opacity: .6; }
+/* 0.3.0: a workspace's shared libraries (the Explorer) */
+.gf-name.gf-lib { font-style: italic; }
+.gf-lib-ver { flex: none; margin-left: 6px; font-size: 11px; }
 .gf-pfile { padding: 6px 8px 1px; font: 12px var(--gf-mono); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gf-pcount { font-family: inherit; font-weight: 400; color: var(--gf-dim); margin-left: 4px; }

@@ -13,6 +13,10 @@
     file in the editor has a mark at its left; the project's name: the same menu on a right-click as on a click.
     0.1.11: drag files onto a folder (or the project's name) to move them, their imports updated; Rename… is left
     out of the menu when several are selected.
+    0.3.0: a workspace's shared libraries under "Shared libraries" (@shared): each library's row tells its version, what
+    it is and which of the workspace's widgets use it (found when the pointer first rests on it). 0.3.1: the rows'
+    tooltips are GEM Shell's (v-gex-tooltip), not the browser's title. Edited like the
+    project's files; a file can't move between the project and a library.
 -->
 <template>
     <div ref="rootEl" class="gf-explorer" :class="{ dragging: !!dragging }">
@@ -25,13 +29,15 @@
         <button v-for="r in rows" :key="r.key" type="button"
                 class="gf-row" :class="{ on: r.path === project.state.active, dir: r.dir, flash: r.path === flashed, sel: selected.includes(r.path), drop: r.dir && dropAt === r.path }" :data-row="r.path"
                 :style="{ paddingLeft: `${8 + r.depth * 14}px` }"
-                :title="r.path"
+                v-gex-tooltip="tipOf(r)"
                 :aria-selected="selected.includes(r.path)"
+                @pointerenter="onRowEnter(r)"
                 @pointerdown="onRowDown($event, r)"
                 @click="onRowClick($event, r)"
                 @contextmenu.prevent="onRowMenu($event, r)">
             <span class="gf-ico">{{ r.dir ? (folded.has(r.path) ? '▸' : '▾') : icon(r.name) }}</span>
-            <span class="gf-name" :class="{ 'gf-skipped': isSkipped(project, r.path) }">{{ r.name }}</span>
+            <span class="gf-name" :class="{ 'gf-skipped': isSkipped(project, r.path), 'gf-lib': isLibRow(r) }">{{ r.path === SHARED_DIR ? 'Shared libraries' : r.name }}</span>
+            <span v-if="libraryOf(r)" class="gf-dim gf-lib-ver">{{ libraryOf(r)!.version }}</span>
             <!-- 0.2.13: left out of Check all (this one; what's in a folder left out is dimmed) -->
             <span v-if="project.state.checkSkip.includes(r.path)" class="gf-skip" title="Left out of Check all (right-click ▸ Include in Check all)">⊘</span>
             <span v-if="!r.dir && project.state.conflicts.includes(r.path)" class="gf-warn" title="Changed on disk while you edited it">⚠</span>
@@ -43,8 +49,8 @@
 
 <script setup lang="ts">
 import { computed, inject, nextTick, reactive, ref, watch } from 'vue'
-import type { WidgetSdk } from 'gexplorer/widgets'
-import type { Project } from './project'
+import type { TooltipOptions, WidgetSdk } from 'gexplorer/widgets'
+import { SHARED, type Project } from './project'
 import { isSkipped } from './checks'
 import { prettyFor } from './pretty'
 
@@ -170,6 +176,31 @@ watch(() => props.project.state.explorerReveal?.seq, async () => {
 })
 
 type Row = { key: string; path: string; name: string; depth: number; dir: boolean }
+
+// ── 0.3.0: a workspace's shared libraries (@shared/<name>/…) ─────────────────────────────────────────────────────
+const SHARED_DIR = SHARED.slice(0, -1)
+/** The library a row IS (its folder: @shared/<name>), or undefined. */
+function libraryOf(r: Row) {
+    if (!r.dir || !r.path.startsWith(SHARED) || r.path.slice(SHARED.length).includes('/')) return undefined
+    return props.project.state.libraries.find(l => l.name === r.path.slice(SHARED.length))
+}
+const isLibRow = (r: Row) => r.path === SHARED_DIR || !!libraryOf(r)
+/** 0.3.1: GEM Shell's tooltips (easier to read than the browser's title): the path; a library's details. */
+function tipOf(r: Row): TooltipOptions | string {
+    const ws = props.project.state.workspace
+    if (r.path === SHARED_DIR) return { content: 'Shared libraries', detail: `The workspace's libraries (${ws}${ws.includes('\\') ? '\\' : '/'}shared), imported as @shared/<name> and built into each widget that uses them.` }
+    const lib = libraryOf(r)
+    if (!lib) return r.path
+    const users = props.project.state.libraryUsers[lib.name]
+    const used = users === 'finding' ? 'Finding the widgets that use it…'
+        : Array.isArray(users) ? (users.length ? `Used by ${users.join(', ')}.` : 'No widget of the workspace uses it.')
+            : 'Finding the widgets that use it…'
+    return { content: `${lib.name} ${lib.version}`, detail: [lib.description, used].filter(Boolean).join(' ') }
+}
+function onRowEnter(r: Row) {
+    const lib = libraryOf(r)
+    if (lib && props.project.state.libraryUsers[lib.name] === undefined) void props.project.libraryUsers(lib.name)
+}
 
 const rows = computed<Row[]>(() => {
     // A tree from the paths: folders first, then files, each sorted by name

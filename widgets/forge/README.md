@@ -304,7 +304,22 @@ preview. GEM Shell's part: `PhotinoVue1/FORGE-SHELL-ADDITIONS.md` (forge-1 to fo
   end unless you scroll up), and a Cancel button stops npm at once. npm now runs through GEM Shell's runner for Node
   tools: one npm per project folder, so two projects (two GEM Forge copies) can install side by side.
 
-Next (claude/forge-dev-tools-design.md): ESLint (the project's own, run by Node), TypeScript and Prettier in a
+## 0.3.0 (2026-11-15): workspaces
+
+- **Shared libraries work in GEM Forge.** A project in `<root>/widgets/<name>`, where `<root>` has a `package.json`
+  and a `shared/` folder (the starter's layout), is in a workspace: GEM Forge reads `<root>` too (GEM Shell asks once).
+  - The workspace's libraries (`shared/<name>/`, with their `library.json`) show in the Explorer under **Shared
+    libraries**, with their version; rest the pointer on one to see which of the workspace's widgets use it.
+  - `import { X } from '@shared/<name>'` builds (GEM Shell bundles the library), TypeScript knows it (completions, go
+    to definition), Search and Check all include the libraries.
+  - Edit a library like the project's files: saved in place, and the project runs again. A file stays where it is:
+    it can't move between the project and a library.
+  - The watch is on the workspace: a library changed by another editor reloads here too.
+  - npm and the build's packages are the workspace's (its `package.json` and `node_modules`); TypeScript reads the
+    types of the packages this project and its libraries import.
+
+Next (claude/forge-dev-tools-design.md): rebuilding the other widgets a library edit affects (asked, with a choice
+to remember), ESLint (the project's own, run by Node), TypeScript and Prettier in a
 background worker, explorer projects in the grid preview, a terminal part lent by the Console.
 
 ## Files

@@ -7,12 +7,14 @@
     0.2.3: a moving bar and the seconds while npm works (it says nothing until it's done; its output follows).
     0.2.4: npm runs in the project (project.packagesOp), so Problems' "＋ Add date-fns" uses it too; this part shows it.
     0.2.19: npm's output comes while it works (GEM Shell's Node tools' runner); Cancel stops it at once.
+    0.3.0: in a workspace, npm works in its root (its package.json, its node_modules): the line under the versions says so.
 -->
 <template>
     <div class="gf-pkgs">
         <div v-if="!project.state.folder" class="gf-empty">Packages need a project folder (New ▾ or Open a folder…).</div>
         <template v-else>
             <div class="gf-dim gf-pkgs-node">{{ nodeLine }}</div>
+            <div v-if="project.state.workspace" class="gf-dim gf-pkgs-node" :title="project.state.workspace">The workspace's packages (the package.json of {{ project.state.workspace }}): its widgets share them.</div>
             <div class="gf-search-bar">
                 <input v-model="names" class="gf-search-in" spellcheck="false" placeholder="date-fns   or   chart.js@4   (several: spaces)"
                        :disabled="pkg.busy || !npmOk" @keydown.enter="add">
@@ -84,7 +86,7 @@ onBeforeUnmount(() => window.clearInterval(tick))
 
 /** package.json's dependencies (and devDependencies), as GEM Forge has it. */
 const deps = computed(() => {
-    const text = props.project.file('package.json')?.text
+    const text = props.project.packageJsonText()   // 0.3.0: the workspace's in a workspace
     if (!text) return []
     try {
         const p = JSON.parse(text)

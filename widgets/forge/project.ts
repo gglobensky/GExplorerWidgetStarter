@@ -22,6 +22,13 @@
 // state (editorStates: undo, selection). When GEM Shell puts the copy away for good (hibernation, a restart),
 // snapshot() is what's saved (plain data: the folder or the sample's files, unsaved edits, open tabs, cursors, live
 // reload) and restore() brings it back: the folder read again, the edits put back on top.
+//
+// WORKSPACES (0.3.0, 2026-11-15; claude/forge-dev-tools-design.md 4b): a project at <root>/widgets/<name> whose <root>
+// has a package.json and a shared/ folder (the starter's layout) is in a WORKSPACE: GEM Forge reads <root> too (GEM
+// Shell asks once for it). Its suite libraries (shared/<name>/, library.json) are files of the project under
+// @shared/<name>/... (the name widgets import), built with it (GEM Shell maps @shared/* to them), checked by TypeScript,
+// edited and saved in place; the watch is on <root>; npm and the build's packages are <root>'s (its package.json and
+// node_modules). Paths never leave their place: a project file stays in the project, a library's in its library.
 import { reactive, markRaw } from 'vue'
 import type { WidgetSdk, WidgetDev, DevProblem, DevChange, ListingEntry, DevInstalledState, NamingToken } from 'gexplorer/widgets'
 import { GUIDE_FILES } from './templates'
@@ -119,6 +126,13 @@ export function projectIdOf(name: string): string {
 const sepOf = (folder: string) => (folder.includes('\\') ? '\\' : '/')
 const joinPath = (folder: string, rel: string) => folder.replace(/[\\/]+$/, '') + sepOf(folder) + rel.split('/').join(sepOf(folder))
 const baseName = (p: string) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? p
+// 0.3.0: a workspace's shared libraries, as the project sees them (the name widgets import)
+export const SHARED = '@shared/'
+const LIB_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+/** 0.3.0: the library a path is in ('@shared/library-ui/x.ts' → 'library-ui'), or null (a project file). */
+export const libOf = (rel: string): string | null => (rel.startsWith(SHARED) ? rel.slice(SHARED.length).split('/')[0] || null : null)
+/** 0.3.0: a workspace's library (shared/<name>/library.json). */
+export type Library = { name: string; version: string; description: string; uses: string[] }
 
 /** Built: not the guide for AIs, no notes, no typings. */
 // 0.2.0: package.json and package-lock.json are npm's (the build reads the packages from node_modules)
@@ -214,6 +228,12 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
         /** 0.2.4: a part to show (Widget places it): Problems' "＋ Add" shows Packages. */
         showPart: null as { kind: string; seq: number } | null,
         typeProblems: { path: '', items: [] as DevProblem[] },
+        /** 0.3.0: the workspace the project is in ('' when none), its libraries, its package.json's text. */
+        workspace: '',
+        libraries: [] as Library[],
+        workspacePackage: '',
+        /** 0.3.0: the workspace's widgets using each library (found when asked: libraryUsers), by library name. */
+        libraryUsers: {} as Record<string, string[] | 'finding'>,
     })
 
     let stopWatch: (() => void) | null = null
@@ -261,7 +281,8 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
         window.clearTimeout(runTimer)
         Object.assign(s, { id: '', name: '', folder: '', files: [], openTabs: [], active: '', errors: [], warnings: [], notes: [],
             build: 0, lastOkAt: 0, conflicts: [], reveal: null, status: '', widgetId: '', installed: 'none', dirs: [], pinned: [], explorerReveal: null, selected: [],
-            typeProblems: { path: '', items: [] }, typesNote: '', checked: { running: false, done: 0, total: 0, at: 0, files: [] }, checkSkip: [] })
+            typeProblems: { path: '', items: [] }, typesNote: '', checked: { running: false, done: 0, total: 0, at: 0, files: [] }, checkSkip: [],
+            workspace: '', libraries: [], workspacePackage: '', libraryUsers: {} })
         s.pkg.output = ''
         installBuild = null
         editorStates.clear()
@@ -326,7 +347,8 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
     }
 
     async function readOne(folder: string, rel: string): Promise<PFile> {
-        const full = joinPath(folder, rel)
+        // 0.3.0: a library's file is in the workspace's shared/<name>/
+        const full = libOf(rel) && s.workspace ? diskPath(rel) : joinPath(folder, rel)
         if (BINARY_FILE.test(rel)) {
             if (!sdk.fsReadBytes) throw new Error('GEM Forge needs the Read permission.')
             const blob = await sdk.fsReadBytes(full, { maxBytes: MAX_BINARY })
@@ -337,6 +359,89 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
         const bom = raw.charCodeAt(0) === 0xfeff
         const text = (bom ? raw.slice(1) : raw).replace(/\r\n/g, '\n')
         return { path: rel, text, saved: text, bom, crlf: raw.includes('\r\n') }
+    }
+
+    /** 0.3.0: a project's path on disk: its own files in its folder, a library's in the workspace's shared/<name>/. */
+    function diskPath(rel: string): string {
+        if (libOf(rel) && s.workspace) return joinPath(s.workspace, 'shared/' + rel.slice(SHARED.length))
+        return rel ? joinPath(s.folder, rel) : s.folder
+    }
+
+    /**
+     * 0.3.0: the workspace <folder> is in: <root>/widgets/<name> with <root>/package.json and <root>/shared/ (the
+     * starter's layout). Reading <root> asks GEM Shell's Read question once; refused, or another layout: none ('').
+     */
+    async function findWorkspace(folder: string): Promise<string> {
+        const parts = folder.replace(/[\\/]+$/, '').split(/[\\/]/)
+        if (parts.length < 3 || parts[parts.length - 2].toLowerCase() !== 'widgets') return ''
+        const root = parts.slice(0, -2).join(sepOf(folder))
+        if (!root || /^[A-Za-z]:$/.test(root)) return ''
+        try {
+            const names = new Map((await listOne(root)).map(e => [e.Name.toLowerCase(), e.Kind]))
+            return names.get('package.json') === 'file' && names.get('shared') === 'dir' ? root : ''
+        } catch {
+            return ''
+        }
+    }
+
+    /** 0.3.0: the workspace's libraries (shared/<name>/library.json) and their files, as @shared/<name>/<file>. */
+    async function readLibraries(root: string, room: number): Promise<{ libs: Library[]; files: PFile[] }> {
+        const libs: Library[] = []
+        const files: PFile[] = []
+        const shared = joinPath(root, 'shared')
+        for (const e of await listOne(shared)) {
+            if (e.Kind !== 'dir' || !LIB_NAME.test(e.Name)) continue
+            const dir = joinPath(shared, e.Name)
+            let meta: any
+            try { meta = JSON.parse((await sdk.fsReadText!(joinPath(dir, 'library.json'), { maxBytes: 64 * 1024 })).text) } catch { continue }
+            libs.push({
+                name: e.Name, version: typeof meta?.version === 'string' ? meta.version : '',
+                description: typeof meta?.description === 'string' ? meta.description : '',
+                uses: Array.isArray(meta?.uses) ? meta.uses.filter((u: unknown) => typeof u === 'string') : [],
+            })
+            for (const p of await listAll(dir)) {
+                if (files.length >= room) break
+                try {
+                    const f = await readOne(dir, p)
+                    files.push({ ...f, path: `${SHARED}${e.Name}/${p}` })
+                } catch (err) { log('warn', `${SHARED}${e.Name}/${p}: not read (${String((err as Error)?.message ?? err)})`) }
+            }
+        }
+        return { libs, files }
+    }
+
+    /** 0.3.0: the workspace's package.json read again (npm wrote it). */
+    async function readWorkspacePackage() {
+        if (!s.workspace || !sdk.fsReadText) return
+        try { s.workspacePackage = (await sdk.fsReadText(joinPath(s.workspace, 'package.json'), { maxBytes: MAX_TEXT })).text } catch { s.workspacePackage = '' }
+    }
+
+    /**
+     * 0.3.0: the workspace's widgets that import @shared/<name> (widgets/*: their .ts and .vue files read once, when
+     * asked; found again after a change under widgets/). For the Explorer's library rows.
+     */
+    async function libraryUsers(name: string): Promise<string[]> {
+        const known = s.libraryUsers[name]
+        if (Array.isArray(known)) return known
+        if (known === 'finding' || !s.workspace || !sdk.fsReadText) return []
+        s.libraryUsers[name] = 'finding'
+        const root = s.workspace
+        const users: string[] = []
+        const needle = `${SHARED}${name}`
+        try {
+            for (const w of await listOne(joinPath(root, 'widgets'))) {
+                if (w.Kind !== 'dir') continue
+                const dir = joinPath(joinPath(root, 'widgets'), w.Name)
+                for (const p of (await listAll(dir)).filter(x => /\.(ts|vue|js|mjs)$/i.test(x))) {
+                    let text = ''
+                    try { text = (await sdk.fsReadText(joinPath(dir, p), { maxBytes: MAX_TEXT })).text } catch { continue }
+                    if (new RegExp(`['"\`]${needle.replace(/[-/]/g, m => '\\' + m)}['"\`]`).test(text)) { users.push(w.Name); break }
+                }
+            }
+        } catch (err) { log('warn', `${needle}: its widgets not found (${String((err as Error)?.message ?? err)})`) }
+        if (s.workspace !== root) return []
+        s.libraryUsers[name] = users
+        return users
     }
 
     /** A project folder: read, watched, run. */
@@ -353,9 +458,22 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
             s.folder = folder
             s.name = baseName(folder)
             s.id = projectIdOf(s.name)
+            // 0.3.0: its workspace (shared libraries, one package.json)
+            const root = await findWorkspace(folder)
+            let libLine = ''
+            if (root) {
+                s.workspace = root
+                await readWorkspacePackage()
+                try {
+                    const { libs, files: libFiles } = await readLibraries(root, Math.max(0, MAX_FILES - files.length))
+                    s.libraries = libs
+                    files.push(...libFiles)
+                    libLine = `; workspace ${baseName(root)}, ${libs.length} shared librar${libs.length === 1 ? 'y' : 'ies'}`
+                } catch (err) { log('warn', `${root}: its shared libraries not read (${String((err as Error)?.message ?? err)})`) }
+            }
             s.files = files
             showFirst()
-            say(paths.length >= MAX_FILES ? `${s.name}: the first ${MAX_FILES} files.` : `${s.name}: ${files.length} files.`)
+            say(paths.length >= MAX_FILES ? `${s.name}: the first ${MAX_FILES} files${libLine}.` : `${s.name}: ${files.length} files${libLine}.`)
             if (!files.some(f => f.path === 'entry.ts')) say(`${s.name} has no entry.ts: not a widget project yet (New project makes one).`, false)
             await startWatch()
             void refreshInstalled()
@@ -370,16 +488,39 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
     // ── The folder watch: what an AI (or another editor) writes ────────────────────────────────────────────────
     async function startWatch() {
         if (!dev || !s.folder) return
-        const r = await dev.watch(s.folder, e => void onDisk(e.changes, e.overflow))
+        // 0.3.0: a workspace is watched from its root (the project and its libraries; the other widgets' changes only
+        // forget which widgets use a library)
+        const where = s.workspace || s.folder
+        const r = await dev.watch(where, e => void onDisk(e.changes, e.overflow))
         if (r.ok) { stopWatch = r.stop; s.watching = true }
-        else log('warn', `Not watching ${s.folder}: ${r.error}`)
+        else log('warn', `Not watching ${where}: ${r.error}`)
+    }
+
+    /** 0.3.0: a change under the workspace's root as a path of the project ('' when it's neither the project's nor a library's). */
+    function fromRoot(p: string): string {
+        const own = s.folder.slice(s.workspace.length).replace(/^[\\/]+/, '').split(/[\\/]/).join('/')
+        if (p.startsWith(`${own}/`)) return p.slice(own.length + 1)
+        if (p.startsWith('shared/')) {
+            const rest = p.slice('shared/'.length)
+            const name = rest.split('/')[0]
+            if (s.libraries.some(l => l.name === name) && rest.length > name.length + 1) return SHARED + rest
+        }
+        if (p.startsWith('widgets/')) s.libraryUsers = {}
+        return ''
     }
 
     async function onDisk(changes: DevChange[], overflow: boolean) {
         if (!s.folder) return
         const folder = s.folder
         let touched = false
-        const list = overflow ? (await listAll(folder)).map(path => ({ path, kind: 'changed' as const })) : changes
+        let list: { path: string; kind: DevChange['kind'] }[]
+        if (overflow) {
+            list = (await listAll(folder)).map(path => ({ path, kind: 'changed' as const }))
+            // 0.3.0: the libraries' files too
+            for (const f of s.files) if (libOf(f.path)) list.push({ path: f.path, kind: 'changed' })
+        } else {
+            list = s.workspace ? changes.map(c => ({ path: fromRoot(c.path), kind: c.kind })).filter(c => c.path) : changes
+        }
         for (const c of list) {
             if (!TEXT_FILE.test(c.path) && !BINARY_FILE.test(c.path)) continue
             const mine = file(c.path)
@@ -511,7 +652,7 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
         }
         try {
             const text = f.text
-            await sdk.fsWriteText(joinPath(s.folder, path), f.crlf ? text.replace(/\n/g, '\r\n') : text, { overwrite: true, bom: !!f.bom })
+            await sdk.fsWriteText(diskPath(path), f.crlf ? text.replace(/\n/g, '\r\n') : text, { overwrite: true, bom: !!f.bom })
             f.saved = text
             s.conflicts = s.conflicts.filter(p => p !== path)
             say(`${path} saved.`)
@@ -661,7 +802,33 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
     // ── New project, install (0.1c) ─────────────────────────────────────────────────────────────────────────────
     /** The files sent to the build. */
     function buildFiles() {
-        return s.files.filter(f => isBuilt(f.path)).map(f => (f.base64 !== undefined ? { path: f.path, base64: f.base64 } : { path: f.path, text: f.text }))
+        return s.files.filter(f => isBuilt(f.path)).map(f => (f.base64 !== undefined ? { path: f.path, base64: f.base64 }
+            : { path: f.path, text: libOf(f.path) || !s.workspace ? f.text : withSharedReach(f.path, f.text) }))
+    }
+
+    /**
+     * 0.3.2: a project file's relative import that reaches into the workspace's shared/ ('../../shared/library-ui/x.ts',
+     * which the starter allows with a warning, e.g. for node's tests) as the library's path ('@shared/library-ui/x.ts');
+     * null when <spec> isn't one. The project sits at <root>/<own>, the libraries at <root>/shared/<name>/.
+     */
+    function sharedSpec(fromRel: string, spec: string): string | null {
+        if (!s.workspace || !/^\.\.?\//.test(spec)) return null
+        const own = s.folder.slice(s.workspace.length).replace(/^[\\/]+/, '').split(/[\\/]/).filter(Boolean)
+        const parts = [...own, ...fromRel.split('/').slice(0, -1)]
+        for (const seg of spec.split('/')) {
+            if (seg === '.' || seg === '') continue
+            if (seg === '..') { if (!parts.length) return null; parts.pop() } else parts.push(seg)
+        }
+        if (parts[0] !== 'shared' || parts.length < 3 || !s.libraries.some(l => l.name === parts[1])) return null
+        return SHARED + parts.slice(1).join('/')
+    }
+    /** 0.3.2: <text> (a project file's) with its imports into shared/ as the libraries' paths (for the build only). */
+    function withSharedReach(path: string, text: string): string {
+        if (!/\.(ts|mts|js|mjs|vue)$/i.test(path) || !text.includes('shared/')) return text
+        return text.replace(/(\bfrom\s*|\bimport\s*\(?\s*)(['"])(\.\.?\/[^'"\n]*)\2/g, (m, lead: string, q: string, spec: string) => {
+            const to = sharedSpec(path, spec)
+            return to ? `${lead}${q}${to}${q}` : m
+        })
     }
 
     /** <files> written in <folder> (an empty one: the user picked or made it), then opened. false: not made (said why). */
@@ -775,8 +942,13 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
         const to = asPath ? newName : (dir ? `${dir}/` : '') + newName.trim()
         if (to === rel) return null
         if (file(to)) { say(`${to} is already there.`, false); return null }
+        // 0.3.0: a file stays where it is: in the project, or in its library
+        if (libOf(rel) !== libOf(to) || to === SHARED.slice(0, -1) || (libOf(to) && !to.slice(SHARED.length).includes('/'))) {
+            say(`${rel} stays ${libOf(rel) ? `in the library ${libOf(rel)}` : 'in the project'}: a file can't move between the project and a shared library.`, false)
+            return null
+        }
         if (s.folder) {
-            const r = await sdk.fsRename?.(joinPath(s.folder, rel), joinPath(s.folder, to))
+            const r = await sdk.fsRename?.(diskPath(rel), diskPath(to))
             if (!r?.ok) { say(`Not renamed: ${r?.error ?? 'GEM Shell can\'t rename for GEM Forge here.'}`, false); return null }
         }
         f.path = to
@@ -820,13 +992,16 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
         const under = (p: string) => rels.some(r => p === r || p.startsWith(`${r}/`))
         if (s.folder) {
             if (!sdk.fsDelete) { say('This GEM Shell can\'t delete for GEM Forge.', false); return }
-            try { await sdk.fsDelete(rels.map(r => joinPath(s.folder, r))) } catch (err) {
+            // 0.3.0: the shared libraries' folder itself is the workspace's, never deleted from here
+            rels = rels.filter(r => r !== SHARED.slice(0, -1))
+            if (!rels.length) return
+            try { await sdk.fsDelete(rels.map(r => diskPath(r))) } catch (err) {
                 say(`Not deleted: ${String((err as Error)?.message ?? err)}`, false)
             }
             // What is really gone (the question may have been cancelled)
             const gone: string[] = []
             for (const f of s.files.filter(x => under(x.path))) {
-                try { await sdk.fsReadText!(joinPath(s.folder, f.path)) } catch { gone.push(f.path) }
+                try { await sdk.fsReadText!(diskPath(f.path)) } catch { gone.push(f.path) }
             }
             dropFiles(gone)
             s.dirs = s.dirs.filter(d => !under(d) || s.files.some(f => f.path.startsWith(`${d}/`)))
@@ -847,16 +1022,17 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
     /** A copy beside each (GEM Shell's copy: the naming pattern names it). */
     async function duplicatePaths(rels: string[]): Promise<void> {
         if (!s.folder || !sdk.fsCopy || !rels.length) return
-        try { await sdk.fsCopy(rels.map(r => ({ from: joinPath(s.folder, r), to: joinPath(s.folder, r) }))) } catch (err) {
+        try { await sdk.fsCopy(rels.map(r => ({ from: diskPath(r), to: diskPath(r) }))) } catch (err) {
             say(`Not duplicated: ${String((err as Error)?.message ?? err)}`, false)
         }
     }
 
     async function createFile(dir: string, name: string): Promise<boolean> {
         // CHANGED (0.1.9): a taken name gets the user's naming pattern ("Untitled (2).vue")
+        if (dir === SHARED.slice(0, -1)) { say('New files go in a library\'s folder (or in the project): shared/ holds the libraries only.', false); return false }
         const rel = (dir ? `${dir}/` : '') + await freeNameIn(dir, name)
         if (s.folder) {
-            try { await sdk.fsWriteText!(joinPath(s.folder, rel), '', { overwrite: false }) } catch (err) {
+            try { await sdk.fsWriteText!(diskPath(rel), '', { overwrite: false }) } catch (err) {
                 say(`Not made: ${String((err as Error)?.message ?? err)}`, false)
                 return false
             }
@@ -870,9 +1046,10 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
 
     /** A new folder <name> in <dir>: shown in the Explorer until it has files. */
     async function createFolder(dir: string, name: string): Promise<boolean> {
+        if (dir === SHARED.slice(0, -1)) { say('A new library is made in the workspace (shared/<name>/ with its library.json), not from here yet.', false); return false }
         const rel = (dir ? `${dir}/` : '') + await freeNameIn(dir, name, true)
         if (s.folder) {
-            try { await sdk.fsMkdir?.(joinPath(s.folder, rel)) } catch (err) {
+            try { await sdk.fsMkdir?.(diskPath(rel)) } catch (err) {
                 say(`Not made: ${String((err as Error)?.message ?? err)}`, false)
                 return false
             }
@@ -937,7 +1114,9 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
     }
 
     /** A file's full path (a folder project), or ''. */
-    const pathOf = (rel: string) => (s.folder ? (rel ? joinPath(s.folder, rel) : s.folder) : '')
+    const pathOf = (rel: string) => (s.folder ? (rel === SHARED.slice(0, -1) && s.workspace ? joinPath(s.workspace, 'shared') : diskPath(rel)) : '')
+    /** 0.3.0: a path in the folder npm works in (the workspace's root, else the project's). */
+    const packagePathOf = (rel: string) => { const base = packageFolder(); return base ? (rel ? joinPath(base, rel) : base) : '' }
 
     /** entry.ts's id, and whether it's installed (the Widget ▾ menu). */
     async function refreshInstalled() {
@@ -968,15 +1147,21 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
     // ── npm packages (0.2.0: the Packages part; sdk.dev().packages runs Node's npm) ────────────────────────────────
     /** The folder whose node_modules the build bundles from: its package.json lists dependencies. */
     function packagesFrom(): string | undefined {
-        const text = s.folder ? file('package.json')?.text : undefined
+        const text = packageJsonText()
         if (!text) return undefined
         try {
-            const deps = JSON.parse(text)?.dependencies
-            return deps && typeof deps === 'object' && Object.keys(deps).length ? s.folder : undefined
+            const p = JSON.parse(text)
+            // 0.3.0: a workspace's package.json lists its widgets' packages under devDependencies too (the starter's)
+            const deps = { ...(p?.dependencies ?? {}), ...(s.workspace ? p?.devDependencies ?? {} : {}) }
+            return Object.keys(deps).length ? packageFolder() : undefined
         } catch {
             return undefined
         }
     }
+    /** 0.3.0: the folder npm works in: the workspace's root, else the project's. */
+    function packageFolder(): string { return s.workspace || s.folder }
+    /** 0.3.0: that folder's package.json as it is now ('' when none). */
+    function packageJsonText(): string { return s.workspace ? s.workspacePackage : file('package.json')?.text ?? '' }
 
     /** <path> read again from the folder (npm wrote it): taken unless you edited it here (then: keep yours or the disk's). */
     async function reloadFile(path: string) {
@@ -996,6 +1181,7 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
     /** package.json there and saved before npm writes in it: a minimal one made when missing. false: not (said why). */
     async function ensurePackageJson(): Promise<boolean> {
         if (!s.folder) { say('Packages need a project folder (New ▾ or Open a folder…).', false); return false }
+        if (s.workspace) return !!s.workspacePackage   // 0.3.0: the workspace's own
         if (file('package.json')) return isDirty('package.json') ? await save('package.json') : true
         if (!sdk.fsWriteText) { say('This GEM Shell can\'t write files for GEM Forge.', false); return false }
         const text = JSON.stringify({ name: s.id || 'widget', version: '0.0.0', private: true, dependencies: {} }, null, 2) + '\n'
@@ -1028,7 +1214,7 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
             if (!(await ensurePackageJson())) return false
             pkgStop = new AbortController()
             let streamed = ''
-            const r = await dev.packages(kind, s.folder, list, {
+            const r = await dev.packages(kind, packageFolder(), list, {
                 signal: pkgStop.signal,
                 // 0.2.19: npm's output while it works (the last 64 KB kept)
                 onOutput: text => {
@@ -1040,7 +1226,8 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
             if (r.cancelled) { say('npm stopped.'); return false }
             if (r.ok) {
                 say(kind === 'remove' ? `Removed: ${list.join(', ')}.` : kind === 'add' ? `Added: ${list.join(', ')}. Import it in your code.` : 'Packages installed.')
-                await reloadFile('package.json')
+                if (s.workspace) await readWorkspacePackage()
+                else await reloadFile('package.json')
                 packagesChanged()
                 return true
             }
@@ -1113,6 +1300,7 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
         isStale, freeNameIn, renamePlan, renameFile, deletePaths, duplicatePaths, setTexts, focusSearch, moveFiles, replaceTexts,
         keepMine, takeDisk, run, scheduleRun, asText, log, say, dispose,
         packagesFrom, reloadFile, ensurePackageJson, packagesChanged, setFormatter, packagesOp, cancelPackages, addPackage, showPart,
+        diskPath, packageFolder, packageJsonText, packagePathOf, libraryUsers, sharedSpec,
     }
 }
 

@@ -15,7 +15,7 @@ import { StateEffect, StateField } from '@codemirror/state'
 import type { Diagnostic } from '@codemirror/lint'
 import type { DevCompletion, DevLanguageService, DevProblem, DevSignatureHelp } from 'gexplorer/widgets'
 import SDK_TYPINGS from '../../types/widgets-sdk.d.ts?raw'
-import type { Project } from './project'
+import { packageOf, SHARED, type Project } from './project'
 import { readPackageTypes, type PackageTypes } from './pkgtypes'
 import { PRETTIER_PREFIX } from './pretty'
 
@@ -157,14 +157,30 @@ function createLanguage(project: Project) {
     }
 
     function packageNames(): string[] {
-        const text = project.file('package.json')?.text
+        // 0.3.0: a workspace's package.json (its root's)
+        const text = project.packageJsonText()
         if (!text) return []
         try {
             const p = JSON.parse(text)
-            return [...Object.keys(p?.dependencies ?? {}), ...Object.keys(p?.devDependencies ?? {})]
+            const all = [...Object.keys(p?.dependencies ?? {}), ...Object.keys(p?.devDependencies ?? {})]
+            if (!s.workspace) return all
+            // 0.3.0: a workspace lists every widget's packages (and its tools'): only those this project and its
+            // libraries import are read (their types)
+            const used = importedPackages()
+            return all.filter(n => used.has(n))
         } catch {
             return []
         }
+    }
+    /** 0.3.0: the npm packages the project's files (and its libraries') import. */
+    function importedPackages(): Set<string> {
+        const out = new Set<string>()
+        const re = /(?:\bfrom\s*|\bimport\s*\(?\s*)['"]([^'"\n]+)['"]/g
+        for (const f of s.files) {
+            if (f.base64 !== undefined || !/\.(ts|mts|js|mjs|vue)$/i.test(f.path)) continue
+            for (const m of f.text.matchAll(re)) { const n = packageOf(m[1]); if (n) out.add(n) }
+        }
+        return out
     }
 
     let lastError = ''
@@ -175,14 +191,15 @@ function createLanguage(project: Project) {
     /** The types for package.json as it is now (null while they're read: read once per change of the packages). */
     function packageTypes(names: string[]): PackageTypes | null {
         if (!s.folder || !names.length || !project.sdk.fsReadText) return { files: NO_FILES, untyped: names }
-        // package.json's text and npm's last run (an Install all doesn't change package.json)
-        const key = `${s.folder}\u0000${project.file('package.json')?.text ?? ''}\u0000${s.pkg.started}`
+        // package.json's text and npm's last run (an Install all doesn't change package.json); 0.3.0: the names read
+        // (a workspace's depend on the imports)
+        const key = `${project.packageFolder()}\u0000${project.packageJsonText()}\u0000${s.pkg.started}\u0000${names.join(',')}`
         if (key === typesKey) return typesOf
         typesKey = key
         typesOf = null
         s.typesNote = `Reading the packages' types (${names.join(', ')})…`
         const read = async (rel: string) => {
-            try { return (await project.sdk.fsReadText!(project.pathOf(rel), { maxBytes: 4 * 1024 * 1024 })).text } catch { return null }
+            try { return (await project.sdk.fsReadText!(project.packagePathOf(rel), { maxBytes: 4 * 1024 * 1024 })).text } catch { return null }
         }
         const started = Date.now()
         void readPackageTypes(names, read).then(async pt => {
@@ -220,6 +237,24 @@ function createLanguage(project: Project) {
         const aliases: Record<string, string> = {}
         if (project.file('widgets-sdk.d.ts')) aliases['gexplorer/widgets'] = 'widgets-sdk.d.ts'
         else { files.push({ path: SDK_COPY, text: SDK_TYPINGS }); aliases['gexplorer/widgets'] = SDK_COPY }
+        // 0.3.0: a workspace's shared libraries: '@shared/<name>' is the library's index
+        for (const lib of s.libraries) {
+            const index = ['index.ts', 'index.js'].map(n => `${SHARED}${lib.name}/${n}`).find(p => !!project.file(p))
+            if (index) aliases[`${SHARED}${lib.name}`] = index
+        }
+        // 0.3.2: a project file's relative import into the workspace's shared/ ('../../shared/library-ui/x.ts'): the
+        // library's file (TypeScript's aliases are by the import's text)
+        if (s.libraries.length) {
+            const re = /(?:\bfrom\s*|\bimport\s*\(?\s*)['"](\.\.?\/[^'"\n]*shared\/[^'"\n]*)['"]/g
+            for (const f of files) {
+                if (f.path.startsWith(SHARED)) continue
+                for (const m of f.text.matchAll(re)) {
+                    const to = project.sharedSpec(f.path, m[1])
+                    const target = to && [to, `${to}.ts`, `${to}/index.ts`].find(p => !!project.file(p))
+                    if (target) aliases[m[1]] = target
+                }
+            }
+        }
         // 0.2.8: the packages' own types (read in the background; meanwhile, and without types: any)
         const names = packageNames()
         const types = packageTypes(names)
