@@ -303,14 +303,14 @@ const darkHighlight = HighlightStyle.define([
 
 const darkTheme = EditorView.theme({
     // fontSize: textPx (2026-11-14): 13px at 100 %, following Text size (a theme is set from code: the build doesn't see it)
-    '&': { height: '100%', fontSize: textPx(13), backgroundColor: 'transparent', color: 'var(--fg, #e6e6e6)' },
+    '&': { height: '100%', fontSize: textPx(13), backgroundColor: 'transparent', color: 'var(--gex-fg, #e6e6e6)' },
     '.cm-scroller': { fontFamily: 'var(--gex-font-mono, "Cascadia Mono", Consolas, monospace)', lineHeight: '1.5' },
     '.cm-gutters': { backgroundColor: 'transparent', color: 'color-mix(in oklab, currentColor 40%, transparent)', border: 'none' },
     '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'color-mix(in oklab, currentColor 6%, transparent)' },
-    '.cm-cursor': { borderLeftColor: 'var(--accent, #5aa9d6)' },
-    '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': { backgroundColor: 'color-mix(in oklab, var(--accent, #5aa9d6) 35%, transparent)' },
-    '.cm-panels': { backgroundColor: 'var(--surface-2, #26262b)', color: 'inherit' },
-    '.cm-tooltip': { backgroundColor: 'var(--surface-2, #26262b)', border: '1px solid var(--border, rgba(255,255,255,.14))' },
+    '.cm-cursor': { borderLeftColor: 'var(--gex-accent, #5aa9d6)' },
+    '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': { backgroundColor: 'color-mix(in oklab, var(--gex-accent, #5aa9d6) 35%, transparent)' },
+    '.cm-panels': { backgroundColor: 'var(--gex-surface, #26262b)', color: 'inherit' },
+    '.cm-tooltip': { backgroundColor: 'var(--gex-surface, #26262b)', border: '1px solid var(--gex-border, rgba(255,255,255,.14))' },
 }, { dark: true })
 
 /** A command (commands.ts) on the editor; false: not the editor's. */

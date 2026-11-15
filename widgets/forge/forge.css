@@ -1,11 +1,11 @@
 /* widgets/forge/forge.css: GEM Forge 0.1 (the prototype's look: tiles on the hub, a warm accent for Run). */
 .gf {
-    --gf-fg: var(--fg, #e6e6e6);
+    --gf-fg: var(--gex-fg, #e6e6e6);
     --gf-dim: color-mix(in oklab, var(--gf-fg) 58%, transparent);
-    --gf-line: var(--border, rgba(255, 255, 255, .12));
-    --gf-tile: var(--surface-1, #1b1b1f);
-    --gf-chrome: var(--surface-2, #232328);
-    --gf-accent: var(--accent, #5aa9d6);
+    --gf-line: var(--gex-border, rgba(255, 255, 255, .12));
+    --gf-tile: var(--gex-bg, #1b1b1f);
+    --gf-chrome: var(--gex-surface, #232328);
+    --gf-accent: var(--gex-accent, #5aa9d6);
     --gf-run: #e8823a;
     --gf-bad: #e0645c;
     --gf-warn: #d6a23c;
@@ -18,7 +18,7 @@
     padding: 8px;
     box-sizing: border-box;
     color: var(--gf-fg);
-    font: 13px/1.35 system-ui, "Segoe UI", sans-serif;
+    font: 13px/1.35 var(--gex-font, system-ui, "Segoe UI", sans-serif);
 }
 .gf button { font: inherit; color: inherit; }
 .gf-bar { display: flex; align-items: center; gap: 6px; flex: none; flex-wrap: wrap; }
@@ -43,7 +43,7 @@
 .gf-page:hover { background: color-mix(in oklab, var(--gf-fg) 8%, transparent); }
 .gf-page.on { color: var(--gf-fg); background: var(--gf-chrome); border-color: var(--gf-line); }
 .gf-page-add { padding: 3px 8px; }
-.gf-page-name { width: 110px; border: 1px solid var(--gf-accent); background: var(--gf-chrome); color: inherit; border-radius: 6px; padding: 3px 8px; font: inherit; }
+.gf-page-name { width: calc(var(--gex-px, 1px) * 110); border: 1px solid var(--gf-accent); background: var(--gf-chrome); color: inherit; border-radius: 6px; padding: 3px 8px; font: inherit; }
 .gf-btn.on { border-color: var(--gf-accent); color: var(--gf-accent); }
 .gf-main { flex: 1; min-height: 0; }
 .gf-grid-host { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
@@ -97,9 +97,9 @@
 .gf-tab.dragging { opacity: .55; }
 .gf-tab.pinned { padding-right: 10px; }
 .gf-pin { font-size: 10px; }
-.gf-tabs-more { flex: none; height: 29px; padding: 0 8px; font-size: 12px; }
+.gf-tabs-more { flex: none; height: calc(var(--gex-px, 1px) * 29); padding: 0 8px; font-size: 12px; }
 .gf-row.flash { background: color-mix(in oklab, var(--gf-accent) 28%, transparent); transition: background .3s; }
-.gf-tab { display: inline-flex; align-items: center; gap: 6px; height: 29px; box-sizing: border-box; flex: none; border: 0; background: none; padding: 5px 8px 5px 10px; cursor: pointer; color: var(--gf-dim); font-family: var(--gf-mono) !important; font-size: 12px !important; border-bottom: 2px solid transparent; white-space: nowrap; }
+.gf-tab { display: inline-flex; align-items: center; gap: 6px; height: calc(var(--gex-px, 1px) * 29); box-sizing: border-box; flex: none; border: 0; background: none; padding: 5px 8px 5px 10px; cursor: pointer; color: var(--gf-dim); font-family: var(--gf-mono) !important; font-size: 12px !important; border-bottom: 2px solid transparent; white-space: nowrap; }
 .gf-tab.on { color: var(--gf-fg); border-bottom-color: var(--gf-accent); background: color-mix(in oklab, var(--gf-fg) 5%, transparent); }
 .gf-x { opacity: .5; padding: 0 2px; border-radius: 3px; }
 .gf-x:hover { opacity: 1; background: color-mix(in oklab, var(--gf-fg) 15%, transparent); }
@@ -152,18 +152,18 @@
 
 /* 0.1d: the playground (Playground.vue: the sidebar, the IDE's part; PlayPopover.vue: the toolbar's popover) */
 .gf-pop, .gf-tb, .gf-play {
-    --gf-fg: var(--fg, #e6e6e6);
+    --gf-fg: var(--gex-fg, #e6e6e6);
     --gf-dim: color-mix(in oklab, var(--gf-fg) 58%, transparent);
-    --gf-line: var(--border, rgba(255, 255, 255, .12));
-    --gf-tile: var(--surface-1, #1b1b1f);
-    --gf-chrome: var(--surface-2, #232328);
-    --gf-accent: var(--accent, #5aa9d6);
+    --gf-line: var(--gex-border, rgba(255, 255, 255, .12));
+    --gf-tile: var(--gex-bg, #1b1b1f);
+    --gf-chrome: var(--gex-surface, #232328);
+    --gf-accent: var(--gex-accent, #5aa9d6);
     --gf-run: #e8823a;
     --gf-bad: #e0645c;
     --gf-warn: #d6a23c;
     --gf-mono: var(--gex-font-mono, "Cascadia Mono", Consolas, monospace);
     color: var(--gf-fg);
-    font: 13px/1.35 system-ui, "Segoe UI", sans-serif;
+    font: 13px/1.35 var(--gex-font, system-ui, "Segoe UI", sans-serif);
 }
 .gf-pop button, .gf-tb button, .gf-play button { font: inherit; color: inherit; }
 .gf-play { flex: 1; height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 6px; box-sizing: border-box; }
@@ -186,14 +186,14 @@
 .gf-pop-bar { display: flex; align-items: center; gap: 6px; }
 .gf-pop-out { max-height: 220px; min-height: 48px; border: 1px solid var(--gf-line); border-radius: 6px; }
 .gf-tb { position: relative; height: 100%; display: flex; align-items: center; }
-.gf-tb-btn { height: 28px; min-width: 32px; border: 1px solid transparent; background: none; border-radius: 6px; cursor: pointer; color: var(--gf-run) !important; font-size: 16px; }
+.gf-tb-btn { height: calc(var(--gex-px, 1px) * 28); min-width: calc(var(--gex-px, 1px) * 32); border: 1px solid transparent; background: none; border-radius: 6px; cursor: pointer; color: var(--gf-run) !important; font-size: 16px; }
 .gf-tb-btn:hover, .gf-tb-btn.open { background: color-mix(in oklab, var(--gf-fg) 10%, transparent); }
 /* where a script of the toolbar's playground runs (dev.preview): 1 px, out of sight */
 .gf-tb-host { position: absolute; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 
 /* 0.1.7: one highlight everywhere (the editor's): selected text in the toolbar's line, the console, the parts */
 .gf ::selection, .gf-pop ::selection, .gf-play ::selection, .gf-tb ::selection {
-    background: color-mix(in oklab, var(--accent, #5aa9d6) 35%, transparent);
+    background: color-mix(in oklab, var(--gex-accent, #5aa9d6) 35%, transparent);
     color: inherit;
 }
 .gf textarea:focus-visible, .gf input:focus-visible, .gf-pop textarea:focus-visible, .gf-play input:focus-visible {
