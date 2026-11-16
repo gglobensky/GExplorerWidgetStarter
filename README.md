@@ -746,6 +746,7 @@ To look native and follow the user's theme, use these public variables (with a f
 | `--gex-widget-bg`, `--gex-widget-backdrop` | your widget's own background and its backdrop filter (the surface and none today; transparent / glass once hubs get wallpapers) |
 | `--gex-px` | one px at 100 % Text size (above) |
 | `--gex-widget-bg-opacity` | 0..1: how opaque a background of your own should be (below) |
+| `--gex-pane-overlay-start` | the room the pane's floating Back / Forward / Up take at the start of your top row (0 when they aren't floating there): `padding-left: max(4px, var(--gex-pane-overlay-start, 0px))` (GEM Shell 2026-11-16) |
 
 ```css
 .card { background: var(--gex-widget-bg, #2a2a2a); color: var(--gex-fg, #eaeaea);

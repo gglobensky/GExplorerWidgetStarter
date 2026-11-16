@@ -54,6 +54,14 @@ it runs a command); after a close the other tabs keep their widths a moment, so 
 ← / → move between tabs, Enter shows one; too many scroll sideways. A console starting shows as a last tab with a
 spinner until it's ready. The dots are the console's own (running, new output); an ended console is struck through.
 
+## Colours (0.2.2)
+
+The bars and tabs follow GEM Shell's look. The terminal itself stays dark in every look, light ones included: the
+programs running in it choose their colours for a dark background (yellow, cyan, grey). Its colours are GEM Console's
+own (`--gc-term`, `--gc-term-fg`); a later GEM Shell lets the user change them for this widget.
+When the pane's Back / Forward / Up float over the top row (Appearance ▸ Panes ▸ Overlay), the first tab starts after
+them.
+
 ## Permissions
 
 - **Terminal:** run consoles. GEM Shell asks the first time you start one, and asks again before Allow.

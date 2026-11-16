@@ -3,7 +3,10 @@
     --gc-fg: var(--gex-fg, #e6e6e6);
     --gc-muted: color-mix(in oklab, var(--gc-fg) 60%, transparent);
     --gc-chrome: var(--gex-surface, #26262b);
-    --gc-term: color-mix(in oklab, var(--gex-bg, #1b1b1f) 82%, #000);
+    /* 0.2.2: the terminal stays dark in every look (its programs' colours assume it): GEM Console's own design */
+    --gc-term: #0c0c0c;
+    --gc-term-fg: #e6e6e6;
+    --gc-term-muted: #9a9a9a;
     --gc-line: var(--gex-border, rgba(255, 255, 255, .14));
     --gc-accent: var(--gex-accent, #5aa9d6);
     --gc-busy: #e0b04a;
@@ -37,6 +40,8 @@
 /* ── a view ── */
 .gc-root { flex: 1; width: 100%; height: 100%; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--gc-term); }
 .gc-bar { display: flex; align-items: stretch; gap: 2px; height: calc(var(--gex-px, 1px) * 28); flex: none; background: var(--gc-chrome); border-bottom: 1px solid var(--gc-line); padding: 0 4px; }
+/* 0.2.2: the first tab clears the pane's floating Back / Forward / Up (GEM Shell's --gex-pane-overlay-start) */
+.gc-bar { padding-left: max(4px, var(--gex-pane-overlay-start, 0px)); }
 /* 0.2.1: the tabs are GEM Shell's tab strip (header look), in the console's colours */
 .gc-tabs {
     flex: 1; min-width: 0; padding-top: 3px;
@@ -72,7 +77,8 @@
 .gc-pt b { font-family: var(--gc-mono); font-weight: 600; }
 .gc-link { border: 0; background: none; color: var(--gc-accent); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }
 
-.gc-main { position: relative; flex: 1; min-height: 0; }
+.gc-main { position: relative; flex: 1; min-height: 0; color: var(--gc-term-fg); }
+.gc-main .gc-dim { color: var(--gc-term-muted); }
 .gc-term { position: absolute; inset: 4px 2px 2px 6px; }
 .gc-term.hidden { visibility: hidden; }
 .gc-term .xterm { height: 100%; }

@@ -26,7 +26,7 @@ export function termColors(at: HTMLElement | null): Record<string, string> {
     }
     const out = {
         background: read('var(--gc-term)', '#151518'),
-        foreground: read('var(--gc-fg)', '#e6e6e6'),
+        foreground: read('var(--gc-term-fg)', '#e6e6e6'),   // 0.2.2: the terminal's own text colour (it stays dark)
         cursor: read('var(--gc-accent)', '#5aa9d6'),
         cursorAccent: read('var(--gc-term)', '#151518'),
         selectionBackground: 'rgba(90, 169, 214, .35)',
