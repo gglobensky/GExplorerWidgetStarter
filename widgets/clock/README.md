@@ -1,5 +1,10 @@
 # GEM Clock
 
+## 0.11.3 — GEM Shell's tab strip (2026-11-16)
+
+At size L the sections (Clock, Calendar, Timers, Stopwatch) are GEM Shell's tab strip, in the skin's colours: ← / →
+switch, and they scroll sideways when the clock is narrow. The skin's name stays after them.
+
 ## 0.11.2 — other widgets' parts through GEM Shell (2026-11-15)
 
 - Clock's three points (`gem.clock.calendar-provider`, `gem.clock.calendar-panel`, `gem.clock.complication`, all

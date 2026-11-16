@@ -148,9 +148,7 @@
 .source-manager button:disabled { opacity: .55; cursor: wait; }
 .source-error { padding: 6px 8px; border-left: 3px solid #d36a51; background: color-mix(in srgb, #d36a51 12%, transparent); }
 .source-candidates, .source-list { margin-top: 10px; padding-top: 2px; border-top: 1px solid var(--border, #586474); }
-.candidate-tabs { display: flex; gap: 5px; overflow: auto; padding: 4px 0; }
-.candidate-tabs button { white-space: nowrap; }
-.candidate-tabs button.selected { border-color: var(--gex-accent, #63a9ff); background: color-mix(in srgb, var(--gex-accent, #63a9ff) 18%, transparent); }
+.candidate-tabs { margin: 4px 0; }   /* 0.4.3: GEM Shell's tab strip (section look) */
 .candidate-preview { padding: 8px; border: 1px solid var(--border, #586474); border-radius: var(--radius-sm, 5px); background: color-mix(in srgb, var(--surface-2, #202a34) 70%, transparent); }
 .candidate-preview ul { margin: 5px 0 0; padding-left: 18px; font-size: 11px; }
 .candidate-preview li + li { margin-top: 3px; }

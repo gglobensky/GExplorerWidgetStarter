@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
-import type { PartProvider, WidgetPlacement, WidgetSdk } from 'gexplorer/widgets'
+import type { PartProvider, WidgetPlacement, WidgetSdk, TabItem } from 'gexplorer/widgets'
 import CalendarSurface from './CalendarSurface.vue'
 import PartSlot from './PartSlot.vue'
 import { partKey, useClockParts } from './useClockParts'
@@ -46,6 +46,10 @@ const layout = computed(() => clockLayout(width.value, height.value))
 const size = computed(() => layout.value.size)
 const showSeconds = computed(() => props.config?.view?.showSeconds !== false)
 const chosenSkin = ref(props.config?.view?.skin ?? 'gem-shell')
+const CLOCK_TABS: TabItem[] = [
+  { id: 'clock', title: 'Clock' }, { id: 'calendar', title: 'Calendar' },
+  { id: 'timers', title: 'Timers' }, { id: 'stopwatch', title: 'Stopwatch' },
+]
 const initialTab = props.config?.view?.tab
 const selectedTab = ref<ClockTab>(initialTab === 'calendar' || initialTab === 'timers' || initialTab === 'stopwatch' ? initialTab : 'clock')
 watch(() => props.config?.view?.skin, value => { if (value) chosenSkin.value = value })
@@ -313,13 +317,11 @@ function moveComplication(id: string, delta: number) {
 <template>
   <main class="clock-widget" :class="[`size-${size}`, `renderer-${skin.renderer}`]" :style="timepieceSkinStyle(skin)" @contextmenu="openContextMenu">
     <button type="button" class="widget-menu" title="Clock menu" aria-label="Clock menu" @click="openViewMenu">…</button>
-    <nav v-if="size === 'l'" class="tabs" aria-label="Clock sections">
-      <button type="button" :class="{ active: selectedTab === 'clock' }" @click="setTab('clock')">Clock</button>
-      <button type="button" :class="{ active: selectedTab === 'calendar' }" @click="setTab('calendar')">Calendar</button>
-      <button type="button" :class="{ active: selectedTab === 'timers' }" @click="setTab('timers')">Timers</button>
-      <button type="button" :class="{ active: selectedTab === 'stopwatch' }" @click="setTab('stopwatch')">Stopwatch</button>
-      <span class="tabs-title">{{ skin.name }}</span>
-    </nav>
+    <!-- 0.11.3: GEM Shell's tab strip; the skin's name after the tabs -->
+    <gex-tab-strip v-if="size === 'l'" class="tabs" :items="CLOCK_TABS" :active-id="selectedTab" variant="header"
+                   overflow="scroll" activation="auto" label="Clock sections" @activate="(id: string) => setTab(id as ClockTab)">
+      <template #end><span class="tabs-title">{{ skin.name }}</span></template>
+    </gex-tab-strip>
     <section v-if="selectedTab === 'clock'" class="clock-page">
       <ClockFace :now="now" :skin="skin" :show-seconds="size === 's' ? false : showSeconds" />
       <div v-if="size !== 's'" class="date">{{ date }}</div>
@@ -446,11 +448,11 @@ function moveComplication(id: string, delta: number) {
 .clock-widget { container-type:size; position:relative; display:flex; width:100%; height:100%; min-width:0; min-height:0; flex-direction:column; box-sizing:border-box; overflow:hidden; color:var(--clock-fg,#eef); border:1px solid var(--clock-edge,#ffffff18); border-radius:var(--clock-radius,14px); background:var(--clock-bg,#111); font-family:var(--gex-font,Inter,"Segoe UI",sans-serif); box-shadow:inset 0 1px #fff1; }
 .widget-menu { position:absolute; z-index:30; top:5px; right:6px; display:grid; width:calc(var(--gex-px, 1px) * 25); height:calc(var(--gex-px, 1px) * 24); padding:0 0 6px; place-items:center; border:1px solid transparent; border-radius:5px; color:var(--clock-muted,#aaa); background:color-mix(in srgb,var(--clock-panel,#111) 90%,transparent); box-shadow:0 2px 8px #0005; font:700 17px/1 sans-serif; cursor:pointer; }
 .widget-menu:hover,.widget-menu:focus-visible { color:var(--clock-fg,#fff); border-color:var(--clock-edge,#ffffff28); outline:none; }
-.tabs { display:flex; min-height:34px; flex:none; align-items:end; gap:3px; padding:5px 8px 0; overflow-x:auto; border-bottom:1px solid var(--clock-edge,#ffffff18); background:var(--clock-panel,#1118); scrollbar-width:none; }
-.tabs button { flex:none; padding:6px clamp(7px,2cqw,11px) 7px; border:0; border-bottom:2px solid transparent; color:var(--clock-muted,#aaa); background:transparent; font:600 11px/1 inherit; cursor:pointer; }
-.tabs button:hover,.tabs button:focus-visible { color:var(--clock-fg,#fff); }
-.tabs button.active { color:var(--clock-fg,#fff); border-bottom-color:var(--clock-accent,#6cf); }
-.tabs-title { flex:none; margin:0 30px 7px auto; color:var(--clock-muted,#aaa); font-size:10px; letter-spacing:.04em; white-space:nowrap; }
+.tabs { min-height:34px; flex:none; padding:5px 8px 0; box-sizing:border-box; border-bottom:1px solid var(--clock-edge,#ffffff18); background:var(--clock-panel,#1118);
+  /* 0.11.3: GEM Shell's tab strip (header look), in the skin's colours */
+  --tab-header-fg:var(--clock-muted,#aaa); --tab-header-hover-fg:var(--clock-fg,#fff); --tab-header-hover-bg:transparent;
+  --tab-header-active-fg:var(--clock-fg,#fff); --tab-header-active-bg:transparent; --tab-header-active-border:var(--clock-edge,#ffffff18); }
+.tabs-title { flex:none; align-self:center; margin:0 30px 0 auto; padding-left:8px; color:var(--clock-muted,#aaa); font-size:10px; letter-spacing:.04em; white-space:nowrap; }
 .clock-page { display:grid; flex:1; min-width:0; min-height:0; grid-template-columns:minmax(0,1.25fr) minmax(130px,.75fr); grid-template-rows:minmax(0,1fr) auto auto; gap:8px clamp(8px,3cqw,16px); align-items:center; padding:12px; }
 .clock-page :deep(.analog),.clock-page :deep(.digital) { grid-row:1 / span 3; width:100%; max-width:430px; min-width:0; justify-self:center; box-sizing:border-box; }
 .clock-page :deep(.analog) { width:min(100%,82cqh,330px); }

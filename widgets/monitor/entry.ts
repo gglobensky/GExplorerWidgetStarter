@@ -19,7 +19,7 @@ import RecordingCard from './RecordingCard.vue'
 export default {
     api: '1.0',
     id: 'monitor',
-    version: '1.0.2',   // 1.0.2 (2026-11-14): tiles sized for the text (no text over text at large text); GEM Shell's colours and fonts. 1.0.1: sizes follow Appearance (built with the Text size / Roundness step)
+    version: '1.0.3',   // 1.0.3 (2026-11-16): the details' tabs are GEM Shell's tab strip (← / →, sideways scroll when narrow). 1.0.2 (2026-11-14): tiles sized for the text (no text over text at large text); GEM Shell's colours and fonts. 1.0.1: sizes follow Appearance (built with the Text size / Roundness step)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     displayName: 'GEM Monitor',

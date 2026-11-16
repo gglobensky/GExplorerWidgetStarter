@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { inject, ref } from 'vue'
-import type { WidgetSdk } from 'gexplorer/widgets'
+import { computed, inject, ref } from 'vue'
+import type { WidgetSdk, TabItem } from 'gexplorer/widgets'
 import { BUGLE_SECTIONS, sectionLabel, type BugleSection, type BugleSource, type SourceCandidate, type SourceDisplay, type SourceSection } from '../model'
 import { sourceHealth } from '../source-health'
 import StarterShelf from './StarterShelf.vue'
@@ -29,6 +29,12 @@ const working = ref(false)
 const error = ref('')
 const candidates = ref<SourceCandidate[]>([])
 const selected = ref(0)
+// 0.4.3: the feeds found, as GEM Shell's tab strip takes them (ids are their places in the list)
+const candidateTabs = computed<TabItem[]>(() => candidates.value.map((cand, i) => ({
+  id: String(i),
+  title: cand.discoveredAs || cand.feed.title,
+  tip: cand.feed.feedUrl,
+})))
 const section = ref<SourceSection>('auto')
 const display = ref<SourceDisplay>('summary')
 const editingId = ref('')
@@ -199,11 +205,10 @@ async function exportSubscriptions(): Promise<void> {
 
     <section v-if="candidates.length" class="source-candidates" aria-labelledby="source-found-title">
       <h2 id="source-found-title">{{ candidates.length === 1 ? 'Feed found' : `${candidates.length} feeds found` }}</h2>
-      <div v-if="candidates.length > 1" class="candidate-tabs">
-        <button v-for="(candidate, index) in candidates" :key="candidate.feed.feedUrl" type="button" :class="{ selected: selected === index }" @click="selected = index">
-          {{ candidate.discoveredAs || candidate.feed.title }}
-        </button>
-      </div>
+      <!-- 0.4.3: GEM Shell's tab strip -->
+      <gex-tab-strip v-if="candidates.length > 1" class="candidate-tabs" :items="candidateTabs" :active-id="String(selected)"
+                     variant="section" overflow="scroll" activation="auto" label="Feeds found"
+                     @activate="(id: string) => selected = Number(id)" />
       <article class="candidate-preview">
         <h3>{{ candidates[selected].feed.title }}</h3>
         <p>{{ candidates[selected].feed.description || candidates[selected].feed.feedUrl }}</p>

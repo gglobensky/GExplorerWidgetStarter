@@ -37,19 +37,15 @@
 /* ── a view ── */
 .gc-root { flex: 1; width: 100%; height: 100%; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--gc-term); }
 .gc-bar { display: flex; align-items: stretch; gap: 2px; height: calc(var(--gex-px, 1px) * 28); flex: none; background: var(--gc-chrome); border-bottom: 1px solid var(--gc-line); padding: 0 4px; }
-.gc-tabs { flex: 1; min-width: 0; display: flex; gap: 1px; overflow-x: auto; scrollbar-width: none; }
-.gc-tabs::-webkit-scrollbar { display: none; }
-.gc-tab {
-    flex: 0 1 auto; min-width: 52px; max-width: 200px; display: flex; align-items: center; gap: 5px; padding: 0 4px 0 8px;
-    border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--gc-muted); cursor: pointer; font: inherit;
+/* 0.2.1: the tabs are GEM Shell's tab strip (header look), in the console's colours */
+.gc-tabs {
+    flex: 1; min-width: 0; padding-top: 3px;
+    --tab-header-fg: var(--gc-muted); --tab-header-hover-fg: var(--gc-fg);
+    --tab-header-hover-bg: color-mix(in oklab, var(--gc-fg) 6%, transparent);
+    --tab-header-active-fg: var(--gc-fg); --tab-header-active-bg: var(--gc-term); --tab-header-active-border: var(--gc-line);
 }
-.gc-tab:hover { color: var(--gc-fg); background: color-mix(in oklab, var(--gc-fg) 6%, transparent); }
-.gc-tab.on { color: var(--gc-fg); border-bottom-color: var(--gc-accent); background: var(--gc-term); }
-.gc-tab.ended .gc-tl { text-decoration: line-through; opacity: .7; }
 .gc-tl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
-.gc-x { flex: none; width: calc(var(--gex-px, 1px) * 16); height: calc(var(--gex-px, 1px) * 16); border-radius: 4px; display: grid; place-items: center; opacity: 0; font-size: 13px; }
-.gc-tab:hover .gc-x, .gc-tab.on .gc-x { opacity: .7; }
-.gc-x:hover { opacity: 1 !important; background: color-mix(in oklab, var(--gc-fg) 16%, transparent); }
+.gc-tl.ended { text-decoration: line-through; opacity: .7; }
 .gc-busy { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--gc-busy); box-shadow: 0 0 0 2px color-mix(in oklab, var(--gc-busy) 30%, transparent); animation: gc-pulse 1.6s ease-in-out infinite; }
 @keyframes gc-pulse { 50% { opacity: .45; } }
 @media (prefers-reduced-motion: reduce) { .gc-busy { animation: none; } }
@@ -95,7 +91,6 @@
 .gc-note { font-size: 11px; }
 .gc-err { color: #e07a6a; font-size: 12px; }
 
-.gc-root.narrow .gc-tab { min-width: 40px; padding-left: 6px; }
 /* xterm.js paints its viewport and the space under the last row: the console's own colour (the theme is the same) */
 .gc-term .xterm, .gc-term .xterm-viewport, .gc-term .xterm-screen { background-color: var(--gc-term) !important; }
 /* 0.1.2: the sidebar: the terminal keeps some height whatever its box does (Widget.vue sets the box's own) */
@@ -114,5 +109,3 @@
 @keyframes gc-turn { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .gc-spin { animation-duration: 2.4s; } }
 .gc-starting { display: inline-flex; align-items: center; gap: 10px; padding: 9px 16px; font-size: 13px; color: var(--gc-muted); }
-.gc-tab-starting { cursor: default; color: var(--gc-muted); }
-.gc-tab-starting:hover { background: transparent; color: var(--gc-muted); }

@@ -57,10 +57,13 @@
 .gm-detail { position: relative; display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; background: var(--gm-bg); }
 .gm-detail.m-popover { width: min(620px, calc(100vw - 32px)); height: min(600px, calc(100vh - 120px)); border-radius: 8px; }
 .gm-bar { display: flex; align-items: center; gap: 4px; height: 32px; padding: 0 6px; border-bottom: 1px solid var(--gm-line); flex: none; }
-.gm-tabs { display: flex; gap: 2px; }
-.gm-tab { border: 0; background: transparent; color: var(--gm-muted); padding: 5px 10px; border-radius: 6px; cursor: pointer; font: inherit; }
-.gm-tab:hover { color: var(--gm-fg); background: color-mix(in oklab, var(--gm-fg) 7%, transparent); }
-.gm-tab.on { color: var(--gm-fg); background: color-mix(in oklab, var(--gm-accent) 20%, transparent); }
+/* 1.0.3: the tabs are GEM Shell's tab strip (header look), in the monitor's colours */
+.gm-tabs {
+    flex: 0 1 auto; min-width: 0; align-self: stretch;
+    --tab-header-fg: var(--gm-muted); --tab-header-hover-fg: var(--gm-fg);
+    --tab-header-hover-bg: color-mix(in oklab, var(--gm-fg) 7%, transparent);
+    --tab-header-active-fg: var(--gm-fg); --tab-header-active-bg: var(--gm-bg); --tab-header-active-border: var(--gm-line);
+}
 .gm-spacer { flex: 1; }
 .gm-ib { border: 0; background: transparent; color: var(--gm-muted); padding: 4px 7px; border-radius: 6px; cursor: pointer; font: inherit; }
 .gm-ib:hover { color: var(--gm-fg); background: color-mix(in oklab, var(--gm-fg) 9%, transparent); }

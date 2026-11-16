@@ -3,7 +3,7 @@ import Widget from './Widget.vue'
 export default {
   api: '1.0',
   id: 'gem-bugle',
-  version: '0.4.2',   // 0.4.2 (2026-11-14): GEM Shell's colours and fonts (the page itself never fades). 0.4.1 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step)
+  version: '0.4.3',   // 0.4.3 (2026-11-16): the feeds found are GEM Shell's tab strip (← / →, sideways scroll). 0.4.2 (2026-11-14): GEM Shell's colours and fonts (the page itself never fades). 0.4.1 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step)
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
   about: `# The GEM Bugle

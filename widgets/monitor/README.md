@@ -39,6 +39,9 @@ that use them, and what GEM Shell itself uses. Brass valve gauges, graphs of the
 - **GEM Shell:** its own use, with each of its processes (its web view runs in processes of its own).
 - **⏱** the refresh rate: every 0.5, 1, 2 or 5 seconds (this copy).
 
+The details' tabs (1.0.3) are GEM Shell's tab strip: ← / → switch, and they scroll sideways when the details are
+narrow.
+
 ## For gamers and developers
 
 - **Follow a program:** in Processes, **◎** next to its name (or right-click it). It gets its own tab: CPU (of the

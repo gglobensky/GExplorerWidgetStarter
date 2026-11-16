@@ -26,7 +26,7 @@
 //                up…, Optimize… / Defragment… for a hard disk) and a Hardware tab (device, bus, partition, serial,
 //                what its file system supports, BitLocker read-only): fsVolumeInfo.
 import { ref, reactive, computed, onMounted, onBeforeUnmount, inject } from 'vue'
-import type { WidgetSdk, FsPropertiesItem, MediaInfoItem, MediaProbe, FsHashRun, FsVolumeInfo } from 'gexplorer/widgets'
+import type { WidgetSdk, FsPropertiesItem, MediaInfoItem, MediaProbe, FsHashRun, FsVolumeInfo, TabItem } from 'gexplorer/widgets'
 import { usePermissionsDraft } from './permissionsDraft'
 import PermissionsTab from './PermissionsTab.vue'
 
@@ -515,6 +515,7 @@ const totals = computed(() => {
 const partial = computed(() => !single.value && props.count > items.value.length)
 
 // ── The tabs shown (General always; the others when they have something) ───────────
+const tabItems = computed<TabItem[]>(() => tabs.value.map(t => ({ id: t.id, title: t.label })))
 const tabs = computed<{ id: Tab; label: string }[]>(() => {
   const it = item.value
   const out: { id: Tab; label: string }[] = [{ id: 'general', label: 'General' }]
@@ -554,10 +555,9 @@ onBeforeUnmount(() => {
 
     <!-- ── One item, in tabs (0.12.1) ────────────────────────────────────── -->
     <template v-else-if="item">
-      <div v-if="tabs.length > 1" class="ipw-tabs" role="tablist">
-        <button v-for="t in tabs" :key="t.id" type="button" role="tab" class="ipw-tab"
-                :class="{ on: tab === t.id }" :aria-selected="tab === t.id" @click="tab = t.id">{{ t.label }}</button>
-      </div>
+      <!-- 0.16.9: GEM Shell's tab strip -->
+      <gex-tab-strip v-if="tabs.length > 1" class="ipw-tabs" :items="tabItems" :active-id="tab" variant="section"
+                     activation="auto" label="Properties" @activate="(id: string) => tab = id as Tab" />
 
       <template v-if="tab === 'general'">
       <section>
@@ -781,13 +781,7 @@ onBeforeUnmount(() => {
 }
 .ipw section { display: flex; flex-direction: column; gap: 6px; }
 /* 0.12.1: the tabs */
-.ipw-tabs { display: flex; gap: 2px; margin: -2px 0 -4px; border-bottom: 1px solid var(--items-border, #ffffff1f); }
-.ipw-tab {
-  padding: 5px 10px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: inherit;
-  font-size: 12px; opacity: .7; cursor: pointer;
-}
-.ipw-tab:hover { opacity: 1; }
-.ipw-tab.on { opacity: 1; border-bottom-color: var(--gex-accent, #4ea1ff); font-weight: 600; }
+.ipw-tabs { margin: -2px 0 -4px; }   /* 0.16.9: GEM Shell's tab strip (section look) */
 .ipw h3 { margin: 0; color: color-mix(in oklab, var(--gex-fg, #e8e8e8) 62%, transparent); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .ipw h4 { margin: 4px 0 0; color: var(--ipw-muted); font-size: 11px; font-weight: 600; }
 .ipw p { margin: 0; }

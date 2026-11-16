@@ -8,21 +8,20 @@
 <template>
     <div class="gc-root" :class="['m-' + mode, { narrow }]">
         <div class="gc-bar">
-            <div class="gc-tabs" role="tablist" aria-label="Consoles">
-                <button v-for="t in tabs" :key="t.key" class="gc-tab" type="button" role="tab"
-                        :class="{ on: t.key === con.st.active, ended: t.ended }" :aria-selected="t.key === con.st.active"
-                        :title="tabTip(t)" @click="pick(t.key)" @auxclick="(e: MouseEvent) => e.button === 1 && closeTab(t.key)">
-                    <span v-if="t.busy" class="gc-busy" aria-label="Running a command"></span>
-                    <span v-else-if="t.unread" class="gc-unread" aria-label="New output"></span>
-                    <span class="gc-tl">{{ tabTitle(t) }}</span>
-                    <span class="gc-x" role="button" aria-label="Close" title="Close this console" @click.stop="closeTab(t.key)">×</span>
-                </button>
-                <!-- 0.1.4: a console starting beside the others -->
-                <div v-if="con.st.starting && tabs.length" class="gc-tab gc-tab-starting" role="status" :title="`Starting ${con.st.starting}…`">
-                    <span class="gc-spin gc-spin-sm"></span>
-                    <span class="gc-tl">{{ con.st.starting }}</span>
-                </div>
-            </div>
+            <!-- 0.2.1: GEM Shell's tab strip (<gex-tab-strip>): ✕ and middle-click close (the others keep their widths while
+                 you close several), ← / → between tabs, the tabs scroll sideways when they don't fit -->
+            <gex-tab-strip class="gc-tabs" :items="tabItems" :active-id="activeId" variant="header" overflow="scroll"
+                           closable label="Consoles" close-tip="Close this console"
+                           @activate="(id: string) => pick(Number(id))" @close="(id: string) => closeTab(Number(id))">
+                <template #title="{ tab }">
+                    <span class="gc-tl" :class="{ ended: endedIds.has(tab.id) }">{{ tab.title }}</span>
+                </template>
+                <template #badge="{ tab }">
+                    <span v-if="tab.badge === 'busy'" class="gc-busy" aria-label="Running a command"></span>
+                    <span v-else-if="tab.badge === 'unread'" class="gc-unread" aria-label="New output"></span>
+                    <span v-else-if="tab.id === STARTING" class="gc-spin gc-spin-sm" aria-hidden="true"></span>
+                </template>
+            </gex-tab-strip>
             <button class="gc-ib" type="button" :disabled="!canStart" :title="newTip" aria-label="New console" @click="startDefault">＋</button>
             <button ref="shellBtn" class="gc-ib gc-caret" type="button" :disabled="!canStart" title="New console in another shell"
                     aria-label="Choose a shell" @click="pickShell(shellBtn)">▾</button>
@@ -78,7 +77,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, inject, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import type { WidgetSdk, FavoriteTreeNode } from 'gexplorer/widgets'
+import type { WidgetSdk, FavoriteTreeNode, TabItem } from 'gexplorer/widgets'
 import { folderName, isFolderPath, samePath, type Consoles, type Tab } from './consoles'
 
 const props = defineProps<{
@@ -121,6 +120,24 @@ const startLabel = computed(() => {
     return `Start ${con.st.shells.length ? con.shellLabel(id) : 'a console'}`
 })
 const newTip = computed(() => defaultId.value && con.st.shells.length ? `New console (${con.shellLabel(defaultId.value)})` : 'New console')
+
+// 0.2.1: the tabs as GEM Shell's tab strip takes them (ids are the consoles' keys, as text); a console starting is a
+// last tab that can't be chosen yet
+const STARTING = '__starting__'
+const tabItems = computed<TabItem[]>(() => {
+    const list: TabItem[] = tabs.value.map((t: Tab) => ({
+        id: String(t.key),
+        title: tabTitle(t),
+        tip: tabTip(t),
+        badge: t.busy ? 'busy' as const : t.unread ? 'unread' as const : null,
+    }))
+    if (con.st.starting && tabs.value.length) {
+        list.push({ id: STARTING, title: String(con.st.starting), disabled: true, disabledReason: `Starting ${con.st.starting}…`, closable: false })
+    }
+    return list
+})
+const activeId = computed(() => current.value ? String(current.value.key) : null)
+const endedIds = computed(() => new Set(tabs.value.filter((t: Tab) => t.ended).map((t: Tab) => String(t.key))))
 
 function tabTitle(t: Tab): string {
     if (t.kind === 'output') return t.label

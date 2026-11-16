@@ -11,10 +11,9 @@
 <template>
     <div class="gm-detail" :class="['m-' + mode, { narrow }]" ref="rootEl">
         <div class="gm-bar">
-            <div class="gm-tabs" role="tablist">
-                <button v-for="t in TABS" :key="t.id" type="button" role="tab" class="gm-tab" :class="{ on: tab === t.id }"
-                        :aria-selected="tab === t.id" :title="t.title" @click="tab = t.id">{{ t.label }}</button>
-            </div>
+            <!-- 1.0.3: GEM Shell's tab strip -->
+            <gex-tab-strip class="gm-tabs" :items="tabItems" :active-id="tab" variant="header" overflow="scroll"
+                           activation="auto" label="Details" @activate="(id: string) => tab = id as TabId" />
             <span class="gm-spacer"></span>
             <button v-if="recorder && recorder.st.state !== 'recording'" ref="recBtn" type="button" class="gm-ib gm-rec-btn"
                     title="Record a run (a report with graphs, saved where you choose)" aria-label="Record" @click="chooseRecord">⏺</button>
@@ -238,7 +237,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, inject, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import type { WidgetSdk, MonitorSet, MonitorProcess } from 'gexplorer/widgets'
+import type { WidgetSdk, MonitorSet, MonitorProcess, TabItem } from 'gexplorer/widgets'
 import Gauge from './Gauge.vue'
 import Spark from './Spark.vue'
 import CoreStrip from './CoreStrip.vue'
@@ -284,6 +283,7 @@ const TABS = computed<Array<{ id: TabId; label: string; title?: string }>>(() =>
     ...(store.st.follow ? [{ id: 'follow' as const, label: `◎ ${store.st.follow.name.replace(/\.exe$/i, '')}`, title: `Following ${store.st.follow.name}` }] : []),
     { id: 'self', label: 'GEM Shell' },
 ])
+const tabItems = computed<TabItem[]>(() => TABS.value.map(t => ({ id: t.id, title: t.label, tip: t.title })))
 const tab = ref<TabId>(store.st.follow ? 'follow' : 'overview')
 watch(() => store.st.follow?.pid, pid => { if (!pid && tab.value === 'follow') tab.value = 'processes' })
 

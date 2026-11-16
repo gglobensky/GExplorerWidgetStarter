@@ -47,6 +47,13 @@ GEM Console's terminal in its own box (`sdk.parts().mount`). There it is **that 
   that widget.
 - That widget shows one terminal part: showing it in a second place moves the same consoles there.
 
+## The tabs (0.2.1)
+
+GEM Shell's tab strip (the one its main tabs use): ✕ on hover and a middle-click close a console (asked first while
+it runs a command); after a close the other tabs keep their widths a moment, so the next ✕ is under the pointer;
+← / → move between tabs, Enter shows one; too many scroll sideways. A console starting shows as a last tab with a
+spinner until it's ready. The dots are the console's own (running, new output); an ended console is struck through.
+
 ## Permissions
 
 - **Terminal:** run consoles. GEM Shell asks the first time you start one, and asks again before Allow.
