@@ -4467,11 +4467,13 @@ declare module 'gexplorer/widgets' {
 //   <gex-tab-strip :items="tabs" :active-id="current" @activate="id => current = id" />   (NEW GEM Shell 2026-11-16)
 //     GEM Shell's tab strip (README "Tabs"): items are TabItem[] (from 'gexplorer/widgets'). variant 'section'
 //     (default: a panel's sections), 'document' (closable documents, as the main tabs) or 'header' (thin);
-//     overflow 'none' (default) or 'scroll' (sideways, no scrollbar); closable (✕, middle-click: @close, with the
+//     overflow 'none' (default), 'scroll' (sideways, no scrollbar) or 'wrap' (GEM Shell 2026-11-16: up to :max-rows
+//     rows, the rest under ▾ N, @overflow(ids) when that changes); closable (✕, middle-click: @close, with the
 //     close run), reorderable (drag: @reorder with the ids in their new order; drag-disabled: not for now);
 //     activation 'manual' | 'auto'; label (the tablist's name); close-tip. @menu(id, event): a tab's right-click;
 //     @strip-menu(event): the empty space's. Slots #icon / #title / #badge ({ tab, active }), #end (your + button).
-//     Restyle through --tabs-* / --tab-* (document), --tab-section-bg (section).
+//     Restyle through --tabs-* / --tab-* (document), --tab-section-bg (section), --tab-header-fg / -hover-fg /
+//     -hover-bg / -active-fg / -active-bg / -active-border / -h (header: your colours, a fixed tab height).
 //
 //   <gex-video-surface :video="handle" />
 //     Shows a video of sdk.video() (2026-10-25): fills its place, the video contained and
@@ -4496,7 +4498,9 @@ declare module 'vue' {
             items: import('gexplorer/widgets').TabItem[]
             activeId: string | null | undefined
             variant?: 'document' | 'section' | 'header'
-            overflow?: 'scroll' | 'none'
+            overflow?: 'scroll' | 'none' | 'wrap'
+            /** overflow 'wrap': how many rows show (default 1). */
+            maxRows?: number
             closable?: boolean
             reorderable?: boolean
             dragDisabled?: boolean
@@ -4510,6 +4514,8 @@ declare module 'vue' {
             onReorder?: (ids: string[]) => void
             onMenu?: (id: string, event: MouseEvent) => void
             onStripMenu?: (event: MouseEvent) => void
+            /** overflow 'wrap': the ids of the tabs that don't fit the rows shown. */
+            onOverflow?: (ids: string[]) => void
         }>
         'gex-video-surface': import('vue').DefineComponent<{
             video: import('gexplorer/widgets').VideoHandle | null | undefined

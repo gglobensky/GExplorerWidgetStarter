@@ -179,7 +179,11 @@ const tabs = computed<TabItem[]>(() => sessions.value.map(s => ({ id: s.id, titl
 - **Reorder:** `reorderable`: dragged (a press under 6 px stays a click): `@reorder(ids)`; pinned tabs stay first.
   `drag-disabled` leaves them where they are for now.
 - **Too many:** `overflow="scroll"`: the tabs shrink, then scroll sideways (the wheel, the edges), the current one
-  kept in view.
+  kept in view. Or `overflow="wrap"` with `:max-rows="2"`: rows of tabs, the ones that don't fit listed under ▾ N
+  (picking one activates it); `@overflow(ids)` tells you which, to bring the current one forward yourself.
+- **Your colours:** the `header` look takes `--tab-header-fg`, `-hover-fg`, `-hover-bg`, `-active-fg`, `-active-bg`
+  (the current tab: what's under the bar), `-active-border`, and `--tab-header-h` (a fixed tab height). Set them on
+  the strip (its class); don't style its inner classes.
 - **Keys:** ← / → / Home / End move between the tabs (one Tab stop: the current tab); `activation="auto"` switches as
   the focus moves (a few sections), `"manual"` (default) on Enter / Space. The strip takes no other key.
 - **Marks:** an item's `badge` (`'dot' | 'busy' | 'unread' | 'dirty'`), `note` (a short pill: "here"), `icon`, `tip`

@@ -8,12 +8,10 @@
 <template>
     <div ref="root" class="gf-grid-host">
         <template v-if="narrow">
-            <nav class="gf-narrow-tabs">
-                <button v-for="k in pageParts" :key="k" type="button" :class="{ on: k === narrowPart }" @click="narrowPart = k"
-                        @contextmenu.prevent="partMenu($event, k)">
-                    {{ partTitle(k) }}<span v-if="k === 'problems' && errors" class="gf-count">{{ errors }}</span>
-                </button>
-            </nav>
+            <!-- 0.6.4: GEM Shell's tab strip; the problems' count is the tab's note -->
+            <gex-tab-strip class="gf-narrow-tabs" :items="narrowTabs" :active-id="narrowPart" variant="header" overflow="scroll"
+                           activation="auto" label="Parts" @activate="(k: string) => narrowPart = k as PartId"
+                           @menu="(k: string, e: MouseEvent) => partMenu(e, k as PartId)" />
             <section v-if="narrowPart" class="gf-tile gf-narrow-tile">
                 <component :is="components[kindOf(narrowPart)]" :key="narrowPart" :project="project" v-bind="extra(narrowPart)" />
             </section>
@@ -43,7 +41,7 @@
 
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue'
-import type { WidgetSdk, GridRect } from 'gexplorer/widgets'
+import type { WidgetSdk, GridRect, TabItem } from 'gexplorer/widgets'
 import type { Project } from './project'
 import {
     COLS, type Layout, type PartKind, type PartId, type Tile, kindOf, partTitle, newPartId,
@@ -88,6 +86,11 @@ const cellStyle = (r: GridRect) => ({ gridColumn: `${r.col + 1} / span ${r.colSp
 // Narrow: the page's parts, one at a time
 const pageParts = computed<PartId[]>(() => page.value.tiles.flatMap(t => t.parts))
 const narrowPart = ref<PartId | null>(null)
+const narrowTabs = computed<TabItem[]>(() => pageParts.value.map(k => ({
+    id: k,
+    title: partTitle(k),
+    note: k === 'problems' && errors.value ? String(errors.value) : undefined,
+})))
 watch(pageParts, ps => { if (!narrowPart.value || !ps.includes(narrowPart.value)) narrowPart.value = ps.includes('code') ? 'code' : ps[0] ?? null }, { immediate: true })
 
 // ── A tab's menu: Detach / Attach to… / Move to page… / Close ──────────────────────────────────────────────────────

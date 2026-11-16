@@ -14,21 +14,14 @@
 -->
 <template>
     <div class="gf-code">
+        <!-- 0.6.4: GEM Shell's tab strip (<gex-tab-strip>): pinned first (📌, no ✕), dragged to reorder, a middle-click
+             closes (the others keep their widths while you close several), Tab rows 1–3, the rest under ▾ -->
         <div v-if="!single && s.openTabs.length" class="gf-tabbar">
-            <div ref="tabsEl" class="gf-tabs" :style="{ maxHeight: `${s.tabRows * TAB_H}px` }">
-                <button v-for="(p, i) in displayList" :key="p" type="button" class="gf-tab"
-                        :class="{ on: p === s.active, pinned: s.pinned.includes(p), dragging: draggingId === p }"
-                        :data-tab="p" :title="p"
-                        @pointerdown="onTabDown(i, $event)" @click="project.open(p)"
-                        @mousedown.middle.prevent @auxclick.middle.prevent="!s.pinned.includes(p) && project.closeTab(p)" @contextmenu.prevent="tabMenu($event, p)">
-                    <span v-if="s.pinned.includes(p)" class="gf-pin" title="Pinned">📌</span>
-                    <span>{{ p.split('/').pop() }}</span>
-                    <span v-if="project.isDirty(p)" class="gf-dirty">●</span>
-                    <span v-if="!s.pinned.includes(p)" class="gf-x" title="Close" @pointerdown.stop @click.stop="project.closeTab(p)">×</span>
-                </button>
-            </div>
-            <button v-if="hidden.length" ref="moreBtn" type="button" class="gf-ib gf-tabs-more"
-                    :class="{ on: hidden.includes(s.active) }" :title="`${hidden.length} more tab${hidden.length === 1 ? '' : 's'}`" @click="moreMenu">▾ {{ hidden.length }}</button>
+            <gex-tab-strip class="gf-tabs" :items="tabItems" :active-id="s.active" variant="header" overflow="wrap"
+                           :max-rows="s.tabRows" closable reorderable label="Open files" close-tip="Close"
+                           @activate="(p: string) => project.open(p)" @close="(p: string) => project.closeTab(p)"
+                           @reorder="(order: string[]) => project.reorderTabs(order)"
+                           @menu="(p: string, e: MouseEvent) => tabMenu(e, p)" @overflow="(ids: string[]) => hidden = ids" />
         </div>
         <div v-if="s.active && s.conflicts.includes(s.active)" class="gf-conflict">
             <span>{{ s.active }} changed on disk while you edited it here.</span>
@@ -45,7 +38,7 @@
 
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useSortable, textPx } from 'gexplorer/widgets'
+import { textPx, type TabItem } from 'gexplorer/widgets'
 import type { WidgetSdk } from 'gexplorer/widgets'
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, highlightSpecialChars, rectangularSelection, tooltips } from '@codemirror/view'
 import { EditorState, Compartment, type Extension } from '@codemirror/state'
@@ -354,40 +347,22 @@ defineExpose({ exec })
 
 // ── Tabs (0.1.8) ─────────────────────────────────────────────────────────────────────────────────────────────────
 const sdk = inject<WidgetSdk>('widgetSdk')!
-const TAB_H = 29
-const tabsEl = ref<HTMLElement | null>(null)
-const moreBtn = ref<HTMLElement | null>(null)
+// 0.6.4: GEM Shell's tab strip draws them (drag, close, rows, ▾); the open files as its items
 const ordered = computed(() => props.project.orderedTabs())
-// Dragged to reorder: GEM Shell's sortable (its own tabs' engine); a press under the threshold stays a click
-const { displayList, draggingId, startDrag } = useSortable(ordered, {
-    identity: (p: string) => p,
-    orientation: 'horizontal',
-    dragThresholdPx: 6,
-    container: tabsEl,
-    rowSelector: '[data-tab]',
-    rowIdAttr: 'data-tab',
-    onCommit: (order: string[]) => props.project.reorderTabs(order),
-})
-function onTabDown(i: number, e: PointerEvent) {
-    if (e.button === 0) startDrag(i, e)
-}
-
-// The tabs that don't fit in the rows shown: ▾ lists them
+const tabItems = computed<TabItem[]>(() => ordered.value.map((p: string) => {
+    const pinned = s.pinned.includes(p)
+    return {
+        id: p,
+        title: p.split('/').pop() ?? p,
+        tip: p,
+        pinned,
+        closable: !pinned,
+        icon: pinned ? '📌' : undefined,
+        badge: props.project.isDirty(p) ? 'dirty' as const : null,
+    }
+}))
+// The tabs that don't fit the rows shown (the strip says which: @overflow)
 const hidden = ref<string[]>([])
-function measure() {
-    const el = tabsEl.value
-    if (!el) { hidden.value = []; return }
-    const limit = el.clientHeight + 1
-    hidden.value = [...el.querySelectorAll<HTMLElement>('[data-tab]')]
-        .filter(b => b.offsetTop + b.offsetHeight > limit)
-        .map(b => b.dataset.tab ?? '')
-}
-let tabsObs: ResizeObserver | null = null
-watch(tabsEl, (el, old) => {
-    if (old) tabsObs?.unobserve(old)
-    if (el) { tabsObs ??= new ResizeObserver(() => measure()); tabsObs.observe(el) }
-})
-watch(() => [displayList.value.join('|'), s.tabRows, s.active], async () => { await nextTick(); measure() })
 // The active tab out of sight: it comes first among the unpinned ones, in view
 watch(() => s.active, async a => {
     await nextTick()
@@ -396,12 +371,6 @@ watch(() => s.active, async a => {
         props.project.reorderTabs([...s.pinned.filter(p => s.openTabs.includes(p)), a, ...rest])
     }
 })
-
-async function moreMenu() {
-    if (!moreBtn.value) return
-    const id = await sdk.ui?.().menu(moreBtn.value, hidden.value.map(p => ({ id: p, label: `${p === s.active ? '● ' : ''}${p}` })), { label: 'More tabs' })
-    if (id) props.project.open(id)
-}
 
 async function copyText(text: string) {
     try { await sdk.clipboardSetText?.(text) } catch (err) { props.project.log('warn', `Not copied: ${String((err as Error)?.message ?? err)}`) }

@@ -411,6 +411,15 @@ preview. GEM Shell's part: `PhotinoVue1/FORGE-SHELL-ADDITIONS.md` (forge-1 to fo
 - A project with its own `widgets-sdk.d.ts` (made with New ▾) keeps its copy: replace it with the starter's to get
   them there.
 
+## 0.6.4 (2026-11-16): GEM Shell's tab strip
+
+- The editor's tabs are GEM Shell's tab strip (`<gex-tab-strip>`), as its own tabs: pinned first (📌, no ✕), dragged to
+  reorder, a middle-click or the ✕ closes, and after a close the others keep their widths a moment so the next ✕ is
+  under the pointer; ← / → move between tabs; Tab rows 1–3 (the tab's menu) with the rest under ▾ N; a file not
+  saved shows a dot. The active tab out of sight still comes forward.
+- Narrow, the page's parts as tabs are the same strip; Problems shows its count as a note.
+- Unchanged: a tile's head (its parts' tabs are also its handle while arranging), the tab's menu.
+
 ## Files
 `entry.ts`, `Widget.vue` (the bar, the pages, the lifecycle), `layout.ts` (pages of tiles), `TileGrid.vue`, `project.ts` (the project: files, saving, the watch, running), `Explorer.vue`,
 `CodeEditor.vue`, `PreviewPart.vue`, `Problems.vue`, `Output.vue`, `commands.ts`, `samples.ts`, `templates.ts` (New ▾), `raw.d.ts`, `playground.ts`, `Playground.vue`, `PlayPopover.vue`,

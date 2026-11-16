@@ -64,9 +64,13 @@
 .gf-page-empty { position: absolute; inset: 0; display: grid; place-items: center; }
 
 /* Narrow: one part at a time, chosen above */
-.gf-narrow-tabs { display: flex; gap: 2px; flex: none; overflow-x: auto; border-bottom: 1px solid var(--gf-line); }
-.gf-narrow-tabs button { border: 0; border-bottom: 2px solid transparent; background: none; padding: 6px 10px; cursor: pointer; color: var(--gf-dim); white-space: nowrap; }
-.gf-narrow-tabs button.on { color: var(--gf-fg); border-bottom-color: var(--gf-run); }
+.gf-narrow-tabs {   /* 0.6.4: GEM Shell's tab strip (header look) */
+    flex: none; border-bottom: 1px solid var(--gf-line); padding-top: 2px;
+    --tab-header-h: calc(var(--gex-px, 1px) * 27);
+    --tab-header-fg: var(--gf-dim); --tab-header-hover-fg: var(--gf-fg);
+    --tab-header-hover-bg: color-mix(in oklab, var(--gf-fg) 8%, transparent);
+    --tab-header-active-fg: var(--gf-fg); --tab-header-active-bg: var(--gf-tile); --tab-header-active-border: var(--gf-line);
+}
 .gf-narrow-tile { flex: 1; margin-top: 6px; }
 
 /* Explorer */
@@ -91,18 +95,15 @@
 /* Code */
 .gf-code { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
 .gf-tabbar { display: flex; flex: none; align-items: flex-start; border-bottom: 1px solid var(--gf-line); }
-/* 0.1.8: the tabs wrap onto the rows shown (Tab rows 1–3); what doesn't fit: ▾ */
-.gf-tabs { display: flex; flex-wrap: wrap; flex: 1; min-width: 0; overflow: hidden; }
-.gf-tabs.tabs-dragging .gf-tab { cursor: grabbing; }
-.gf-tab.dragging { opacity: .55; }
-.gf-tab.pinned { padding-right: 10px; }
-.gf-pin { font-size: 10px; }
-.gf-tabs-more { flex: none; height: calc(var(--gex-px, 1px) * 29); padding: 0 8px; font-size: 12px; }
+/* 0.6.4: the tabs are GEM Shell's tab strip (header look, rows: Tab rows 1–3, the rest under ▾), in GEM Forge's colours */
+.gf-tabs {
+    flex: 1; min-width: 0; font-family: var(--gf-mono); padding-top: 2px;
+    --tab-header-h: calc(var(--gex-px, 1px) * 27);
+    --tab-header-fg: var(--gf-dim); --tab-header-hover-fg: var(--gf-fg);
+    --tab-header-hover-bg: color-mix(in oklab, var(--gf-fg) 8%, transparent);
+    --tab-header-active-fg: var(--gf-fg); --tab-header-active-bg: var(--gf-tile); --tab-header-active-border: var(--gf-line);
+}
 .gf-row.flash { background: color-mix(in oklab, var(--gf-accent) 28%, transparent); transition: background .3s; }
-.gf-tab { display: inline-flex; align-items: center; gap: 6px; height: calc(var(--gex-px, 1px) * 29); box-sizing: border-box; flex: none; border: 0; background: none; padding: 5px 8px 5px 10px; cursor: pointer; color: var(--gf-dim); font-family: var(--gf-mono) !important; font-size: 12px !important; border-bottom: 2px solid transparent; white-space: nowrap; }
-.gf-tab.on { color: var(--gf-fg); border-bottom-color: var(--gf-accent); background: color-mix(in oklab, var(--gf-fg) 5%, transparent); }
-.gf-x { opacity: .5; padding: 0 2px; border-radius: 3px; }
-.gf-x:hover { opacity: 1; background: color-mix(in oklab, var(--gf-fg) 15%, transparent); }
 .gf-conflict { display: flex; align-items: center; gap: 8px; flex: none; padding: 5px 10px; background: color-mix(in oklab, var(--gf-warn) 18%, transparent); font-size: 12px; }
 .gf-conflict span { flex: 1; }
 .gf-conflict button { border: 1px solid var(--gf-line); background: var(--gf-chrome); border-radius: 5px; padding: 2px 8px; cursor: pointer; }
