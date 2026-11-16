@@ -404,6 +404,13 @@ preview. GEM Shell's part: `PhotinoVue1/FORGE-SHELL-ADDITIONS.md` (forge-1 to fo
 
 - The `[forge] preview …` console lines (0.5.4, to find why previews opened twice) are gone.
 
+## 0.6.3 (2026-11-16): the tab kit in the SDK's typings
+
+- GEM Forge's copy of the SDK's typings (`types/widgets-sdk.d.ts`, built in) knows GEM Shell's tab kit:
+  `useTabStrip`, `TabItem`, `TabBadge`, `TabStripOptions` from `gexplorer/widgets`, and `<gex-tab-strip>`.
+- A project with its own `widgets-sdk.d.ts` (made with New ▾) keeps its copy: replace it with the starter's to get
+  them there.
+
 ## Files
 `entry.ts`, `Widget.vue` (the bar, the pages, the lifecycle), `layout.ts` (pages of tiles), `TileGrid.vue`, `project.ts` (the project: files, saving, the watch, running), `Explorer.vue`,
 `CodeEditor.vue`, `PreviewPart.vue`, `Problems.vue`, `Output.vue`, `commands.ts`, `samples.ts`, `templates.ts` (New ▾), `raw.d.ts`, `playground.ts`, `Playground.vue`, `PlayPopover.vue`,

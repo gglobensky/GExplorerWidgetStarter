@@ -1887,6 +1887,88 @@ declare module 'gexplorer/widgets' {
     export function useSortable<T>(source: Ref<T[]>, options: UseSortableOptions<T>): UseSortableReturn<T>
     export function useScrollHints(options: any): any
 
+    // ── Tab kit (NEW GEM Shell 2026-11-16; README "Tabs") ──────────────────
+    // What GEM Shell's own tab strips do (its main tabs, a stack's header, the sidebar's tabs, its pages), headless.
+    // <gex-tab-strip> draws it; use this alone to draw your own tabs with the same behaviour.
+
+    /** A small mark on a tab: a dot, a spinning ring (busy), new output (unread), not saved (dirty). */
+    export type TabBadge = 'dot' | 'busy' | 'unread' | 'dirty'
+
+    export interface TabItem {
+        id: string
+        /** Shown as text (never HTML). */
+        title: string
+        /** A glyph before the title. */
+        icon?: string
+        /** Extra class(es) on the icon. */
+        iconClass?: string
+        /** The tooltip's detail line(s) under the title. */
+        tip?: string
+        /** Default true when the strip closes tabs; false: no ✕, no middle-click close. */
+        closable?: boolean
+        /** Kept before the others when reordering. */
+        pinned?: boolean
+        disabled?: boolean
+        /** Why it is disabled: its tooltip (never offer something and then refuse it). */
+        disabledReason?: string
+        badge?: TabBadge | null
+        /** A short pill after the title ("here"). */
+        note?: string
+        /** Reserved for tab groups (a later GEM Shell). */
+        group?: string
+    }
+
+    export interface TabStripOptions {
+        activeId: () => string | null | undefined
+        onActivate: (id: string) => void
+        /** Given: the tabs close (✕, middle-click), with the close run (below). */
+        onClose?: (id: string) => void
+        /** Given: the tabs reorder by dragging (the shell's sortable engine), pinned ones first. */
+        onReorder?: (ids: string[]) => void
+        /** The element whose children are the tabs ([data-tab-id] each) and which scrolls. */
+        scroller: () => HTMLElement | null
+        /** 'manual' (default): ← / → / Home / End move the focus, Enter / Space activate. 'auto': the focus activates. */
+        activation?: 'manual' | 'auto'
+        /** Keep the active tab in view (default true). */
+        revealActive?: boolean
+        /** The close run's cooldown once the pointer leaves the strip (default 800 ms). */
+        thawDelayMs?: number
+        /** Below this a press stays a click (default 6 px). */
+        dragThresholdPx?: number
+        /** Read at each press: true leaves the tabs where they are for now. */
+        dragDisabled?: () => boolean
+    }
+
+    /**
+     * useTabStrip's answer. Wire each tab: data-tab-id, :tabindex="tabIndexOf(id)", :style="tabStyle(id)",
+     * @pointerdown="onTabPointerDown(i, $event)", @auxclick="onTabAuxClick(id, $event)", @click="activate(id)",
+     * @keydown="onTabKeydown(i, $event)"; the strip: @pointerenter / @pointerleave.
+     */
+    export interface TabStrip {
+        readonly activeId: { readonly value: string }
+        /** The tabs to draw (a live preview while one is dragged). */
+        readonly displayList: { readonly value: TabItem[] }
+        readonly draggingId: { readonly value: string | number | null }
+        readonly isDragging: { readonly value: boolean }
+        readonly reorderable: boolean
+        readonly closes: boolean
+        canClose(tab: TabItem | undefined): boolean
+        activate(id: string): void
+        /** A close with the pointer: the other tabs keep their widths until the pointer has been away a moment. */
+        closeByPointer(id: string): void
+        /** A tab's inline style (its frozen width during a close run). */
+        tabStyle(id: string): Record<string, string> | undefined
+        thaw(): void
+        tabIndexOf(id: string): 0 | -1
+        onTabPointerDown(index: number, e: PointerEvent): void
+        onTabAuxClick(id: string, e: MouseEvent): void
+        onTabKeydown(index: number, e: KeyboardEvent): void
+        onStripPointerEnter(): void
+        onStripPointerLeave(): void
+    }
+
+    export function useTabStrip(items: Ref<TabItem[]>, options: TabStripOptions): TabStrip
+
     // ── Ink kit: drawing on pictures and sketches (NEW 2026-11-05, GEM Shell H1; from Corkboard's ink.ts) ───
     // Strokes are data in their surface's units: the <svg>'s viewBox (1000 wide: ink scales with the picture; or the
     // picture's own pixels). A freehand stroke is exactly Corkboard's Stroke ({ c, w, pts, p? }): saved ink reads as it is.
@@ -4382,6 +4464,15 @@ declare module 'gexplorer/widgets' {
 //     :page-ratio (0.8) and :min-page-step (px, 80): how far a click scrolls.
 //     The ref's el is the scrolling element: center an item with el.scrollTo({ left, behavior }).
 //
+//   <gex-tab-strip :items="tabs" :active-id="current" @activate="id => current = id" />   (NEW GEM Shell 2026-11-16)
+//     GEM Shell's tab strip (README "Tabs"): items are TabItem[] (from 'gexplorer/widgets'). variant 'section'
+//     (default: a panel's sections), 'document' (closable documents, as the main tabs) or 'header' (thin);
+//     overflow 'none' (default) or 'scroll' (sideways, no scrollbar); closable (✕, middle-click: @close, with the
+//     close run), reorderable (drag: @reorder with the ids in their new order; drag-disabled: not for now);
+//     activation 'manual' | 'auto'; label (the tablist's name); close-tip. @menu(id, event): a tab's right-click;
+//     @strip-menu(event): the empty space's. Slots #icon / #title / #badge ({ tab, active }), #end (your + button).
+//     Restyle through --tabs-* / --tab-* (document), --tab-section-bg (section).
+//
 //   <gex-video-surface :video="handle" />
 //     Shows a video of sdk.video() (2026-10-25): fills its place, the video contained and
 //     letterboxed in black. Mounting moves the shell's <video> in; unmounting moves it back
@@ -4399,6 +4490,26 @@ declare module 'vue' {
             enabled?: boolean; fill?: boolean; maxHeight?: number; minRows?: number; minHeight?: number
             // NEW (2026-11-03): sideways, floating edges, the page step
             axis?: 'y' | 'x'; edges?: 'strip' | 'overlay'; pageRatio?: number; minPageStep?: number
+        }>
+        // NEW (GEM Shell 2026-11-16): the shell's tab strip (README "Tabs")
+        'gex-tab-strip': import('vue').DefineComponent<{
+            items: import('gexplorer/widgets').TabItem[]
+            activeId: string | null | undefined
+            variant?: 'document' | 'section' | 'header'
+            overflow?: 'scroll' | 'none'
+            closable?: boolean
+            reorderable?: boolean
+            dragDisabled?: boolean
+            activation?: 'manual' | 'auto'
+            label?: string
+            closeTip?: string | { content: string; detail?: string }
+            thawDelayMs?: number
+            revealActive?: boolean
+            onActivate?: (id: string) => void
+            onClose?: (id: string) => void
+            onReorder?: (ids: string[]) => void
+            onMenu?: (id: string, event: MouseEvent) => void
+            onStripMenu?: (event: MouseEvent) => void
         }>
         'gex-video-surface': import('vue').DefineComponent<{
             video: import('gexplorer/widgets').VideoHandle | null | undefined

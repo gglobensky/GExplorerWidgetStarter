@@ -156,6 +156,39 @@ const geo = createVirtualGeometry({ vlist: v.lines, scrollEl, flow, count: () =>
   The Layout menu offers them after the sizes; the choice arrives in `props.config.view.arrange` and is kept
   per folder for an explorer (Items does this for Icons and Media).
 
+## Tabs
+
+GEM Shell's tab strip (GEM Shell 2026-11-16), the one its main tabs, a stack's header, the sidebar's tabs and its
+own pages use, is yours too: `<gex-tab-strip>` draws it, `useTabStrip` (from `gexplorer/widgets`) is its behaviour
+alone, to draw your own tabs.
+
+```vue
+<gex-tab-strip :items="tabs" :active-id="current" @activate="(id: string) => current = id" />
+```
+
+```ts
+import type { TabItem } from 'gexplorer/widgets'
+const tabs = computed<TabItem[]>(() => sessions.value.map(s => ({ id: s.id, title: s.name, badge: s.busy ? 'busy' : null })))
+```
+
+- **Looks:** `variant="section"` (default: a panel's sections, the current tab raised and joined to what's under it),
+  `"document"` (documents you open and close, as GEM Shell's main tabs), `"header"` (thin, a header bar's).
+- **Close:** `closable` gives each tab a ✕ (on hover) and middle-click: `@close(id)`. An item's `closable: false`
+  keeps it (a pinned tab). After a close with the pointer, the other tabs keep their widths so the next ✕ is under
+  the cursor; they fit again once the pointer has been out of the strip a moment.
+- **Reorder:** `reorderable`: dragged (a press under 6 px stays a click): `@reorder(ids)`; pinned tabs stay first.
+  `drag-disabled` leaves them where they are for now.
+- **Too many:** `overflow="scroll"`: the tabs shrink, then scroll sideways (the wheel, the edges), the current one
+  kept in view.
+- **Keys:** ← / → / Home / End move between the tabs (one Tab stop: the current tab); `activation="auto"` switches as
+  the focus moves (a few sections), `"manual"` (default) on Enter / Space. The strip takes no other key.
+- **Marks:** an item's `badge` (`'dot' | 'busy' | 'unread' | 'dirty'`), `note` (a short pill: "here"), `icon`, `tip`
+  (the tooltip's detail), `disabled` with `disabledReason` (its tooltip: never offer something and then refuse it).
+- **Menus:** `@menu(id, event)` (a tab's right-click) and `@strip-menu(event)` (the empty space): open yours with
+  `sdk.ui().contextMenu`.
+- **Slots:** `#icon`, `#title`, `#badge` ({ tab, active }) replace a tab's parts; `#end` follows the tabs (your +).
+- Titles are text, never HTML. Dragging moves tabs within your strip only.
+
 ## Drawing on pictures (the ink kit)
 
 GEM Shell's picture editor and the Corkboard draw with the same kit (GEM Shell, 2026-11-05), from `gexplorer/widgets`:
