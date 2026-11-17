@@ -3499,6 +3499,19 @@ declare module 'gexplorer/widgets' {
         buttons?: WidgetUiButton[]
         /** Pixels (320–720). */
         width?: number
+        /**
+         * GEM Shell 2026-11-16: the box holds work the user would hate to lose (a form, a list being built). While
+         * dirty() returns true, your cancelling button (Escape presses it) asks first, GEM Shell's question for every
+         * dialog holding work: Keep editing / Discard, plus Save when `save` names your button that saves (the
+         * question presses it: its onClick runs; { failed } keeps the box). Closing GEM Shell lists it too. Read your
+         * refs or <values> in dirty() (reactive), so GEM Shell knows when it changes. Not for a short prompt.
+         */
+        unsaved?: {
+            /** <values>: the box's content items' values as they are now. */
+            dirty: (values: Record<string, unknown>) => boolean
+            /** The id (or label) of your button that saves. */
+            save?: string
+        }
     }
 
     export type WidgetMessageBoxResult = {
@@ -3568,6 +3581,14 @@ declare module 'gexplorer/widgets' {
      *         label: 'Connect', default: true, requires: 'url',
      *         onClick: async () => (await tryConnect()) ? undefined : { failed: 'The server did not answer.' },
      *     }],
+     * })
+     *
+     * // A form the user would hate to lose: Cancel / Escape ask first once something is typed (GEM Shell 2026-11-16).
+     * await ui.messageBox({
+     *     title: 'New station',
+     *     content: [{ type: 'input', id: 'name', label: 'Name' }, { type: 'input', id: 'url', label: 'Stream URL' }],
+     *     buttons: [{ label: 'Cancel', cancel: true }, { label: 'Add', id: 'add', default: true, requires: 'url', onClick: add }],
+     *     unsaved: { dirty: v => !!(v.name || v.url), save: 'add' },
      * })
      *
      * // Progress in a box that changes while open.

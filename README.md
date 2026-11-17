@@ -891,6 +891,29 @@ What a widget does with keys (the key mapper, 2026-10-24):
   that has the focus, typing in a field. Listen to them on your own elements, not the whole
   document: on `document` they would take keys from every other widget and the shell.
 
+## Work in a dialog: asking before it's lost (GEM Shell 2026-11-16)
+
+Every GEM Shell dialog that holds work (Power Rename's rules, a menu item being built, launch profiles) asks the
+same question before that work would be dropped by Cancel, ✕, Escape or a click beside it: **Keep editing /
+Discard**, plus **Save** where saving from there is safe. Closing GEM Shell lists those dialogs with the pages'
+unsaved changes. Your message boxes get the same with `unsaved`:
+
+```ts
+await sdk.ui!().messageBox({
+    title: 'New station',
+    content: [{ type: 'input', id: 'name', label: 'Name' }, { type: 'input', id: 'url', label: 'Stream URL' }],
+    buttons: [{ label: 'Cancel', cancel: true }, { label: 'Add', id: 'add', default: true, requires: 'url', onClick: add }],
+    unsaved: { dirty: values => !!(values.name || values.url), save: 'add' },
+})
+```
+
+- `dirty(values)`: true while there is work; `values` are the content items' values as they are now. Read refs or
+  `values` so it's reactive (GEM Shell watches it to know, when it closes, that something would be lost).
+- `save` (optional): the id or label of your button that saves. The question presses it (its `onClick` runs; a
+  `{ failed }` keeps the box). Leave it out when saving does something the user should click for themselves
+  (renaming, deleting, sending): the question then offers Keep editing / Discard only.
+- Use it where losing the work would hurt, not for a one-field prompt.
+
 ## Drawing outside your box (GEM Shell 2026-10-31)
 
 A widget draws **inside its own box**. Anything outside it goes through GEM Shell, which frames it
