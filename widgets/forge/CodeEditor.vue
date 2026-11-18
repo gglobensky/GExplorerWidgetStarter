@@ -278,25 +278,28 @@ function syncFromProject(path: string) {
     }
 }
 
-// Colours for a dark background (CodeMirror's default style is made for a light one)
+// CHANGED (0.6.6, 2026-11-18; GEM Shell G7a2): GEM Shell's code colours (--gex-code-*, Appearance ▸ Widgets ▸ Code):
+// every theme keeps every token readable (a light theme hid the names, they were always near-white). The fallbacks
+// are the old dark colours, for a GEM Shell before G7a2.
 const darkHighlight = HighlightStyle.define([
-    { tag: [t.keyword, t.operatorKeyword, t.modifier, t.controlKeyword], color: '#c792ea' },
-    { tag: [t.string, t.special(t.string), t.regexp], color: '#c3e88d' },
-    { tag: [t.number, t.bool, t.null, t.atom], color: '#f78c6c' },
-    { tag: [t.comment, t.lineComment, t.blockComment], color: '#7f8a99', fontStyle: 'italic' },
-    { tag: [t.function(t.variableName), t.function(t.propertyName)], color: '#82aaff' },
-    { tag: [t.typeName, t.className, t.namespace], color: '#ffcb6b' },
-    { tag: [t.propertyName, t.attributeName], color: '#89ddff' },
-    { tag: [t.tagName, t.angleBracket], color: '#f07178' },
-    { tag: [t.definition(t.variableName)], color: '#eeffff' },
-    { tag: [t.variableName], color: '#e6e6e6' },
-    { tag: [t.punctuation, t.separator, t.bracket], color: '#a6accd' },
-    { tag: t.invalid, color: '#ff5370' },
+    { tag: [t.keyword, t.operatorKeyword, t.modifier, t.controlKeyword], color: 'var(--gex-code-keyword, #c792ea)' },
+    { tag: [t.string, t.special(t.string), t.regexp], color: 'var(--gex-code-string, #c3e88d)' },
+    { tag: [t.number, t.bool, t.null, t.atom], color: 'var(--gex-code-number, #f78c6c)' },
+    { tag: [t.comment, t.lineComment, t.blockComment], color: 'var(--gex-code-comment, #7f8a99)', fontStyle: 'italic' },
+    { tag: [t.function(t.variableName), t.function(t.propertyName)], color: 'var(--gex-code-function, #82aaff)' },
+    { tag: [t.typeName, t.className, t.namespace], color: 'var(--gex-code-type, #ffcb6b)' },
+    { tag: [t.propertyName, t.attributeName], color: 'var(--gex-code-property, #89ddff)' },
+    { tag: [t.tagName, t.angleBracket], color: 'var(--gex-code-keyword, #f07178)' },
+    { tag: [t.definition(t.variableName)], color: 'var(--gex-code-variable, #eeffff)' },
+    { tag: [t.variableName], color: 'var(--gex-code-variable, #e6e6e6)' },
+    { tag: [t.punctuation, t.separator, t.bracket], color: 'var(--gex-code-operator, #a6accd)' },
+    { tag: t.invalid, color: 'var(--gex-code-invalid, #ff5370)' },
 ])
 
 const darkTheme = EditorView.theme({
     // fontSize: textPx (2026-11-14): 13px at 100 %, following Text size (a theme is set from code: the build doesn't see it)
-    '&': { height: '100%', fontSize: textPx(13), backgroundColor: 'transparent', color: 'var(--gex-fg, #e6e6e6)' },
+    // CHANGED (0.6.6): GEM Shell's code background and text (what its readability check measures the tokens on)
+    '&': { height: '100%', fontSize: textPx(13), backgroundColor: 'var(--gex-code-bg, transparent)', color: 'var(--gex-code-fg, var(--gex-fg, #e6e6e6))' },
     '.cm-scroller': { fontFamily: 'var(--gex-font-mono, "Cascadia Mono", Consolas, monospace)', lineHeight: '1.5' },
     '.cm-gutters': { backgroundColor: 'transparent', color: 'color-mix(in oklab, currentColor 40%, transparent)', border: 'none' },
     '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'color-mix(in oklab, currentColor 6%, transparent)' },

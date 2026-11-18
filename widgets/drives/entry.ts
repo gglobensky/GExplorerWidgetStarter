@@ -5,7 +5,7 @@ export default {
   id: 'drives',
   // NEW (2026-11-14, 0.7.2; GEM Shell G2b): GEM Shell's drives role (widgets/roles.ts)
   role: 'drives',
-  version: '0.7.5',   // 0.7.5 (2026-11-14): densities chosen as at 100 % text; GEM Shell's colours. 0.7.4: sizes follow Appearance (built with the Text size / Roundness step). 0.7.3 (2026-11-14): in GEM Shell's file dialog (contexts.dialog: a compact list)
+  version: '0.7.7',   // 0.7.7 (2026-11-18, GEM Shell W): "Colour bars by space used" shows in Appearance ▸ Widgets ▸ Drives too, and only the fills in use can be changed (Fill while it's off, the three by space used while it's on). 0.7.6 (2026-11-18, GEM Shell G7): the usage bar's colours are customizable parts (Appearance ▸ Widgets ▸ Drives). 0.7.5 (2026-11-14): densities chosen as at 100 % text; GEM Shell's colours. 0.7.4: sizes follow Appearance (built with the Text size / Roundness step). 0.7.3 (2026-11-14): in GEM Shell's file dialog (contexts.dialog: a compact list)
                       // 0.7.2 (2026-11-14): role 'drives'
                       // 0.7.1 (2026-11-13): GEM Shell's cursor handles (the hand: one click opens a drive)
                       // 0.7.0 (2026-11-13, GEM Shell drive properties): a drive's menu (Open, Open in a new tab,
@@ -69,6 +69,25 @@ export default {
     }
   },
 
+  // NEW (0.7.6, GEM Shell G7): the colours the user may change (Appearance ▸ Widgets ▸ Drives, or Customize a part on a
+  // bar). Widget.vue uses var(--my-<name>); the bar carries data-gem-part="usage". The fill is read on the track (a
+  // separator's target: it must not nearly disappear).
+  // 0.7.7 (GEM Shell W): the group shows the colorByUsage setting (still a setting: yours, every theme), and each fill
+  // says when it's used (enabledWhen): the other ones are greyed there.
+  customize: [
+    { id: 'usage', label: 'Usage bar', settings: ['colorByUsage'], values: [
+      { name: 'usage-fill', label: 'Fill (one colour)', designed: 'accent', textOn: 'usage-track', kind: 'decor',
+        enabledWhen: { key: 'colorByUsage', truthy: false } },
+      { name: 'usage-normal', label: 'Fill, by space used: plenty left', designed: 'success', textOn: 'usage-track', kind: 'decor',
+        enabledWhen: { key: 'colorByUsage', truthy: true } },
+      { name: 'usage-warning', label: 'Fill, by space used: above 75 %', designed: 'warning', textOn: 'usage-track', kind: 'decor',
+        enabledWhen: { key: 'colorByUsage', truthy: true } },
+      { name: 'usage-critical', label: 'Fill, by space used: above 90 %', designed: 'danger', textOn: 'usage-track', kind: 'decor',
+        enabledWhen: { key: 'colorByUsage', truthy: true } },
+      { name: 'usage-track', label: 'Track', designed: 'surface3' },
+    ] },
+  ],
+
   settings: {
     fields: [
       {
@@ -76,7 +95,7 @@ export default {
         type: 'toggle',
         label: 'Colour bars by space used',
         default: true,
-        hint: 'Uses green normally, amber above 75% used, and red above 90%. Turn this off to use the shell accent colour.',
+        hint: 'Green normally, amber above 75 % used, red above 90 %. Off: one colour (the theme\'s Fill).',
       },
     ],
     groups: [

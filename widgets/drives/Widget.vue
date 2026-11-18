@@ -345,6 +345,7 @@ defineExpose({ onMenuItem, onCommand })
         <template v-else-if="showCapacity">
           <span
             class="usage-bar"
+            data-gem-part="usage"
             :role="usagePercent(statFor(drive)) !== null ? 'progressbar' : undefined"
             :aria-label="`${drive.display} space used`"
             :aria-valuemin="usagePercent(statFor(drive)) !== null ? 0 : undefined"
@@ -470,27 +471,28 @@ defineExpose({ onMenuItem, onCommand })
   height: 6px;
   overflow: hidden;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--gex-fg, #fff) 12%, transparent);
+  /* 0.7.6: customizable (entry.ts customize); the fallbacks for a GEM Shell before G7 */
+  background: var(--my-usage-track, color-mix(in srgb, var(--gex-fg, #fff) 12%, transparent));
 }
 
 .usage-fill {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--gex-accent, #4ea1ff);
+  background: var(--my-usage-fill, var(--gex-accent, #4ea1ff));
   transition: width 240ms ease, background-color 160ms ease;
 }
 
 .color-by-usage .usage-normal .usage-fill {
-  background: var(--drive-usage-normal, #22c55e);
+  background: var(--my-usage-normal, var(--drive-usage-normal, #22c55e));
 }
 
 .color-by-usage .usage-warning .usage-fill {
-  background: var(--drive-usage-warning, #f59e0b);
+  background: var(--my-usage-warning, var(--drive-usage-warning, #f59e0b));
 }
 
 .color-by-usage .usage-critical .usage-fill {
-  background: var(--drive-usage-critical, #ef4444);
+  background: var(--my-usage-critical, var(--drive-usage-critical, #ef4444));
 }
 
 .capacity-text,
