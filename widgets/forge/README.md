@@ -420,6 +420,14 @@ preview. GEM Shell's part: `PhotinoVue1/FORGE-SHELL-ADDITIONS.md` (forge-1 to fo
 - Narrow, the page's parts as tabs are the same strip; Problems shows its count as a note.
 - Unchanged: a tile's head (its parts' tabs are also its handle while arranging), the tab's menu.
 
+## 0.6.7 (2026-11-21): the widget's id from its default export
+
+- GEM Forge took the first `id:` in entry.ts as the widget's id, so Items (whose menu entries come first) was
+  `rows`. It now reads the `id` of the object entry.ts exports by default: `export default { … }`,
+  `export default defineWidget({ … })`, or `export default def` with `const def = { … }`; only that object's own
+  `id`, with comments and strings skipped (project.ts: `entryIdOf`). The Widget ▾ menu (install, uninstall, "comes
+  with GEM Shell") uses it.
+
 ## Files
 `entry.ts`, `Widget.vue` (the bar, the pages, the lifecycle), `layout.ts` (pages of tiles), `TileGrid.vue`, `project.ts` (the project: files, saving, the watch, running), `Explorer.vue`,
 `CodeEditor.vue`, `PreviewPart.vue`, `Problems.vue`, `Output.vue`, `commands.ts`, `samples.ts`, `templates.ts` (New ▾), `raw.d.ts`, `playground.ts`, `Playground.vue`, `PlayPopover.vue`,

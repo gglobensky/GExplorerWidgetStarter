@@ -480,7 +480,6 @@ async function editorMenu(e: MouseEvent) {
     }
     exec(id)
 }
-onBeforeUnmount(() => tabsObs?.disconnect())
 
 /** Each open file's cursor (for the snapshot while away). */
 function cursors(): Record<string, number> {

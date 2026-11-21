@@ -187,6 +187,76 @@ export type ProjectOptions = {
 }
 export type BuildFile = { path: string; text?: string; base64?: string }
 
+/**
+ * 0.6.7 (2026-11-21): the widget's id: the `id` of the object entry.ts exports by default (not the first `id:` in the
+ * file: items' menu entries come first, so it was 'rows'). Follows `export default { … }`,
+ * `export default defineWidget({ … })`, and `export default def` with `const def = { … }` (or `= defineWidget({ … })`);
+ * only the object's own `id`, not one inside it. Comments and strings are skipped. '' when there's none.
+ */
+export function entryIdOf(text: string): string {
+    const code = maskCode(text)
+    const def = /\bexport\s+default\s+/.exec(code)
+    if (!def) return ''
+    const objectAt = (from: number, depthCalls = 3): number => {
+        let i = from
+        while (/\s/.test(code[i] ?? '')) i++
+        if (code[i] === '{') return i
+        if (code[i] === '(') return objectAt(i + 1, depthCalls)
+        const name = /^[A-Za-z_$][\w$]*/.exec(code.slice(i))?.[0]
+        if (!name) return -1
+        let j = i + name.length
+        while (/\s/.test(code[j] ?? '')) j++
+        if (code[j] === '(' && depthCalls > 0) return objectAt(j + 1, depthCalls - 1) // defineWidget({ … })
+        // A name: its declaration (const def: WidgetDefinition = { … })
+        const decl = new RegExp(`\\b(?:const|let|var)\\s+${name.replace(/\$/g, '\\$')}\\b[^=;]*=(?!=)`).exec(code)
+        return decl && depthCalls > 0 ? objectAt(decl.index + decl[0].length, depthCalls - 1) : -1
+    }
+    const start = objectAt(def.index + def[0].length)
+    if (start < 0) return ''
+    // The object's own keys: depth 1 from its brace
+    let depth = 0
+    for (let i = start; i < code.length; i++) {
+        const c = code[i]
+        if (c === '{' || c === '[' || c === '(') depth++
+        else if (c === '}' || c === ']' || c === ')') { if (--depth === 0) break }
+        else if (depth === 1 && c === 'i' && !/[\w$.]/.test(code[i - 1] ?? '')) {
+            const m = /^id\s*:\s*(['"`])/.exec(code.slice(i, i + 64))
+            if (!m) continue
+            const q = i + m[0].length
+            const end = text.indexOf(m[1], q)
+            return end > q ? text.slice(q, end) : ''
+        }
+    }
+    return ''
+}
+
+/** <text> with its comments and its strings' insides as spaces (same length: offsets kept; the quotes stay). */
+function maskCode(text: string): string {
+    const out = text.split('')
+    let i = 0
+    while (i < text.length) {
+        const c = text[i], n = text[i + 1]
+        if (c === '/' && n === '/') { while (i < text.length && text[i] !== '\n') out[i++] = ' '; continue }
+        if (c === '/' && n === '*') {
+            const end = text.indexOf('*/', i + 2), stop = end < 0 ? text.length : end + 2
+            for (; i < stop; i++) if (text[i] !== '\n') out[i] = ' '
+            continue
+        }
+        if (c === '"' || c === "'" || c === '`') {
+            i++
+            while (i < text.length && text[i] !== c) {
+                if (text[i] === '\\') { out[i++] = ' ' }
+                if (i < text.length && text[i] !== '\n') out[i] = ' '
+                i++
+            }
+            i++
+            continue
+        }
+        i++
+    }
+    return out.join('')
+}
+
 export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
     const dev: WidgetDev | undefined = sdk.dev?.()
     const s = reactive({
@@ -1247,8 +1317,8 @@ export function createProject(sdk: WidgetSdk, opts: ProjectOptions = {}) {
 
     /** entry.ts's id, and whether it's installed (the Widget ▾ menu). */
     async function refreshInstalled() {
-        const m = /\bid\s*:\s*['"]([a-z0-9-]+)['"]/.exec(file('entry.ts')?.text ?? '')
-        s.widgetId = m?.[1] ?? ''
+        // 0.6.7: the default export's id (entryIdOf), not the file's first `id:`
+        s.widgetId = entryIdOf(file('entry.ts')?.text ?? '')
         s.installed = s.widgetId && dev?.installed ? await dev.installed(s.widgetId) : 'none'
     }
 
