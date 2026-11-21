@@ -758,8 +758,8 @@ A widget with a design of its own keeps it: hard-coded colours and its own fonts
 corkboard). Set `font-family` on your elements; the host's `--gex-font` is only the default.
 
 **A background of your own fades with the user's choice** (GEM Shell 2026-11-14). Settings ▸ Hubs & grid ▸ "Widget
-backgrounds", and per hub in Edit Layout ("Backgrounds"), set `--gex-widget-bg-opacity` (1 opaque, 0 none: a hub's
-wallpaper shows through, later). Fade only the surface you draw behind your content, never what must stay readable
+backgrounds" (now Appearance ▸ General ▸ Hubs & grid), and per hub in Edit Layout ("Backgrounds"), set
+`--gex-widget-bg-opacity` (1 opaque, 0 none: the wallpaper shows through). Fade only the surface you draw behind your content, never what must stay readable
 (notes, a newspaper page):
 
 ```css
@@ -767,6 +767,137 @@ wallpaper shows through, later). Fade only the surface you draw behind your cont
 ```
 
 (GEM Corkboard fades its cork this way; its bar and notes stay.)
+
+## Colours the user can change (`customize`)
+
+GEM Shell 2026-11-18. Declare the colours of your widget the user may change. Appearance lists them under your
+widget's name, and the user can also click them on screen (☰ ▸ Customize a part…). They're part of the **theme**: every
+copy of your widget follows, a theme someone shares carries them, and switching theme switches them. One copy can also
+have its own colours (Edit Layout ▸ ⋮ ▸ Personalize this copy…).
+
+```ts
+// entry.ts (types: WidgetCustomizeGroup, WidgetCustomizeValue)
+customize: [
+  { id: 'usage', label: 'Usage bar', values: [
+      { name: 'usage-fill',  label: 'Fill',  designed: 'accent', textOn: 'usage-track', kind: 'decor' },
+      { name: 'usage-track', label: 'Track', designed: 'surface3' },
+  ] },
+],
+```
+
+```css
+.bar          { background: var(--my-usage-track); }
+.bar > .fill  { background: var(--my-usage-fill); }
+```
+
+```html
+<div class="bar" data-gem-part="usage"><div class="fill"></div></div>
+```
+
+- **`designed`**: a palette colour (`bg`, `surface1`, `surface2`, `surface3`, `sunken`, `fg`, `muted`, `border`,
+  `accent`, `onAccent`, `danger`, `success`, `warning`, `info`, `cat1`…`cat6`) or one of GEM Shell's variables
+  (`'--btn-bg'`). Your widget follows every theme by itself.
+- **`var(--my-<name>)` needs no fallback**: GEM Shell always sets it on your host. `--my-` is reserved for this.
+- **`textOn` and `kind`** join the readability check (Appearance's Fix, Surprise me): what the colour is read on
+  (another value's name or a palette key), and how strict to be (`text` is the strictest; `fill`, `control`, `decor`).
+- **Mark the group's elements** with `data-gem-part="<group id>"` (or list CSS selectors in `marks`), so Customize a
+  part… finds them. A *part* is an area whose colours Appearance changes. It's never skinned or made glass (that's a
+  surface, below).
+- **Keep names and ids across versions.** Themes store the user's colours by them: a renamed value loses them, and a
+  theme made for your widget stops reaching it.
+- A bad entry is left out, with a console warning naming it.
+
+### Settings beside the colours
+
+A group may show some of your own settings (a toggle, a choice or a number from entry.ts `settings`) at its top, and a
+value may be used only while a setting says so:
+
+```ts
+customize: [
+  { id: 'usage', label: 'Usage bar', settings: ['colorByUsage'], values: [
+      { name: 'usage-fill',   label: 'Fill (one colour)', designed: 'accent', enabledWhen: { key: 'colorByUsage', truthy: false } },
+      { name: 'usage-normal', label: 'Plenty left',       designed: 'success', enabledWhen: { key: 'colorByUsage', truthy: true } },
+  ] },
+],
+```
+
+- **A setting shown here is about the look, so it's the theme's.** Each theme has its own value, and switching theme
+  switches it. Settings leaves it out ("This widget has appearance settings", with a button to Appearance).
+  `sdk.settings()` gives you the theme's value like any other. Only put settings here that change how your widget
+  looks, never what it does.
+- **`enabledWhen`** has the shape of a setting's `showWhen` (`equals`, `in` or `truthy`), and its key must be one of
+  the group's `settings`. While it doesn't hold, Appearance greys the value and says why, and the readability check,
+  inspect mode and Surprise me leave it out.
+
+## Surfaces: glass, skins later (`surface`)
+
+GEM Shell 2026-11-20. Over a wallpaper, GEM Shell's chrome can turn to glass. Your widget's own surfaces can too: say so
+on a `customize` group, and mark the elements whose background takes it.
+
+```ts
+customize: [
+  { id: 'tiles', label: 'Tiles', surface: '--my-tile-bg', values: [
+      { name: 'tile-bg', label: 'Tile', designed: 'surface1' },
+  ] },
+],
+```
+
+```html
+<div class="tile" data-gem-surface="tiles">…</div>
+```
+
+- **`surface: true`** tints the glass with `--gex-surface`. **`surface: '--my-<name>'`** (one of the group's values)
+  tints it with that colour, as the user set it.
+- **Only elements marked `data-gem-surface="<group id>"`** inside your widget take the finish. A group's parts and
+  marks stay colour only.
+- **It turns to glass only over a picture**: the window's, or the hub's own behind the grid. Elsewhere it's as you
+  designed it. The user can switch it off per group, in Appearance, for the theme.
+- **Only what's under your widget shows through.** If the widget's Backgrounds opacity (`--gex-widget-bg-opacity`) is
+  100 %, your own background shows there.
+- **Skins come later.** A skin is a picture placed over a surface, semi-translucent on a glass one. Marking surfaces
+  now means your widget can be skinned then, with nothing more to do.
+
+The theme's glass, if you draw glass of your own:
+
+| Variable | What |
+|---|---|
+| `--gex-glass-tint` | how much of the surface's own colour shows (a percentage, 20 to 90) |
+| `--gex-glass-frost` | the blur of what's behind (`backdrop-filter: blur(var(--gex-glass-frost))`) |
+| `--gex-glass-glare` | the soft highlight across the top (an image: `background-image`) |
+| `--gex-glass-edge` | the thin bright line inside the top edge (a colour) |
+
+## Code colours (`--gex-code-*`)
+
+GEM Shell 2026-11-18. A code editor or highlighted code should use the theme's code colours (Appearance ▸ Widgets ▸
+Code), so every token stays readable in every theme, light ones included. Each one is checked on `--gex-code-bg`.
+
+| Variable | For |
+|---|---|
+| `--gex-code-bg`, `--gex-code-fg` | the editor's background; plain text |
+| `--gex-code-keyword` | keywords (`const`, `if`, `import`) |
+| `--gex-code-string`, `--gex-code-number` | strings; numbers |
+| `--gex-code-comment` | comments |
+| `--gex-code-function`, `--gex-code-type` | function names; types and classes |
+| `--gex-code-property`, `--gex-code-variable` | properties; variables |
+| `--gex-code-operator` | operators and punctuation |
+| `--gex-code-invalid` | errors |
+
+(GEM Forge's CodeMirror highlight style is built on them.)
+
+## Your widget in Appearance's preview
+
+GEM Shell 2026-11-18. Appearance's stage shows a **real copy** of your widget, with real data, at each size, while the
+user changes its colours.
+
+- **`sdk.inPreview()` is true there.** Show sample content if you'd have nothing to show, such as a player's example
+  playlist.
+- **`preview.config` in entry.ts** gives the preview copy its own starting config, over your `defaults`:
+  `preview: { config: { data: { … }, view: { … } } }` (type `WidgetPreviewDecl`).
+- **Allowed there:** reads, media, your own view and state, menus and questions, reading settings.
+- **Everything else rejects with `code: 'E_PREVIEW'`**: opening, navigating, writing, moving, deleting, messaging,
+  jobs, the network. Catch it like any refusal. The stage tells the user what was stopped ("Not in the preview:
+  opening D:\").
+- **Explorers and `instance: 'global'` widgets aren't previewed.**
 
 ## GEM Shell's file preferences
 

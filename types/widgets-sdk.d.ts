@@ -160,6 +160,15 @@ declare module 'gexplorer/widgets' {
          */
         settings?: () => WidgetSettings
         /**
+         * GEM Shell 2026-11-18: true in Appearance's preview, the copy of your widget shown on its stage while the user
+         * customizes its look (owner appearance-preview_<type>). Reads, media, your view and state, menus and questions
+         * work there; what would change something outside your box (opening, navigating, writing, moving, deleting,
+         * messaging, jobs, the network…) rejects with code 'E_PREVIEW': catch it like any refusal. Show sample content
+         * there if you have none to show (a player's example playlist). entry.ts `preview.config` (WidgetPreviewDecl)
+         * gives the preview copy its own starting config. Explorers and instance: 'global' widgets aren't previewed.
+         */
+        inPreview?: () => boolean
+        /**
          * 2026-10-31: GEM Shell's file preferences, set by the user in Settings ▸ Files & drives, for every widget
          * alike: show hidden files, show protected system files. Read-only and reactive: watch it and list again
          * (pass them to openListing's filter: showHidden / showProtected). Absent on older shells. Same object on
@@ -1337,6 +1346,61 @@ declare module 'gexplorer/widgets' {
         fields: WidgetSettingField[]
         groups?: Array<{ title: string; description?: string; keys: string[] }>
     }
+    // ── Colours the user can change (entry.ts `customize`, GEM Shell 2026-11-18; settings, enabledWhen 2026-11-18;
+    //    surfaces 2026-11-20) ──────────────────────────────────────────────────────────────────────────────────────
+    /** A palette colour of the user's theme, for a value's `designed` and `textOn`. */
+    export type WidgetPaletteKey =
+        | 'bg' | 'surface1' | 'surface2' | 'surface3' | 'sunken' | 'fg' | 'muted' | 'border' | 'accent' | 'onAccent'
+        | 'danger' | 'success' | 'warning' | 'info' | 'cat1' | 'cat2' | 'cat3' | 'cat4' | 'cat5' | 'cat6'
+    /**
+     * One colour the user may change. Your CSS uses var(--my-<name>), always set by GEM Shell on your widget's host (as
+     * designed, the theme's, or one copy's own): no fallback needed. --my- is reserved for this.
+     *   name         a-z, 0-9, '-' (40 at most), unique in the whole widget (every group). KEEP IT ACROSS VERSIONS:
+     *                themes store the user's colours by it; a renamed value loses them (and a theme made for your
+     *                widget stops reaching it)
+     *   designed     what it is as you designed it: a palette colour ('accent') or one of GEM Shell's variables
+     *                ('--btn-bg'; not a --my- one)
+     *   textOn       for the readability check: what this colour is read on, another value's name or a palette key
+     *   kind         for the readability check: 'text' (the strictest), 'fill', 'control', 'decor'
+     *   enabledWhen  used only while one of the group's settings says so (the shape of a setting's showWhen; its key
+     *                must be one of the group's `settings`): otherwise Appearance greys it, with the reason, and the
+     *                readability check, inspect mode and Surprise me leave it out
+     */
+    export type WidgetCustomizeValue = {
+        name: string
+        label?: string
+        designed: WidgetPaletteKey | `--${string}`
+        textOn?: string
+        kind?: 'text' | 'fill' | 'control' | 'decor'
+        enabledWhen?: WidgetSettingShowWhen
+    }
+    /**
+     * entry.ts `customize: WidgetCustomizeGroup[]` (20 groups, 40 values each at most): what Appearance ▸ <your widget>
+     * shows. A bad entry is left out with a console warning naming it.
+     *   id        a-z, 0-9, '-' (40 at most), unique. Keep it across versions, like a value's name.
+     *   marks     CSS selectors (inside your widget, 10 at most) of the group's elements, for inspect mode (Customize
+     *             a part…); or put data-gem-part="<id>" on them. A part is an area whose colours Appearance changes:
+     *             never skinned, never glass.
+     *   settings  keys of your own settings (entry.ts `settings`: a toggle, a choice or a number; 10 at most) shown
+     *             at the top of the group. They are ABOUT THE LOOK: the theme's (each theme has its own value; switching
+     *             theme switches it), so Settings leaves them out and points to Appearance. sdk.settings() gives you the
+     *             theme's value like any other.
+     *   surface   the group's surfaces can take a finish (GEM Shell 2026-11-20): glass over a picture today, a skin
+     *             later. Mark each element whose background takes it with data-gem-surface="<id>" (inside your
+     *             widget). true: its glass is tinted with --gex-surface; '--my-<name>' (one of the group's values):
+     *             tinted with that colour. The user turns the glass off per group (Appearance, the theme's).
+     */
+    export type WidgetCustomizeGroup = {
+        id: string
+        label?: string
+        values: WidgetCustomizeValue[]
+        marks?: string[]
+        settings?: string[]
+        surface?: true | `--my-${string}`
+    }
+    /** entry.ts `preview` (GEM Shell 2026-11-18): the preview copy's own starting config, over your `defaults`. */
+    export type WidgetPreviewDecl = { config?: { data?: Record<string, unknown>; view?: Record<string, unknown> } }
+
     /** sdk.prefs() (2026-10-31): GEM Shell's file preferences, the user's, read-only. */
     export interface WidgetShellPrefs {
         /** Show files and folders marked hidden. */
