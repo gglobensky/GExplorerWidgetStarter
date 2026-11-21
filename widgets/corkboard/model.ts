@@ -18,7 +18,8 @@ export type InkTool = InkColor | 'erase'
 /** How the ink kit draws Corkboard's colour keys ('hl' is the kit's default highlighter). */
 export const CB_LOOK: InkLook = { color: (c: string) => `var(--cb-ink-${c})` }
 
-export type TextBlock = { id: string; t: BlockType; lvl: number; checked?: boolean; html: string }
+// round (2026-11-21): a checkbox drawn round, typed "( ) " or "(x) " ("[ ]" is hard to type for most people)
+export type TextBlock = { id: string; t: BlockType; lvl: number; checked?: boolean; round?: boolean; html: string }
 /** A pasted picture (a GEM Shell image asset) and the ink drawn on it (1000 units wide). */
 export type PictureBlock = { id: string; t: 'img'; lvl: number; asset: string; url: string; w: number; h: number; ink: Stroke[] }
 /** A blank drawing area, 1000 units wide and h high. */
@@ -218,12 +219,14 @@ export function inlineMd(t: string): string {
 export function parseLine(raw: string): TextBlock {
     const m = raw.match(/^([ \t]*)(.*)$/)!
     const L = Math.floor(m[1].replace(/\t/g, '  ').length / 2)
-    let s = m[2], t: BlockType = 'p', ck = false, mm: RegExpMatchArray | null
+    let s = m[2], t: BlockType = 'p', ck = false, round = false, mm: RegExpMatchArray | null
     if ((mm = s.match(/^[-*•]\s+\[([ xX]?)\]\s+/)) || (mm = s.match(/^\[([ xX]?)\]\s+/))) { t = 'c'; ck = /x/i.test(mm[1]); s = s.slice(mm[0].length) }
+    // 2026-11-21: "( )" / "(x)" too, round
+    else if ((mm = s.match(/^[-*•]\s+\(([ xX]?)\)\s+/)) || (mm = s.match(/^\(([ xX]?)\)\s+/))) { t = 'c'; ck = /x/i.test(mm[1]); round = true; s = s.slice(mm[0].length) }
     else if ((mm = s.match(/^[-*•]\s+/))) { t = 'b'; s = s.slice(mm[0].length) }
     else if ((mm = s.match(/^\d{1,3}[.)]\s+/))) { t = 'n'; s = s.slice(mm[0].length) }
     else if (L === 0 && (mm = s.match(/^#{1,3}\s+/))) { t = 'h'; s = s.slice(mm[0].length) }
-    const b = blk(t, Math.min(L, 6), inlineMd(s)); b.checked = ck; return b
+    const b = blk(t, Math.min(L, 6), inlineMd(s)); b.checked = ck; if (round) b.round = true; return b
 }
 export function parseText(text: string): TextBlock[] {
     const lines = text.replace(/\r/g, '').split('\n')
@@ -231,17 +234,28 @@ export function parseText(text: string): TextBlock[] {
     return lines.map(parseLine)
 }
 
-/** What the start of a line turns it into while typing ("- ", "[ ] ", "1. ", "# "). */
-export function prefixRule(text: string, caret: number, t: BlockType, lvl: number): { len: number; t: BlockType; checked: boolean } | null {
+/** What the start of a line turns it into while typing ("- ", "[ ] ", "( ) ", "1. ", "# "). round: a "( )" box. */
+export function prefixRule(text: string, caret: number, t: BlockType, lvl: number): { len: number; t: BlockType; checked: boolean; round?: boolean } | null {
     if (t !== 'p' && t !== 'b') return null
     const raw = text.replace(/ /g, ' ')
-    const rules: [RegExp, BlockType, boolean][] = [[/^\[[xX]\] /, 'c', true], [/^\[ ?\] /, 'c', false]]
-    if (t === 'p') rules.push([/^[-*•] /, 'b', false], [/^\d{1,3}[.)] /, 'n', false], [/^#{1,3} /, 'h', false])
-    for (const [re, nt, ck] of rules) {
+    const rules: [RegExp, BlockType, boolean, boolean][] = [[/^\[[xX]\] /, 'c', true, false], [/^\[ ?\] /, 'c', false, false],
+        [/^\([xX]\) /, 'c', true, true], [/^\( ?\) /, 'c', false, true]]
+    if (t === 'p') rules.push([/^[-*•] /, 'b', false, false], [/^\d{1,3}[.)] /, 'n', false, false], [/^#{1,3} /, 'h', false, false])
+    for (const [re, nt, ck, round] of rules) {
         const m = raw.match(re)
-        if (m && caret === m[0].length && !(nt === 'h' && lvl > 0)) return { len: m[0].length, t: nt, checked: ck }
+        if (m && caret === m[0].length && !(nt === 'h' && lvl > 0)) return { len: m[0].length, t: nt, checked: ck, ...(round ? { round } : {}) }
     }
     return null
+}
+
+/** 2026-11-21: the checklist <id> is part of: it and the checkboxes right before and after it, at any level. */
+export function checklistRun(blocks: Block[], id: string): TextBlock[] {
+    const i = blocks.findIndex(b => b.id === id)
+    if (i < 0 || blocks[i].t !== 'c') return []
+    let a = i, z = i
+    while (a > 0 && blocks[a - 1].t === 'c') a--
+    while (z < blocks.length - 1 && blocks[z + 1].t === 'c') z++
+    return blocks.slice(a, z + 1) as TextBlock[]
 }
 
 // ── Factories ───────────────────────────────────────────────────────────────

@@ -25,7 +25,7 @@ import TerminalPart from './TerminalPart.vue'
 export default {
     api: '1.0',
     id: 'console',
-    version: '0.2.2',   // 0.2.2 (2026-11-16): the terminal stays dark in every look (--gc-term / --gc-term-fg: its programs' colours assume it); the first tab clears the pane's floating Back / Forward / Up (GEM Shell's --gex-pane-overlay-start). 0.2.1 (2026-11-16): the tabs are GEM Shell's tab strip (<gex-tab-strip>: ✕ / middle-click close with the close run, ← / →, sideways scroll). 0.2.0 (2026-11-15): the terminal part (provides 'shell.terminal': runs as the widget showing it; a "Tool output" tab, run / cd / newSession / print). 0.1.11 (2026-11-15): a move waiting because something was typed goes as soon as it is erased (it waited for Enter; GEM Shell's terminal:ready). 0.1.10 (2026-11-14): the terminal's text follows Text size. 0.1.9 (2026-11-14): GEM Shell's colours and fonts; bars and buttons grow with the text. 0.1.8 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step). 0.1.7 (2026-11-14): "Open console here" hidden in GEM Shell's file dialog (a default rule)
+    version: '0.2.3',   // 0.2.3 (2026-11-21): narrower in the toolbar (down to its button). 0.2.2 (2026-11-16): the terminal stays dark in every look (--gc-term / --gc-term-fg: its programs' colours assume it); the first tab clears the pane's floating Back / Forward / Up (GEM Shell's --gex-pane-overlay-start). 0.2.1 (2026-11-16): the tabs are GEM Shell's tab strip (<gex-tab-strip>: ✕ / middle-click close with the close run, ← / →, sideways scroll). 0.2.0 (2026-11-15): the terminal part (provides 'shell.terminal': runs as the widget showing it; a "Tool output" tab, run / cd / newSession / print). 0.1.11 (2026-11-15): a move waiting because something was typed goes as soon as it is erased (it waited for Enter; GEM Shell's terminal:ready). 0.1.10 (2026-11-14): the terminal's text follows Text size. 0.1.9 (2026-11-14): GEM Shell's colours and fonts; bars and buttons grow with the text. 0.1.8 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step). 0.1.7 (2026-11-14): "Open console here" hidden in GEM Shell's file dialog (a default rule)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     displayName: 'GEM Console',
@@ -41,7 +41,8 @@ export default {
     contexts: {
         grid: { minSize: { width: 320, height: 160 }, defaultSize: { width: '50%', height: '40%' } },
         sidebar: { minHeight: 220, maxHeight: 900 },
-        toolbar: { width: 40 },
+        // 0.2.3: may be dragged down to its button (GEM Shell 2026-11-21: contexts.toolbar.minWidth)
+        toolbar: { width: 40, minWidth: 40 },
     },
 
     // The keys a console can't do without, among those GEM Shell keeps for itself (leave the pane: Esc by default).

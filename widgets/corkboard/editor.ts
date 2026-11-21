@@ -16,7 +16,7 @@
 // Indent (Tab) to the next cell (a new row after the last), Outdent to the previous, End the list (0.2.5: no key by default)
 // out of the table; Enter goes down a row (a new row at the bottom; on an empty last row: out of the table); the
 // arrows cross cells at their edges and step out of the table above and below.
-import { type Note, type Block, type TextBlock, type TableBlock, type Stroke, type BlockType, blk, isText, hasInk, newTable, uid, textOf, cleanHtml, prefixRule, parseLine, esc } from './model'
+import { type Note, type Block, type TextBlock, type TableBlock, type Stroke, type BlockType, blk, isText, hasInk, newTable, uid, textOf, cleanHtml, prefixRule, parseLine, esc, checklistRun } from './model'
 import { tableHTML, addRow, addCol, delRow, delCol, moveRow, rowEmpty, parseTSV, fillFrom, colsOf } from './table'
 import { beginInk, drawInk, type InkUndo, type InkGesture } from 'gexplorer/widgets'
 import { CB_LOOK, type InkTool } from './model'
@@ -187,6 +187,13 @@ export class NoteEditor {
             case 'plain': this.setType(c, 'p'); break
             case 'line-up': this.moveLine(c, -1); break
             case 'line-down': this.moveLine(c, 1); break
+            // 2026-11-21: the right-click's Round / Square checkboxes: every box of the list the line is in
+            case 'box-round': case 'box-square': {
+                const off = textOffset(c.tx); c.b.html = c.tx.innerHTML
+                for (const b of checklistRun(this.host.note().blocks, c.b.id)) { if (id === 'box-round') b.round = true; else delete b.round }
+                this.structural({ id: c.b.id, off })
+                break
+            }
             default: return false
         }
         this.host.used(id)
@@ -235,6 +242,7 @@ export class NoteEditor {
         }
         const tail = tailFrom(tx); b.html = cleanHtml(tx.innerHTML)
         const nb = shift ? blk('p', b.t === 'p' || b.t === 'h' ? b.lvl : Math.min(6, b.lvl + 1)) : blk(b.t === 'h' ? 'p' : b.t, b.lvl)
+        if (!shift && b.t === 'c' && b.round) nb.round = true   // 2026-11-21: the next box of a round list is round
         nb.html = cleanHtml(tail)
         n.blocks.splice(i + 1, 0, nb)
         this.structural({ id: nb.id, off: 0 })
@@ -468,6 +476,8 @@ export class NoteEditor {
             const r = document.createRange(); r.setStart(n1, o1); r.setEnd(n2, o2); r.deleteContents()
             const fromP = b.t === 'p'
             b.t = rule.t; b.checked = rule.checked
+            // 2026-11-21: "( ) " makes a round box
+            if (rule.t === 'c' && rule.round) b.round = true; else delete b.round
             if (rule.t === 'h') b.lvl = 0; else if (fromP) b.lvl = Math.max(0, (b.lvl || 0) - 1)
             this.host.used(rule.t === 'c' ? 'md-check' : rule.t === 'h' ? 'md-heading' : 'md-list')
             b.html = cleanHtml(tx.innerHTML)
@@ -769,7 +779,7 @@ function blockHTML(b: Block, num: number): string {
             `<svg viewBox="0 0 1000 ${b.h}" preserveAspectRatio="none"></svg>` +
             `<button class="cb-mx" type="button" title="Remove the sketch" aria-label="Remove the sketch">✕</button><div class="cb-grip" title="Drag to resize"></div></div></div>`
     }
-    const mk = b.t === 'b' ? BUL[L % 3] : b.t === 'n' ? num + '.' : b.t === 'c' ? '<span class="cb-box"></span>' : ''
+    const mk = b.t === 'b' ? BUL[L % 3] : b.t === 'n' ? num + '.' : b.t === 'c' ? `<span class="cb-box${b.round ? ' round' : ''}"></span>` : ''
     const marker = b.t === 'p' || b.t === 'h' ? '' :
         `<span class="cb-mk" contenteditable="false" title="${b.t === 'c' ? 'Tick' : 'Click to make it a checkbox'}">${mk}</span>`
     return `<div class="cb-blk t-${b.t}${b.checked ? ' done' : ''}" data-id="${b.id}" style="--lvl:${L}">${marker}<div class="cb-tx" contenteditable="true" spellcheck="true">${b.html}</div></div>`

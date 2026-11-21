@@ -27,7 +27,7 @@ import { loadDetails, lookUpDetails, saveDetails, sgdbKeyChange, withoutSgdb, ty
 import type { FetchPort } from './online/paced'
 import { DETAILS_CELL, DETAILS_LOADED_CELL, LOOKING_UP_CELL, LOOKUP_JOB, LOOKUP_PROGRESS_CELL, lookUpTitle, ONLINE_NOTE_CELL, type LookUpProgress } from './online/lookup-job'
 import { SGDB_HOSTS, SGDB_SECRET } from './online/sgdb'
-import { IGDB_SECRET, igdbImage, igdbSession, searchIgdb, type IgdbGame } from './online/igdb'
+import { IGDB_SECRET, igdbImage, igdbSession, searchIgdb, shelfGenres, type IgdbGame } from './online/igdb'
 import { pickQuip, QUIPS } from './playtime-quips'
 import { titleKey } from './games'
 import { fetchOwned, normalizeOwned, OWNED_DOC, ownedDue, ownedSession, STEAM_API_SECRET, type OwnedDoc } from './online/steam-owned'
@@ -218,8 +218,10 @@ const lookUpProgress = cell<LookUpProgress | null>(LOOKUP_PROGRESS_CELL, null)
 /** Why the last look-up stopped (the Network permission, the SteamGridDB key), shown under the top bar. */
 const onlineNote = cell(ONLINE_NOTE_CELL, '')
 /** The run that counts (a newer one, or Stop, takes over) and the pending save: shared by every mount and the job. */
-const runner = life?.persistReactive('game-library.lookUpRunner', () => ({ run: 0, saveTimer: undefined as ReturnType<typeof setTimeout> | undefined }), { transient: true })
-    ?? { run: 0, saveTimer: undefined as ReturnType<typeof setTimeout> | undefined }
+// again (0.23.9): a look-up asked while one runs (coming back to the Game Shop, a new scan): once that one ends,
+// one more run for what's still due, instead of taking over (it started again from the first game, its job too)
+const runner = life?.persistReactive('game-library.lookUpRunner', () => ({ run: 0, again: false, saveTimer: undefined as ReturnType<typeof setTimeout> | undefined }), { transient: true })
+    ?? { run: 0, again: false, saveTimer: undefined as ReturnType<typeof setTimeout> | undefined }
 let unmounted = false
 
 function saveDetailsSoon() {
@@ -266,6 +268,10 @@ function catchUpSgdb(keySet: boolean): number | null {
 async function lookUp(force = false) {
     const scanned = result.value?.scan.games
     if (!online.value || !sdk?.networkFetch || !scanned?.length) return
+    // 0.23.9: one is running: it goes on; what it doesn't cover (new games) is looked up once it ends.
+    // Only "Look up details again" (force) takes over.
+    if (lookingUp.value && !force) { runner.again = true; return }
+    runner.again = false
     const run = ++runner.run
     while (lookingUp.value) {
         await new Promise(resolve => setTimeout(resolve, 500))
@@ -309,14 +315,18 @@ async function lookUp(force = false) {
         if (run === runner.run) lookUpProgress.value = null
         // Stopped from the card: the run that counts is over too (the next start goes on with what's still due)
         const ran = job as WidgetJob | null
-        if (ran && !ran.alive && run === runner.run) runner.run += 1
+        const stoppedByCard = !!ran && !ran.alive
+        if (stoppedByCard && run === runner.run) runner.run += 1
         ran?.end()
+        // 0.23.9: asked again meanwhile (not stopped): one more run, for what's still due (each game says when it was asked)
+        if (runner.again && !stoppedByCard && run === runner.run) { runner.again = false; void lookUp() }
     }
 }
 
 /** Stop (the Game Shop's own, beside the count): the run stops after the games it's on; what's due waits for the next start. */
 function stopLookUp() {
     runner.run += 1
+    runner.again = false
     sdk?.jobs?.().current(LOOKUP_JOB)?.end()
     snack('Stopped looking up details. The rest will be looked up at the next start.')
 }
@@ -407,7 +417,8 @@ const games = computed<GameItem[]>(() => (result.value?.scan.games ?? []).map(ga
     const d = detailsOf(game.id)
     const mine = doc.value.edits[game.id]
     // The scan's genres when nothing online says (a modpack: "Minecraft modpacks")
-    const genres = mine?.genres ?? d?.genres ?? (game.genres.length ? game.genres : [])
+    // 0.23.9: one name per shelf ("Sport" from IGDB, "Sports" from Steam: Sports)
+    const genres = shelfGenres(mine?.genres ?? d?.genres ?? (game.genres.length ? game.genres : []))
     const link = doc.value.links?.[game.id]
     return {
         ...game,

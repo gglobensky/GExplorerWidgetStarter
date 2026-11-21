@@ -194,6 +194,8 @@
 .cb-blk.t-n .cb-mk { font: 500 12.5px/var(--cb-lh) var(--cb-mono); display: block; text-align: right; padding-right: 6px; }
 .cb-box { width: 13px; height: 13px; border: 1.6px solid currentColor; border-radius: 3px; display: block; }
 .cb-blk.done .cb-box { background: currentColor; }
+/* 2026-11-21: "( )" boxes */
+.cb-box.round { border-radius: 50%; }
 .cb-blk.done .cb-box::after { content: ""; display: block; width: 4px; height: 7px; border: solid var(--pc); border-width: 0 2px 2px 0; transform: translate(3.3px, .6px) rotate(45deg); }
 .cb-tx { flex: 1; min-width: 0; outline: none; white-space: pre-wrap; overflow-wrap: anywhere; padding-right: 2px; }
 .cb-blk.t-h .cb-tx { font-weight: 600; font-size: 17px; }

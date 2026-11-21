@@ -38,6 +38,10 @@
 .gm-toolbtn:hover { background: color-mix(in oklab, var(--gm-fg) 9%, transparent); }
 .gm-toolbtn.open { background: color-mix(in oklab, var(--gm-accent) 18%, transparent); border-color: color-mix(in oklab, var(--gm-accent) 45%, transparent); }
 .gm-tb-item { display: inline-flex; align-items: center; gap: 4px; }
+/* 1.0.4: narrow in the toolbar: the button stays inside its box, and below 90 px only the gauge (and a recording) shows */
+.gm-widget.p-toolbar { container-type: inline-size; min-width: 0; overflow: hidden; }
+.p-toolbar .gm-toolbtn { max-width: 100%; overflow: hidden; }
+@container (max-width: 90px) { .p-toolbar .gm-tb-item, .p-toolbar .gm-tb-cores { display: none; } }
 .gm-tb-k { font-size: 10px; color: var(--gm-muted); letter-spacing: .3px; }
 .gm-tb-v { font: 600 12px var(--gm-mono); min-width: 3.2ch; text-align: right; }
 .gm-tb-cores { height: 18px; margin-left: 2px; }

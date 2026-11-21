@@ -105,7 +105,7 @@ export function stackMarkdown(d: DeskData, s: Stack, level = 1): string {
             if (b.t === 'img') { out += pad + '[Picture]\n'; continue }
             if (b.t === 'ink') { out += pad + '[Sketch]\n'; continue }
             if (b.t === 'table') { out += '\n' + tableMd(b, pad) + '\n'; skipped = true; continue }
-            const lead = b.t === 'b' ? '- ' : b.t === 'c' ? `- [${b.checked ? 'x' : ' '}] ` : b.t === 'n' ? `${cnt[L]}. ` : ''
+            const lead = b.t === 'b' ? '- ' : b.t === 'c' ? (b.round ? `- (${b.checked ? 'x' : ' '}) ` : `- [${b.checked ? 'x' : ' '}] `) : b.t === 'n' ? `${cnt[L]}. ` : ''
             const t = mdText(b.html, pad + ' '.repeat(lead.length))
             if (!t.trim()) continue
             if (!skipped && (b.t === 'p' || b.t === 'h') && t.replace(/\s+/g, ' ').trim() === title.replace(/\s+/g, ' ').trim()) { skipped = true; continue }
@@ -189,7 +189,7 @@ async function blocksIn(list: unknown, make: MakePicture): Promise<Block[]> {
         } else if ((b as any).t === 'ink') {
             out.push({ id: uid(), t: 'ink', lvl, h: Math.round(num((b as any).h, 150, 2400, 380)), ink: okInk((b as any).ink) })
         } else {
-            out.push({ id: uid(), t: pick((b as any).t, ['p', 'b', 'c', 'n', 'h'] as const, 'p'), lvl, checked: !!(b as any).checked, html: sanitize((b as any).html) })
+            out.push({ id: uid(), t: pick((b as any).t, ['p', 'b', 'c', 'n', 'h'] as const, 'p'), lvl, checked: !!(b as any).checked, ...((b as any).round === true ? { round: true } : {}), html: sanitize((b as any).html) })
         }
     }
     return out

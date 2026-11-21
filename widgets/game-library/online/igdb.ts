@@ -97,6 +97,37 @@ export function simpleGenre(name: string): string {
   return short[n] ?? n
 }
 
+/**
+ * 0.23.9: one name per shelf, whoever gave it: IGDB's singular names become the plural ones Steam uses ("Sport" and
+ * "Sports" were two shelves), the same for both ("Simulator" → "Simulation"); duplicates go, the first order kept.
+ * Applied when the boxes are made (saved details and the user's own edits included: nothing to migrate).
+ */
+const SHELF_NAMES: Record<string, string> = {
+  sport: 'Sports',
+  shooter: 'Shooters',
+  platform: 'Platformers',
+  platformer: 'Platformers',
+  puzzle: 'Puzzles',
+  simulator: 'Simulation',
+  'visual novel': 'Visual novels',
+  'card & board': 'Card & board games',
+  'card & board game': 'Card & board games',
+}
+export function shelfGenres(names: readonly string[]): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const raw of names) {
+    const n = raw.trim()
+    if (!n) continue
+    const name = SHELF_NAMES[n.toLocaleLowerCase()] ?? n
+    const key = name.toLocaleLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(name)
+  }
+  return out
+}
+
 /** The IGDB game of a Steam app id (IGDB's links between stores and games); undefined when it has none. */
 export async function igdbIdOfSteam(session: PacedSession, appId: string): Promise<number | undefined> {
   if (!/^\d+$/.test(appId)) return undefined

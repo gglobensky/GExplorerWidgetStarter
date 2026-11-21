@@ -6,7 +6,7 @@
 // entries come with each right-click; menuStates grey or hide what doesn't apply (not in a group, one page...).
 // A choice comes back to Widget.vue's onMenuItem → handle() here, with the context and the ref given at the click.
 import type { WidgetSdk, WidgetMenuNode } from 'gexplorer/widgets'
-import { FLAGS, PAPER_COLORS, COLOR_NAMES, PINS, TABLE_MAX, dueInfo, ymd, nextWeekday, isText, hasInk, type Stack, type Group, type Photo, type FlagId, type PaperColor, type PinColor } from './model'
+import { FLAGS, PAPER_COLORS, COLOR_NAMES, PINS, TABLE_MAX, dueInfo, ymd, nextWeekday, isText, hasInk, checklistRun, type Stack, type Group, type Photo, type FlagId, type PaperColor, type PinColor } from './model'
 import type { Desk } from './store'
 import type { InkTool } from './model'
 
@@ -27,6 +27,8 @@ export const MENU_STATES = [
     { id: 'one-board', label: 'There is one board' },
     { id: 'not-list', label: 'The line is not a list item' },
     { id: 'not-checkbox', label: 'The line is not a checkbox' },
+    { id: 'round-boxes', label: 'The list\'s checkboxes are round' },
+    { id: 'square-boxes', label: 'The list\'s checkboxes are square' },
     { id: 'first-level', label: 'The line is not indented' },
     { id: 'no-ink', label: 'Nothing drawn' },
     { id: 'no-due', label: 'No due date' },
@@ -81,6 +83,9 @@ export const MENU_ITEMS = [
     { id: 'outdent', label: 'Outdent', icon: '←', contexts: T, disableWhen: ['first-level'] },
     { id: 'end-list', label: 'End the list here', icon: '↵', contexts: T, hideWhen: ['not-list'] },
     { id: 'check', label: 'Tick or untick', icon: '✓', contexts: T, hideWhen: ['not-checkbox'] },
+    // 2026-11-21: the shape of every box in the list
+    { id: 'box-round', label: 'Round checkboxes', icon: '○', contexts: T, hideWhen: ['not-checkbox', 'round-boxes'] },
+    { id: 'box-square', label: 'Square checkboxes', icon: '□', contexts: T, hideWhen: ['not-checkbox', 'square-boxes'] },
     { id: 'text.sep2', type: 'separator', contexts: T },
     { id: 'sketch', label: 'Insert a drawing', icon: '🖊', contexts: T },
     { id: 'picture', label: 'Insert a picture…', icon: '🖼', contexts: T },
@@ -230,6 +235,11 @@ export function createMenus(sdk: WidgetSdk, desk: Desk, act: MenuActions) {
         if (b && isText(b)) {
             if (!['b', 'n', 'c'].includes(b.t)) o.states.push('not-list')
             if (b.t !== 'c') o.states.push('not-checkbox')
+            else {
+                const run = checklistRun(desk.activeNote(s).blocks, b.id)
+                if (run.every(x => x.round)) o.states.push('round-boxes')
+                if (run.every(x => !x.round)) o.states.push('square-boxes')
+            }
             if (!(b.lvl > 0)) o.states.push('first-level')
             for (const [id, t] of [['bullet', 'b'], ['checklist', 'c'], ['numbered', 'n'], ['heading', 'h'], ['plain', 'p']] as const) o.state[id] = { checked: b.t === t }
         }
@@ -329,6 +339,7 @@ export function createMenus(sdk: WidgetSdk, desk: Desk, act: MenuActions) {
             case 'delete-group': if (g) act.deleteGroup(g); return
             case 'bullet': case 'checklist': case 'numbered': case 'heading': case 'plain':
             case 'indent': case 'outdent': case 'end-list': case 'check': case 'sketch': case 'picture': case 'table':
+            case 'box-round': case 'box-square':
                 if (ref) act.editor(head, ref)
                 return
             case 'delete-note':

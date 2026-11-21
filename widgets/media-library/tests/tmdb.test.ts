@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { MovieItem } from '../movie-types.ts'
-import { applyPersistedTmdbMetadata, createTmdbSession, enrichWithTmdb, persistedTmdbMetadata, restorePersistedTmdbMetadata, tmdbImageUrl, tmdbReviewsUrl } from '../tmdb.ts'
+import { applyPersistedTmdbMetadata, createTmdbSession, enrichWithTmdb, persistedTmdbMetadata, restorePersistedTmdbMetadata, tmdbImageUrl, tmdbReviewsUrl, withoutMovieWords } from '../tmdb.ts'
 
 function item(values: Partial<MovieItem>): MovieItem {
   return {
@@ -314,4 +314,25 @@ test('records of extras are never restored onto them', () => {
   const local = item({ path:'F:\\T\\Featurettes\\Outakes.mkv', mediaKind:'movie', extraOf:'F:\\T', tmdbMatchAttempted:true })
   const wrong = persistedTmdbMetadata({ ...local, title:'Tucker and Dale vs. Evil', metadataSource:'tmdb', tmdbId:46838, tmdbType:'movie' })!
   assert.equal(restorePersistedTmdbMetadata([local], { [local.path!]:wrong }).restored, 0)
+})
+
+test('takes "The Movie" (or a last "Movie") out of a title, for a second try', () => {
+  assert.equal(withoutMovieWords('Garfield - The Movie'), 'Garfield')
+  assert.equal(withoutMovieWords('The Movie'), '')
+  assert.equal(withoutMovieWords('Heat'), '')
+  assert.equal(withoutMovieWords('The SpongeBob SquarePants Movie'), 'The SpongeBob SquarePants')
+})
+
+test('a title with "The Movie" that finds nothing is searched again without it, after the title as it is', async () => {
+  const fake = fakeTmdb(url => {
+    if (url.includes('/genre/')) return { body:{ genres:[] } }
+    if (url.includes('query=Garfield&')) return { body:{ results:[{ id:8920, title:'Garfield', release_date:'2004-06-07' }] } }
+    if (url.includes('/search/movie')) return { body:{ results:[] } }
+    return { body:{} }
+  })
+  const result = await enrichWithTmdb(fake.sdk, [item({ title:'Garfield The Movie', year:2004, mediaKind:'movie' })], undefined, instant(fake.sdk))
+  const searches = fake.calls.map(c => c.url).filter(u => u.includes('/search/movie'))
+  assert.equal(result.items[0].tmdbId, 8920)
+  assert.equal(searches.length, 2)
+  assert.ok(searches[0].includes('query=Garfield+The+Movie'))
 })

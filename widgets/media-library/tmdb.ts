@@ -146,9 +146,23 @@ function bestResult(results: SearchResult[], title: string, year: number): Searc
   return best && best.titleScore >= 45 ? best.result : undefined
 }
 
+/**
+ * A title without "The Movie" ("Garfield - The Movie" → "Garfield"), or a "Movie" at its end; '' when there's none.
+ * Tried only after the title as it is (searchTitles): some real titles have it ("Pokémon: The Movie 2000").
+ */
+export function withoutMovieWords(title: string): string {
+  const out = title
+    .replace(/\s*[-–—:]?\s*\bthe\s+movie\b\s*[-–—:]?/giu, ' ')
+    .replace(/\s*[-–—:]?\s*\bmovie\s*$/iu, '')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s\-–—:]+|[\s\-–—:]+$/g, '')
+  return out && normalized(out) !== normalized(title) ? out : ''
+}
+
 function searchTitles(item: MovieItem, primary: string): string[] {
-  return [primary,...(item.metadataSearchTitles ?? [])]
-    .map(title => title.trim())
+  const titles = [primary,...(item.metadataSearchTitles ?? [])].map(title => title.trim())
+  // Last: each one without "The Movie" (a filename with it threw the match off)
+  return [...titles, ...titles.map(withoutMovieWords)]
     .filter((title,index,all) => !!title && all.findIndex(candidate => normalized(candidate) === normalized(title)) === index)
 }
 

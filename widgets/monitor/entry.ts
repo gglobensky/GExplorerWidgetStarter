@@ -19,7 +19,7 @@ import RecordingCard from './RecordingCard.vue'
 export default {
     api: '1.0',
     id: 'monitor',
-    version: '1.0.3',   // 1.0.3 (2026-11-16): the details' tabs are GEM Shell's tab strip (← / →, sideways scroll when narrow). 1.0.2 (2026-11-14): tiles sized for the text (no text over text at large text); GEM Shell's colours and fonts. 1.0.1: sizes follow Appearance (built with the Text size / Roundness step)
+    version: '1.0.4',   // 1.0.4 (2026-11-21): narrower in the toolbar (down to its gauge: the numbers hide when there's no room). 1.0.3 (2026-11-16): the details' tabs are GEM Shell's tab strip (← / →, sideways scroll when narrow). 1.0.2 (2026-11-14): tiles sized for the text (no text over text at large text); GEM Shell's colours and fonts. 1.0.1: sizes follow Appearance (built with the Text size / Roundness step)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     displayName: 'GEM Monitor',
@@ -32,7 +32,8 @@ export default {
     contexts: {
         grid: { minSize: { width: 300, height: 220 }, defaultSize: { width: '50%', height: '60%' } },
         sidebar: { minHeight: 240, maxHeight: 1200 },
-        toolbar: {},
+        // 1.0.4: as narrow as its gauge (GEM Shell 2026-11-21: contexts.toolbar.minWidth); the numbers go first
+        toolbar: { minWidth: 40 },
     },
 
     // A recording goes on when its copy leaves the screen (a hub's tab changed): its card in the operations tray
