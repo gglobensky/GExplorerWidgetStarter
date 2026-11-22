@@ -19,7 +19,7 @@ import RecordingCard from './RecordingCard.vue'
 export default {
     api: '1.0',
     id: 'monitor',
-    version: '1.1.1',   // 1.1.1 (2026-11-22): the refresh rate and the background graphs are GEM Monitor's settings (Settings ▸ GEM Monitor, and ⏱ changes them): one value for every copy. 1.1.0 (2026-11-22): ⏱ ▸ "Keep the graphs running in the background" (per copy, off by default): with this copy not on screen (its hub not shown), it goes on reading what the graphs draw, so they're full when it's back (live.ts). 1.0.4 (2026-11-21): narrower in the toolbar (down to its gauge: the numbers hide when there's no room). 1.0.3 (2026-11-16): the details' tabs are GEM Shell's tab strip (← / →, sideways scroll when narrow). 1.0.2 (2026-11-14): tiles sized for the text (no text over text at large text); GEM Shell's colours and fonts. 1.0.1: sizes follow Appearance (built with the Text size / Roundness step)
+    version: '1.1.2',   // 1.1.2 (2026-11-22): GEM Shell reads the graphics card once a second at most: said when 0.5 s is chosen, and on the Settings page. 1.1.1 (2026-11-22): the refresh rate and the background graphs are GEM Monitor's settings (Settings ▸ GEM Monitor, and ⏱ changes them): one value for every copy. 1.1.0 (2026-11-22): ⏱ ▸ "Keep the graphs running in the background" (per copy, off by default): with this copy not on screen (its hub not shown), it goes on reading what the graphs draw, so they're full when it's back (live.ts). 1.0.4 (2026-11-21): narrower in the toolbar (down to its gauge: the numbers hide when there's no room). 1.0.3 (2026-11-16): the details' tabs are GEM Shell's tab strip (← / →, sideways scroll when narrow). 1.0.2 (2026-11-14): tiles sized for the text (no text over text at large text); GEM Shell's colours and fonts. 1.0.1: sizes follow Appearance (built with the Text size / Roundness step)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     displayName: 'GEM Monitor',
@@ -48,6 +48,7 @@ export default {
         fields: [
             {
                 key: 'intervalMs', type: 'choice', label: 'Refresh rate', default: 1000,
+                hint: 'The graphics card is read once a second at most (its readings are the costly ones).',
                 choices: [
                     { value: 500, label: 'Every 0.5 s' }, { value: 1000, label: 'Every second' },
                     { value: 2000, label: 'Every 2 s' }, { value: 5000, label: 'Every 5 s' },

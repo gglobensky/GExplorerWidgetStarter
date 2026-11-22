@@ -92,7 +92,11 @@ function saveView(patch: Record<string, unknown>) { void sdk.setView?.(patch) }
 /** The grid's pages of tiles, as arranged, and the one shown (this copy's view: another copy in the same hub keeps its own). */
 function saveTiles(layout: TileLayout) { saveView({ pages: layout.pages, page: layout.page }) }
 const showDetails = ref(false)
-function setRefresh(ms: number) { void settings?.set?.('intervalMs', ms) }
+function setRefresh(ms: number) {
+    void settings?.set?.('intervalMs', ms)
+    // 1.1.2: GEM Shell reads the graphics card once a second at most (its counters are the costly ones)
+    if (ms < 1000) void ui.snack({ id: 'gem-monitor-gpu', text: 'Every 0.5 s: the graphics card is still read once a second, the costliest reading. The rest follows the rate.', dedupe: 'replace', timeoutMs: 6000 })
+}
 
 // ── The readings ────────────────────────────────────────────────────────────
 
