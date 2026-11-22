@@ -28,7 +28,7 @@ export type FolderMenuCtx = {
   removeFolder: (id: string) => void
   removeFavorite: (id: string) => void
   startMenuRowDrag: (row: MenuRow, folderId: string, e: PointerEvent) => void
-  setMenuContainerRef: (menu: OpenMenu, el: HTMLElement | null) => void
+  setMenuContainerRef: (menu: OpenMenu | null, el: HTMLElement | null) => void
   setMenuRowRef: (row: MenuRow, el: HTMLElement | null) => void
 }
 

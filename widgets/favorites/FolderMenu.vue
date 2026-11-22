@@ -42,7 +42,7 @@ onBeforeUnmount(clearTimer)
     class="fav-menu"
     @click.stop
     @contextmenu.prevent.stop="ctx.onDropdownMenu(menu.folderId, $event)"
-    :ref="el => ctx.setMenuContainerRef(menu!, el as HTMLElement | null)"
+    :ref="el => ctx.setMenuContainerRef(menu, el as HTMLElement | null)"
   >
     <div class="fav-menu-title">
       {{ menu.label || 'Folder' }}
@@ -97,7 +97,7 @@ onBeforeUnmount(clearTimer)
             class="icon-btn danger fav-menu-delete-btn"
             @pointerdown.stop
             @click.stop="ctx.removeFolder(row.id)"
-            title="Delete folder and nested favorites"
+            title="Remove folder and its favorites"
           >✕</button>
           <button
             v-else

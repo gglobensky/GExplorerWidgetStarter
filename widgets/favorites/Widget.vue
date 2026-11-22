@@ -241,9 +241,13 @@ const folderPopovers = useFolderPopovers({
 })
 onBeforeUnmount(() => folderPopovers.dispose())
 
-/** 0.3.0: an element in the open folder menus (GEM Shell's popovers: their containers are known by folder). */
+/**
+ * 0.3.0: an element in the open folder menus (GEM Shell's popovers: their containers are known by folder).
+ * 0.3.11: only one still on the page (a closed level's container is dropped): Rename found a detached row and did nothing.
+ */
 function inMenus(sel: string): HTMLElement | null {
-  for (const el of menuContainers.values()) {
+  for (const [id, el] of menuContainers) {
+    if (!el.isConnected) { menuContainers.delete(id); continue }
     const hit = el.querySelector<HTMLElement>(sel)
     if (hit) return hit
   }
@@ -344,7 +348,12 @@ async function onWidgetAction(msg: any) {
 }
 
 // --- Right-click on a favorite / a folder (entry.ts menuContexts + menus.items, 2026-10-23) ------
+/** 0.3.11: the favorite the menu was opened on (its element: this widget is shown in several places). */
+let menuItem: { id: string; el: HTMLElement } | null = null
+
 function onFavoriteMenu(id: string, e: MouseEvent) {
+  // 0.3.11: the row right-clicked, as for a folder (menuFolder): Rename… goes over that one
+  menuItem = e.currentTarget instanceof HTMLElement ? { id, el: e.currentTarget } : null
   void sdk?.ui?.().contextMenu(e, { context: 'favorites.item', ref: id, widgetConfig: props.config })
 }
 
@@ -400,6 +409,7 @@ async function renameFolderInPlace(id: string) {
 
 /** NEW (0.2.2): the element of favorite <id> on screen (list row, pill, open dropdown row), or null. */
 function itemButton(id: string): HTMLElement | null {
+  if (menuItem?.id === id && menuItem.el.isConnected) return menuItem.el
   const sel = `[data-fav-item="${CSS.escape(id)}"]`
   return rootEl.value?.querySelector<HTMLElement>(sel) ?? inMenus(sel)
 }
@@ -563,7 +573,7 @@ defineExpose({ onWidgetAction, onMenuItem, onCommand })
                   class="icon-btn danger"
                   @pointerdown.stop
                   @click.stop="handleRemoveFolder(row.node.id)"
-                  title="Delete folder and nested favorites"
+                  title="Remove folder and its favorites"
                 >
                   ✕
                 </button>
@@ -573,7 +583,7 @@ defineExpose({ onWidgetAction, onMenuItem, onCommand })
                   class="icon-btn danger"
                   @pointerdown.stop
                   @click.stop="handleRemoveFavorite(row.entry.id)"
-                  title="Remove"
+                  title="Remove favorite"
                 >
                   ✕
                 </button>
@@ -641,7 +651,7 @@ defineExpose({ onWidgetAction, onMenuItem, onCommand })
                   class="icon-btn danger toolbar-delete-btn"
                   @pointerdown.stop
                   @click.stop="handleRemoveFolder(row.node.id)"
-                  title="Delete folder and nested favorites"
+                  title="Remove folder and its favorites"
                 >
                   ✕
                 </button>
@@ -676,7 +686,7 @@ defineExpose({ onWidgetAction, onMenuItem, onCommand })
                   class="icon-btn danger toolbar-delete-btn"
                   @pointerdown.stop
                   @click.stop="handleRemoveFavorite(row.entry.id)"
-                  title="Remove"
+                  title="Remove favorite"
                 >
                   ✕
                 </button>

@@ -1,17 +1,21 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   getDrives,
   startRename,
   type DriveSnapshot,
   type DriveStats,
+  type FsVolumeInfo,
   type WidgetSdk,
   type WidgetMenuItemMessage,
 } from 'gexplorer/widgets'
 import {
   chooseDensity,
+  DENSITY_BOXES,
+  deviceText,
   finiteNumber,
   formatBytes,
+  specText,
   usagePercent,
   usageTone as toneForPercent,
   type DriveDensity,
@@ -191,8 +195,58 @@ async function renameDrive(drive: DriveSnapshot): Promise<void> {
   })
 }
 
+// ── 0.8.0: the detailed density (a roomy card): what sdk.fsVolumeInfo says of each drive ─────────────────────────────
+// Read once per drive while a card is detailed, again when the drives change (drives:changed: a drive renamed, plugged,
+// formatted). Not with the capacity every minute: it asks the OS for more (the partition, the device).
+const volumes = ref(new Map<string, FsVolumeInfo | null>())
+const reading = new Set<string>()
+let volumeGeneration = 0
+
+async function loadVolumes(): Promise<void> {
+  if (density.value !== 'detailed' || !sdk?.fsVolumeInfo) return
+  const generation = volumeGeneration
+  for (const drive of drives.value) {
+    if (isEmpty(drive) || !drive.root || volumes.value.has(drive.root) || reading.has(drive.root)) continue
+    reading.add(drive.root)
+    const info = await sdk.fsVolumeInfo(drive.root).catch(() => null)
+    reading.delete(drive.root)
+    if (generation !== volumeGeneration) return
+    volumes.value = new Map(volumes.value).set(drive.root, info)
+  }
+}
+
+function volumeOf(drive: DriveSnapshot): FsVolumeInfo | null {
+  return volumes.value.get(drive.root) ?? null
+}
+
+/** "NTFS · GPT · NVMe SSD" (the file system alone until the volume is read). */
+function specLine(drive: DriveSnapshot): string {
+  const info = volumeOf(drive)
+  return info ? specText(info) : (drive.fsType ?? '')
+}
+
+function deviceLine(drive: DriveSnapshot): string {
+  const info = volumeOf(drive)
+  return info ? deviceText(info) ?? '' : ''
+}
+
+/** "112 GB free of 931 GB". */
+function capacityOfText(drive: DriveSnapshot): string {
+  const stat = statFor(drive)
+  if (!stat || !finiteNumber(stat.free) || !finiteNumber(stat.total)) return refreshing.value ? 'Reading capacity…' : 'Capacity unavailable'
+  return `${formatBytes(stat.free)} free of ${formatBytes(stat.total)}`
+}
+
+/** The donut's used arc (its circle is 100 long). */
+function ringDash(drive: DriveSnapshot): string {
+  return `${usagePercent(statFor(drive)) ?? 0} 100`
+}
+
 /** Read the current drives and discard stats belonging to drives that disappeared. */
 function reloadDrives(): void {
+  volumeGeneration++
+  volumes.value = new Map()   // 0.8.0: read again (loadVolumes, on the drives' change)
+  reading.clear()
   drives.value = getDrives()
   const roots = new Set(drives.value.map(drive => drive.root))
   stats.value = new Map([...stats.value].filter(([root]) => roots.has(root)))
@@ -249,7 +303,7 @@ const density = computed<DriveDensity>(() => chooseDensity(
   drives.value.length,
 ))
 
-const gap = computed(() => density.value === 'expanded' ? 8 : density.value === 'compact' ? 5 : 3)
+const gap = computed(() => density.value === 'micro' ? 3 : DENSITY_BOXES[density.value].gap)
 
 const columns = computed(() => {
   const count = Math.max(1, drives.value.length)
@@ -257,9 +311,11 @@ const columns = computed(() => {
   if (context.value === 'toolbar') return count
   if (view.value.layout === 'list') return 1
 
-  const minWidth = density.value === 'expanded' ? 154 : density.value === 'compact' ? 104 : 46
+  const minWidth = density.value === 'micro' ? 46 : DENSITY_BOXES[density.value].minWidth
+  // 0.7.8: the cards share the box less the widget's padding (as chooseDensity counts it)
+  const padding = density.value === 'micro' ? 3 : DENSITY_BOXES[density.value].padding
   const automatic = boxWidth.value
-    ? Math.max(1, Math.floor((boxWidth.value + gap.value) / (minWidth + gap.value)))
+    ? Math.max(1, Math.floor((boxWidth.value - 2 * padding + gap.value) / (minWidth + gap.value)))
     : Math.max(1, props.placement?.size?.cols ?? 3)
   const preference = finiteNumber(view.value.columns) && view.value.columns > 0
     ? Math.floor(view.value.columns)
@@ -274,8 +330,12 @@ const listStyle = computed(() => ({
   '--drive-gap': `${gap.value}px`,
 }))
 
+// 0.8.0: the volumes are read when a card becomes detailed, and for drives that appear
+watch([density, drives], () => void loadVolumes())
+
 onMounted(() => {
   void refreshStats()
+  void loadVolumes()
   const stopHost = sdk?.onHostChange?.('drives', reloadDrives)
   if (stopHost) cleanups.push(stopHost)
 
@@ -292,6 +352,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   refreshGeneration++
+  volumeGeneration++
   for (const cleanup of cleanups.splice(0)) cleanup()
 })
 
@@ -331,6 +392,36 @@ defineExpose({ onMenuItem, onCommand })
         @focus="remember(drive.root)"
         @mousedown.middle.prevent
       >
+        <!-- 0.8.0: detailed: a donut of the space used beside the name, the spec, the device and the capacity -->
+        <span v-if="density === 'detailed'" class="detail-grid">
+          <span
+            v-if="!isEmpty(drive)"
+            class="usage-ring"
+            data-gem-part="usage"
+            :role="usagePercent(statFor(drive)) !== null ? 'progressbar' : undefined"
+            :aria-label="`${drive.display} space used`"
+            :aria-valuemin="usagePercent(statFor(drive)) !== null ? 0 : undefined"
+            :aria-valuemax="usagePercent(statFor(drive)) !== null ? 100 : undefined"
+            :aria-valuenow="usagePercent(statFor(drive)) ?? undefined"
+          >
+            <svg viewBox="0 0 36 36" aria-hidden="true">
+              <circle class="ring-track" cx="18" cy="18" r="15.9155" />
+              <circle class="ring-fill" cx="18" cy="18" r="15.9155" :stroke-dasharray="ringDash(drive)" />
+            </svg>
+            <span class="ring-percent">{{ usagePercent(statFor(drive)) ?? '—' }}<small v-if="usagePercent(statFor(drive)) !== null">%</small></span>
+          </span>
+          <span class="drive-heading">
+            <span class="drive-label drive-label-full">{{ drive.display }}</span>
+          </span>
+          <span v-if="isEmpty(drive)" class="drive-status">No disc</span>
+          <template v-else>
+            <span v-if="showCapacity" class="capacity-text">{{ capacityOfText(drive) }}</span>
+            <span v-if="showFsType && specLine(drive)" class="drive-spec">{{ specLine(drive) }}</span>
+            <span v-if="deviceLine(drive)" class="drive-device">{{ deviceLine(drive) }}</span>
+          </template>
+        </span>
+
+        <template v-else>
         <span class="drive-heading">
           <span class="drive-label drive-label-full">{{ drive.display }}</span>
           <span class="drive-label drive-label-short">{{ drive.name }}</span>
@@ -355,6 +446,7 @@ defineExpose({ onMenuItem, onCommand })
             <span class="usage-fill" :style="{ width: usageWidth(drive) }" />
           </span>
           <span class="capacity-text">{{ capacityText(drive) }}</span>
+        </template>
         </template>
       </button>
     </div>
@@ -389,7 +481,7 @@ defineExpose({ onMenuItem, onCommand })
   appearance: none;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: safe center;   /* 0.7.8: if it ever overflows, the bottom goes, never the name */
   gap: 6px;
   min-width: 0;
   min-height: 0;
@@ -430,6 +522,13 @@ defineExpose({ onMenuItem, onCommand })
   align-items: baseline;
   gap: 6px;
   min-width: 0;
+}
+
+/* 0.7.8: a fixed line height, so a card's height doesn't depend on the theme's font (drives.ts DENSITY_BOXES) */
+.drive-heading,
+.capacity-text,
+.drive-status {
+  line-height: 1.25;
 }
 
 .drive-label {
@@ -625,7 +724,172 @@ defineExpose({ onMenuItem, onCommand })
   display: none;
 }
 
+/* ── 0.8.0: detailed ─────────────────────────────────────────────────────────────────────────────────────────────
+   A card of medium width: the donut beside the name and the capacity, the spec and the device under them, full width.
+   A wide card (its content 236 px or more): the donut beside all four lines. drives.ts DENSITY_BOXES.detailed. */
+.density-detailed .drive-item {
+  padding: 10px 12px;
+}
+
+/* the grid is inside the card: the card is the container its queries measure */
+.detail-grid {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "ring name"
+    "ring cap"
+    "spec spec"
+    "dev  dev";
+  align-content: center;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 4px;
+}
+
+.density-detailed .drive-heading { grid-area: name; align-self: end; }
+.density-detailed .capacity-text,
+.density-detailed .drive-status { grid-area: cap; align-self: start; }
+.density-detailed .drive-spec { grid-area: spec; }
+.density-detailed .drive-device { grid-area: dev; }
+
+.usage-ring {
+  grid-area: ring;
+  position: relative;
+  width: 44px;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+}
+
+@container (min-width: 236px) {
+  .detail-grid {
+    grid-template-areas:
+      "ring name"
+      "ring spec"
+      "ring dev"
+      "ring cap";
+    column-gap: 12px;
+  }
+
+  .density-detailed .drive-heading,
+  .density-detailed .capacity-text,
+  .density-detailed .drive-status { align-self: center; }
+
+  .density-detailed .usage-ring {
+    width: min(72px, 100cqh);
+  }
+}
+
+.usage-ring svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);   /* the used arc starts at the top */
+}
+
+.ring-track,
+.ring-fill {
+  fill: none;
+  stroke-width: 4;
+}
+
+.ring-track {
+  stroke: var(--my-usage-track, color-mix(in srgb, var(--gex-fg, #fff) 12%, transparent));
+}
+
+.ring-fill {
+  stroke: var(--my-usage-fill, var(--gex-accent, #4ea1ff));
+  stroke-linecap: round;
+  transition: stroke-dasharray 240ms ease, stroke 160ms ease;
+}
+
+.color-by-usage .usage-normal .ring-fill {
+  stroke: var(--my-usage-normal, var(--drive-usage-normal, #22c55e));
+}
+
+.color-by-usage .usage-warning .ring-fill {
+  stroke: var(--my-usage-warning, var(--drive-usage-warning, #f59e0b));
+}
+
+.color-by-usage .usage-critical .ring-fill {
+  stroke: var(--my-usage-critical, var(--drive-usage-critical, #ef4444));
+}
+
+.ring-percent {
+  position: relative;
+  font-size: 12px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.ring-percent small {
+  font-size: 8px;
+  font-weight: 500;
+  opacity: 0.75;
+}
+
+.drive-spec,
+.drive-device {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.drive-spec {
+  opacity: 0.85;
+}
+
+.drive-device {
+  opacity: 0.6;
+}
+
+/* 0.7.8: the safety net in the grid: a card too short for its capacity line (very large text, a squeezed box) shows
+   the percentage in its heading, as compact does, rather than half a line */
+.context-grid .drive-item,
+.context-embedded .drive-item {
+  container-type: size;
+}
+
+/* the card's content box: 16.25 name + 6 + 6 bar + 6 + 13.75 capacity = 48 */
+@container (max-height: 47.5px) {
+  .density-expanded .capacity-text,
+  .density-expanded .drive-fs {
+    display: none;
+  }
+
+  .density-expanded .drive-percent {
+    display: block;
+  }
+}
+
+/* 0.8.0: a detailed card squeezed (large text): the device line goes first, then the spec. Content heights: medium
+   44 + 2 × 17.75 = 79.5, without the device 61.75; wide 16.25 + 3 × 17.75 = 69.5, without the device 51.75 */
+@container (max-width: 235.9px) and (max-height: 79px) {
+  .density-detailed .drive-device { display: none; }
+}
+
+@container (max-width: 235.9px) and (max-height: 61px) {
+  .density-detailed .drive-spec { display: none; }
+}
+
+@container (min-width: 236px) and (max-height: 69px) {
+  .density-detailed .drive-device { display: none; }
+}
+
+@container (min-width: 236px) and (max-height: 51px) {
+  .density-detailed .drive-spec { display: none; }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .ring-fill,
   .drive-item,
   .usage-fill {
     transition: none;

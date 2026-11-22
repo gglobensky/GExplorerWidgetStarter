@@ -288,15 +288,16 @@ export function useFolderMenus(opts: UseFolderMenusOptions) {
   /**
    * Set a menu container ref (for hit-testing empty folders)
    */
-  function setMenuContainerRef(menu: OpenMenu, el: HTMLElement | null) {
-    const folderId = menu.folderId
-    if (!folderId) return
-
-    if (el) {
+  function setMenuContainerRef(menu: OpenMenu | null, el: HTMLElement | null) {
+    // 0.3.11: a level closing may come with its menu already gone from openMenus (null): its container left the map
+    // only by luck before, and Rename found a row no longer on the page. Gone or detached: out of the map.
+    const folderId = menu?.folderId
+    if (el && folderId) {
       menuContainers.set(folderId, el)
-    } else {
-      menuContainers.delete(folderId)
+      return
     }
+    if (folderId) menuContainers.delete(folderId)
+    for (const [id, c] of menuContainers) if (!c.isConnected) menuContainers.delete(id)
   }
 
   /**

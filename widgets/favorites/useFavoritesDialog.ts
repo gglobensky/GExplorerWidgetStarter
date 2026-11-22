@@ -106,22 +106,54 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
     }
   }
 
-  /** Remove a folder and all its nested contents (asked first). */
+  /**
+   * Remove a folder and all its nested contents. 0.3.11: asked first only when it holds something (an empty one goes
+   * at once); GEM Shell's snackbar then offers Undo (everything back where it was).
+   */
   async function handleRemoveFolder(folderId: string) {
-    const ok = await sdk?.ui?.().confirm(
-      'Its favorites and the folders inside it go with it. This cannot be undone.',
-      { title: 'Delete this folder?', okLabel: 'Delete', danger: true },
-    )
-    if (!ok) return
+    const folder = findFolder(await need('getGlobalFavorites')(), folderId)
+    const inside = folder ? countInside(folder.children) : { items: 0, folders: 0 }
+    if (inside.items || inside.folders) {
+      const what = [
+        inside.items ? `${inside.items} favorite${inside.items === 1 ? '' : 's'}` : '',
+        inside.folders ? `${inside.folders} folder${inside.folders === 1 ? '' : 's'}` : '',
+      ].filter(Boolean).join(' and ')
+      const ok = await sdk?.ui?.().confirm(
+        `"${folder!.label}" holds ${what}. They go with it.`,
+        { title: 'Remove this folder?', detail: 'Undo on the message that follows puts everything back.', okLabel: 'Remove', danger: true },
+      )
+      if (!ok) return
+    }
     try {
       await need('removeFolder')(folderId)
       await refresh()
     } catch (e: any) {
-      say(`Not deleted: ${e?.message ?? e}`)
+      say(`Not removed: ${e?.message ?? e}`)
     }
   }
 
-  /** Remove a favorite (by its id). */
+  /** Folder <id> in the tree (ids compared as GEM Shell does: case ignored). */
+  function findFolder(nodes: FavoriteTreeNode[], id: string): Extract<FavoriteTreeNode, { kind: 'folder' }> | null {
+    for (const n of nodes) {
+      if (n.kind !== 'folder') continue
+      if (n.id.toLowerCase() === id.toLowerCase()) return n
+      const r = findFolder(n.children, id)
+      if (r) return r
+    }
+    return null
+  }
+
+  /** The favorites and folders inside <nodes>, all levels. */
+  function countInside(nodes: FavoriteTreeNode[]): { items: number; folders: number } {
+    let items = 0, folders = 0
+    for (const n of nodes) {
+      if (n.kind === 'item') items++
+      else { folders++; const c = countInside(n.children); items += c.items; folders += c.folders }
+    }
+    return { items, folders }
+  }
+
+  /** Remove a favorite (by its id). 0.3.11: no question; GEM Shell's snackbar offers Undo. */
   async function handleRemoveFavorite(id: string) {
     try {
       await need('removeFavorite')(id)
