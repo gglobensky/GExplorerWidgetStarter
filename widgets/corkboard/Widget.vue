@@ -57,7 +57,7 @@ import { createDesk, type PictureSource } from './store'
 import { SHARED, type Shared } from './shared'
 import { createMenus } from './menus'
 import { dueCount, noteText, noteLabel, parseText, blk, uid, type Stack, type Group, type Block, type Photo, type Item } from './model'
-import { exportStack, exportBoard, stackMarkdown, boardMarkdown, importStack, importBoard, copyKind, ARCHIVE_FORMAT, ARCHIVE_JSON, type InlinePicture, type CopyFiles } from './exchange'
+import { exportStack, exportBoard, stackMarkdown, boardMarkdown, importStack, importBoard, copyKind, ARCHIVE_JSON, type InlinePicture, type CopyFiles } from './exchange'
 import { makeZip, readZip, isZip, type ZipEntryIn } from './zip'
 import { undoInk, type InkUndo } from 'gexplorer/widgets'
 import type { InkTool } from './model'
@@ -189,20 +189,16 @@ const FILE_KINDS: Record<CopyFileKind, { ext: string; label: string }> = {
     board: { ext: 'gembrd', label: 'GEM Corkboard board' },
     stack: { ext: 'gemstk', label: 'GEM Corkboard stack' },
 }
-/**
- * What a Corkboard opens at most. 0.4.0: a v2 file (an archive, fsReadBytes) up to 256 MB; a v1 file (JSON text) was
- * read with fsReadText, at most 8 MB, which an older GEM Shell still is.
- */
+/** What a Corkboard opens at most (0.4.0: an archive, fsReadBytes). */
 const FILE_MAX = 256 * 1024 * 1024
-const TEXT_MAX = 8 * 1024 * 1024
 const fileName = (s: string) => (s.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Corkboard').slice(0, 80)
 const picExt = (type: string) => type === 'image/webp' ? 'webp' : type === 'image/jpeg' ? 'jpg' : type === 'image/gif' ? 'gif' : 'png'
 /**
  * Saves a copy where the user picks (GEM Shell's save dialog): a Corkboard file, or Markdown when the user picks
- * that type (the name ends in .md). 0.4.0: a Corkboard file is v2, an archive: corkboard.json and its pictures as
- * files (pictures/1.webp…, WebP when that's smaller; a picture used twice is in it once).
+ * that type (the name ends in .md). 0.4.0: a Corkboard file is an archive: corkboard.json and its pictures as files
+ * (pictures/1.webp…, WebP when that's smaller; a picture used twice is in it once).
  */
-async function saveCopyFile(kind: CopyFileKind, name: string, json: (inline: InlinePicture, version: 1 | 2) => Promise<string>, md: () => string) {
+async function saveCopyFile(kind: CopyFileKind, name: string, json: (inline: InlinePicture) => Promise<string>, md: () => string) {
     const ext = FILE_KINDS[kind].ext
     const path = await ui.saveFile({
         title: `Save “${name}”`, suggestedName: fileName(name) + '.' + ext,
@@ -220,13 +216,13 @@ async function saveCopyFile(kind: CopyFileKind, name: string, json: (inline: Inl
     const files: ZipEntryIn[] = [], named = new Map<string, string>()
     const text = await json(async url => {
         const known = named.get(url)
-        if (known) return { pic: known }
+        if (known) return known
         const blob = await desk.pictureBlob(url, true)
         if (!blob) return null
         const pic = `pictures/${files.length + 1}.${picExt(blob.type)}`
         files.push({ name: pic, data: blob }); named.set(url, pic)
-        return { pic }
-    }, ARCHIVE_FORMAT)
+        return pic
+    })
     try {
         const zip = await makeZip([{ name: ARCHIVE_JSON, data: text, deflate: true }, ...files])
         if (zip.size > FILE_MAX) {
@@ -239,26 +235,19 @@ async function saveCopyFile(kind: CopyFileKind, name: string, json: (inline: Inl
         await sdk.fsWriteBytes(path, zip, { overwrite: true }); saved()
     } catch (err) { failed(err) }
 }
-/**
- * Opens a .gembrd / .gemstk file (GEM Shell's file dialog, those two types only) and adds it as a separate copy.
- * 0.4.0: a v2 file (an archive) or a v1 one (JSON text, pictures inlined), told apart by their first bytes.
- */
+/** Opens a .gembrd / .gemstk file (GEM Shell's file dialog, those two types only) and adds it as a separate copy. */
 async function openCopyFile(): Promise<boolean> {
     const [path] = (await ui.openFiles({
         title: 'Open a Corkboard file', acceptLabel: 'Open', access: 'read',
         filters: [{ label: 'GEM Corkboard boards and stacks', extensions: ['gembrd', 'gemstk'] }],
     })) ?? []
     if (!path) return false
-    if (!sdk.fsReadBytes) {   // an older GEM Shell: v1 files only
-        if (!sdk.fsReadText) { desk.told('Opening files needs the Read permission for GEM Corkboard.'); return false }
-        try { const { text } = await sdk.fsReadText(path, { maxBytes: TEXT_MAX }); return await importText(text) }
-        catch (err: any) { desk.told(err?.code === 'E_TOO_LARGE' ? 'That file is over 8 MB: too large to open.' : "That file couldn't be read."); return false }
-    }
+    if (!sdk.fsReadBytes) { desk.told('Opening files needs the Read permission for GEM Corkboard.'); return false }
     let blob: Blob
     try { blob = await sdk.fsReadBytes(path, { maxBytes: FILE_MAX }) }
     catch (err: any) { desk.told(err?.code === 'E_TOO_LARGE' ? `That file is over ${FILE_MAX / 1048576} MB: too large to open.` : "That file couldn't be read."); return false }
     const bytes = new Uint8Array(await blob.arrayBuffer())
-    if (!isZip(bytes)) return await importText(new TextDecoder().decode(bytes))   // v1 (the decoder drops a BOM)
+    if (!isZip(bytes)) { desk.told("That isn't a Corkboard file (or it was saved by a version before 0.4.0)."); return false }
     let files: CopyFiles
     try { files = await readZip(bytes, { totalBytes: 512 * 1024 * 1024 }) }
     catch (err: any) {
@@ -269,10 +258,12 @@ async function openCopyFile(): Promise<boolean> {
     const json = files.get(ARCHIVE_JSON)
     if (!json) { desk.told("That isn't a Corkboard file (no board in it)."); return false }
     files.delete(ARCHIVE_JSON)
-    return await importText(new TextDecoder().decode(json), files)
+    let o: unknown
+    try { o = JSON.parse(new TextDecoder().decode(json)) } catch { desk.told("That file is damaged: it couldn't be opened."); return false }
+    return await importFile(o, files)
 }
-const saveStackFile = (s: Stack) => void saveCopyFile('stack', s.name, (inline, v) => exportStack(desk.d.value, s, inline, v), () => stackMarkdown(desk.d.value, s))
-const saveBoardFile = () => { const b = board.value; void saveCopyFile('board', b.title || 'Untitled board', (inline, v) => exportBoard(desk.d.value, b, inline, v), () => boardMarkdown(desk.d.value, b)) }
+const saveStackFile = (s: Stack) => void saveCopyFile('stack', s.name, inline => exportStack(desk.d.value, s, inline), () => stackMarkdown(desk.d.value, s))
+const saveBoardFile = () => { const b = board.value; void saveCopyFile('board', b.title || 'Untitled board', inline => exportBoard(desk.d.value, b, inline), () => boardMarkdown(desk.d.value, b)) }
 
 /** 0.2.2: an item of the view to another page; when there's no room even small, offers to shrink the others there. */
 async function moveToPage(it: Item, to: number) {
@@ -295,20 +286,17 @@ async function deleteGroupAsk(g: Group) {
     if (ok) desk.deleteGroup(g)
 }
 
-/**
- * A Corkboard copy pasted or imported: a stack into this view, a board as a new board. false: not a copy.
- * files (0.4.0): a v2 file's pictures.
- */
-async function importText(text: string, files?: CopyFiles): Promise<boolean> {
-    const kind = copyKind(text)
+/** A Corkboard file opened (its JSON, parsed, and its pictures): a stack into this view, a board as a new board. */
+async function importFile(o: unknown, files: CopyFiles): Promise<boolean> {
+    const kind = copyKind(o)
     try {
-        if (kind === 'board') { const b = await importBoard(desk.d.value, text, desk.makePicture, files); desk.switchBoard(b.id); desk.told(`Added the board “${b.title || 'Untitled board'}” as a separate copy`); return true }
+        if (kind === 'board') { const b = await importBoard(desk.d.value, o, files, desk.makePicture); desk.switchBoard(b.id); desk.told(`Added the board “${b.title || 'Untitled board'}” as a separate copy`); return true }
         if (kind === 'stack') {
-            const s = await importStack(desk.d.value, text, desk.d.value.board, desk.d.value.group, desk.makePicture, files)
+            const s = await importStack(desk.d.value, o, files, desk.d.value.board, desk.d.value.group, desk.makePicture)
             s.place = desk.newPlace(undefined, 'rect' in s.place ? s.place.rect : undefined); desk.save(); desk.told(`Added “${s.name}” as a separate copy`); return true
         }
-    } catch (err: any) { desk.told(err?.message || "That copy couldn't be read."); return false }
-    desk.told("That isn't a Corkboard copy. Use Export to make one.")
+    } catch (err: any) { desk.told(err?.message || "That file couldn't be read."); return false }
+    desk.told("That isn't a Corkboard file (or it was saved by another version).")
     return false
 }
 
@@ -428,21 +416,15 @@ function openResult(r: { s: Stack; n: any }) {
     desk.openStack(r.s.id, r.n.id)
 }
 
-// ── Paste on the board (a copy, a picture, some text) ────────────────────────
+// ── Paste on the board (a picture, some text) ───────────────────────────────
 function onPaste(e: ClipboardEvent) {
     const t = e.target as HTMLElement
-    if (t.closest?.('input, textarea, .cb-tx, .cb-sh-name')) {
-        // a note's text: the editor takes text and pictures; only a copy is the widget's
-        const text = e.clipboardData?.getData('text/plain') ?? ''
-        if (t.closest('.cb-tx') && copyKind(text)) { e.preventDefault(); void importText(text) }
-        return
-    }
+    if (t.closest?.('input, textarea, .cb-tx, .cb-sh-name')) return   // a note's text: the editor takes text and pictures
     const cd = e.clipboardData; if (!cd) return
     const file = [...cd.items].find(it => it.kind === 'file' && it.type.startsWith('image/'))?.getAsFile()
     if (file) { e.preventDefault(); void shared.addPicture(file, null); return }
     const text = cd.getData('text/plain'); if (!text) return
     e.preventDefault()
-    if (copyKind(text)) { void importText(text); return }
     if (desk.focused.value) { stackView.value?.appendText(text); return }
     const s = desk.addStack(parseText(text)); desk.openStack(s.id)
 }

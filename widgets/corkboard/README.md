@@ -2,11 +2,11 @@
 
 Sticky notes on a cork board, for the GEM Shell grid (a quarter of the screen or less) and the sidebar.
 
-**0.4.0 (2026-11-21): board and stack files are archives (v2)**
+**0.4.0 (2026-11-21): board and stack files are archives**
 - A `.gembrd` / `.gemstk` file is now a zip archive: `corkboard.json` (the board or the stack, `corkboard: 2`) and its pictures as files (`pictures/1.webp`…, WebP when that's smaller; a picture used twice is stored once). The JSON names each picture (`pic`) instead of holding it as base64 text.
 - **Why:** the "Blocked: something in GEM Shell tried to load a connection from app/data" of the security log was a `data:` address being fetched (the log showed it as `app/data`: see GEM Shell's `shell-changes-2026-11-21-csp-scheme-names.md`). No picture travels as a `data:` address in a file any more, and the files are about a quarter smaller.
 - **Larger boards:** a file opens up to **256 MB** (it was 8 MB, the text reader's limit); the archive is read with limits (entries, sizes, checks), and a damaged or foreign one is refused with a message.
-- **Old files still open** (v1: JSON with the pictures inlined), told apart by their first bytes; saved again, they are v2. A copy pasted as text is still read as before. A file is still added as a **separate copy**.
+- **Older files are no longer read** (JSON text with the pictures inlined), nor a Corkboard copy pasted as text (nothing has made one since 0.2.3): there were no users yet. Such a file is refused with a message; pasted text becomes a note, like any text. A file is still added as a **separate copy**.
 - New `zip.ts` (no imports; `tests/zip.test.ts`: `node --experimental-strip-types --test widgets/corkboard/tests/zip.test.ts`). Windows' own "Extract all" opens a `.gembrd` renamed `.zip`.
 
 **0.2.5 (2026-11-06), after Guillaume's notes:**

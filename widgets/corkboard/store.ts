@@ -23,8 +23,8 @@ const SAVE_MS = 700
 const PICTURE_GRACE_MS = 20_000
 
 export type Desk = ReturnType<typeof createDesk>
-/** A picture to make an asset of: a pasted / dropped file, a copy's data: URL, or (0.2.1) a path from ui.openFiles. */
-export type PictureSource = Blob | string | { path: string }
+/** A picture to make an asset of: a pasted / dropped file, a file's picture (0.4.0), or (0.2.1) a path from ui.openFiles. */
+export type PictureSource = Blob | { path: string }
 
 export function createDesk(sdk: WidgetSdk, sourceId: string) {
     const docName = 'desk-' + String(sourceId || 'default').replace(/[^a-z0-9_-]/gi, '_').slice(0, 80)
@@ -433,14 +433,14 @@ export function createDesk(sdk: WidgetSdk, sourceId: string) {
     }
 
     // ── Pictures ────────────────────────────────────────────────────────────
-    /** A picture asset from a pasted / dropped file or a copy's data (null: refused, told to the user). */
+    /** A picture asset from a pasted / dropped file or a Corkboard file's picture (null: refused, told to the user). */
     async function makePicture(data: PictureSource): Promise<{ asset: string; url: string; w: number; h: number } | null> {
         if (!sdk.mediaImageCreate) { told('Pictures need the Media permission for GEM Corkboard.'); return null }
         try {
             const opts = { width: 1600, format: 'png' as const, storage: 'persistent' as const }
             const img = typeof data === 'object' && 'path' in data
                 ? await sdk.mediaImageCreate({ type: 'file', path: data.path }, opts)   // chosen in GEM Shell's file dialog
-                : await sdk.mediaImageCreate({ type: 'bytes', data: typeof data === 'string' ? dataUrlBlob(data) : data }, opts)
+                : await sdk.mediaImageCreate({ type: 'bytes', data }, opts)
             return { asset: img.assetId, url: img.url, w: img.width, h: img.height }
         } catch (err: any) {
             console.warn('[corkboard] picture refused', err)
@@ -465,12 +465,6 @@ export function createDesk(sdk: WidgetSdk, sourceId: string) {
             }
             return blob
         } catch { return null }
-    }
-    /** A picture as data: for a copy as text (v1; null: unreadable, left out of the copy). compact: as pictureBlob. */
-    async function inlinePicture(url: string, compact = false): Promise<string | null> {
-        const blob = await pictureBlob(url, compact)
-        if (!blob) return null
-        return await new Promise<string | null>(res => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = () => res(null); r.readAsDataURL(blob) })
     }
     function forgetPictureLater(asset: string) {
         setTimeout(() => {
@@ -527,26 +521,12 @@ export function createDesk(sdk: WidgetSdk, sourceId: string) {
         addStack, addNote, autoName, mergeInto, swapPlaces, joinGroup, leaveGroupWith, moveStackToBoard, moveNote, reorderNote,
         duplicateNote, deleteNote, deleteStack, toggleFlag, setDue, setColor, cleanupEmpty, stackOfNote,
         createGroup, editGroup, setPin, ungroup, deleteGroup, createBoard, editBoard, deleteBoard,
-        makePicture, pictureBlob, inlinePicture, forgetPictureLater, used, learned,
+        makePicture, pictureBlob, forgetPictureLater, used, learned,
     }
 }
 
 /** A document read back: the fields this version knows, with safe defaults (an older or hand-edited one). */
 import { fitWidths } from './table'
-/**
- * 0.2.4: a data: URL's bytes, decoded here. fetch(data:) is a connection GEM Shell's page policy refuses ("Blocked:
- * something tried to load a connection from data"): the pictures of a board file opened on another computer
- * never arrived.
- */
-function dataUrlBlob(url: string): Blob {
-    const m = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(url)
-    if (!m) throw new Error('not a data URL')
-    const type = m[1] || 'application/octet-stream'
-    if (!m[2]) return new Blob([decodeURIComponent(m[3])], { type })
-    const bin = atob(m[3]), bytes = new Uint8Array(bin.length)
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-    return new Blob([bytes], { type })
-}
 function normalize(doc: DeskData): DeskData {
     const base = emptyDesk()
     const o: DeskData = { ...base, ...doc }
