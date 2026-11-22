@@ -5,6 +5,10 @@
 // new picture assets, nothing kept in sync (Guillaume, 2026-11-02). Everything read from a copy is checked: known
 // fields only, text sanitized, numbers bounded, pictures as PNG / JPEG / WebP / GIF data only.
 // Also: what a new Corkboard starts with (the "Start here" stack).
+// 0.4.0: FILES ARE V2, AN ARCHIVE (zip.ts): corkboard.json (this same JSON, `corkboard: 2`) and the pictures as files
+// (pictures/1.webp…), each picture named in the JSON (`pic`) instead of inlined (`data`). No data: address left in a
+// file: GEM Shell's page refuses fetching one (the "a connection from app/data" of the security log), and base64 made a
+// board of photos a third larger. v1 (a file saved before 0.4.0, a copy pasted as text) is still read.
 import {
     type DeskData, type Stack, type Group, type Board, type Note, type Block, type Stroke, type Place, type PaperColor,
     type FlagId, type PinColor, type Surface, type PaperKind, type InkColor, type TableBlock,
@@ -14,27 +18,37 @@ import {
 import { fitWidths, tableMd } from './table'
 
 const FORMAT = 1
+/** NEW (0.4.0): the JSON inside a v2 file (an archive): pictures named, not inlined. */
+export const ARCHIVE_FORMAT = 2
+/** NEW (0.4.0): the JSON's name inside a v2 file. */
+export const ARCHIVE_JSON = 'corkboard.json'
+const FORMATS = [FORMAT, ARCHIVE_FORMAT]
 const MAX_NOTES = 2000
 const MAX_STACKS = 1000
 const MAX_STROKES = 4000
 const MAX_POINTS = 4000
 
-/** Reads a picture asset as a data: URL (null: unreadable, the picture is left out of the copy). */
-export type InlinePicture = (url: string) => Promise<string | null>
-/** Makes a picture asset from a data: URL (null: refused, the picture is left out). */
-export type MakePicture = (dataUrl: string) => Promise<{ asset: string; url: string; w: number; h: number } | null>
+/**
+ * A picture asset as the copy holds it (null: unreadable, the picture is left out of the copy): v1 `{ data }` (a
+ * data: URL), 0.4.0's v2 `{ pic }` (its file's name in the archive).
+ */
+export type InlinePicture = (url: string) => Promise<{ data: string } | { pic: string } | null>
+/** Makes a picture asset from a copy's picture: a data: URL (v1) or a file's bytes (v2) (null: refused, left out). */
+export type MakePicture = (src: string | Blob) => Promise<{ asset: string; url: string; w: number; h: number } | null>
+/** NEW (0.4.0): a v2 file's other files, by name (readZip); absent for v1. */
+export type CopyFiles = Map<string, Uint8Array>
 
-type NoteOut = { num: number; title?: string; ink: Stroke[]; blocks: Array<Omit<Block, 'id'> & { data?: string }> }
+type NoteOut = { num: number; title?: string; ink: Stroke[]; blocks: Array<Omit<Block, 'id'> & { data?: string; pic?: string }> }
 type StackOut = {
     name: string; color: PaperColor; paper: PaperKind; numbered: boolean; flags: FlagId[]; due: string | null
     place: Place; group?: number | null; notes: NoteOut[]
 }
 type GroupOut = { name: string; pin: PinColor; due: string | null; place: Place }
 /** grid (0.2.5): 2, places in the finer grid; absent, a 0.2.4 copy (its places are made 2 × 2 finer when read). */
-export type StackCopy = { corkboard: 1; grid?: 2; kind: 'stack'; stack: StackOut }
-/** NEW (0.2.0): a picture pinned on the board, its data inlined. */
-type PhotoOut = { caption: string; ink: Stroke[]; place: Place; group: number | null; data: string }
-export type BoardCopy = { corkboard: 1; grid?: 2; kind: 'board'; board: { title: string; surface: Surface }; groups: GroupOut[]; stacks: StackOut[]; photos?: PhotoOut[] }
+export type StackCopy = { corkboard: 1 | 2; grid?: 2; kind: 'stack'; stack: StackOut }
+/** NEW (0.2.0): a picture pinned on the board, its data inlined (v1) or named (0.4.0, v2). */
+type PhotoOut = { caption: string; ink: Stroke[]; place: Place; group: number | null; data?: string; pic?: string }
+export type BoardCopy = { corkboard: 1 | 2; grid?: 2; kind: 'board'; board: { title: string; surface: Surface }; groups: GroupOut[]; stacks: StackOut[]; photos?: PhotoOut[] }
 
 // ── Out ─────────────────────────────────────────────────────────────────────
 
@@ -42,10 +56,10 @@ async function noteOut(n: Note, inline: InlinePicture): Promise<NoteOut> {
     const blocks: NoteOut['blocks'] = []
     for (const b of n.blocks) {
         if (b.t === 'img') {
-            const data = await inline(b.url)
-            if (!data) continue
+            const ref = await inline(b.url)
+            if (!ref) continue
             const { id: _id, asset: _a, url: _u, ...rest } = b
-            blocks.push({ ...rest, asset: '', url: '', data } as any)
+            blocks.push({ ...rest, asset: '', url: '', ...ref } as any)
         } else {
             const { id: _id, ...rest } = b
             blocks.push(rest as any)
@@ -60,23 +74,24 @@ async function stackOut(d: DeskData, s: Stack, inline: InlinePicture, group?: nu
     return { name: s.name, color: s.color, paper: s.paper, numbered: s.numbered, flags: [...s.flags], due: s.due, place: s.place, group, notes }
 }
 
-export async function exportStack(d: DeskData, s: Stack, inline: InlinePicture): Promise<string> {
-    const copy: StackCopy = { corkboard: FORMAT, grid: GRID, kind: 'stack', stack: await stackOut(d, s, inline) }
+/** version (0.4.0): 2 for the JSON of a v2 file (`inline` then names the pictures: `{ pic }`). */
+export async function exportStack(d: DeskData, s: Stack, inline: InlinePicture, version: 1 | 2 = FORMAT): Promise<string> {
+    const copy: StackCopy = { corkboard: version, grid: GRID, kind: 'stack', stack: await stackOut(d, s, inline) }
     return JSON.stringify(copy)
 }
 
-export async function exportBoard(d: DeskData, b: Board, inline: InlinePicture): Promise<string> {
+export async function exportBoard(d: DeskData, b: Board, inline: InlinePicture, version: 1 | 2 = FORMAT): Promise<string> {
     const groups = d.groups.filter(g => g.board === b.id)
     const gi = new Map(groups.map((g, i) => [g.id, i]))
     const stacks: StackOut[] = []
     for (const s of d.stacks.filter(x => x.board === b.id)) stacks.push(await stackOut(d, s, inline, s.group != null && gi.has(s.group) ? gi.get(s.group)! : null))
     const photos: PhotoOut[] = []
     for (const p of d.photos.filter(x => x.board === b.id)) {
-        const data = await inline(p.url)
-        if (data) photos.push({ caption: p.caption, ink: p.ink, place: p.place, group: p.group != null && gi.has(p.group) ? gi.get(p.group)! : null, data })
+        const ref = await inline(p.url)
+        if (ref) photos.push({ caption: p.caption, ink: p.ink, place: p.place, group: p.group != null && gi.has(p.group) ? gi.get(p.group)! : null, ...ref })
     }
     const copy: BoardCopy = {
-        corkboard: FORMAT, grid: GRID, kind: 'board', board: { title: b.title, surface: b.surface },
+        corkboard: version, grid: GRID, kind: 'board', board: { title: b.title, surface: b.surface },
         groups: groups.map(g => ({ name: g.name, pin: g.pin, due: g.due, place: g.place })), stacks, photos,
     }
     return JSON.stringify(copy)
@@ -173,15 +188,38 @@ function tableIn(b: any, lvl: number): TableBlock | null {
     return t
 }
 
-async function blocksIn(list: unknown, make: MakePicture): Promise<Block[]> {
+/** NEW (0.4.0): a picture file's type from its first bytes: PNG, JPEG, WebP or GIF only (null: something else). */
+export function pictureType(b: Uint8Array): string | null {
+    if (b.length >= 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png'
+    if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg'
+    if (b.length >= 6 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return 'image/gif'
+    if (b.length >= 12 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) return 'image/webp'
+    return null
+}
+
+/**
+ * NEW (0.4.0): a copy's picture: its file in the archive (`pic`, v2: a picture by its bytes, not its name) or its data:
+ * URL (`data`, v1: PNG / JPEG / WebP / GIF only). null: missing or not a picture, left out.
+ */
+function pictureIn(o: any, files?: CopyFiles): string | Blob | null {
+    if (files && typeof o?.pic === 'string') {
+        const bytes = files.get(o.pic.replace(/\\/g, '/').replace(/^\.?\/+/, ''))
+        const type = bytes && pictureType(bytes)
+        return type ? new Blob([bytes as BlobPart], { type }) : null
+    }
+    const data = o?.data
+    return typeof data === 'string' && /^data:image\/(png|jpeg|webp|gif);base64,/.test(data) ? data : null
+}
+
+async function blocksIn(list: unknown, make: MakePicture, files?: CopyFiles): Promise<Block[]> {
     const out: Block[] = []
     for (const b of Array.isArray(list) ? list.slice(0, 2000) : []) {
         if (!b || typeof b !== 'object') continue
         const lvl = Math.floor(num((b as any).lvl, 0, 6, 0))
         if ((b as any).t === 'img') {
-            const data = (b as any).data
-            if (typeof data !== 'string' || !/^data:image\/(png|jpeg|webp|gif);base64,/.test(data)) continue
-            const pic = await make(data)
+            const src = pictureIn(b, files)
+            if (!src) continue
+            const pic = await make(src)
             if (pic) out.push({ id: uid(), t: 'img', lvl, ...pic, ink: okInk((b as any).ink) })
         } else if ((b as any).t === 'table') {
             const t = tableIn(b, lvl)
@@ -195,7 +233,7 @@ async function blocksIn(list: unknown, make: MakePicture): Promise<Block[]> {
     return out
 }
 
-async function stackIn(d: DeskData, so: any, board: string, group: string | null, make: MakePicture, finer = false): Promise<Stack> {
+async function stackIn(d: DeskData, so: any, board: string, group: string | null, make: MakePicture, finer = false, files?: CopyFiles): Promise<Stack> {
     const s = newStack(d, {
         board, group, place: okPlace(so?.place, finer), autoName: false,
         name: String(so?.name ?? 'Imported stack').slice(0, 40) || 'Imported stack',
@@ -204,7 +242,7 @@ async function stackIn(d: DeskData, so: any, board: string, group: string | null
         due: okDate(so?.due),
     })
     for (const no of Array.isArray(so?.notes) ? so.notes.slice(0, MAX_NOTES) : []) {
-        const blocks = await blocksIn(no?.blocks, make)
+        const blocks = await blocksIn(no?.blocks, make, files)
         const n = newNote(d, s, blocks.length ? blocks : null)
         n.ink = okInk(no?.ink)
         if (typeof no?.title === 'string' && no.title.trim()) n.title = no.title.trim().slice(0, NOTE_TITLE_MAX)
@@ -220,30 +258,30 @@ export function copyKind(text: string): 'stack' | 'board' | null {
     if (!/^\s*\{\s*"corkboard"/.test(text)) return null
     try {
         const o = JSON.parse(text)
-        if (o?.corkboard !== FORMAT) return null
+        if (!FORMATS.includes(o?.corkboard)) return null
         return o.kind === 'board' ? 'board' : o.kind === 'stack' && o.stack ? 'stack' : null
     } catch { return null }
 }
 
 /**
  * Adds a stack copy to the view (board, group). The caller places it (its place in the copy is kept only as a
- * hint). Throws with a message for the user when the text isn't a copy.
+ * hint). Throws with a message for the user when the text isn't a copy. files (0.4.0): a v2 file's pictures.
  */
-export async function importStack(d: DeskData, text: string, board: string, group: string | null, make: MakePicture): Promise<Stack> {
+export async function importStack(d: DeskData, text: string, board: string, group: string | null, make: MakePicture, files?: CopyFiles): Promise<Stack> {
     let o: any
     try { o = JSON.parse(text) } catch { throw new Error("That isn't a Corkboard copy. Use Export to make one.") }
-    if (o?.corkboard !== FORMAT || o.kind !== 'stack' || !o.stack) throw new Error("That isn't a Corkboard copy of a stack.")
-    const s = await stackIn(d, o.stack, board, group, make, o.grid !== GRID)
+    if (!FORMATS.includes(o?.corkboard) || o.kind !== 'stack' || !o.stack) throw new Error("That isn't a Corkboard copy of a stack.")
+    const s = await stackIn(d, o.stack, board, group, make, o.grid !== GRID, files)
     if (d.stacks.some(x => x.board === board && x.name === s.name)) s.name = (s.name + ' (copy)').slice(0, 40)
     d.stacks.push(s)
     return s
 }
 
-/** Adds a board copy as a new board (its groups, stacks and notes with new ids). */
-export async function importBoard(d: DeskData, text: string, make: MakePicture): Promise<Board> {
+/** Adds a board copy as a new board (its groups, stacks and notes with new ids). files (0.4.0): a v2 file's pictures. */
+export async function importBoard(d: DeskData, text: string, make: MakePicture, files?: CopyFiles): Promise<Board> {
     let o: any
     try { o = JSON.parse(text) } catch { throw new Error("That isn't a Corkboard copy. Use Export to make one.") }
-    if (o?.corkboard !== FORMAT || o.kind !== 'board') throw new Error("That isn't a Corkboard copy of a board.")
+    if (!FORMATS.includes(o?.corkboard) || o.kind !== 'board') throw new Error("That isn't a Corkboard copy of a board.")
     let title = String(o.board?.title ?? '').slice(0, 40)
     if (d.boards.some(b => b.title === title)) title = ((title || 'Untitled board') + ' (copy)').slice(0, 40)
     const b: Board = { id: uid(), title, surface: pick(o.board?.surface, SURFACES.map(s => s[0]), 'cork'), cols: 0 }
@@ -255,12 +293,12 @@ export async function importBoard(d: DeskData, text: string, make: MakePicture):
     }
     for (const so of Array.isArray(o.stacks) ? o.stacks.slice(0, MAX_STACKS) : []) {
         const gi = Number.isInteger(so?.group) ? gids[so.group] ?? null : null
-        d.stacks.push(await stackIn(d, so, b.id, gi, make, o.grid !== GRID))
+        d.stacks.push(await stackIn(d, so, b.id, gi, make, o.grid !== GRID, files))
     }
     for (const po of Array.isArray(o.photos) ? o.photos.slice(0, MAX_STACKS) : []) {
-        const data = po?.data
-        if (typeof data !== 'string' || !/^data:image\/(png|jpeg|webp|gif);base64,/.test(data)) continue
-        const pic = await make(data)
+        const src = pictureIn(po, files)
+        if (!src) continue
+        const pic = await make(src)
         if (!pic) continue
         const gi = Number.isInteger(po?.group) ? gids[po.group] ?? null : null
         d.photos.push({ id: uid(), kind: 'photo', board: b.id, group: gi, ...pic, caption: String(po?.caption ?? '').replace(/\s+/g, ' ').slice(0, PHOTO_CAPTION_MAX), ink: okInk(po?.ink), place: okPlace(po?.place, o.grid !== GRID), tilt: rndTilt(), z: ++d.z })

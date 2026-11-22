@@ -449,10 +449,10 @@ export function createDesk(sdk: WidgetSdk, sourceId: string) {
         }
     }
     /**
-     * A picture as data: for a copy (null: unreadable, left out of the copy). compact (0.2.2, a file): WebP when that
-     * is smaller, so a board of photos stays under the 8 MB a Corkboard opens.
+     * NEW (0.4.0): a picture asset's bytes for a file (null: unreadable, left out). compact: WebP when that is smaller
+     * (0.2.2). The asset's url is GEM Shell's own (same origin), so this fetch is allowed.
      */
-    async function inlinePicture(url: string, compact = false): Promise<string | null> {
+    async function pictureBlob(url: string, compact = false): Promise<Blob | null> {
         try {
             let blob = await (await fetch(url)).blob()
             if (compact && typeof OffscreenCanvas !== 'undefined') {
@@ -463,8 +463,14 @@ export function createDesk(sdk: WidgetSdk, sourceId: string) {
                     if (w.type === 'image/webp' && w.size < blob.size) blob = w
                 } catch { /* the original */ }
             }
-            return await new Promise<string | null>(res => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = () => res(null); r.readAsDataURL(blob) })
+            return blob
         } catch { return null }
+    }
+    /** A picture as data: for a copy as text (v1; null: unreadable, left out of the copy). compact: as pictureBlob. */
+    async function inlinePicture(url: string, compact = false): Promise<string | null> {
+        const blob = await pictureBlob(url, compact)
+        if (!blob) return null
+        return await new Promise<string | null>(res => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = () => res(null); r.readAsDataURL(blob) })
     }
     function forgetPictureLater(asset: string) {
         setTimeout(() => {
@@ -521,7 +527,7 @@ export function createDesk(sdk: WidgetSdk, sourceId: string) {
         addStack, addNote, autoName, mergeInto, swapPlaces, joinGroup, leaveGroupWith, moveStackToBoard, moveNote, reorderNote,
         duplicateNote, deleteNote, deleteStack, toggleFlag, setDue, setColor, cleanupEmpty, stackOfNote,
         createGroup, editGroup, setPin, ungroup, deleteGroup, createBoard, editBoard, deleteBoard,
-        makePicture, inlinePicture, forgetPictureLater, used, learned,
+        makePicture, pictureBlob, inlinePicture, forgetPictureLater, used, learned,
     }
 }
 

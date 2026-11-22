@@ -2,6 +2,13 @@
 
 Sticky notes on a cork board, for the GEM Shell grid (a quarter of the screen or less) and the sidebar.
 
+**0.4.0 (2026-11-21): board and stack files are archives (v2)**
+- A `.gembrd` / `.gemstk` file is now a zip archive: `corkboard.json` (the board or the stack, `corkboard: 2`) and its pictures as files (`pictures/1.webp`…, WebP when that's smaller; a picture used twice is stored once). The JSON names each picture (`pic`) instead of holding it as base64 text.
+- **Why:** the "Blocked: something in GEM Shell tried to load a connection from app/data" of the security log was a `data:` address being fetched (the log showed it as `app/data`: see GEM Shell's `shell-changes-2026-11-21-csp-scheme-names.md`). No picture travels as a `data:` address in a file any more, and the files are about a quarter smaller.
+- **Larger boards:** a file opens up to **256 MB** (it was 8 MB, the text reader's limit); the archive is read with limits (entries, sizes, checks), and a damaged or foreign one is refused with a message.
+- **Old files still open** (v1: JSON with the pictures inlined), told apart by their first bytes; saved again, they are v2. A copy pasted as text is still read as before. A file is still added as a **separate copy**.
+- New `zip.ts` (no imports; `tests/zip.test.ts`: `node --experimental-strip-types --test widgets/corkboard/tests/zip.test.ts`). Windows' own "Extract all" opens a `.gembrd` renamed `.zip`.
+
 **0.2.5 (2026-11-06), after Guillaume's notes:**
 - **A finer board.** The cells are half as wide and half as high as before, so a stack or a picture can be any size from **one small cell to a whole page** (it was 2 × 2 at most), in finer steps. A board can have a page of the hub to itself.
   - A small stack shows only its **name**, as much of it as fits, with the whole name in the tooltip; a tiny one, its initials. What a card shows depends on its own size now, not the board's.

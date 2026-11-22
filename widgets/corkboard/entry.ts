@@ -12,7 +12,7 @@ import { COMMANDS, GESTURES } from './commands'
 export default {
     api: '1.0',
     id: 'corkboard',
-    version: '0.3.1',   // 0.3.1 (2026-11-21): round checkboxes: "( ) " / "(x) " make one; right-click a box ▸ Round / Square checkboxes changes its whole list. 0.3.0 (2026-11-14): the board's surface follows GEM Shell's Widget backgrounds (opacity); the chrome on GEM Shell's colours. 0.2.6 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step)
+    version: '0.4.0',   // 0.4.0 (2026-11-21): board and stack files are v2, an archive (corkboard.json + the pictures as files: no data: addresses, the "a connection from app/data" block; opens up to 256 MB, was 8); v1 files still open. 0.3.1 (2026-11-21): round checkboxes: "( ) " / "(x) " make one; right-click a box ▸ Round / Square checkboxes changes its whole list. 0.3.0 (2026-11-14): the board's surface follows GEM Shell's Widget backgrounds (opacity); the chrome on GEM Shell's colours. 0.2.6 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     displayName: 'GEM Corkboard',
