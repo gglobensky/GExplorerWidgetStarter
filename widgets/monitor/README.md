@@ -37,7 +37,13 @@ that use them, and what GEM Shell itself uses. Brass valve gauges, graphs of the
   handles), each GPU (per engine: 3D, copy, video; its memory), disks (active %, read / write), network (in / out, link).
 - **Processes:** the busiest 200 of them, sorted by any column, filtered by name: CPU, memory, disk, GPU, threads.
 - **GEM Shell:** its own use, with each of its processes (its web view runs in processes of its own).
-- **⏱** the refresh rate: every 0.5, 1, 2 or 5 seconds (this copy).
+- **⏱** the refresh rate: every 0.5, 1, 2 or 5 seconds.
+  - **Keep the graphs running in the background** (1.1.0, off by default): while a copy isn't on screen
+    (its hub not shown), it goes on reading what the graphs draw (CPU, memory, GPU, disks, network, GEM Shell; not the
+    process list), so the last two minutes are there when you come back. Off: the graphs start again from empty, as
+    before. A recording always goes on regardless (its job's card).
+  - 1.1.1: both are GEM Monitor's settings, for every copy: **Settings ▸ GEM Monitor ▸ Readings** shows them too, and
+    either place changes them.
 
 The details' tabs (1.0.3) are GEM Shell's tab strip: ← / → switch, and they scroll sideways when the details are
 narrow.

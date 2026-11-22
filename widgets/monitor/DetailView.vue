@@ -248,7 +248,7 @@ import Pages from './Pages.vue'
 import KvPaged, { type KvRow } from './KvPaged.vue'
 import RowPaged from './RowPaged.vue'
 import Pager from './Pager.vue'
-import { useInlineMenu } from './inlineMenu'
+import { useInlineMenu, type InlineMenuItem } from './inlineMenu'
 
 const props = defineProps<{
     store: Store
@@ -256,6 +256,9 @@ const props = defineProps<{
     /** The refresh rate (ms: read live, the instance's view) and its setter. */
     interval: { readonly value: number }
     onInterval?: (ms: number) => void
+    /** NEW (1.1.0): "Keep the graphs running" (read live, this copy's view) and its setter; absent: not offered. */
+    background?: { readonly value: boolean }
+    onBackground?: (on: boolean) => void
     /** In a hub, over the tiles: back to them. */
     onBack?: () => void
     /** This copy's recorder (⏺). */
@@ -526,8 +529,15 @@ const INTERVALS = [500, 1000, 2000, 5000]
 const intervalLabel = computed(() => props.interval.value < 1000 ? `${props.interval.value / 1000}s` : `${props.interval.value / 1000}s`)
 async function chooseInterval() {
     if (!moreBtn.value) return
-    const id = await imenu.open(moreBtn.value, INTERVALS.map(ms => ({ id: String(ms), check: ms === props.interval.value ? 'on' as const : false, label: `Every ${ms < 1000 ? `${ms} ms` : `${ms / 1000} s`}` })), 'Refresh rate')
-    if (id) props.onInterval?.(Number(id))
+    const items: InlineMenuItem[] = INTERVALS.map(ms => ({ id: String(ms), check: ms === props.interval.value ? 'on' as const : false, label: `Every ${ms < 1000 ? `${ms} ms` : `${ms / 1000} s`}` }))
+    // 1.1.0 (#8): the graphs go on while this copy isn't on screen (a hub not shown): full when it's back
+    if (props.onBackground) items.push({ separator: true }, {
+        id: 'bg', check: props.background?.value ? 'on' : false, label: 'Keep the graphs running in the background',
+        title: 'While GEM Monitor isn\'t on screen (its hub not shown), it goes on reading what the graphs draw, so they\'re full when you come back. It costs a little: a reading at each refresh.',
+    })
+    const id = await imenu.open(moreBtn.value, items, 'Refresh rate')
+    if (id === 'bg') props.onBackground?.(!props.background?.value)
+    else if (id) props.onInterval?.(Number(id))
 }
 
 let obs: ResizeObserver | null = null

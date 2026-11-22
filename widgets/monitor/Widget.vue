@@ -29,9 +29,9 @@
         <template v-else-if="context === 'grid'">
             <TilesView :store="store" :recorder="rec" :pages="config?.view?.pages" :legacy-tiles="config?.view?.tiles" :page="config?.view?.page"
                        :text-scale="placement?.size?.textScale" :on-save="saveTiles" @details="showDetails = true" />
-            <DetailView v-if="showDetails" :store="store" :recorder="rec" mode="panel" :interval="interval" :on-interval="setRefresh" :on-back="() => showDetails = false" />
+            <DetailView v-if="showDetails" :store="store" :recorder="rec" mode="panel" :interval="interval" :on-interval="setRefresh" :background="background" :on-background="setBackground" :on-back="() => showDetails = false" />
         </template>
-        <DetailView v-else :store="store" :recorder="rec" mode="panel" :interval="interval" :on-interval="setRefresh" />
+        <DetailView v-else :store="store" :recorder="rec" mode="panel" :interval="interval" :on-interval="setRefresh" :background="background" :on-background="setBackground" />
     </div>
 </template>
 
@@ -74,32 +74,36 @@ const toolbar = computed<{ show: Metric[]; cores: boolean }>(() => {
     return { show: show.length ? show : ['cpu'], cores: t.cores !== false }
 })
 const shown = computed(() => toolbar.value.show)
+// CHANGED (1.1.1): GEM Monitor's settings (every copy: Settings ▸ GEM Monitor; ⏱ changes them), were this copy's view
+const settings = sdk.settings?.()
 const intervalMs = computed(() => {
-    const v = Number(props.config?.view?.intervalMs)
+    const v = Number(settings?.values.intervalMs)
     return [500, 1000, 2000, 5000].includes(v) ? v : 1000
 })
 
 /** The refresh rate, read live by the detail views (a popover's or a window's props aren't reactive). */
 const interval = { get value() { return intervalMs.value } }
+/** NEW (1.1.0, #8): "Keep the graphs running in the background" (1.1.1: a setting; off by default), read live too. */
+const backgroundOn = computed(() => settings?.values.background === true)
+const background = { get value() { return backgroundOn.value } }
+function setBackground(on: boolean) { void settings?.set?.('background', on) }
 
 function saveView(patch: Record<string, unknown>) { void sdk.setView?.(patch) }
 /** The grid's pages of tiles, as arranged, and the one shown (this copy's view: another copy in the same hub keeps its own). */
 function saveTiles(layout: TileLayout) { saveView({ pages: layout.pages, page: layout.page }) }
 const showDetails = ref(false)
-function setRefresh(ms: number) {
-    saveView({ intervalMs: ms })
-    // the view comes back through props: the watch follows on the next tick
-    setTimeout(() => store.refresh(), 0)
-}
+function setRefresh(ms: number) { void settings?.set?.('intervalMs', ms) }
 
 // ── The readings ────────────────────────────────────────────────────────────
 
 // This instance's readings and recorder: kept while a recording runs with this view gone (live.ts, the job's card)
-const live = enterLive(sdk, () => intervalMs.value)
+const live = enterLive(sdk, () => intervalMs.value, () => backgroundOn.value)
 const store = live.store
 /** This copy's recorder (⏺ in the details): a background job, it goes on when this view leaves (RecordingCard). */
 const rec = live.rec
 const recClock = computed(() => { void rec.st.count; return clock(rec.elapsed()) })
+// 1.1.1: the rate changed (here, in another copy, or on the Settings page): the watch follows
+watch(intervalMs, () => store.refresh())
 const s = computed(() => { void store.st.tick; return store.last.value })
 
 function valueOf(m: Metric): string {
@@ -154,7 +158,7 @@ let pop: WidgetPopoverHandle | null = null
 let win: WidgetWindowHandle | null = null
 
 function windowProps() {
-    return { store, recorder: rec, mode: 'window', interval, onInterval: setRefresh }
+    return { store, recorder: rec, mode: 'window', interval, onInterval: setRefresh, background, onBackground: setBackground }
 }
 
 function toggleDetail() {
@@ -165,7 +169,7 @@ function toggleDetail() {
     if (!anchor) return
     const h = ui.openPopover({
         anchor, component: DetailView,
-        props: { store, recorder: rec, mode: 'popover', interval, onInterval: setRefresh, onPin: pin },
+        props: { store, recorder: rec, mode: 'popover', interval, onInterval: setRefresh, onPin: pin, background, onBackground: setBackground },
         placement: 'below', maxWidth: 640, maxHeight: 640, style: { padding: 0, radius: 8 },
         onClose: () => { pop = null; popOpen.value = false },
     })

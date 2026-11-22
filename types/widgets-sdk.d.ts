@@ -1421,6 +1421,13 @@ declare module 'gexplorer/widgets' {
          * It may answer { message } (2026-11-01): shown under the button on the settings page ("Looking up 24 games").
          */
         onAction(key: string, fn: () => void | { message?: string } | Promise<void | { message?: string }>): () => void
+        /**
+         * NEW (GEM Shell 2026-11-22): one of your settings changed from your own UI (a menu, a toggle), so it can be in
+         * both places: checked like the Settings page's, saved, every copy told (onChange). false: not a declared
+         * setting, not a value it takes, an action or a secret, or one the theme holds (Appearance). Older shells:
+         * absent.
+         */
+        set?(key: string, value: WidgetSettingValue): Promise<boolean>
     }
 
     // ── FS types ───────────────────────────────────────────────────────────
