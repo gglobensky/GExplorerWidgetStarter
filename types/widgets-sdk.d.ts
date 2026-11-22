@@ -3692,6 +3692,8 @@ declare module 'gexplorer/widgets' {
         /** The left column: a box or a radio. Toggling keeps the menu open (onToggle). */
         check?: 'box' | 'radio'
         checked?: boolean
+        /** The check column's own tooltip (checkToggles 'column': it does something else than the row). */
+        checkTooltip?: string
         /** A ✕ while hovered or focused (Delete with the keys): onRemove. A string: its tooltip. */
         removable?: boolean | string
         /** F2 or handle.rename(id): GEM Shell's rename box over the label (onRename). */
@@ -3900,6 +3902,11 @@ declare module 'gexplorer/widgets' {
              * 'center', not a child level); otherwise ignored, with a console warning.
              */
             console?: boolean
+            /**
+             * GEM Shell 2026-11-21: 'center' only: a press on the dimmed page doesn't close it; its ✕, your Cancel,
+             * Escape and close() do (a form the user would lose).
+             */
+            modal?: boolean
         }): WidgetPopoverHandle | null
         /**
          * GEM Shell 2026-11-05: your component in a WINDOW GEM Shell frames: its header ("<your widget's name> —

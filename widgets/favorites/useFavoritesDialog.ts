@@ -36,6 +36,8 @@ export function useFavoritesDialog(opts: UseFavoritesDialogOptions) {
       anchor: at,
       component: FavoriteDialog,
       placement: 'center',
+      // 0.4.2: a press on the dimmed page doesn't close it (the form would be lost): its ✕, Cancel or Escape do
+      modal: true,
       title,
       maxWidth: 440,
       maxHeight: 560,
