@@ -19,7 +19,7 @@ const ARRANGES = [
 export default {
     api:     '1.0',
     id:      'items',
-    version: '0.16.9',   // 0.16.9 (2026-11-16): the Properties window's tabs are GEM Shell's tab strip (← / →). 0.16.8 (2026-11-14): the Properties window sized for the text. 0.16.7 (2026-11-14): GEM Shell's colours; icon cells wider at large text; rows remeasured on a text size change. 0.16.6 (2026-11-14): the details header grows with the text. 0.16.5 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step). 0.16.4 (2026-11-13): the arrow on files and folders (GEM Shell's --gex-cursor-item), no grab hands
+    version: '0.17.0',   // 0.17.0 (2026-11-21, #16): filters stack: several types at once (OR: Pictures or Videos) with Show (AND); "Files only" is called Hide folders; one chip per part (Show, Type), each with its ▾ menu and ✕; the chips' menus and the Filter command (Ctrl+Shift+F) are GEM Shell's menu (ui.openMenu: check boxes that stay open, Sort ▸ / Show ▸ / Type ▸), the right-click Filter submenu still the arranged one (a type there toggles). A saved one-type filter still reads. 0.16.9 (2026-11-16): the Properties window's tabs are GEM Shell's tab strip (← / →). 0.16.8 (2026-11-14): the Properties window sized for the text. 0.16.7 (2026-11-14): GEM Shell's colours; icon cells wider at large text; rows remeasured on a text size change. 0.16.6 (2026-11-14): the details header grows with the text. 0.16.5 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step). 0.16.4 (2026-11-13): the arrow on files and folders (GEM Shell's --gex-cursor-item), no grab hands
                          // 0.16.3 (2026-11-13): fragmentation in colours: green under 10 %, amber to 30 %, red beyond
                          // 0.16.2 (2026-11-13, GEM Shell D4): a drive's fragmentation / last optimization, as Windows'
                          // optimizer last measured it (General), its last full run (Hardware)
@@ -130,8 +130,9 @@ export default {
             { id: 'show', type: 'submenu', label: 'Show', disableWhen: ['dialog'], children: [
                 { id: 'show.all', label: 'Everything' },
                 { id: 'show.folders', label: 'Folders only' },
-                { id: 'show.files', label: 'Files only' },
+                { id: 'show.files', label: 'Hide folders' },   // 0.17.0: was "Files only" (the same: no folders)
             ] },
+            // 0.17.0: a type chosen here joins the others (OR) or comes off; Any type clears them
             { id: 'type', type: 'submenu', label: 'Type', disableWhen: ['dialog'], children: [
                 { id: 'type.any', label: 'Any type' },
                 { slot: 'type.list', label: 'Your types and the built-in ones' },

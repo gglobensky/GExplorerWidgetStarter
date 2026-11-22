@@ -529,13 +529,62 @@
   position: relative;
 }
 
-.gex-fav-insert-bar {
-  background-color: var(--gex-accent, #4dabf7);
-  box-shadow: 0 0 4px rgba(0, 0, 0, 0.7);
+/* 0.4.1: the bar's drag marks (Widget.vue dropClass), as GEM Shell's menus draw theirs: the dragged row faded, a line
+   where a drop goes (between pills on the bar, between rows in the list), a folder lit for inside, a refused spot.
+   They replace .gex-fav-insert-bar, an element made in script that these scoped styles never reached. */
+.fav-row,
+.toolbar-sortable-item {
+  position: relative;
 }
 
-.gex-fav-insert-bar-blocked {
-  background-color: var(--gex-danger, #ff4d4f);
+.fav-row.is-dragged,
+.toolbar-sortable-item.is-dragged {
+  opacity: 0.45;
+}
+
+.toolbar-sortable-item.is-drop-before::before,
+.toolbar-sortable-item.is-drop-after::after,
+.fav-row.is-drop-before::before,
+.fav-row.is-drop-after::after {
+  content: '';
+  position: absolute;
+  border-radius: 1px;
+  background: var(--gex-accent, #4dabf7);
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* The bar runs left to right: an upright line in the gap */
+.toolbar-sortable-item.is-drop-before::before,
+.toolbar-sortable-item.is-drop-after::after {
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+}
+.toolbar-sortable-item.is-drop-before::before { left: -3px; }
+.toolbar-sortable-item.is-drop-after::after { right: -3px; }
+
+/* The list runs top to bottom: a level line between rows */
+.fav-row.is-drop-before::before,
+.fav-row.is-drop-after::after {
+  left: 4px;
+  right: 4px;
+  height: 2px;
+}
+.fav-row.is-drop-before::before { top: -2px; }
+.fav-row.is-drop-after::after { bottom: -2px; }
+
+/* Inside a folder: the folder lit */
+.toolbar-sortable-item.is-drop-inside .fav-pill,
+.fav-row.is-drop-inside .fav-btn {
+  background: color-mix(in srgb, var(--gex-accent, #4dabf7) 18%, transparent);
+  box-shadow: inset 0 0 0 1px var(--gex-accent, #4dabf7);
+}
+
+.toolbar-sortable-item.is-drop-refused,
+.fav-row.is-drop-refused {
+  cursor: no-drop;
 }
 
 .fav-menu-row {

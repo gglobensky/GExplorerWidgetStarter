@@ -1,4 +1,10 @@
 // /src/widgets/favorites/useFavoritesSortable.ts
+//
+// The bar's (and the list's) own drag: GEM Shell's sortable over the top-level rows.
+// CHANGED 0.4.0 (2026-11-21, GEM Shell's menu API): the folder menus are sdk.ui().openMenu (useFolderMenus.ts). Their
+// rows drag inside the menus by themselves (and out to the bar: barIntentAt here); a drag from the bar over an open
+// menu asks the menu where it goes (menuIntentAt: the menu draws its marks and opens sub-folders as the pointer
+// lingers). The raw pointer loop for menu rows and the hit tests of the menus' rows went with the old menus.
 import { ref, inject, type Ref } from 'vue'
 import {
   useSortable,
@@ -7,12 +13,9 @@ import {
 } from 'gexplorer/widgets'
 import {
     rowId,
-    menuRowId,
     parseRootRowId,
     type RootRow,
     type RootRowId,
-    type MenuRow,
-    type OpenMenu,
 } from './favorites.model'
 
 export type UseFavoritesSortableOptions = {
@@ -22,9 +25,7 @@ export type UseFavoritesSortableOptions = {
     /** 0.3.3: the element that scrolls (the list's or the bar's scroll area); none: listEl / toolbarEl. */
     scrollEl?: () => HTMLElement | null
     rootRows: Ref<RootRow[]>
-    openMenus: Ref<OpenMenu[]>
     rowEls: Map<RootRowId, HTMLElement>
-    menuContainers: Map<string, HTMLElement>
     /** Reads the favorites again (and keeps open folder menus in step). */
     refresh: () => Promise<void>
     setupGhostForRow: (id: RootRowId, ev: { clientX: number; clientY: number }) => void
@@ -33,6 +34,13 @@ export type UseFavoritesSortableOptions = {
     handleDragHover: (intent: DropIntent | null) => void
     teardownDragVisuals: () => void
     clearHoverTimer: () => void
+    /**
+     * 0.4.0: the open folder menu at (x, y) for the row being dragged: null when not over it; { intent: null } when
+     * over it where it can't go (useFolderMenus.ts menuIntentAt).
+     */
+    menuIntentAt: (x: number, y: number, draggedRowId: string) => { intent: DropIntent | null } | null
+    /** 0.4.0: the drag ended: the menu's marks go. */
+    menuDragEnd: () => void
     /** The drop intent the visuals keep (Widget.vue passes it; read through handleDragHover). */
     lastDropIntent?: Ref<DropIntent | null>
 }
@@ -51,7 +59,6 @@ export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
         toolbarEl,
         rootRows,
         rowEls,
-        menuContainers,
         refresh,
         setupGhostForRow,
         updateGhostPosition,
@@ -59,83 +66,32 @@ export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
         handleDragHover,
         teardownDragVisuals,
         clearHoverTimer,
+        menuIntentAt,
+        menuDragEnd,
     } = opts
 
     // ── Shared drag state ─────────────────────────────────────────────────
 
     let dragJustEnded = false
     let currentDraggingId: RootRowId | null = null
+    /** 0.4.0: the last move was over the open menu (its intent, or null: refused there). */
+    let overMenu: { intent: DropIntent | null } | null = null
 
     const sortableState = ref<{ isDragging: boolean; draggingId: RootRowId | null }>({
         isDragging: false,
         draggingId: null,
     })
 
-    // ── Shared hit test helpers ───────────────────────────────────────────
-
-    // CHANGED (0.3.1): a menu row is a row inside an open folder menu (its container): their ids are folder: / item: like
-    // the bar's, so the old 'menu:' test never matched and a drag from the bar never saw the menus' rows.
-    function inOpenMenu(el: HTMLElement): boolean {
-        for (const c of menuContainers.values()) if (c.contains(el)) return true
-        return false
-    }
-
-    function hitTestMenuRow(clientX: number, clientY: number): RootRowId | null {
-        for (const [id, el] of rowEls) {
-            if (!inOpenMenu(el)) continue
-            const r = el.getBoundingClientRect()
-            if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
-                return id
-            }
-        }
-        return null
-    }
-
-    /** 0.3.1: where a drop on a menu row goes: a folder's middle third is inside it (and opens it after a moment). */
-    function menuRowIntent(id: RootRowId, clientY: number): DropIntent | null {
-        const el = rowEls.get(id)
-        if (!el) return null
-        const r = el.getBoundingClientRect()
-        const rel = (clientY - r.top) / (r.height || 1)
-        if (id.startsWith('folder:')) {
-            if (rel < 0.3) return { targetId: id, placement: 'before' }
-            if (rel > 0.7) return { targetId: id, placement: 'after' }
-            return { targetId: id, placement: 'inside' }
-        }
-        return { targetId: id, placement: rel < 0.5 ? 'before' : 'after' }
-    }
-
-    /** 0.3.1: the pointer is over an open menu: the drop goes there, whatever the bar's sortable projects. */
-    function menuIntentAt(clientX: number, clientY: number): DropIntent | null {
-        const menuRow = hitTestMenuRow(clientX, clientY)
-        if (menuRow) return menuRowIntent(menuRow, clientY)
-        const folderId = hitTestMenuContainer(clientX, clientY)
-        return folderId ? { targetId: `folder:${folderId}` as RootRowId, placement: 'inside' } : null
-    }
-    let lastMenuIntent: DropIntent | null = null
-
-    function hitTestMenuContainer(clientX: number, clientY: number): string | null {
-        for (const [folderId, el] of menuContainers) {
-            const r = el.getBoundingClientRect()
-            if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
-                return folderId
-            }
-        }
-        return null
-    }
-
-    // Hit tests everything — root rows, menu rows, and folder containers.
-    // Used by the menu row raw pointer loop.
-    function resolveIntent(clientX: number, clientY: number): DropIntent | null {
-        // Root rows (the bar or the list: not the open menus' rows). CHANGED (0.3.2): along the bar's own axis (a
-        // toolbar runs left to right: before / after by x, as its sortable does), and a drop in the bar's empty space
-        // goes next to the nearest favorite (the end of the bar: after the last), so a favorite carried out of a menu
-        // can be put back on the bar anywhere.
+    /**
+     * Where a drop at (x, y) goes on the bar or the list: before / after a favorite along the bar's own axis (a folder's
+     * middle: inside it); in the bar's empty space, next to the nearest favorite. null: not on the bar. 0.4.0: also a
+     * menu row carried out of a folder menu (useFolderMenus.ts onDragOut).
+     */
+    function barIntentAt(clientX: number, clientY: number): DropIntent | null {
         const horizontal = layout() !== 'list'
         const bar = horizontal ? toolbarEl.value : listEl.value
         let nearest: { id: RootRowId; dist: number; after: boolean } | null = null
         for (const [id, el] of rowEls) {
-            if (inOpenMenu(el)) continue
             const r = el.getBoundingClientRect()
             if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
                 const rel = horizontal ? (clientX - r.left) / (r.width || 1) : (clientY - r.top) / (r.height || 1)
@@ -159,13 +115,6 @@ export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
                 return { targetId: nearest.id, placement: nearest.after ? 'after' : 'before' }
             }
         }
-        // Menu rows
-        const menuRow = hitTestMenuRow(clientX, clientY)
-        if (menuRow) return menuRowIntent(menuRow, clientY)
-        // Empty folder containers
-        const folderId = hitTestMenuContainer(clientX, clientY)
-        if (folderId) return { targetId: `folder:${folderId}` as RootRowId, placement: 'inside' }
-
         return null
     }
 
@@ -176,6 +125,7 @@ export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
         targetRowId: RootRowId,
         placement: 'before' | 'after' | 'inside'
     ) {
+        if (movedRowId === targetRowId) return
         const { kind: movedKind, key: movedKey } = parseRootRowId(movedRowId)
         const { kind: targetKind, key: targetKey } = parseRootRowId(targetRowId)
         dragJustEnded = true
@@ -185,6 +135,15 @@ export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
         } catch (err) {
             console.error('[favorites] applyFavoritesMove failed', err)
         }
+    }
+
+    function endRootDrag() {
+        currentDraggingId = null
+        teardownDragVisuals()
+        clearHoverTimer()
+        menuDragEnd()
+        sortableState.value.isDragging = false
+        sortableState.value.draggingId = null
     }
 
     // ── Root row sortable (useSortable) ───────────────────────────────────
@@ -203,6 +162,7 @@ export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
         onDragStart(row, startX, startY) {
             const id = rowId(row)
             currentDraggingId = id
+            overMenu = null
             sortableState.value.isDragging = true
             sortableState.value.draggingId = id
             setupGhostForRow(id, { clientX: startX, clientY: startY })
@@ -210,39 +170,41 @@ export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
 
         onPreview(intent, blocked, clientX, clientY) {
             updateGhostPosition({ clientX, clientY } as PointerEvent)
-            // CHANGED (0.3.1): over an open menu, its rows decide (a sub-folder opens when hovered), not the bar's projection
-            lastMenuIntent = menuIntentAt(clientX, clientY)
-            const effectiveIntent = lastMenuIntent ?? intent
-            updateInsertBar(effectiveIntent, lastMenuIntent ? false : blocked)
-            handleDragHover(effectiveIntent)
+            // 0.4.0: over the open menu, the menu decides (its marks; a sub-folder opens as the pointer lingers)
+            overMenu = menuIntentAt(clientX, clientY, currentDraggingId ?? '')
+            if (overMenu) {
+                updateInsertBar(null, false)
+                handleDragHover(null)
+                return
+            }
+            updateInsertBar(intent, blocked)
+            handleDragHover(intent)
         },
 
-        onCommit(ordered, intent) {
+        onCommit(_ordered, intent) {
             const dragging = currentDraggingId
-            currentDraggingId = null
+            const menu = overMenu
+            overMenu = null
+            endRootDrag()
             if (!dragging) return
-            teardownDragVisuals()
-            clearHoverTimer()
-            sortableState.value.isDragging = false
-            sortableState.value.draggingId = null
-            // 0.3.1: dropped over an open menu: there
-            const target = lastMenuIntent ?? intent
-            lastMenuIntent = null
-            void applyMove(dragging, String(target.targetId) as RootRowId, target.placement)
+            if (menu) {
+                if (menu.intent) void applyMove(dragging, String(menu.intent.targetId) as RootRowId, menu.intent.placement)
+                else dragJustEnded = true
+                return
+            }
+            void applyMove(dragging, String(intent.targetId) as RootRowId, intent.placement)
         },
 
         onBlocked(row, intent, clientX, clientY) {
             const dragging = currentDraggingId ?? rowId(row)
-            currentDraggingId = null
-            teardownDragVisuals()
-            clearHoverTimer()
-            sortableState.value.isDragging = false
-            sortableState.value.draggingId = null
-
-            // 0.3.1: over an open menu first (its rows, a folder's middle: inside), then the bar's intent
-            const inMenu = menuIntentAt(clientX, clientY)
-            lastMenuIntent = null
-            if (inMenu) { void applyMove(dragging, String(inMenu.targetId) as RootRowId, inMenu.placement); return }
+            const menu = menuIntentAt(clientX, clientY, dragging) ?? overMenu
+            overMenu = null
+            endRootDrag()
+            if (menu) {
+                if (menu.intent) void applyMove(dragging, String(menu.intent.targetId) as RootRowId, menu.intent.placement)
+                else dragJustEnded = true
+                return
+            }
             if (intent && (intent.placement === 'inside' || intent.placement === 'before' || intent.placement === 'after')) {
                 void applyMove(dragging, String(intent.targetId) as RootRowId, intent.placement)
                 return
@@ -251,107 +213,12 @@ export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
         },
     })
 
-    // ── Menu row raw pointer loop ─────────────────────────────────────────
-    // Menu rows are transient (open/close with folders) so they can't be
-    // managed by a sortable instance. A raw pointer loop hit-tests everything
-    // — root rows, sibling menu rows, folder containers — giving full freedom
-    // to reorder within a submenu, move items between submenus, or drag back
-    // to root level.
-
-    const MENU_DRAG_THRESHOLD = 4
-
-    let menuDragId: RootRowId | null = null
-    let menuDragStartX = 0
-    let menuDragStartY = 0
-    let menuDragActive = false
-
-    function startMenuRowDrag(row: MenuRow, folderId: string, event: PointerEvent) {
-        const id = menuRowId(row) as RootRowId | null
-        if (!id) return
-
-        menuDragId = id
-        menuDragStartX = event.clientX
-        menuDragStartY = event.clientY
-        menuDragActive = false
-
-        event.preventDefault()
-        document.addEventListener('pointermove', onMenuDragMove, true)
-        document.addEventListener('pointerup', onMenuDragUp, true)
-        document.addEventListener('pointercancel', onMenuDragCancel, true)
-    }
-
-    function onMenuDragMove(ev: PointerEvent) {
-        if (!menuDragId) return
-
-        if (!menuDragActive) {
-            const dx = ev.clientX - menuDragStartX
-            const dy = ev.clientY - menuDragStartY
-            if (dx * dx + dy * dy < MENU_DRAG_THRESHOLD * MENU_DRAG_THRESHOLD) return
-            // Threshold crossed — start visual drag
-            menuDragActive = true
-            currentDraggingId = menuDragId
-            sortableState.value.isDragging = true
-            sortableState.value.draggingId = menuDragId
-            setupGhostForRow(menuDragId, { clientX: menuDragStartX, clientY: menuDragStartY })
-        }
-
-        updateGhostPosition(ev)
-        const intent = resolveIntent(ev.clientX, ev.clientY)
-        updateInsertBar(intent, false)
-        handleDragHover(intent)
-    }
-
-    function onMenuDragUp(ev: PointerEvent) {
-        cleanupMenuDragListeners()
-
-        const dragging = menuDragId
-        const wasActive = menuDragActive
-        menuDragId = null
-        menuDragActive = false
-        currentDraggingId = null
-        sortableState.value.isDragging = false
-        sortableState.value.draggingId = null
-        teardownDragVisuals()
-        clearHoverTimer()
-
-        if (!dragging || !wasActive) { dragJustEnded = wasActive; return }
-
-        const intent = resolveIntent(ev.clientX, ev.clientY)
-        if (!intent) { dragJustEnded = true; return }
-
-        void applyMove(dragging, String(intent.targetId) as RootRowId, intent.placement as any)
-    }
-
-    function onMenuDragCancel() {
-        cleanupMenuDragListeners()
-        menuDragId = null
-        menuDragActive = false
-        currentDraggingId = null
-        sortableState.value.isDragging = false
-        sortableState.value.draggingId = null
-        teardownDragVisuals()
-        clearHoverTimer()
-    }
-
-    function cleanupMenuDragListeners() {
-        document.removeEventListener('pointermove', onMenuDragMove, true)
-        document.removeEventListener('pointerup', onMenuDragUp, true)
-        document.removeEventListener('pointercancel', onMenuDragCancel, true)
-    }
-
     // ── Row ref management ────────────────────────────────────────────────
 
     function setRowRef(row: RootRow, el: HTMLElement | null) {
         const id = rowId(row)
         if (el) rowEls.set(id, el)
         else rowEls.delete(id)
-    }
-
-    function setMenuRowRef(row: MenuRow, el: HTMLElement | null) {
-        const id = menuRowId(row)
-        if (!id) return
-        if (el) rowEls.set(id as RootRowId, el)
-        else rowEls.delete(id as RootRowId)
     }
 
     // ── Root row drag initiation ──────────────────────────────────────────
@@ -374,9 +241,9 @@ export function useFavoritesSortable(opts: UseFavoritesSortableOptions) {
         draggingId,
         sortableState,
         setRowRef,
-        setMenuRowRef,
         startRowDrag,
-        startMenuRowDrag,
+        applyMove,
+        barIntentAt,
         isDragJustEnded,
         resetDragJustEnded,
     }

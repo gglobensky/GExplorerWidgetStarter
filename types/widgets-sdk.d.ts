@@ -3669,6 +3669,107 @@ declare module 'gexplorer/widgets' {
      * if (s.type === 'action') restore()
      * ui.snackOnce('hint.dragToQueue', { text: 'Tip: drag songs onto the queue to add them.' })
      */
+    // ── GEM Shell's menu: sdk.ui().openMenu (2026-11-21) ────────────────────────────────────────────────────────────
+    /** A line between rows. */
+    export type WidgetMenuSeparator = { type: 'separator'; id?: string }
+    /** A section's title (never focused or chosen). */
+    export type WidgetMenuHeader = { type: 'header'; id?: string; label: string }
+    /** A row of ui.openMenu. Only id and label are needed. Text only (labels 120 characters, 300 rows a level, 6 levels). */
+    export type WidgetMenuRow = {
+        type?: 'item'
+        id: string
+        label: string
+        /** A symbol before the label (an emoji, a glyph). */
+        icon?: string
+        /** A second, smaller line. */
+        detail?: string
+        /** Shown at the right ("F2"): a hint, not bound. */
+        keys?: string
+        tooltip?: string
+        /** Greyed out; a string says why (its tooltip). */
+        disabled?: boolean | string
+        danger?: boolean
+        /** The left column: a box or a radio. Toggling keeps the menu open (onToggle). */
+        check?: 'box' | 'radio'
+        checked?: boolean
+        /** A ✕ while hovered or focused (Delete with the keys): onRemove. A string: its tooltip. */
+        removable?: boolean | string
+        /** F2 or handle.rename(id): GEM Shell's rename box over the label (onRename). */
+        renamable?: boolean
+        /** It may be dragged (opts.drag decides where). */
+        draggable?: boolean
+        /** A submenu. */
+        children?: WidgetMenuEntry[]
+        /** A submenu read when it opens ("Loading…" meanwhile). */
+        loadChildren?: () => Promise<WidgetMenuEntry[]>
+        /** With a submenu: a split row (the row is chosen, its arrow opens the submenu). */
+        action?: boolean
+        /** Your own value, handed back untouched. */
+        data?: unknown
+    }
+    export type WidgetMenuEntry = WidgetMenuRow | WidgetMenuSeparator | WidgetMenuHeader
+    /** How a row was chosen: Ctrl / Shift held, the middle button (a new tab), or the keyboard. */
+    export type WidgetMenuPickHow = { ctrlKey: boolean; shiftKey: boolean; middle: boolean; keyboard: boolean }
+    export type WidgetMenuDropWhere = 'before' | 'after' | 'inside'
+    /** The frame (as WidgetPopoverStyle) and compact rows. Default: the right-click menu's look. */
+    export type WidgetMenuStyle = WidgetPopoverStyle & { compact?: boolean }
+    export type WidgetOpenMenuOptions = {
+        /** The user's own click in this widget (a right-click opens at the pointer), or an element of it (below it; again: closes). */
+        at: MouseEvent | HTMLElement
+        /** The rows; a function is read again whenever the reactive data it reads changes (a live menu). */
+        items: WidgetMenuEntry[] | (() => WidgetMenuEntry[])
+        /** Its name for screen readers (default: your widget's). */
+        label?: string
+        /** Under an element (default) or to its right. */
+        placement?: 'below' | 'right'
+        style?: WidgetMenuStyle
+        /** The first row focused at once (a menu opened with the keyboard). */
+        focusFirst?: boolean
+        /** 'row' (default): a click on a check row toggles it; 'column': only its check column does, the row is chosen. */
+        checkToggles?: 'row' | 'column'
+        /** Choosing a row doesn't close the menu. */
+        keepOpen?: boolean
+        onPick?: (row: WidgetMenuRow, how: WidgetMenuPickHow) => void
+        onToggle?: (row: WidgetMenuRow, checked: boolean) => void
+        onRemove?: (row: WidgetMenuRow) => void
+        onRename?: (row: WidgetMenuRow, name: string) => void | Promise<void>
+        /** The rename box's check: an error message, or null (default: a name is needed). */
+        validateName?: (row: WidgetMenuRow, value: string) => string | null
+        /** A right-click on a row (the menu stays open): your ui.contextMenu(event, …) for it, say. */
+        onRowMenu?: (row: WidgetMenuRow, event: MouseEvent) => void
+        /**
+         * Dragging draggable rows: within a level, and into others (hovering a submenu row's middle opens it). target
+         * null: the top level's end. A drop on the row itself or inside it is never offered. Out of the menu: onDragOut.
+         */
+        drag?: {
+            canDrag?: (row: WidgetMenuRow) => boolean
+            canDrop?: (row: WidgetMenuRow, target: WidgetMenuRow | null, where: WidgetMenuDropWhere) => boolean
+            onMove: (row: WidgetMenuRow, target: WidgetMenuRow | null, where: WidgetMenuDropWhere) => void | Promise<void>
+            onDragOut?: (row: WidgetMenuRow, event: PointerEvent) => void
+            /** Every move of a row dragged from the menu; overMenu false: outside it (show where it goes on your own list). */
+            onDragMove?: (row: WidgetMenuRow, event: PointerEvent, overMenu: boolean) => void
+        }
+        onClose?: () => void
+    }
+    export type WidgetMenuHandle = {
+        close(): void
+        /** Read the items again now (a static list changed in place, or data that isn't reactive). */
+        update(): void
+        /** Rename row <id> in place (on an open level): false when it isn't shown. */
+        rename(id: string): boolean
+        /**
+         * A drag of your own (from your list) over the open menu, at (x, y): the menu shows where it would go (a submenu
+         * row's middle opens it after a moment). null: (x, y) isn't over the menu (your list decides); else the row
+         * (null: the top level's end) and where, ok false when it can't go there (on <draggedId> itself or inside it,
+         * drag.canDrop refused). Call it on every move; dragLeave() at the end.
+         */
+        dragOver(x: number, y: number, draggedId?: string): { ok: boolean; target: WidgetMenuRow | null; where: WidgetMenuDropWhere } | null
+        dragLeave(): void
+        /** The row the user is on (under the pointer, or the keyboard's), or null: your own key command over the menu acts on it. */
+        focused(): WidgetMenuRow | null
+        readonly open: boolean
+    }
+
     /** One choice of ui.menu(). */
     export type WidgetMenuItem = { id: string; label: string; disabled?: boolean; title?: string }
 
@@ -3733,6 +3834,21 @@ declare module 'gexplorer/widgets' {
          *   const id = await ui.declaredMenu(chip, 'filter', { slots, state, states })
          */
         declaredMenu?(at: MouseEvent | HTMLElement, submenuId: string, opts?: WidgetDeclaredMenuOptions): Promise<string | null>
+        /**
+         * NEW (GEM Shell 2026-11-21; undefined on older shells): GEM Shell's menu, live. Submenus (children, or
+         * loadChildren), a check column (onToggle: stays open), a ✕ (onRemove), inline rename (F2, handle.rename),
+         * dragging rows within a level and into other levels (drag), the whole keyboard (↑ ↓ → ← Enter Space Escape,
+         * Delete, F2, Alt+↑ / ↓, typing to jump), long levels paged. Same rules as menu(): the user's own click in the
+         * widget, while on screen; it closes when the widget leaves the screen. Your callbacks run with the user's
+         * gesture (a dialog may follow). null: refused, or its element again (it was open: now closed).
+         *
+         *   ui.openMenu?.({
+         *       at: chip,
+         *       items: () => types.map(t => ({ id: t, label: t, check: 'box', checked: shown.has(t) })),
+         *       onToggle: (row, on) => on ? shown.add(row.id) : shown.delete(row.id),
+         *   })
+         */
+        openMenu?(opts: WidgetOpenMenuOptions): WidgetMenuHandle | null
         /**
          * The widget's own component in the host's overlay, next to opts.anchor (an element of this
          * widget): never clipped by the widget's place, kept on screen. Same rules as menu() (the

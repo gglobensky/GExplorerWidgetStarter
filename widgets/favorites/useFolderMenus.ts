@@ -1,337 +1,179 @@
 // /src/widgets/favorites/useFolderMenus.ts
-import { ref, markRaw } from 'vue'
-import type { FavoriteTreeFolder } from 'gexplorer/widgets'
-import type { OpenMenu, MenuRow } from './favorites.model'
-import { buildMenuRows, menuRowId } from './favorites.model'
+//
+// CHANGED 0.4.0 (2026-11-21, GEM Shell's menu API: PhotinoVue1 claude/plan-2026-11-21-menu-api.md): a folder's
+// dropdown is ONE sdk.ui().openMenu, its sub-folders its submenus. GEM Shell draws every level, opens sub-folders on
+// hover / → / while a drag lingers, gives the keyboard, the ✕, inline rename (F2) and dragging rows within and between
+// levels. Here: the rows (read live from the tree), and what each gesture does to the favorites.
+//   - A drag inside the menus: applyFavoritesMove (into a menu's empty space: into that folder).
+//   - A row carried out of the menus: the bar shows where it goes (barIntentAt / showBarIntent) and takes the drop.
+//   - The bar's own drag over an open menu: dragOver (useFavoritesSortable.ts asks it on every move).
+// Before 0.4.0: FolderMenu.vue, useFolderPopovers.ts and this file's levels (a popover per level), and the raw
+// pointer loop in useFavoritesSortable.ts.
+import { inject, ref } from 'vue'
+import type {
+  DropIntent,
+  FavoriteTreeFolder,
+  FavoriteTreeNode,
+  WidgetMenuEntry,
+  WidgetMenuHandle,
+  WidgetMenuRow,
+  WidgetSdk,
+} from 'gexplorer/widgets'
 
 export type UseFolderMenusOptions = {
   isSidebar: () => boolean
   findFolderNodeById: (id: string | null) => FavoriteTreeFolder | null
-  isRootFolder: (folderId: string) => boolean
-  openFavorite: (fav: { locations: string[]; label?: string }, event?: MouseEvent) => void | Promise<unknown>
-  rowEls: Map<string, HTMLElement>
+  openFavorite: (fav: { locations: string[]; label?: string }) => void | Promise<unknown>
+  paneCount: (locations: string[] | undefined) => number
+  favTip: (label: string | undefined, locations: string[] | undefined) => string
+  removeFolder: (id: string) => void
+  removeFavorite: (id: string) => void
+  renameFolder: (id: string, name: string) => Promise<void>
+  renameFavorite: (id: string, name: string) => Promise<void>
+  onFavoriteMenu: (id: string, e: MouseEvent) => void
+  onFolderNodeMenu: (id: string, e: MouseEvent) => void
+  /** Moves a node (row ids: folder:<id> / item:<id>), then reads the favorites again. */
+  applyMove: (movedRowId: string, targetRowId: string, placement: 'before' | 'after' | 'inside') => Promise<void>
+  /** Where a drop at (x, y) goes on the bar or the list (null: not on it). */
+  barIntentAt: (x: number, y: number) => DropIntent | null
+  /** The bar's insert mark for that drop (null: none). */
+  showBarIntent: (intent: DropIntent | null) => void
 }
 
+/** Favorites' own dark frame (each menu keeps its look: the menu API's decisions). */
+const MENU_STYLE = { background: 'rgba(10, 10, 10, 0.98)', borderColor: 'rgba(255, 255, 255, 0.14)', radius: 8, shadow: 'large' as const, padding: 4 }
+
+/** folder:<id> / item:<id> (the bar's row ids too) and back. */
+const keyOf = (rowId: string) => rowId.slice(rowId.indexOf(':') + 1)
+const isFolderRow = (rowId: string) => rowId.startsWith('folder:')
+
 export function useFolderMenus(opts: UseFolderMenusOptions) {
-  const {
-    isSidebar,
-    findFolderNodeById,
-    isRootFolder,
-    openFavorite,
-    rowEls,
-  } = opts
+  const sdk = inject<WidgetSdk>('widgetSdk')
 
-  // Map from folderId -> menu container element (for empty-folder drops)
-  const menuContainers = new Map<string, HTMLElement>()
+  /** The folder whose menu is open (its pill shows it), or null. */
+  const openFolderId = ref<string | null>(null)
+  let handle: WidgetMenuHandle | null = null
 
-  // Stack of open menus (supports nested cascading)
-  const openMenus = ref<OpenMenu[]>([])
-
-  /**
-   * Computed: the folder ID that's currently being targeted for a drop (if any)
-   */
-  function getDropTargetFolderId(lastDropIntent: any): string | null {
-    const intent = lastDropIntent
-    if (!intent || intent.placement !== 'inside' || !intent.targetId) {
-      return null
-    }
-    const id = String(intent.targetId)
-    return id.startsWith('folder:') ? id : null
+  /** A folder's children as menu rows (sub-folders as submenus): ids folder:<id> / item:<id>, as the bar's. */
+  function rowsOf(nodes: FavoriteTreeNode[]): WidgetMenuEntry[] {
+    return nodes.map(n => n.kind === 'folder'
+      ? {
+          id: `folder:${n.id}`, label: n.label || 'Folder', icon: '📁', children: rowsOf(n.children),
+          removable: 'Remove folder and its favorites', renamable: true, draggable: true,
+        }
+      : {
+          id: `item:${n.id}`, label: n.label || n.locations.join(' + '),
+          // A favorite of several folders (side by side): their count on its star
+          icon: opts.paneCount(n.locations) > 1 ? `★${opts.paneCount(n.locations)}` : '★',
+          tooltip: opts.favTip(n.label, n.locations).slice(0, 300),
+          removable: 'Remove favorite', renamable: true, draggable: true, data: n.locations,
+        })
   }
 
-  /**
-   * Helper to check if a folder menu is currently open
-   */
   function isFolderMenuOpen(folderId: string): boolean {
-    return openMenus.value.some(m => m.folderId === folderId)
+    return openFolderId.value === folderId && !!handle?.open
   }
 
-  /** 0.3.0: the element a level opens next to (GEM Shell's popover anchor), never made reactive. */
-  const anchorOf = (el: HTMLElement | null | undefined) => (el ? markRaw(el) : null)
-  /** A menu row's own element (its <li>), the anchor of the level it opens. */
-  const rowElementOf = (el: Element | null | undefined) => anchorOf((el?.closest?.('li') as HTMLElement | null) ?? (el as HTMLElement | null))
-
-  /**
-   * Open a folder dropdown (user click on folder pill)
-   */
-  function openFolderDropdown(folder: FavoriteTreeFolder, event: MouseEvent) {
-    const anchor = event.currentTarget as HTMLElement | null
-    const rect = anchor?.getBoundingClientRect()
-
-    const top = rect ? rect.bottom + 4 : 80
-
-    let left: number
-    if (rect) {
-      if (isSidebar()) {
-        // Sidebar: shift menu so only ~half of it covers the sidebar
-        left = rect.left + rect.width / 2
-      } else {
-        // Toolbar / grid: keep existing behavior
-        left = rect.left
-      }
-    } else {
-      left = 80
-    }
-
-    const rows = buildMenuRows(folder.children)
-
-    // Toggle if same folder already open as root
-    const existingRoot = openMenus.value[0]
-    if (existingRoot && existingRoot.folderId === folder.id) {
-      closeFolderMenu()
-      return
-    }
-
-    openMenus.value = [
-      {
-        folderId: folder.id,
-        label: folder.label,
-        rows,
-        top,
-        left,
-        anchor: anchorOf(anchor),
-      },
-    ]
-  }
-
-  /**
-   * Open a folder dropdown from drag hover (auto-expand on hover)
-   */
-  function openFolderDropdownFromDrag(folder: FavoriteTreeFolder, anchor: HTMLElement | null) {
-    const rect = anchor?.getBoundingClientRect()
-    const rows = buildMenuRows(folder.children)
-
-    // Case 1: root-level folder (same behavior as before)
-    if (isRootFolder(folder.id)) {
-      const top = rect ? rect.bottom + 4 : 80
-      const left = rect ? rect.left : 80
-
-      const existingRoot = openMenus.value[0]
-      if (existingRoot && existingRoot.folderId === folder.id) {
-        // Already open as root → do nothing
-        return
-      }
-
-      openMenus.value = [
-        {
-          folderId: folder.id,
-          label: folder.label,
-          rows,
-          top,
-          left,
-          anchor: anchorOf(anchor),
-        },
-      ]
-      return
-    }
-
-    // Case 2: nested folder inside an existing menu
-    // Find which menu level contains this folder as a row
-    const level = openMenus.value.findIndex(menu =>
-      menu.rows.some(r => r.type === 'folder' && r.id === folder.id),
-    )
-
-    if (level === -1) {
-      // Fallback: treat it like a root-level open if we somehow didn't find it
-      const top = rect ? rect.bottom + 4 : 80
-      const left = rect ? rect.left : 80
-      openMenus.value = [
-        {
-          folderId: folder.id,
-          label: folder.label,
-          rows,
-          top,
-          left,
-          anchor: anchorOf(anchor),
-        },
-      ]
-      return
-    }
-
-    const parentMenu = openMenus.value[level]
-    const top = rect ? rect.top : parentMenu?.top ?? 80
-    const left = rect ? rect.right + 8 : (parentMenu?.left ?? 80) + 220
-
-    // Already open there: nothing to do (a drag lingering on the row)
-    if (openMenus.value[level + 1]?.folderId === folder.id) return
-
-    const next = openMenus.value.slice(0, level + 1)
-    next[level + 1] = {
-      folderId: folder.id,
-      label: folder.label,
-      rows,
-      top,
-      left,
-      anchor: rowElementOf(anchor),
-    }
-
-    openMenus.value = next
-  }
-
-  /**
-   * 0.3.0: a folder row hovered in level <level> (FolderMenu.vue, after a short delay): its folder opens as the next
-   * level, replacing what was there (GEM Shell closes a hover level once the pointer leaves it and its parent).
-   */
-  function openFolderLevelOnHover(row: MenuRow, el: HTMLElement, level: number) {
-    if (row.type !== 'folder') return
-    if (openMenus.value[level + 1]?.folderId === row.id) return
-    const folder = findFolderNodeById(row.id)
-    if (!folder || !openMenus.value[level]) return
-    const next = openMenus.value.slice(0, level + 1)
-    next[level + 1] = {
-      folderId: folder.id,
-      label: folder.label,
-      rows: buildMenuRows(folder.children),
-      top: 0,
-      left: 0,
-      anchor: rowElementOf(el),
-    }
-    openMenus.value = next
-  }
-
-  /** 0.3.0: the levels under <level> close (a favorite of that level hovered: its sibling folder's level goes). */
-  function closeLevelsAfter(level: number) {
-    if (openMenus.value.length > level + 1) openMenus.value = openMenus.value.slice(0, level + 1)
-  }
-
-  /**
-   * Close all folder menus
-   */
   function closeFolderMenu() {
-    openMenus.value = []
+    handle?.close()
   }
 
-  /**
-   * Handle click on a menu row (either folder or item)
-   */
-  function handleFolderMenuClick(row: MenuRow, event: MouseEvent, level: number) {
-    if (row.type === 'folder') {
-      const folder = findFolderNodeById(row.id)
-      if (!folder) return
-
-      const anchor = event.currentTarget as HTMLElement | null
-      const rect = anchor?.getBoundingClientRect()
-
-      const parentMenu = openMenus.value[level]
-      const top = rect ? rect.top : parentMenu?.top ?? 80
-      const left = rect ? rect.right + 8 : (parentMenu?.left ?? 80) + 220
-
-      const rows = buildMenuRows(folder.children)
-
-      // 0.3.0: already open from this row (a hover opened it): a click keeps it
-      if (openMenus.value[level + 1]?.folderId === folder.id) return
-
-      const next = openMenus.value.slice(0, level + 1)
-      next[level + 1] = {
-        folderId: folder.id,
-        label: folder.label,
-        rows,
-        top,
-        left,
-        anchor: rowElementOf(anchor),
-      }
-      openMenus.value = next
+  /** Opens folder <folder>'s menu at <anchor> (its pill, or its row in the list); the same folder again: closes it. */
+  function openFolderMenu(folder: FavoriteTreeFolder, anchor: HTMLElement | null) {
+    if (!anchor) return
+    if (handle?.open && openFolderId.value === folder.id) { handle.close(); return }
+    handle?.close()
+    const ui = sdk?.ui?.()
+    if (!ui?.openMenu) {
+      void ui?.snack({ text: 'Folder menus need a newer GEM Shell (the menu API).' })
       return
     }
-
-    // Leaf item
-    if (!row.locations?.length) return
-    // CHANGED (2026-10-28): the dropdown closes once the place is opened, after the shell's "where?"
-    // question when it asks one (sdk.navigate resolves then), not as soon as the row is clicked.
-    void Promise.resolve(openFavorite({ locations: row.locations, label: row.label }, event)).finally(closeFolderMenu)
-  }
-
-  /**
-   * Keep open menus in sync with tree changes (after moves/deletes)
-   */
-  function refreshOpenMenusFromTree() {
-    console.log('[DEBUG] refreshOpenMenusFromTree called', {
-      openMenusCount: openMenus.value.length,
-      menuFolderIds: openMenus.value.map(m => m.folderId),
-      timestamp: performance.now()
+    const folderId = folder.id
+    const h = ui.openMenu({
+      at: anchor,
+      label: folder.label,
+      placement: opts.isSidebar() ? 'right' : 'below',
+      style: MENU_STYLE,
+      // Read live: a favorite added, removed, renamed or moved shows at once
+      items: () => rowsOf(opts.findFolderNodeById(folderId)?.children ?? []),
+      onPick: (row: WidgetMenuRow) => {
+        if (isFolderRow(row.id)) return
+        const locations = Array.isArray(row.data) ? (row.data as string[]) : []
+        if (locations.length) void opts.openFavorite({ locations, label: row.label })
+      },
+      onRemove: row => isFolderRow(row.id) ? opts.removeFolder(keyOf(row.id)) : opts.removeFavorite(keyOf(row.id)),
+      onRename: (row, name) => isFolderRow(row.id) ? opts.renameFolder(keyOf(row.id), name) : opts.renameFavorite(keyOf(row.id), name),
+      onRowMenu: (row, e) => isFolderRow(row.id) ? opts.onFolderNodeMenu(keyOf(row.id), e) : opts.onFavoriteMenu(keyOf(row.id), e),
+      drag: {
+        // Inside the menus: target null is this menu's own folder (its top level's empty space)
+        onMove: (row, target, where) => opts.applyMove(row.id, target ? target.id : `folder:${folderId}`, target ? where : 'inside'),
+        // Carried out of the menus: the bar shows where it goes, and takes it
+        onDragMove: (_row, e, overMenu) => opts.showBarIntent(overMenu ? null : opts.barIntentAt(e.clientX, e.clientY)),
+        onDragOut: (row, e) => {
+          opts.showBarIntent(null)
+          const intent = opts.barIntentAt(e.clientX, e.clientY)
+          if (intent) void opts.applyMove(row.id, String(intent.targetId), intent.placement as 'before' | 'after' | 'inside')
+        },
+      },
+      onClose: () => {
+        if (handle !== h) return
+        handle = null
+        openFolderId.value = null
+      },
     })
+    if (!h) return
+    handle = h
+    openFolderId.value = folderId
+  }
 
-    if (!openMenus.value.length) return
+  /** A click on a folder's pill or row. */
+  function openFolderDropdown(folder: FavoriteTreeFolder, event: MouseEvent) {
+    openFolderMenu(folder, event.currentTarget as HTMLElement | null)
+  }
 
-    const next: OpenMenu[] = []
-
-    for (const menu of openMenus.value) {
-      // Menus tied to a folderId need to be rebuilt
-      if (!menu.folderId) {
-        next.push(menu)
-        continue
-      }
-
-      const folder = findFolderNodeById(menu.folderId)
-      if (!folder) {
-        // Folder no longer exists → drop that menu level
-        console.log('[DEBUG] Folder no longer exists, dropping menu:', menu.folderId)
-        continue
-      }
-
-      next.push({
-        ...menu,
-        label: folder.label,
-        rows: buildMenuRows(folder.children),
-        // keep top/left so the menu doesn't jump
-      })
-    }
-
-    console.log('[DEBUG] refreshOpenMenusFromTree complete', {
-      oldCount: openMenus.value.length,
-      newCount: next.length
-    })
-
-    openMenus.value = next
+  /** The bar's drag lingered on a folder's pill (useDragVisuals.ts): its menu opens, to drop inside. */
+  function openFolderDropdownFromDrag(folder: FavoriteTreeFolder, anchor: HTMLElement | null) {
+    if (isFolderMenuOpen(folder.id)) return
+    openFolderMenu(folder, anchor)
   }
 
   /**
-   * Set a menu container ref (for hit-testing empty folders)
+   * The bar's drag (of <draggedRowId>) at (x, y), over the open menu: where it goes there (target: a row id; the top
+   * level's end: this menu's folder), or null when not over the menu; refused there: blocked.
    */
-  function setMenuContainerRef(menu: OpenMenu | null, el: HTMLElement | null) {
-    // 0.3.11: a level closing may come with its menu already gone from openMenus (null): its container left the map
-    // only by luck before, and Rename found a row no longer on the page. Gone or detached: out of the map.
-    const folderId = menu?.folderId
-    if (el && folderId) {
-      menuContainers.set(folderId, el)
-      return
-    }
-    if (folderId) menuContainers.delete(folderId)
-    for (const [id, c] of menuContainers) if (!c.isConnected) menuContainers.delete(id)
+  function menuIntentAt(x: number, y: number, draggedRowId: string): { intent: DropIntent | null } | null {
+    if (!handle?.open) return null
+    const hit = handle.dragOver(x, y, draggedRowId)
+    if (!hit) return null
+    if (!hit.ok) return { intent: null }
+    const targetId = hit.target ? hit.target.id : `folder:${openFolderId.value}`
+    return { intent: { targetId, placement: hit.target ? hit.where : 'inside' } as DropIntent }
   }
 
-  /**
-   * Set a menu row ref (for drag hit-testing)
-   */
-  function setMenuRowRef(row: MenuRow, el: HTMLElement | null) {
-    const id = menuRowId(row)
-    if (!id) return
+  /** The bar's drag ended: the menu's marks go. */
+  function menuDragEnd() {
+    handle?.dragLeave()
+  }
 
-    if (el) {
-      rowEls.set(id, el)
-    } else {
-      rowEls.delete(id)
-    }
+  /** The open menu's row the user is on (under the pointer, or the keyboard's): its id (folder:<id> / item:<id>), or null. */
+  function focusedMenuRowId(): string | null {
+    return handle?.open ? handle.focused()?.id ?? null : null
+  }
+
+  /** Renames row <rowId> in the open menu (false: not shown there). */
+  function renameInMenu(rowId: string): boolean {
+    return !!handle?.open && handle.rename(rowId)
   }
 
   return {
-    // State
-    openMenus,
-    menuContainers,
-
-    // Computed helpers
-    getDropTargetFolderId,
+    openFolderId,
     isFolderMenuOpen,
-
-    // Methods
     openFolderDropdown,
     openFolderDropdownFromDrag,
-    openFolderLevelOnHover,
-    closeLevelsAfter,
     closeFolderMenu,
-    handleFolderMenuClick,
-    refreshOpenMenusFromTree,
-    setMenuContainerRef,
-    setMenuRowRef,
+    menuIntentAt,
+    menuDragEnd,
+    renameInMenu,
+    focusedMenuRowId,
   }
 }

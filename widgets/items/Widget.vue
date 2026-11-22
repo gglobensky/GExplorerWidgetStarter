@@ -67,8 +67,9 @@ import ItemsTypesPanel from './ItemsTypesPanel.vue'
 // 0.12.0 (GEM Shell 2026-11-05, H4b): the Properties window
 import PropertiesWindow from './PropertiesWindow.vue'
 import {
-  applyFilterChoice, applySortChoice, chipLabel, effectiveFilter, EMPTY_REGISTRY, filterMenu, filterMenuParts, isFiltering, listingKinds, NO_FILTER,
-  quickFilterOf, registryOf, TYPE_GROUPS, TYPES_DOCUMENT, type QuickFilter, type TypeRegistry,
+  applyFilterChoice, applySortChoice, clearPart, effectiveFilter, EMPTY_REGISTRY, filterChips, filterMenu, filterMenuParts, isFiltering,
+  listingKinds, NO_FILTER, quickFilterOf, registryOf, SHOW_LABELS, showMenuRows, SORT_COLUMNS, toggleType, TYPE_GROUPS, typeMenuRows,
+  typeRefOfMenuId, typesLabel, TYPES_DOCUMENT, type QuickFilter, type TypeRegistry,
 } from './quickFilter'
 import { createThumbnailLoader, thumbExtsOf, thumbFormat, thumbKey, thumbPx, wantsThumbnail, type ThumbJob } from './thumbnails'
 import { COLUMN_LABELS, OPTIONAL_COLUMNS, shownColumnsOf, toggleColumn, type ColumnFit, type OptionalCol } from './detailColumns'
@@ -1814,9 +1815,64 @@ function chooseFilter(choice: string) {
   if (next) setFilter(next)
 }
 
+// ── 0.17.0 (#16): the filter's menus on GEM Shell's menu (ui.openMenu): check boxes that stay open, so several types
+// are chosen at once (OR); Show is a radio. An older GEM Shell: the menus below, as before. ──
+
+/** A check row turned on or off in a filter menu: a type joins or leaves; a Show radio is chosen. */
+function toggleFilterRow(id: string, on: boolean) {
+  if (inDialog.value) return
+  if (id.startsWith('show.')) { if (on) chooseFilter(id); return }
+  const ref = typeRefOfMenuId(id)
+  if (ref) setFilter(toggleType(quickFilter.value, ref, on))
+}
+
+/** The Filter command's menu: Sort ▸, Show ▸, Type ▸ (check boxes), Clear filter. Read live while open. */
+function filterMenuRows(): any[] {
+  const f = effectiveQuickFilter.value
+  const off = inDialog.value ? 'The file dialog chooses its own types' : false
+  const sortLabel = SORT_COLUMNS.find(c => c.key === sortKey.value)?.label ?? 'Name'
+  return [
+    { id: 'sort', label: `Sort: ${sortLabel} ${sortDir.value === 'asc' ? '↑' : '↓'}`, children: SORT_COLUMNS.map(c => c.key === sortKey.value
+      ? { id: `sort.${c.key}`, label: c.label, icon: '✓', keys: sortDir.value === 'asc' ? '↑' : '↓', tooltip: 'Choose again to reverse the order' }
+      : { id: `sort.${c.key}`, label: c.label, icon: ' ' }) },
+    { id: 'show', label: `Show: ${SHOW_LABELS[f.show]}`, disabled: off, children: showMenuRows(f) },
+    { id: 'type', label: `Type: ${typesLabel(f.types, typeRegistry.value)}`, disabled: off, children: typeMenuRows(f, typeRegistry.value, focusedExt()) },
+    ...(isFiltering(f) && !inDialog.value ? [{ type: 'separator' }, { id: 'clear', label: 'Clear filter' }] : []),
+  ]
+}
+
+/** A chip's ▾: its part's menu (Type: check boxes; Show: radios). */
+function openChipMenu(part: 'show' | 'type', anchor: HTMLElement | null) {
+  if (!anchor) return
+  if (typeof ui.openMenu !== 'function') { void openFilterMenu(anchor); return }
+  const menu = ui.openMenu({
+    at: anchor,
+    label: part === 'type' ? 'Type' : 'Show',
+    items: () => (part === 'type'
+      ? typeMenuRows(effectiveQuickFilter.value, typeRegistry.value, focusedExt())
+      : showMenuRows(effectiveQuickFilter.value)) as any,
+    onToggle: (row, on) => {
+      toggleFilterRow(row.id, on)
+      if (part === 'show') menu?.close()   // one choice: done
+    },
+    onPick: row => chooseFilter(row.id),   // Any type, Edit types…
+  })
+}
+
 /** The chip and the Filter command: the same entries, flat (ui.menu), under `anchor`. */
 async function openFilterMenu(anchor: HTMLElement | null) {
   if (!anchor) return
+  // 0.17.0: GEM Shell's menu (several types at once, the menu stays open while ticking)
+  if (typeof ui.openMenu === 'function') {
+    ui.openMenu({
+      at: anchor,
+      label: 'Filter',
+      items: () => filterMenuRows(),
+      onToggle: (row, on) => toggleFilterRow(row.id, on),
+      onPick: row => chooseFilter(row.id),
+    })
+    return
+  }
   // 0.11.1: in a file dialog too (its Sort); the old flat list below stays out of dialogs
   if (inDialog.value && typeof ui.declaredMenu !== 'function') return
   // 0.9.1: the Filter submenu as the user arranged it in Settings › Context Menu (order, hidden entries), drawn by
@@ -1843,7 +1899,8 @@ async function openFilterMenu(anchor: HTMLElement | null) {
   if (choice && !choice.startsWith('~')) chooseFilter(choice)
 }
 
-const filterChipText = computed(() => isFiltering(effectiveQuickFilter.value) ? chipLabel(effectiveQuickFilter.value, typeRegistry.value) : '')
+/** 0.17.0: the chips while a filter is on: one per part (Show, Type). */
+const chips = computed(() => filterChips(effectiveQuickFilter.value, typeRegistry.value))
 
 /** The widget's own menu items (entry.ts menus.items): the Filter submenu's entries. */
 function onMenuItem(message: { itemId: string }) {
@@ -2341,11 +2398,17 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand, onMenuI
 
     <!-- Filter: the menus' anchor (top right), and the chip (bottom left) while a filter is on -->
     <span ref="viewAnchor" class="items-view-anchor" aria-hidden="true"></span>
-    <div v-if="filterChipText" ref="filterChip" class="items-filter-chip" role="status">
-      <button type="button" class="items-filter-chip-open" v-gex-tooltip="{ content: `Filtered: ${filterChipText}`, detail: 'Click to change the filter.', command: 'filter' }" @click.stop="openFilterMenu(filterChip)">
-        <span aria-hidden="true">⏷</span>{{ filterChipText }}
-      </button>
-      <button type="button" class="items-filter-chip-clear" aria-label="Clear the filter" title="Clear the filter" @click.stop="setFilter({ show: 'all', type: null })">✕</button>
+    <!-- 0.17.0 (#16): one chip per part of the filter (Show, Type), each with its menu (▾) and its ✕ -->
+    <div v-if="chips.length" ref="filterChip" class="items-filter-chips" role="status" aria-label="Filter">
+      <div v-for="chip in chips" :key="chip.part" class="items-filter-chip">
+        <button type="button" class="items-filter-chip-open"
+                v-gex-tooltip="{ content: chip.title, detail: chip.part === 'type' ? 'Click to choose the types (several at once).' : 'Click to change what is shown.', command: 'filter' }"
+                @click.stop="openChipMenu(chip.part, $event.currentTarget as HTMLElement)">
+          <span aria-hidden="true">⏷</span>{{ chip.label }}
+        </button>
+        <button type="button" class="items-filter-chip-clear" :aria-label="`Clear ${chip.part === 'type' ? 'the type' : 'Show'}`" :title="`Clear ${chip.part === 'type' ? 'the type' : 'Show'}`"
+                @click.stop="setFilter(clearPart(quickFilter, chip.part))">✕</button>
+      </div>
     </div>
 
     <!-- Focusable scroller; captures keyboard for every layout -->
@@ -2579,14 +2642,21 @@ defineExpose({ applyExternalCwd, getNavState, onWidgetAction, onCommand, onMenuI
 
 /* Sort and filter (2026-10-27) */
 .items-view-anchor{ position:absolute; top:4px; right:12px; width:1px; height:1px; pointer-events:none; }
-.items-filter-chip{
+.items-filter-chips{
   position:absolute;
   bottom:10px;
   left:12px;
   z-index:5;
   display:flex;
-  align-items:center;
+  flex-wrap:wrap-reverse;
+  gap:6px;
   max-width:calc(100% - 28px);
+}
+.items-filter-chip{
+  display:flex;
+  align-items:center;
+  min-width:0;
+  max-width:100%;
   border:1px solid color-mix(in oklab, var(--gex-accent,#4ea1ff) 55%, transparent);
   border-radius:999px;
   background:color-mix(in oklab, var(--gex-accent,#4ea1ff) 14%, var(--gex-surface,#1a1a1a));

@@ -7,8 +7,9 @@ import type {
 } from 'gexplorer/widgets'
 
 export type UseDragVisualsOptions = {
-  activeContainer: () => HTMLElement | null
-  activeLayout: () => 'list' | 'toolbar' | null
+  /** Unused since 0.4.1 (the bar's drop is drawn by Widget.vue's classes); kept for its callers. */
+  activeContainer?: () => HTMLElement | null
+  activeLayout?: () => 'list' | 'toolbar' | null
   rowEls: Map<RootRowId, HTMLElement>
   findFolderNodeById: (id: string | null) => FavoriteTreeFolder | null
   openFolderDropdownFromDrag: (folder: FavoriteTreeFolder, anchor: HTMLElement | null) => void
@@ -22,8 +23,6 @@ export type UseDragVisualsOptions = {
 
 export function useDragVisuals(opts: UseDragVisualsOptions) {
   const {
-    activeContainer,
-    activeLayout,
     rowEls,
     findFolderNodeById,
     openFolderDropdownFromDrag,
@@ -33,8 +32,12 @@ export function useDragVisuals(opts: UseDragVisualsOptions) {
   // The shell's ghost (follows the pointer by itself)
   let ghost: { close(): void } | null = null
 
-  // Insert bar (shows drop location)
-  let insertBarEl: HTMLElement | null = null
+  /**
+   * 0.4.1: where a drop on the bar would go, drawn by Widget.vue's classes (a line before / after a pill, a folder lit
+   * for inside, refused). It was an element made here (insertBarEl), which the component's scoped styles never reached:
+   * a transparent strip, so the bar showed nothing while dragging.
+   */
+  const barDrop = ref<{ targetId: string; placement: 'before' | 'after' | 'inside'; blocked: boolean } | null>(null)
 
   // Hover-to-open state
   let hoverFolderId: RootRowId | null = null
@@ -51,10 +54,7 @@ export function useDragVisuals(opts: UseDragVisualsOptions) {
     ghost?.close()
     ghost = null
 
-    if (insertBarEl && insertBarEl.parentNode) {
-      insertBarEl.parentNode.removeChild(insertBarEl)
-    }
-    insertBarEl = null
+    barDrop.value = null
   }
 
   /**
@@ -71,77 +71,13 @@ export function useDragVisuals(opts: UseDragVisualsOptions) {
   /** The shell's ghost follows the pointer by itself (kept for the sortable's calls). */
   function updateGhostPosition(_ev: PointerEvent) { /* nothing */ }
 
-  /**
-   * Ensure insert bar element exists in container
-   */
-  function ensureInsertBar(container: HTMLElement) {
-    if (insertBarEl) return
-    insertBarEl = document.createElement('div')
-    insertBarEl.className = 'gex-fav-insert-bar'
-    insertBarEl.style.position = 'absolute'
-    insertBarEl.style.pointerEvents = 'none'
-    insertBarEl.style.zIndex = '9998'
-    container.appendChild(insertBarEl)
-  }
-
-  /**
-   * Update insert bar position based on drop intent
-   */
-  function updateInsertBar(
-    intent: DropIntent | null,
-    blocked: boolean
-  ) {
-    const container = activeContainer()
-    if (!container) return
-
-    if (!intent) {
-      if (insertBarEl) insertBarEl.style.display = 'none'
-      return
-    }
-
-    const targetEl = rowEls.get(String(intent.targetId))
-    if (!targetEl) {
-      if (insertBarEl) insertBarEl.style.display = 'none'
-      return
-    }
-
-    ensureInsertBar(container)
-    if (!insertBarEl) return
-
-    // For flat root mode, treat 'inside' as 'after'
-    let placement = intent.placement
-    if (placement === 'inside') placement = 'after'
-
-    const containerRect = container.getBoundingClientRect()
-    const targetRect = targetEl.getBoundingClientRect()
-
-    insertBarEl.style.display = 'block'
-    insertBarEl.classList.toggle('gex-fav-insert-bar-blocked', blocked)
-
-    const layout = activeLayout()
-    if (layout === 'list') {
-      // Horizontal bar spanning the list width
-      const y =
-        placement === 'before'
-          ? targetRect.top - containerRect.top
-          : targetRect.bottom - containerRect.top
-
-      insertBarEl.style.left = '0px'
-      insertBarEl.style.width = `${containerRect.width}px`
-      insertBarEl.style.top = `${y - 1}px`
-      insertBarEl.style.height = '2px'
-    } else {
-      // Toolbar → vertical bar
-      const x =
-        placement === 'before'
-          ? targetRect.left - containerRect.left
-          : targetRect.right - containerRect.left
-
-      insertBarEl.style.top = '0px'
-      insertBarEl.style.height = `${containerRect.height}px`
-      insertBarEl.style.left = `${x - 1}px`
-      insertBarEl.style.width = '2px'
-    }
+  /** Where a drop on the bar would go (null: nowhere on it); blocked: it can't go there. */
+  function updateInsertBar(intent: DropIntent | null, blocked: boolean) {
+    if (!intent || !rowEls.has(String(intent.targetId))) { barDrop.value = null; return }
+    const placement = intent.placement === 'inside' || intent.placement === 'before' || intent.placement === 'after' ? intent.placement : 'after'
+    const next = { targetId: String(intent.targetId), placement, blocked }
+    const now = barDrop.value
+    if (!now || now.targetId !== next.targetId || now.placement !== next.placement || now.blocked !== next.blocked) barDrop.value = next
   }
 
   /**
@@ -192,6 +128,7 @@ export function useDragVisuals(opts: UseDragVisualsOptions) {
   return {
     // State
     lastDropIntent,
+    barDrop,
 
     // Ghost methods
     setupGhostForRow,

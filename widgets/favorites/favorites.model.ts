@@ -4,27 +4,8 @@ import type {
   FavoriteTreeNode,
 } from 'gexplorer/widgets'
 
-export type MenuRow = {
-  id: string
-  type: 'folder' | 'item'
-  label: string
-  depth: number
-  /** An item: the place it opens (one location, or 2-4 folders side by side). */
-  locations?: string[]
-}
-
-export type OpenMenu = {
-  folderId: string | null
-  label: string
-  rows: MenuRow[]
-  top: number
-  left: number
-  /**
-   * 0.3.0: the element this level opens next to (a folder pill or row; a row of the level above): GEM Shell's popover
-   * is anchored there (useFolderPopovers.ts). top / left are kept for older callers and no longer place anything.
-   */
-  anchor?: HTMLElement | null
-}
+// 0.4.0: the folder menus' rows are GEM Shell's menu rows (useFolderMenus.ts): MenuRow, OpenMenu and buildMenuRows
+// went with FolderMenu.vue.
 
 // A "root row" in the sidebar list: either a folder node or a root-level item favorite
 export type RootRow =
@@ -40,39 +21,11 @@ export function rowId(row: RootRow): RootRowId {
     : `item:${row.entry.id}`
 }
 
-export function menuRowId(row: MenuRow): RootRowId {
-  if (row.type === 'folder') return `folder:${row.id}`
-  return `item:${row.id}`
-}
-
 export function parseRootRowId(id: RootRowId): { kind: FavoritesNodeKind; key: string } {
   if (id.startsWith('folder:')) return { kind: 'folder', key: id.slice('folder:'.length) }
   if (id.startsWith('item:')) return { kind: 'item', key: id.slice('item:'.length) }
   // Fallback: treat as an item id
   return { kind: 'item', key: id }
-}
-
-export function buildMenuRows(nodes: FavoriteTreeNode[]): MenuRow[] {
-  const rows: MenuRow[] = []
-  for (const n of nodes) {
-    if (n.kind === 'folder') {
-      rows.push({
-        id: n.id,
-        type: 'folder',
-        label: n.label,
-        depth: 0, // one level per dropdown → depth 0 inside each
-      })
-    } else {
-      rows.push({
-        id: n.id,
-        type: 'item',
-        label: n.label,
-        depth: 0,
-        locations: n.locations,
-      })
-    }
-  }
-  return rows
 }
 
 /** The top level of the tree as rows: folders and favorites, in the user's order. */
