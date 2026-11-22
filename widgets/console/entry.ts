@@ -25,7 +25,7 @@ import TerminalPart from './TerminalPart.vue'
 export default {
     api: '1.0',
     id: 'console',
-    version: '0.2.3',   // 0.2.3 (2026-11-21): narrower in the toolbar (down to its button). 0.2.2 (2026-11-16): the terminal stays dark in every look (--gc-term / --gc-term-fg: its programs' colours assume it); the first tab clears the pane's floating Back / Forward / Up (GEM Shell's --gex-pane-overlay-start). 0.2.1 (2026-11-16): the tabs are GEM Shell's tab strip (<gex-tab-strip>: ✕ / middle-click close with the close run, ← / →, sideways scroll). 0.2.0 (2026-11-15): the terminal part (provides 'shell.terminal': runs as the widget showing it; a "Tool output" tab, run / cd / newSession / print). 0.1.11 (2026-11-15): a move waiting because something was typed goes as soon as it is erased (it waited for Enter; GEM Shell's terminal:ready). 0.1.10 (2026-11-14): the terminal's text follows Text size. 0.1.9 (2026-11-14): GEM Shell's colours and fonts; bars and buttons grow with the text. 0.1.8 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step). 0.1.7 (2026-11-14): "Open console here" hidden in GEM Shell's file dialog (a default rule)
+    version: '0.3.1',   // 0.3.1 (2026-11-22): in the toolbar, Open in <shell> opens the console's popover to show it (no "click GEM Console" snackbar). 0.3.0 (2026-11-21): "Open console here" is one row per shell on other widgets' menus (GEM Console ▸ Open in Git Bash, Open in PowerShell…: GEM Shell's ui.setActionChoices, and contextMenu.choicesFrom before its first run); choosing one moves a console of that shell there or starts one there at once (the menu click is the click it needs). 0.2.3 (2026-11-21): narrower in the toolbar (down to its button). 0.2.2 (2026-11-16): the terminal stays dark in every look (--gc-term / --gc-term-fg: its programs' colours assume it); the first tab clears the pane's floating Back / Forward / Up (GEM Shell's --gex-pane-overlay-start). 0.2.1 (2026-11-16): the tabs are GEM Shell's tab strip (<gex-tab-strip>: ✕ / middle-click close with the close run, ← / →, sideways scroll). 0.2.0 (2026-11-15): the terminal part (provides 'shell.terminal': runs as the widget showing it; a "Tool output" tab, run / cd / newSession / print). 0.1.11 (2026-11-15): a move waiting because something was typed goes as soon as it is erased (it waited for Enter; GEM Shell's terminal:ready). 0.1.10 (2026-11-14): the terminal's text follows Text size. 0.1.9 (2026-11-14): GEM Shell's colours and fonts; bars and buttons grow with the text. 0.1.8 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step). 0.1.7 (2026-11-14): "Open console here" hidden in GEM Shell's file dialog (a default rule)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     displayName: 'GEM Console',
@@ -55,7 +55,13 @@ export default {
             label: 'Open console here',
             accepts: { contexts: ['folder', 'background'], kinds: 'folders', count: { max: 1 } },
             // 0.1.7: not offered in GEM Shell's file dialog by default (the user can show it: sys:context-menus)
-            contextMenu: { label: 'Open console here', icon: '>_', submenuLabel: 'GEM Console', hideWhen: ['place:dialog'] },
+            // 0.3.0: one row per shell. choicesFrom: GEM Shell lists them from its own shell detection, so the rows are
+            // there before GEM Console has ever run; once it runs, its own list (with the WSL distros) takes over
+            // (Widget.vue setActionChoices). The label is the one row left when no shell is known.
+            contextMenu: {
+                label: 'Open console here', icon: '>_', submenuLabel: 'GEM Console', hideWhen: ['place:dialog'],
+                choicesFrom: { source: 'terminal.shells', label: 'Open in {name}' },
+            },
         },
     ],
 

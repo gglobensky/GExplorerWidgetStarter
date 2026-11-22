@@ -10,7 +10,7 @@ const PLAYER_EXTENSIONS = [...AUDIO_EXTS, ...PLAYLIST_EXTS].map(e => `.${e}`)
 export default {
     api:     '1.0',
     id:      'local-player',
-    version: '1.0.9',   // 1.0.9: edge to edge again (the cut edge was GEM Shell's grid). 1.0.8: room on the compact layout's sides. 1.0.7: the compact layout never wider than its box. 1.0.6 (2026-11-14): layouts chosen as at 100 % text; GEM Shell's colours. 1.0.5: --gex-px, GEM Shell's one px at 100 % text. 1.0.4: the compact 🔊 fits its strip; 1.0.3 (2026-11-14): buttons and rows follow Text size; no :root variables; 1.0.2: type fixes
+    version: '1.1.0',   // 1.1.0 (2026-11-21): a track's length no longer lands on the track before it (saved on the track the player loaded, by its address; read again for every track at start, which repairs wrong ones); the playing row shows its own length (it showed 0:00 before it loaded); the current track is kept by its id, its index derived. 1.0.9: edge to edge again (the cut edge was GEM Shell's grid). 1.0.8: room on the compact layout's sides. 1.0.7: the compact layout never wider than its box. 1.0.6 (2026-11-14): layouts chosen as at 100 % text; GEM Shell's colours. 1.0.5: --gex-px, GEM Shell's one px at 100 % text. 1.0.4: the compact 🔊 fits its strip; 1.0.3 (2026-11-14): buttons and rows follow Text size; no :root variables; 1.0.2: type fixes
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
 

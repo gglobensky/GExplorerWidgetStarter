@@ -7,6 +7,9 @@
       toolbar   a button; a click grows it into the consoles (a console popover: GEM Shell keeps its clicks and Escape
                 for it), with a path field. Folding it leaves them running.
     "Open console here" (entry.ts actions) moves the active console; with none open, the next one starts there.
+    0.3.0: the action is one row per shell on other widgets' menus ("GEM Console ▸ Open in Git Bash": GEM Shell's
+    ui.setActionChoices); choosing one moves a console of that shell there, or starts one there (the menu click is the
+    click a console needs to start).
 -->
 <template>
     <div ref="rootEl" class="gc-widget" :class="'p-' + context" :style="boxStyle">
@@ -25,7 +28,7 @@
 <script setup lang="ts">
 import '@xterm/xterm/css/xterm.css'
 import './console.css'
-import { ref, computed, inject, onMounted, onBeforeUnmount, markRaw, watch } from 'vue'
+import { ref, computed, inject, onMounted, onBeforeUnmount, markRaw, watch, nextTick } from 'vue'
 import type { WidgetSdk } from 'gexplorer/widgets'
 import ConsoleView from './ConsoleView.vue'
 import ToolbarPanel from './ToolbarPanel.vue'
@@ -123,23 +126,55 @@ function getNavState() {
 }
 
 // ── "Open console here" (other widgets' folder menus) ───────────────────────
-function onWidgetAction(msg: any) {
+// 0.3.0: one row per shell (GEM Shell keeps them for the menus, also while GEM Console isn't on screen)
+watch(() => con.st.shells, shells => {
+    if (!shells.length) return
+    ui.setActionChoices?.('open-here', shells.map(s => ({ id: s.id, label: `Open in ${s.label}`, icon: '>_' })))
+}, { deep: true })
+
+const say = (text: string, ms = 5000) => void ui.snack({ id: 'gem-console', text, dedupe: 'replace', timeoutMs: ms })
+/** 0.3.1 (Guillaume): in the toolbar, the console grows out of its button to show what was done (it said to click it). */
+async function showConsole() {
+    if (context.value !== 'toolbar' || popOpen.value) return
+    await nextTick()   // a folded toolbar was unfolded for the action (GEM Shell): its button may be new
+    if (!popOpen.value) togglePopover()
+}
+
+/**
+ * 0.3.0: a shell chosen (payload.choiceId) or not (an older menu): a console of that shell (the active one first)
+ * moves there; none of that shell: one starts there, at once (the menu click lent by GEM Shell is the gesture it
+ * needs; a console that can't start yet leaves Start pointing there, as before).
+ */
+async function onWidgetAction(msg: any) {
     if (msg?.topic !== 'widget:action' || msg.payload?.actionId !== 'open-here') return
     const args = msg.payload?.args ?? {}
     const paths: string[] = Array.isArray(args.paths) ? args.paths : String(msg.payload?.tokens?.path ?? '').split('\n').filter(Boolean)
     const folder = paths.find(isFolderPath)
     if (!folder) return
-    const t = con.active.value
-    if (!t || t.ended) {
-        // Starting one needs your click in it: the Start button says where
-        con.st.startIn = folder
-        if (context.value === 'toolbar') void ui.snack({ id: 'gem-console', text: `Click GEM Console in the toolbar to start a console in ${folder}.`, dedupe: 'replace', timeoutMs: 6000 })
+    await initDone   // brought on screen for it: the shells and the live consoles first
+    const wanted = typeof msg.payload?.choiceId === 'string' && con.st.shells.some(s => s.id === msg.payload.choiceId) ? msg.payload.choiceId as string : null
+    const live = con.tabs.value.filter(t => t.kind === 'shell' && !t.ended)
+    const a = con.active.value
+    const target = wanted
+        ? (a && a.kind === 'shell' && !a.ended && a.shell === wanted ? a : [...live].reverse().find(t => t.shell === wanted) ?? null)
+        : (a && a.kind === 'shell' && !a.ended ? a : live[live.length - 1] ?? null)
+    if (target) {
+        if (target.key !== con.st.active) con.select(target.key)
+        await con.moveTo(folder)
+        await showConsole()   // 0.3.1: a move waiting for a command to end shows as such in it
         return
     }
-    void con.moveTo(folder)
-    if (context.value === 'toolbar' && !popOpen.value) {
-        void ui.snack({ id: 'gem-console', text: t.busy ? `GEM Console moves to ${folder} when its command ends.` : `GEM Console is now in ${folder}.`, dedupe: 'replace', timeoutMs: 4000 })
+    // permission not given yet: no shells listed; the usual one (GEM Shell asks first, as Start does)
+    const shell = wanted ?? con.defaultShell(savedShell.value) ?? (con.st.state === 'declined' ? (savedShell.value || 'powershell') : null)
+    const err = await con.open(shell, folder)
+    if (err) {
+        // Not started (no click to start it with any more, the permission declined…): Start points there
+        con.st.startIn = folder
+        say(err, 6000)
+        await showConsole()   // 0.3.1: its Start, pointing there
+        return
     }
+    await showConsole()
 }
 
 // ── The toolbar: a console popover growing out of the button ────────────────
@@ -167,8 +202,11 @@ function togglePopover() {
     popOpen.value = true
 }
 
+let initDoneResolve: () => void = () => { }
+const initDone = new Promise<void>(r => { initDoneResolve = r })
+
 onMounted(async () => {
-    await con.init()
+    try { await con.init() } finally { initDoneResolve() }
     ready = true
     const t = con.active.value
     if (early !== null) {

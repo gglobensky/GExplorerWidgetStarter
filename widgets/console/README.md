@@ -26,8 +26,11 @@ WSL distro GEM Shell finds. Built on xterm.js (MIT, bundled into `index.js`; its
   before opening one. A plain click selects, as in Windows Terminal.
 - **Esc** is the console's (vim, a prompt's own). F6 / Shift+F6 still move the focus out; GEM Shell says so once, and
   Keyboard shortcuts says it beside "Leave the focused pane".
-- **"Open console here"** on any folder menu (GEM Console ▸): the console you placed goes there. With none open, the
-  next one you start begins there. It never opens a new widget.
+- **Open in <shell>** on any folder menu (0.3.0: GEM Console ▸ Open in Git Bash, Open in PowerShell 7…, one per shell
+  on this computer, listed once GEM Console has run; before that, "Open console here"). A console of that shell (the
+  active one first) goes there; with none, one starts there at once. A console that can't start yet (the permission
+  not given) leaves Start pointing there. It never opens a new widget: the GEM Console you placed is brought on screen
+  (forward in its stack too: GEM Shell 2026-11-21).
 - Closing a tab running a command asks first. A console that ended can be restarted (⋯).
 
 ## The terminal part (0.2.0)

@@ -11,8 +11,9 @@ import { useVolumePopover } from './useVolumePopover'
  * one says why it can't play and that playing it tries again.
  */
 function rowTip(t: Track) {
+  // CHANGED (1.1.0): the track's own length first (the element's is the playing one's only once it has loaded it)
   const isCurrent = t.id === props.queue[props.currentIndex]?.id
-  const secs = isCurrent && props.duration ? props.duration : t.duration
+  const secs = t.duration || (isCurrent ? props.duration : 0)
   const lines: string[] = []
   if (secs) lines.push(fmtTime(secs))
   if (t.missing) lines.push(`Can't be played: ${reasonText(t.missingReason)}`, 'Double-click to try again')
@@ -366,10 +367,12 @@ defineExpose({ controlsEl, queueEl })
         </button>
 
         <span class="dur">
+          <!-- CHANGED (1.1.0): its own length (the playing one showed the element's: 0:00 before it loaded, and
+               the next track's while the element moved on) -->
           {{
-            t.id === queue[currentIndex]?.id
-              ? fmtTime(duration || 0)
-              : (t.duration ? fmtTime(t.duration) : '—')
+            t.duration
+              ? fmtTime(t.duration)
+              : (t.id === queue[currentIndex]?.id && duration ? fmtTime(duration) : '—')
           }}
         </span>
 

@@ -40,7 +40,14 @@ export function usePlayerState(sourceId: string) {
     const music = acquireElement({ category: 'music', key: 'primary', suspendPolicy: 'continue' })
     // === Core State (Persisted) ===
     const queue = life.persistRef<Track[]>('queue', [])
-    const currentIndex = life.cell<number>('currentIndex', -1)
+    // CHANGED (1.1.0, 2026-11-21): the current track is kept by its ID; its index is derived. An index had to be
+    // moved by hand on every remove / reorder / replace, and lagged behind the element (a track's length went to the
+    // one before). Setting the index sets the id of the track there (-1 / out of range: none).
+    const currentId = life.cell<string>('currentId', '')
+    const currentIndex = computed<number>({
+        get: () => currentId.value ? queue.value.findIndex(t => t.id === currentId.value) : -1,
+        set: (i: number) => { currentId.value = queue.value[i]?.id ?? '' },
+    })
     const queueName = life.cell<string>('queueName', 'Queue')
     const repeat = life.cell<'off' | 'one' | 'all'>('repeat', 'off')
     const shuffle = life.cell<boolean>('shuffle', false)
@@ -114,6 +121,7 @@ export function usePlayerState(sourceId: string) {
 
         // State
         queue,
+        currentId,
         currentIndex,
         queueName,
         repeat,

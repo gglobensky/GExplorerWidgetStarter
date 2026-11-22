@@ -4046,6 +4046,17 @@ declare module 'gexplorer/widgets' {
          */
         setDraft?(draft: WidgetPlacedDraft | null): boolean
         /**
+         * NEW (GEM Shell 2026-11-21): the choices of one of your actions (entry.ts `actions`), known only at run time
+         * (GEM Console: one per shell on this computer). Other widgets' menus then show one row per choice in your
+         * submenu, in place of the action's own label ("GEM Console ▸ Open in Git Bash", "Open in PowerShell 7"), and
+         * onWidgetAction gets `payload.choiceId` (the choice's id). GEM Shell keeps them for your widget type, so they
+         * show while no copy of it is on screen, after a restart too. null / []: back to the action's own label.
+         * At most 16; id: letters, digits, . _ : - (40 at most); label: 60 characters; icon: 8. false: not one of
+         * your actions (nothing changes).
+         *   ui.setActionChoices?.('open-here', shells.map(s => ({ id: s.id, label: `Open in ${s.label}` })))
+         */
+        setActionChoices?(actionId: string, choices: WidgetActionChoice[] | null): boolean
+        /**
          * NEW (GEM Shell 2026-11-07): the user's naming pattern for a taken name (Settings ▸ New items: "a (2).txt",
          * "a (Copy 2).txt", a timestamp…), as GEM Shell applies it. No capability.
          */
@@ -4063,6 +4074,9 @@ declare module 'gexplorer/widgets' {
         | { type: 'literal'; value: string }
         | { type: 'increment'; start?: number }
         | { type: 'timestamp'; format: string }
+
+    /** NEW (GEM Shell 2026-11-21): one row of an action on other widgets' menus (sdk.ui().setActionChoices). */
+    export type WidgetActionChoice = { id: string; label: string; icon?: string }
 
     /** NEW (GEM Shell 2026-11-07): what sdk.ui().setDraft takes. */
     export type WidgetPlacedDraft = {

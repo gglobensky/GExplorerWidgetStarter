@@ -543,22 +543,30 @@ const onTimeUpdate = async () => {
 
 const onLoadedMeta = (e: Event) => {
     applyPlaybackRate()
-    const t = e.target as HTMLMediaElement | null
-    const raw = t?.duration ?? state.music.duration
-    const dur = Number.isFinite(raw) ? raw : 0
+    const el = (e.target as HTMLMediaElement | null) ?? state.music
+    const dur = Number.isFinite(el.duration) ? el.duration : 0
 
     state.duration.value = dur
 
-    // ✅ Persist duration onto the current track so the list can show it
-    const curId = state.current.value?.id
-    if (curId) {
-        const tr = state.queue.value.find(x => x.id === curId)
-        if (tr) tr.duration = dur
-    } else {
-        const idx = state.currentIndex.value
-        const tr = idx >= 0 ? state.queue.value[idx] : null
-        if (tr) tr.duration = dur
-    }
+    // FIX (1.1.0, Guillaume: two songs showing the same length): the length goes to the track the ELEMENT loaded,
+    // found by its address. It went to "the current track", but the element starts loading the next one before the
+    // player's index moves to it, so a track's length was saved on the one before (and kept: restarts showed it).
+    // Not found (an address renewed by the rack): nothing saved; the length read at start covers it.
+    const tr = trackOfElement(el)
+    if (tr && dur > 0) tr.duration = dur
+}
+
+/** NEW (1.1.0): the queue track <el> plays, by its address (the queue's own, else the rack's item with it). */
+function trackOfElement(el: { currentSrc?: string; src?: string }): Track | null {
+    const src = el.currentSrc || el.src
+    if (!src) return null
+    const abs = (u: string | undefined) => { try { return u ? new URL(u, location.href).href : '' } catch { return u ?? '' } }
+    const q = state.queue.value
+    const own = q.find(t => t.url && abs(t.url) === src)
+    if (own) return own
+    const pl = state.playlists.get(state.sel)
+    const item = pl?.items?.find((it: any) => abs(it?.src) === src)
+    return item ? q.find(t => t.id === item.id) ?? null : null
 }
 
 
@@ -626,8 +634,9 @@ onMounted(async () => {
 
     applyPlaybackRate()
 
-    // Tracks without a known length (a queue restored, added before durations were read).
-    void playlist.probeDurations()
+    // Every track's length read again (1.1.0: also the ones that have one: a length saved on the wrong track by the
+    // bug fixed in onLoadedMeta is put right).
+    void playlist.probeDurations(true)
 
     on('dnd:drop', async (msg: any) => {
         if (msg.payload?.zone !== 'queue') return

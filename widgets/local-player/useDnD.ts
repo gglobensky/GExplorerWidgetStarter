@@ -24,15 +24,10 @@ export function useDnD(
         autoScroll: { marginPx: 56, maxSpeedPxPerSec: 900 },
         globalCursor: 'grabbing',
         onCommit: (ordered) => {
-            // The playing and the selected track are indexes: they follow their track (2026-10-23:
-            // the selection stayed at its index, outlining whichever track moved into it)
-            const currentId = queue.value[currentIndex.value]?.id
+            // The selected track is an index: it follows its track (2026-10-23: the selection stayed at its index,
+            // outlining whichever track moved into it). The playing one is kept by id (1.1.0): it follows by itself.
             const selectedId = queue.value[selectedIndex.value]?.id
             queue.value = ordered.slice()
-            if (currentId) {
-                const newIdx = queue.value.findIndex(t => t.id === currentId)
-                if (newIdx >= 0) currentIndex.value = newIdx
-            }
             if (selectedId) {
                 const newIdx = queue.value.findIndex(t => t.id === selectedId)
                 if (newIdx >= 0) selectedIndex.value = newIdx

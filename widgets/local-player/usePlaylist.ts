@@ -102,13 +102,15 @@ export function usePlaylist(state: PlayerState, sourceId: string, playAt: (index
   // element too (Widget.vue onLoadedMeta). Each file is asked once per session.
   const probed = new Set<string>()
   let probing = false
-  async function probeDurations() {
+  // CHANGED (1.1.0): <refresh> (once at start): every track's length read again, also those that have one: a
+  // length saved on the wrong track (the bug fixed in Widget.vue onLoadedMeta) is put right
+  async function probeDurations(refresh = false) {
     if (probing || !sdk!.mediaInfo) return
     probing = true
     try {
       for (;;) {
         const want = [...new Set(queue.value
-          .filter(t => t.sourcePath && !t.duration && !t.missing && !probed.has(t.sourcePath))
+          .filter(t => t.sourcePath && (refresh || !t.duration) && !t.missing && !probed.has(t.sourcePath))
           .map(t => t.sourcePath!))].slice(0, 500)
         if (!want.length) break
         for (const p of want) probed.add(p)
@@ -119,7 +121,7 @@ export function usePlaylist(state: PlayerState, sourceId: string, playAt: (index
         for (const it of items) if (it.durationMs && it.durationMs > 0) ms.set(it.path, it.durationMs)
         if (!ms.size) continue
         for (const t of queue.value) {
-          const d = !t.duration && t.sourcePath ? ms.get(t.sourcePath) : undefined
+          const d = (refresh || !t.duration) && t.sourcePath ? ms.get(t.sourcePath) : undefined
           if (d) t.duration = d / 1000
         }
       }
@@ -455,9 +457,8 @@ export function usePlaylist(state: PlayerState, sourceId: string, playAt: (index
       }
       currentIndex.value = -1
       prepare(nextIdx)
-    } else if (realIndex < currentIndex.value) {
-      currentIndex.value -= 1
     }
+    // (1.1.0: the current track is kept by id: nothing to shift when an earlier one goes)
     sync()
   }
 
