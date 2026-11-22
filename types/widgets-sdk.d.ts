@@ -3706,6 +3706,10 @@ declare module 'gexplorer/widgets' {
         loadChildren?: () => Promise<WidgetMenuEntry[]>
         /** With a submenu: a split row (the row is chosen, its arrow opens the submenu). */
         action?: boolean
+        /** Choosing it doesn't close the menu (a setting that cycles). */
+        keepOpen?: boolean
+        /** A stepper at its right ("− 3 +"): its buttons, ← / → and - / + call onStep(row, -1 | 1). */
+        stepper?: { value: string; canDecrease?: boolean; canIncrease?: boolean }
         /** Your own value, handed back untouched. */
         data?: unknown
     }
@@ -3732,6 +3736,8 @@ declare module 'gexplorer/widgets' {
         /** Choosing a row doesn't close the menu. */
         keepOpen?: boolean
         onPick?: (row: WidgetMenuRow, how: WidgetMenuPickHow) => void
+        /** A stepper row's − (-1) or + (1); the menu stays open (a live items getter shows the new value). */
+        onStep?: (row: WidgetMenuRow, delta: -1 | 1) => void
         onToggle?: (row: WidgetMenuRow, checked: boolean) => void
         onRemove?: (row: WidgetMenuRow) => void
         onRename?: (row: WidgetMenuRow, name: string) => void | Promise<void>
