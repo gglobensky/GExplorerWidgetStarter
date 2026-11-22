@@ -1293,9 +1293,23 @@ declare module 'gexplorer/widgets' {
         reload(): void
         /** Your surface's own address, after every page change. Returns the unsubscribe. */
         onNavigate(cb: (url: string) => void): () => void
+        /** 2026-11-22 (older GEM Shells: absent): ads and trackers GEM Shell blocked on the page shown now. */
+        readonly blocked?: number
+        /** 2026-11-22: blocking applies to this surface now (on in Settings, for its site and for this copy of your widget). */
+        readonly blocking?: boolean
+        /** 2026-11-22: the count or the state changed (throttled). Returns the unsubscribe. */
+        onBlocked?(cb: (info: WebBlocked) => void): () => void
+        /**
+         * 2026-11-22: GEM Shell's ad blocking menu beside `anchor` (default: the surface's element), right after the
+         * user's click or key press in your widget (no-gesture otherwise). Its switches are the user's: this copy of
+         * your widget, the site for every widget, Settings. Your widget can't turn blocking off itself.
+         */
+        showBlocking?(anchor?: HTMLElement | { x: number; y: number }): Promise<WebResult>
         /** Ends it (GEM Shell also does when your widget's instance goes). */
         dispose(): void
     }
+    /** 2026-11-22: page: blocked on the page shown now; total: since the surface opened; blocking: as WebSurface.blocking. */
+    export type WebBlocked = { page: number; total: number; blocking: boolean }
     export interface WidgetWeb {
         surface(el: HTMLElement, opts: { url: string }): Promise<WebSurface | { ok: false; reason: WebReason; error?: string }>
         /** userAdded only, right after the user's click or key press in your widget: the consent dialog for that domain. */

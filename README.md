@@ -514,9 +514,33 @@ const r = await web.addDomain('lefigaro.fr')   // { ok, domain } | { ok: false, 
   (the key mapper's, with Ctrl or Alt), which still work.
 - **Out of view** (another hub, a hidden stack member): suspended at once, closed after 10 minutes and reopened at its
   last address when it shows again: sign-ins stay, the page's state (a half-typed form) may not.
+- **Ads and trackers are blocked** (GEM Shell 2026-11-22, see below).
 - **Windows for now** (Linux with the port: WebKitGTK). `surface()` returns `{ ok: false }` where it isn't available.
 - Results: a surface, or `{ ok: false, reason: 'not-allowed' | 'no-gesture' | 'declined' | 'bad-argument' | 'failed',
   error? }`. `widgets/web-test/` is a small example.
+
+### Ad blocking in your surfaces (GEM Shell 2026-11-22)
+
+GEM Shell blocks ads and trackers in every surface (Brave's engine, EasyList and uBlock Origin's lists). The user
+turns it off for everything or for a site in Settings ▸ Ad blocking, and for one copy of your widget from GEM Shell's
+menu, which you open. Your widget can't turn it off itself, and reads nothing of the page: only the counts.
+
+```ts
+// A shield in your toolbar (outside the frame: nothing of yours over the page)
+const shield = ref({ page: s.blocked ?? 0, on: s.blocking ?? false })
+const off = s.onBlocked?.(b => { shield.value = { page: b.page, on: b.blocking } })
+// Its click: GEM Shell's menu (this widget ☑, this site for every widget ☑, Ad blocking settings…)
+async function onShieldClick(ev: MouseEvent) {
+  const r = await s.showBlocking?.(ev.currentTarget as HTMLElement)   // right after the click: no-gesture otherwise
+}
+```
+
+- `blocked` counts this page (from 0 at each new page); `blocking` is false when the user turned it off anywhere
+  (Settings, the site, this copy) or the engine isn't there. Updates come at most every 0.4 s.
+- **Per copy:** two copies of your widget have their own switch (GEM Shell keeps it by the copy's data key: a moved copy keeps it).
+- **A page that breaks** (a video that won't play, a missing button): tell the user they can turn blocking off for
+  your widget or the site from your shield. Don't work around the blocking in your widget.
+- Older GEM Shells: these are absent (`s.blocked === undefined`); hide your shield then.
 
 ## Your size in a hub
 

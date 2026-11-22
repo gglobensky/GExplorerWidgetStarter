@@ -1,5 +1,6 @@
 <script setup lang="ts">
 // A TEST WIDGET for web surfaces (GEM Shell H9): a toolbar (address, Back / Forward / Reload, Add site) and a surface.
+// 0.1.2 (2026-11-22): the ad blocking shield (GEM Shell's counts; its click opens GEM Shell's menu).
 import { inject, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { WidgetSdk } from 'gexplorer/widgets'
 
@@ -10,6 +11,9 @@ const address = ref('https://www.lemonde.fr/')
 const status = ref('')
 let surface: any = null
 let off: (() => void) | null = null
+let offBlocked: (() => void) | null = null
+// The shield: shown when GEM Shell has ad blocking (older ones: blocked is undefined)
+const shield = ref<{ page: number; on: boolean } | null>(null)
 
 onMounted(async () => {
   if (!web) { status.value = 'sdk.web() is missing (Web not declared?)'; return }
@@ -17,9 +21,18 @@ onMounted(async () => {
   if (!s || s.ok === false) { status.value = `Not shown: ${s?.error ?? s?.reason}`; return }
   surface = s
   off = s.onNavigate((u: string) => { address.value = u; status.value = '' })
+  if (typeof s.blocked === 'number') {
+    shield.value = { page: s.blocked, on: !!s.blocking }
+    offBlocked = s.onBlocked?.((b: { page: number; blocking: boolean }) => { shield.value = { page: b.page, on: b.blocking } }) ?? null
+  }
 })
 
-onBeforeUnmount(() => { off?.(); surface?.dispose() })
+onBeforeUnmount(() => { off?.(); offBlocked?.(); surface?.dispose() })
+
+async function showBlocking(ev: MouseEvent) {
+  const r = await surface?.showBlocking?.(ev.currentTarget as HTMLElement)
+  if (r && !r.ok) status.value = `No menu: ${r.error ?? r.reason}`
+}
 
 async function go() {
   if (!surface) return
@@ -45,6 +58,10 @@ async function addSite() {
       <input v-model="address" @keydown.enter="go" spellcheck="false" />
       <button @click="go">Go</button>
       <button @click="addSite" title="Allow the address's site (asks you)">Add site</button>
+      <button v-if="shield" class="shield" :class="{ off: !shield.on }" @click="showBlocking"
+              :title="shield.on ? `${shield.page} ads and trackers blocked on this page` : 'Ad blocking is off here'">
+        🛡 {{ shield.on ? shield.page : 'off' }}
+      </button>
     </div>
     <div v-if="status" class="status">{{ status }}</div>
     <div ref="frame" class="frame"></div>
@@ -57,4 +74,6 @@ async function addSite() {
 .bar input { flex: 1 1 auto; min-width: 0; }
 .status { font-size: 12px; padding: 2px 6px; opacity: 0.8; flex: 0 0 auto; }
 .frame { flex: 1 1 auto; min-height: 0; position: relative; }
+.shield { min-width: 3.5em; font-variant-numeric: tabular-nums; }
+.shield.off { opacity: 0.6; }
 </style>
