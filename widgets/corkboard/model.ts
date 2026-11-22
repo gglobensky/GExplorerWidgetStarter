@@ -2,7 +2,7 @@
 //
 // THE CORKBOARD'S DATA (0.1.0, 2026-11-02): boards of stacks of notes, groups held by a pin, flags, due dates.
 // Pure: no DOM but the HTML helpers at the bottom (which need a document), no SDK. One document per copy of the
-// widget ('desk-<sourceId>', store.ts). Pictures are GEM Shell image assets (a note keeps the asset id and url);
+// widget (0.5.0: GEM Shell's copy data, document 'desk': store.ts). Pictures are GEM Shell image assets (a note keeps the asset id and url);
 // an export inlines them as data so a copy pasted into another Corkboard is a standalone duplicate.
 import type { GridRect, InkLook } from 'gexplorer/widgets'
 

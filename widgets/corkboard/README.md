@@ -2,6 +2,19 @@
 
 Sticky notes on a cork board, for the GEM Shell grid (a quarter of the screen or less) and the sidebar.
 
+**0.5.0 (2026-11-22): the pad, and every copy in step**
+- **A quick-note pad** (`Pad.vue`): a small notepad you tear pages from.
+  - **Sidebar:** the pad (📝) by default; the header's layout button switches to the **full board** (▦), and the pad's ▦ too. The full board in the sidebar has a height of its own now (it showed only its bar: the sidebar sizes a widget to its content, and the board has none of its own).
+  - **Toolbar:** a 📝 button; the pad opens in a popover under it.
+  - **Send to…** lists the Corkboards (each by its place and its boards: "Home hub: General, Ideas"), then a board, then its stacks, and **New stack…**. The page goes in as a new note at the end of that stack, the stack's open note. The pad then shows a fresh page, and its button says **Send to <stack>**: one click (or **Alt+Enter**, *Pad: send the page*) sends the next page there; ▸ chooses another. With one Corkboard, its boards are listed straight away.
+  - **Open…** (▤): any note of any board, kept in the pad. It is the same note as on the board, live both ways: what you write in one shows in the other (never under your caret: once you leave the line). ← goes back to your own page; a note deleted on its board closes there.
+  - The page not sent yet, the last stack and the note kept open are the copy's own, kept after a restart. Pictures go on the board itself (the pad says so).
+- **The desk is GEM Shell's copy data** (`sdk.instanceData()`, its live document `desk`): one object for everything showing it in the page (the board and a pad holding one of its notes: an edit on one is on the other at once), saved by GEM Shell shortly after a change and when the page hides, caught up when the window comes back if another window saved a newer one. **A removed Corkboard keeps its notes:** Add widget ▸ Removed shows it (its board, read-only, and "3 boards, 42 notes": entry.ts `preview.summary`), places it again with them, or deletes it when you say so.
+- **The pad's lists are GEM Shell's** (`instanceData().copies()`: the Corkboards placed now, by their place's name: "Home hub", "Sidebar"), the ones with boards. A removed one isn't offered.
+- **Your 0.4 boards** (`desk-<sourceId>` documents) are brought in once, the first time each Corkboard opens (TEMPORARY, `store.ts` load `legacy`). The old documents stay in `config/corkboard/`: delete `desk-*.config.json` and `corkboard-directory.config.json` there once your boards show.
+- **Delete by hand:** `deskHub.ts`, `hubCore.ts`, `directory.ts`, `tests/deskHub.test.ts` (GEM Shell does their work now).
+- `Widget.vue` only chooses the face now; the board is `BoardApp.vue` (the old `Widget.vue`).
+
 **0.4.0 (2026-11-21): board and stack files are archives**
 - A `.gembrd` / `.gemstk` file is now a zip archive: `corkboard.json` (the board or the stack, `corkboard: 2`) and its pictures as files (`pictures/1.webp`…, WebP when that's smaller; a picture used twice is stored once). The JSON names each picture (`pic`) instead of holding it as base64 text.
 - **Why:** the "Blocked: something in GEM Shell tried to load a connection from app/data" of the security log was a `data:` address being fetched (the log showed it as `app/data`: see GEM Shell's `shell-changes-2026-11-21-csp-scheme-names.md`). No picture travels as a `data:` address in a file any more, and the files are about a quarter smaller.

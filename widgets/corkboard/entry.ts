@@ -12,7 +12,7 @@ import { COMMANDS, GESTURES } from './commands'
 export default {
     api: '1.0',
     id: 'corkboard',
-    version: '0.4.0',   // 0.4.0 (2026-11-21): board and stack files are archives (corkboard.json + the pictures as files: no data: addresses, the "a connection from app/data" block; opens up to 256 MB, was 8). Older files and copies pasted as text are no longer read (no users yet). 0.3.1 (2026-11-21): round checkboxes: "( ) " / "(x) " make one; right-click a box ▸ Round / Square checkboxes changes its whole list. 0.3.0 (2026-11-14): the board's surface follows GEM Shell's Widget backgrounds (opacity); the chrome on GEM Shell's colours. 0.2.6 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step)
+    version: '0.5.0',   // 0.5.0 (2026-11-22): the pad: in the sidebar (its layout: the pad by default, or the board, which has a height of its own there now) and the toolbar (📝, in a popover), a notepad you tear pages from: Send to… lists the Corkboards ▸ their boards ▸ their stacks (or a new stack), Alt+Enter sends again where it went last; Open… keeps any note there, live with its board. The desk is GEM Shell's copy data (sdk.instanceData's live document 'desk': one object for the board and a pad in the page, caught up from another window, kept when the copy is removed: Add widget ▸ Removed; a 0.4 desk is brought in once). 0.4.0 (2026-11-21): board and stack files are archives (corkboard.json + the pictures as files: no data: addresses, the "a connection from app/data" block; opens up to 256 MB, was 8). Older files and copies pasted as text are no longer read (no users yet). 0.3.1 (2026-11-21): round checkboxes: "( ) " / "(x) " make one; right-click a box ▸ Round / Square checkboxes changes its whole list. 0.3.0 (2026-11-14): the board's surface follows GEM Shell's Widget backgrounds (opacity); the chrome on GEM Shell's colours. 0.2.6 (2026-11-14): sizes follow Appearance (built with the Text size / Roundness step)
     license: 'PolyForm-Noncommercial-1.0.0',
     Component: Widget,
     displayName: 'GEM Corkboard',
@@ -26,7 +26,16 @@ export default {
 
     contexts: {
         grid: { minSize: { cols: 2, rows: 2 }, defaultSize: { cols: 6, rows: 4 } },
-        sidebar: { minHeight: 320, scroll: 'self' },
+        // 0.5.0: the pad (Pad.vue, the default), or the full board
+        sidebar: {
+            minHeight: 320, scroll: 'self',
+            layouts: [
+                { id: 'pad',   icon: '📝', tooltip: 'Quick-note pad' },
+                { id: 'board', icon: '▦', tooltip: 'Full board' },
+            ],
+        },
+        // 0.5.0: a 📝 button, the pad in a popover
+        toolbar: { minWidth: 32, layouts: [{ id: 'pad', icon: '📝', tooltip: 'Quick-note pad' }] },
     },
 
     // ── Keys and gestures (commands.ts): the key mapper runs the commands while the Corkboard has your focus;
@@ -39,6 +48,16 @@ export default {
     menus: { items: MENU_ITEMS },
 
     defaults: { data: {}, view: {} },
+
+    // 0.5.0: Add widget ▸ Removed says what a removed copy kept (its desk: GEM Shell's copy data, read-only)
+    preview: {
+        summary: async (data: { read<T>(name: string): Promise<T | null> }) => {
+            const d = await data.read<{ boards?: unknown[]; notes?: Record<string, unknown> }>('desk')
+            if (!d || !Array.isArray(d.boards)) return null
+            const boards = d.boards.length, notes = Object.keys(d.notes ?? {}).length
+            return `${boards} ${boards === 1 ? 'board' : 'boards'}, ${notes} ${notes === 1 ? 'note' : 'notes'}`
+        },
+    },
 
     capabilities: [
         { cap: 'Media', reason: 'Keeps the screenshots and pictures you paste into notes or pin on the board, so you can draw on them.' },

@@ -38,7 +38,7 @@
                         <button ref="panelBtn" class="cb-ib" type="button" title="Stack options" aria-label="Stack options" @click="panel">⋯</button>
                         <button class="cb-ib" type="button" title="Back (Esc)" aria-label="Back" @click="desk.closeStack()">✕</button>
                     </header>
-                    <div class="cb-sh-body"><div ref="pageEl" class="cb-page"></div></div>
+                    <div class="cb-sh-body"><div ref="pageEl" class="cb-page" @focusout="onPageFocusOut"></div></div>
                     <footer class="cb-sh-foot">
                         <button class="cb-fb" type="button" v-gex-command="'sketch'" aria-label="Insert a drawing">✎<span class="cb-lbl">Sketch</span></button>
                         <button class="cb-fb" type="button" v-gex-command="'table'" aria-label="Insert a table">▦<span class="cb-lbl">Table</span></button>
@@ -101,12 +101,16 @@ const doneOf = (id: string) => { const n = notes.value[id]; const p = n && progr
 // ── The editor ──────────────────────────────────────────────────────────────
 let editor: NoteEditor | null = null
 const caretTick = ref(0)
+/** 0.5.0: this editor's own edits, told apart from a pad's (GEM Shell's live document: the pad edits the same desk). */
+const EDITOR_TAG = Symbol('stack-view')
+/** 0.5.0: the note changed elsewhere while the caret was in it: drawn again when the caret leaves. */
+let stale = false
 function mountEditor() {
     if (!pageEl.value) return
     editor?.destroy()
     editor = new NoteEditor(pageEl.value, {
         note: () => desk.activeNote(stack.value),
-        changed: () => { desk.autoName(stack.value); desk.save() },
+        changed: () => { desk.autoName(stack.value); desk.save(); desk.noteEdited(note.value.id, EDITOR_TAG) },
         used: id => desk.used(id),
         tool: () => sh.tool.value,
         penMode: () => desk.d.value.penMode,
@@ -121,6 +125,18 @@ function mountEditor() {
 }
 // another note, or the desk put back by Undo: draw it again
 watch([() => stack.value.active, () => desk.d.value], () => { editor?.render(); nextTick(() => editor?.focusEnd()) })
+// 0.5.0: a pad edited this note (the same desk): drawn again now, or once the caret leaves it (never under the caret)
+const offNote = desk.onNoteEdited((id, source) => {
+    if (source === EDITOR_TAG || !editor || (id && id !== note.value.id)) return
+    if (pageEl.value?.contains(document.activeElement)) { stale = true; return }
+    editor.render()
+})
+function onPageFocusOut(e: FocusEvent) {
+    if (!stale || pageEl.value?.contains(e.relatedTarget as Node | null)) return
+    stale = false
+    editor?.render()
+}
+onBeforeUnmount(() => offNote())
 
 /** Commands for the open note (Widget.vue's onCommand and the menus). */
 function editorCommand(id: string, blockId?: string) {

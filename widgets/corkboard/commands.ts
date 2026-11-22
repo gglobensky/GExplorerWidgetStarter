@@ -1,6 +1,6 @@
 // widgets/corkboard/commands.ts
 //
-// THE CORKBOARD'S KEYS AND GESTURES (0.1.1; 0.2.0: Insert a table; 0.2.5: New line in the same item): what entry.ts declares to the key mapper (commands) and to the key
+// THE CORKBOARD'S KEYS AND GESTURES (0.1.1; 0.2.0: Insert a table; 0.2.5: New line in the same item; 0.5.0: Pad: send the page): what entry.ts declares to the key mapper (commands) and to the key
 // pages (gestures, CORKBOARD-SHELL-ADDITIONS.md B). Here, not in entry.ts, so the editor can read which keys are
 // commands: a plain key bound to one (Down, Enter...) is left to the key mapper, never handled by the editor first.
 
@@ -27,6 +27,9 @@ export const COMMANDS = [
       description: 'Shows the next page of stacks when the board has more than one.' },
     { id: 'prev-page', name: 'Previous page of the board', keys: ['PageUp'],
       description: 'Shows the previous page of stacks.' },
+    // 0.5.0: the pad (the sidebar's or toolbar's quick note): Ctrl+Enter is the checkbox's
+    { id: 'pad-send', name: 'Pad: send the page', keys: ['Alt+Enter'], whileTyping: true,
+      description: 'In the pad: sends the page to the stack it went to last (the first time: asks which board and stack).' },
     // 0.2.5 (Guillaume): Shift+Enter is a new line inside the item; ending the list has no key of its own by default
     { id: 'line-break', name: 'New line in the same item', keys: ['Shift+Enter'], whileTyping: true,
       description: 'Starts a new line inside the list item or table cell you are in, so an item can have several lines.' },

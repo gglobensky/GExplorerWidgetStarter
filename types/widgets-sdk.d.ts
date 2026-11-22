@@ -169,6 +169,29 @@ declare module 'gexplorer/widgets' {
          */
         inPreview?: () => boolean
         /**
+         * NEW (GEM Shell 2026-11-22): which preview you are in: 'appearance' (Appearance's stage), 'catalog' (Add
+         * widget: show what you are; sample content if you have none), 'removed' (Add widget ▸ Removed: a removed copy
+         * with ITS OWN data, read-only: show it plainly, it's how the user sees what that copy kept). null: placed.
+         */
+        previewKind?: () => 'appearance' | 'catalog' | 'removed' | null
+        /**
+         * NEW (GEM Shell 2026-11-22): THIS COPY'S OWN DATA, KEPT BY GEM SHELL. Use it for anything you keep per copy
+         * (a board's notes, a page not sent yet) instead of configRead / configWrite under names you make up: it costs
+         * you nothing more, and GEM Shell then knows what belongs to which copy:
+         *   - a copy the user removes keeps its data: Add widget ▸ Removed shows it (your widget itself, previewKind
+         *     'removed', reading that data), and the user places it again with its data, or deletes it for good;
+         *   - live(name, init) gives one live document for every holder in the page (two copies showing the same notes
+         *     edit the same object: nothing to merge), saved shortly after each changed(), flushed when the page hides,
+         *     and caught up when the window comes back if another window saved a newer one;
+         *   - of(id) reaches another copy of your widget (copies() lists those placed now, with their place's name).
+         * configRead / configWrite stay for what all your copies share. In a preview nothing is written.
+         *   const notes = sdk.instanceData!().live('notes', () => ({ items: [] as string[] }))
+         *   await notes.ready
+         *   notes.value.value.items.push('Milk'); notes.changed()
+         *   onBeforeUnmount(() => notes.release())
+         */
+        instanceData?: () => WidgetInstanceData
+        /**
          * 2026-10-31: GEM Shell's file preferences, set by the user in Settings ▸ Files & drives, for every widget
          * alike: show hidden files, show protected system files. Read-only and reactive: watch it and list again
          * (pass them to openListing's filter: showHidden / showProtected). Absent on older shells. Same object on
@@ -1399,7 +1422,51 @@ declare module 'gexplorer/widgets' {
         surface?: true | `--my-${string}`
     }
     /** entry.ts `preview` (GEM Shell 2026-11-18): the preview copy's own starting config, over your `defaults`. */
-    export type WidgetPreviewDecl = { config?: { data?: Record<string, unknown>; view?: Record<string, unknown> } }
+    export type WidgetPreviewDecl = {
+        config?: { data?: Record<string, unknown>; view?: Record<string, unknown> }
+        /**
+         * NEW (GEM Shell 2026-11-22): one line about a removed copy's data, shown in Add widget ▸ Removed ("3 boards,
+         * 42 notes"). Called without your widget on screen, with that copy's data, read-only. null: nothing to say.
+         */
+        summary?: (data: WidgetInstanceData) => Promise<string | null> | string | null
+    }
+
+    // ── A copy's own data: sdk.instanceData() (GEM Shell 2026-11-22) ────────────────────────────────────────────
+    /** A document of the copy's: its name (letters, digits, . _ - and up to 3 "/"), size and last save. */
+    export type InstanceDocInfo = { name: string; bytes: number; modified: number }
+    /** A copy of your widget placed now: id (pass it to of()), its place's name ("Home hub", "Sidebar"), where in it. */
+    export type WidgetCopyInfo = { id: string; label: string; where: string; self: boolean }
+    /** What a live document's onChange hears: another holder's changed(detail), or external (another window saved). */
+    export type LiveChange = { detail?: unknown; external: boolean }
+    export interface LiveDoc<T> {
+        /** The value: one object for every holder in the page. Change it in place then changed(), or set .value. */
+        readonly value: import('vue').ShallowRef<T>
+        /** Bumped on every change: read it in a computed to follow changes made in place. */
+        readonly version: Readonly<import('vue').Ref<number>>
+        /** Resolves once it's read. */
+        readonly ready: Promise<void>
+        /** No document and no init to make one (another copy's that was deleted). */
+        readonly missing: Readonly<import('vue').Ref<boolean>>
+        /** Something changed: the other holders hear it (onChange, version); saved shortly. detail: handed to them. */
+        changed(detail?: unknown): void
+        /** Saves what is pending now. */
+        flush(): Promise<void>
+        /** The other holders' changes; external: another window saved a newer copy (value replaced). Returns its off. */
+        onChange(fn: (c: LiveChange) => void): () => void
+        /** Done with it (on unmount): the last holder saves what is pending. */
+        release(): void
+    }
+    export interface WidgetInstanceData {
+        /** This copy's id: stable, also when the user places it again from Removed. */
+        readonly id: string
+        live<T>(name: string, init?: () => T): LiveDoc<T>
+        read<T = unknown>(name: string): Promise<T | null>
+        write(name: string, value: unknown): Promise<void>
+        remove(name: string): Promise<boolean>
+        list(): Promise<InstanceDocInfo[]>
+        copies(): Promise<WidgetCopyInfo[]>
+        of(id: string): WidgetInstanceData
+    }
 
     /** sdk.prefs() (2026-10-31): GEM Shell's file preferences, the user's, read-only. */
     export interface WidgetShellPrefs {

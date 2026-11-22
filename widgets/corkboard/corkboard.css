@@ -3,7 +3,7 @@
    takes GEM Shell's theme. Paper stays paper-coloured in both themes, as real notes do. Handwriting: Windows' own
    Ink Free / Segoe Print (nothing downloaded). Every class is cb-*: the dialogs live in GEM Shell's popovers. */
 
-.cb-root, .cb-dlg, .cb-panel, .cb-ghost {
+.cb-root, .cb-dlg, .cb-panel, .cb-ghost, .cb-pad, .cb-toolbtn {
     /* 0.3.0 (2026-11-14): the chrome on GEM Shell's public variables (the starter README "Colours and fonts") */
     --cb-fg: var(--gex-fg, #e8e4dc);
     --cb-muted: color-mix(in oklab, var(--cb-fg) 62%, transparent);
@@ -38,9 +38,9 @@
 .p-yellow { --pinc: var(--cb-pin-yellow); } .p-black { --pinc: var(--cb-pin-black); }
 
 .cb-root { position: relative; height: 100%; display: flex; flex-direction: column; color: var(--cb-fg); background: color-mix(in srgb, var(--cb-surf) var(--cb-surf-alpha), transparent); container-type: inline-size; container-name: cb; outline: none; font-size: 13px; }
-.cb-root *, .cb-dlg *, .cb-panel * { box-sizing: border-box; }
-.cb-root button, .cb-dlg button, .cb-panel button { font: inherit; color: inherit; }
-.cb-root :focus-visible, .cb-dlg :focus-visible, .cb-panel :focus-visible { outline: 2px solid var(--cb-accent); outline-offset: 2px; }
+.cb-root *, .cb-dlg *, .cb-panel *, .cb-pad * { box-sizing: border-box; }
+.cb-root button, .cb-dlg button, .cb-panel button, .cb-pad button { font: inherit; color: inherit; }
+.cb-root :focus-visible, .cb-dlg :focus-visible, .cb-panel :focus-visible, .cb-pad :focus-visible { outline: 2px solid var(--cb-accent); outline-offset: 2px; }
 .cb-root kbd, .cb-hint kbd { font: 500 10.5px/1.5 var(--cb-mono); padding: 0 4px; border-radius: 4px; border: 1px solid color-mix(in oklab, currentColor 28%, transparent); background: color-mix(in oklab, currentColor 7%, transparent); white-space: nowrap; }
 .cb-sp { flex: 1; display: inline-block; min-width: 12px; }
 
@@ -329,3 +329,32 @@
 .cb-mi.danger { color: #e2695d !important; }
 
 @media (prefers-reduced-motion: reduce) { .cb-root *, .cb-dlg * { transition: none !important; animation: none !important; } }
+
+/* 0.5.0: the pad (Pad.vue): a notepad in the sidebar or the toolbar's popover; Send to… tears the page off */
+.cb-pad { min-height: 0; display: flex; flex-direction: column; color: var(--cb-fg); font-size: 13px; outline: none; }
+/* the sidebar (scroll 'self'): as tall as its page, from 300 px, shrinking to the sidebar's maximum (the page scrolls then) */
+.cb-pad:not(.in-pop) { min-height: 300px; }
+.cb-pad.in-pop { width: 320px; height: 380px; }
+.cb-pad-bar { display: flex; align-items: center; gap: 2px; height: 34px; padding: 0 4px 0 8px; flex: none; }
+.cb-pad-where { font: 600 16px/1 var(--cb-hand); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.cb-pad .cb-ib { width: 28px; height: 28px; }
+.cb-pad-sheet { flex: 1 1 auto; min-height: 0; margin: 0 8px; position: relative; display: flex; flex-direction: column; background: var(--pc); color: var(--cb-paper-fg);
+    border-radius: 2px 2px 3px 3px; box-shadow: 0 1px 2px rgba(0, 0, 0, .22), 0 8px 14px -8px var(--cb-shadow), 0 3px 0 -1px color-mix(in oklab, var(--pc) 88%, #000), 0 6px 0 -2px color-mix(in oklab, var(--pc) 80%, #000);
+    transform-origin: 50% 0; transition: transform .32s ease-in, opacity .32s ease-in; }
+.cb-pad-holes { height: 14px; flex: none; border-bottom: 1px dashed color-mix(in oklab, var(--cb-paper-fg) 22%, transparent);
+    background: radial-gradient(circle, color-mix(in oklab, var(--cb-paper-fg) 35%, transparent) 0 2.5px, transparent 3px) 6px 50% / 16px 14px repeat-x; }
+.cb-pad-page { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 6px 10px 10px; }
+.cb-pad.torn .cb-pad-sheet { transform: translate(30%, -14px) rotate(7deg); opacity: 0; }
+.cb-pad-foot { display: flex; gap: 4px; padding: 8px; flex: none; }
+.cb-pad-send { flex: 1; min-width: 0; height: 30px; border: 0; border-radius: 7px; cursor: pointer; padding: 0 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    background: color-mix(in oklab, var(--cb-accent) 26%, transparent); }
+.cb-pad-send:hover:not(:disabled) { background: color-mix(in oklab, var(--cb-accent) 38%, transparent); }
+.cb-pad-send:disabled { opacity: .45; cursor: default; }
+.cb-pad-send.alt { flex: none; width: 32px; padding: 0; }
+@media (prefers-reduced-motion: reduce) { .cb-pad-sheet { transition: none; } }
+.cb-toolbtn { height: 100%; min-width: 32px; display: grid; place-items: center; border: 0; border-radius: 6px; background: none; color: var(--cb-fg); cursor: pointer; font-size: 16px; padding: 0 6px; }
+.cb-toolbtn:hover, .cb-toolbtn.open { background: color-mix(in oklab, var(--cb-fg) 10%, transparent); }
+/* 0.5.0: the full board in the sidebar. The sidebar (scroll 'self') makes a widget as tall as its content, and the board
+   has none of its own (it fills what it's given): it was 0 px high under its bar. A height of its own now, shrinking to
+   the sidebar's maximum. */
+.cb-root.narrow { height: max(320px, 60vh); flex: 0 1 auto; min-height: 0; }

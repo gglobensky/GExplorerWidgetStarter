@@ -1,16 +1,20 @@
 // widgets/corkboard/store.ts
 //
-// ONE COPY'S DESK (0.1.0): its boards, groups, stacks and notes, kept in the widget's own document
-// 'desk-<sourceId>' (configRead / configWrite: per copy, as the Video Club's library). Saved shortly after a
-// change (debounced) and at once when the widget is suspended, hidden or unmounted.
+// ONE COPY'S DESK (0.1.0): its boards, groups, stacks and notes. CHANGED (0.5.0): kept by GEM Shell as the copy's own
+// data (sdk.instanceData(): its live document 'desk'), so a removed Corkboard keeps its notes (Add widget ▸ Removed:
+// seen, placed again, or deleted by the user). Saved shortly after a change and when the page hides.
 //
 // Everything that changes the desk goes through here, so the board, the open stack and the menus agree:
 // views (board ▸ group ▸ stack), stacks, notes, groups and their pins, boards, flags and due dates. A change
 // that removes things takes a snapshot first: the snackbar's Undo puts it back.
 // Pictures are GEM Shell image assets ('persistent'): made from pasted or dropped pictures and from copies;
 // deleted a while after the last note using them is gone (not at once: Undo may bring the note back).
+// NEW (0.5.0, the pad): the live document is ONE object for everything showing the desk in this page (its board, a pad
+// holding one of its notes: each its own Desk over it), saved by GEM Shell, caught up by it when another window saved
+// a newer one. A change is announced to the other Desks (their views recompute); a note edited by one editor too
+// (noteEdited / onNoteEdited), so the others showing it draw it again.
 import { ref, computed, shallowRef, triggerRef, type Ref } from 'vue'
-import type { WidgetSdk, GridRect } from 'gexplorer/widgets'
+import type { WidgetSdk, GridRect, LiveDoc } from 'gexplorer/widgets'
 import {
     type DeskData, type Stack, type Group, type Board, type Note, type Block, type Item, type Place, type FlagId, type Photo,
     type PinColor, type Surface, type PaperColor,
@@ -19,15 +23,23 @@ import {
 import { layoutView, placeNew, type Geometry } from './layout'
 import { seedDesk } from './exchange'
 
-const SAVE_MS = 700
 const PICTURE_GRACE_MS = 20_000
 
 export type Desk = ReturnType<typeof createDesk>
 /** A picture to make an asset of: a pasted / dropped file, a file's picture (0.4.0), or (0.2.1) a path from ui.openFiles. */
 export type PictureSource = Blob | { path: string }
 
-export function createDesk(sdk: WidgetSdk, sourceId: string) {
-    const docName = 'desk-' + String(sourceId || 'default').replace(/[^a-z0-9_-]/gi, '_').slice(0, 80)
+/** What a Desk tells the other Desks over the same document (LiveDoc.changed's detail): a note edited, by whom. */
+type DeskNews = { noteId: string | null; source?: unknown }
+
+/**
+ * CHANGED (0.5.0): <copyId>: another copy's desk (a pad sending to it, or keeping one of its notes); absent: this copy's.
+ */
+export function createDesk(sdk: WidgetSdk, copyId?: string) {
+    const own = sdk.instanceData!()
+    const data = copyId && copyId !== own.id ? own.of(copyId) : own
+    let doc: LiveDoc<DeskData> | null = null
+    let offDoc: (() => void) | null = null
     const d: Ref<DeskData> = shallowRef(emptyDesk())
     const ready = ref(false)
     /** The board's last grid (Board.vue measures it): where new stacks go while a stack is open. */
@@ -36,36 +48,63 @@ export function createDesk(sdk: WidgetSdk, sourceId: string) {
     const tick = ref(0)
     const changed = () => { tick.value++; triggerRef(d) }
 
-    // ── Load / save ─────────────────────────────────────────────────────────
-    let saveT: ReturnType<typeof setTimeout> | null = null
-    let dirty = false
+    // ── Load / save (CHANGED 0.5.0: GEM Shell's live document) ─────────────
+    /** The desk has no document (a pad opened a Corkboard whose data is gone): nothing is saved. */
+    const missing = ref(false)
 
-    async function load() {
+    /**
+     * create (default true): a desk with no document yet is made (the "Start here" stack); false (a pad opening another
+     * copy's desk): it stays missing. legacy: this copy's sourceId, to bring in a desk saved by 0.4 ('desk-<sourceId>',
+     * TEMPORARY: Guillaume's boards, once).
+     */
+    async function load(opts: { create?: boolean; legacy?: string } = {}) {
+        if (doc) return
         try {
-            const doc = await sdk.configRead?.<DeskData>(docName)
-            if (doc && doc.schema === 1 && Array.isArray(doc.boards) && doc.boards.length) d.value = normalize(doc)
-            else { const fresh = emptyDesk(); seedDesk(fresh); d.value = fresh; dirty = true; void flush() }
-        } catch (err) {
-            console.warn('[corkboard] could not read the desk', err)
-            const fresh = emptyDesk(); seedDesk(fresh); d.value = fresh
-        }
+            if (opts.legacy && data === own && await own.read('desk') == null) {
+                const old = await sdk.configRead?.<DeskData>('desk-' + opts.legacy.replace(/[^a-z0-9_-]/gi, '_').slice(0, 80))
+                if (old && old.schema === 1 && Array.isArray(old.boards) && old.boards.length) await own.write('desk', old)
+            }
+        } catch (err) { console.warn('[corkboard] the 0.4 desk was not brought in', err) }
+        doc = data.live<DeskData>('desk', opts.create === false ? undefined : () => { const fresh = emptyDesk(); seedDesk(fresh); return fresh })
+        await doc.ready
+        if (doc.missing.value) missing.value = true
+        else d.value = normalize(doc.value.value)
+        // Another Desk changed it (or another window: value replaced): the same object here, views recompute
+        offDoc = doc.onChange(c => {
+            if (doc && doc.value.value && d.value !== doc.value.value) { d.value = normalize(doc.value.value); missing.value = false }
+            changed()
+            const news = c.detail as DeskNews | undefined
+            if (c.external) tellNotes(null, 'doc')
+            else if (news && 'noteId' in news) tellNotes(news.noteId, news.source)
+        })
         ready.value = true
         changed()
     }
 
+    // NEW (0.5.0): a note edited by one editor; the others showing it draw it again (null: the whole desk changed)
+    const noteFns = new Set<(noteId: string | null, source: unknown) => void>()
+    function tellNotes(noteId: string | null, source?: unknown) {
+        for (const f of [...noteFns]) { try { f(noteId, source) } catch (err) { console.warn('[corkboard] a note listener failed', err) } }
+    }
+    function noteEdited(noteId: string | null, source?: unknown) {
+        tellNotes(noteId, source)
+        doc?.changed({ noteId, source } satisfies DeskNews)
+    }
+    function onNoteEdited(f: (noteId: string | null, source: unknown) => void): () => void { noteFns.add(f); return () => { noteFns.delete(f) } }
+
     function save() {
-        dirty = true
         changed()
-        if (saveT) clearTimeout(saveT)
-        saveT = setTimeout(() => { void flush() }, SAVE_MS)
+        if (missing.value) return
+        if (doc && doc.value.value !== d.value) doc.value.value = d.value   // replaced here (Undo)
+        doc?.changed()
     }
 
-    async function flush() {
-        if (saveT) { clearTimeout(saveT); saveT = null }
-        if (!dirty || !sdk.configWrite) return
-        dirty = false
-        try { await sdk.configWrite(docName, d.value) }
-        catch (err) { dirty = true; console.warn('[corkboard] could not save the desk', err) }
+    async function flush() { await doc?.flush() }
+
+    /** Done with it (unmount, a pad done sending): saved, then let go. */
+    function release() {
+        offDoc?.(); offDoc = null
+        doc?.release(); doc = null
     }
 
     // ── Undo ────────────────────────────────────────────────────────────────
@@ -509,14 +548,15 @@ export function createDesk(sdk: WidgetSdk, sourceId: string) {
     function labelOf(it: Item): string { return it.kind === 'photo' ? (it.caption || 'Picture') : it.name }
 
     // ── Hints learned ───────────────────────────────────────────────────────
-    function used(id: string) { d.value.learned[id] = (d.value.learned[id] ?? 0) + 1; dirty = true }
+    function used(id: string) { d.value.learned[id] = (d.value.learned[id] ?? 0) + 1; doc?.changed() }
     const learned = (id: string) => (d.value.learned[id] ?? 0) >= 3
 
     return {
         d, ready, geo, tick, load, save, flush, snapshot, told,
+        missing, noteEdited, onNoteEdited, release,
         board, focused, openGroupObj, stackById, groupById, photoById, itemById, viewStacks, viewGroups, viewPhotos, viewItems, activeNote,
         openPhotoObj, addPhoto, openPhoto, closePhoto, setCaption, deletePhoto, labelOf,
-        viewCols, page, setPage, layoutNow, commitView, newPlace, moveToPage,
+        viewCols, page, setPage, layoutNow, commitView, newPlace, placeIn, moveToPage,
         openStack, closeStack, openGroup, leaveGroup, goBack, switchBoard, selectNote, stepNote,
         addStack, addNote, autoName, mergeInto, swapPlaces, joinGroup, leaveGroupWith, moveStackToBoard, moveNote, reorderNote,
         duplicateNote, deleteNote, deleteStack, toggleFlag, setDue, setColor, cleanupEmpty, stackOfNote,
@@ -527,9 +567,15 @@ export function createDesk(sdk: WidgetSdk, sourceId: string) {
 
 /** A document read back: the fields this version knows, with safe defaults (an older or hand-edited one). */
 import { fitWidths } from './table'
+// CHANGED (0.5.0): in place, once per object (WeakSet): every Desk over the live document keeps the same stacks and notes
+const normalized = new WeakSet<object>()
 function normalize(doc: DeskData): DeskData {
+    if (normalized.has(doc)) return doc
+    normalized.add(doc)
     const base = emptyDesk()
-    const o: DeskData = { ...base, ...doc }
+    const docGrid = doc.grid
+    const o: DeskData = doc
+    for (const [k, v] of Object.entries(base)) if ((o as any)[k] === undefined) (o as any)[k] = v
     o.boards = (o.boards ?? []).filter(b => b && b.id)
     if (!o.boards.length) o.boards = base.boards
     if (!o.boards.some(b => b.id === o.board)) o.board = o.boards[0].id
@@ -543,7 +589,7 @@ function normalize(doc: DeskData): DeskData {
     o.learned = o.learned ?? {}
     o.pages = o.pages ?? {}
     // 0.2.5: a 0.2.4 desk is read in the finer grid once (every cell 2 × 2: it looks as it did); saved as such
-    if (doc.grid !== GRID) {   // (the doc's own: `o` has emptyDesk's)
+    if (docGrid !== GRID) {   // (the doc's own, before the defaults)
         for (const it of [...o.stacks, ...o.groups, ...o.photos]) if (it.place) it.place = finerPlace(it.place)
         for (const b of o.boards) b.cols = (b.cols || 0) * GRID
         for (const g of o.groups) g.cols = (g.cols || 0) * GRID
