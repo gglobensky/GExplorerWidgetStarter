@@ -151,8 +151,15 @@ async function onWidgetAction(msg: any) {
     const paths: string[] = Array.isArray(args.paths) ? args.paths : String(msg.payload?.tokens?.path ?? '').split('\n').filter(Boolean)
     const folder = paths.find(isFolderPath)
     if (!folder) return
+    // 0.3.2 (Guillaume): the console shows at once (its spinner, then "Starting Git Bash…"), before its first start-up
+    // is done; Start already points there
+    if (!con.tabs.value.some(t => t.kind === 'shell' && !t.ended)) con.st.startIn = folder
+    void showConsole()
     await initDone   // brought on screen for it: the shells and the live consoles first
-    const wanted = typeof msg.payload?.choiceId === 'string' && con.st.shells.some(s => s.id === msg.payload.choiceId) ? msg.payload.choiceId as string : null
+    // FIX (0.3.3, Guillaume: the first time it was always PowerShell): with no shells listed yet (the permission not
+    // given: GEM Shell listed the rows itself), the shell chosen is taken as it is (terminal.open checks it)
+    const choice = typeof msg.payload?.choiceId === 'string' ? msg.payload.choiceId as string : null
+    const wanted = choice && (!con.st.shells.length || con.st.shells.some(s => s.id === choice)) ? choice : null
     const live = con.tabs.value.filter(t => t.kind === 'shell' && !t.ended)
     const a = con.active.value
     const target = wanted
@@ -161,7 +168,6 @@ async function onWidgetAction(msg: any) {
     if (target) {
         if (target.key !== con.st.active) con.select(target.key)
         await con.moveTo(folder)
-        await showConsole()   // 0.3.1: a move waiting for a command to end shows as such in it
         return
     }
     // permission not given yet: no shells listed; the usual one (GEM Shell asks first, as Start does)
@@ -171,10 +177,8 @@ async function onWidgetAction(msg: any) {
         // Not started (no click to start it with any more, the permission declined…): Start points there
         con.st.startIn = folder
         say(err, 6000)
-        await showConsole()   // 0.3.1: its Start, pointing there
         return
     }
-    await showConsole()
 }
 
 // ── The toolbar: a console popover growing out of the button ────────────────
