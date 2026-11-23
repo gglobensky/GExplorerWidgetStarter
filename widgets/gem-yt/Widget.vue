@@ -6,7 +6,10 @@
 // channel's uploads and subscribers kept over time, and a slow background survey of the channels not read yet;
 // 0.3.1: posting rhythm on the posters (a chart, ~2/wk, Overdue), quiet channels put away at the aisle's end, a filter;
 // 0.3.2: the aisle holds still while you look: quiet racks are put away when it's (re)arranged, and a reorder keeps
-// the rack you went to, or the ones in view, where they were). Two modes, per copy (its state):
+// the rack you went to, or the ones in view, where they were; 0.3.3: your own aisles (aisles.ts), and Since you were
+// here: your channels' videos that came out since your last visit, first in the aisle; 0.3.4: the channel list is
+// GEM Shell's menu, with a filter of its own, and in an aisle a check beside each channel puts it in or takes it out;
+// the survey paces itself like a person (45 s to 2 min) and pauses an hour when YouTube stops answering). Two modes, per copy (its state):
 //   - GEM YT (racks): the store floor of library-ui 3.9.0 (shared/library-ui): one rack per channel you follow, its
 //     poster on top (avatar, name, subscribers), its latest videos as DVD cases lying on their side. A click on a rack
 //     opens its department; a click on a case plays the video (Standard mode, on its page). The data is YouTube's own
@@ -21,8 +24,9 @@ import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, 
 import type { WidgetSdk } from 'gexplorer/widgets'
 import { LibraryFloor, skinClass, skinStyle } from '@shared/library-ui'
 import { BROADCAST } from './skin'
+import { AISLES_DOC, addAisle, readAisles, removeAisle, renameAisle, toggleChannel, type Aisles } from './aisles'
 import { LEDGER_DOC, MEMORY_DOC, emptyLedger, lastUpload, makeMemory, rhythmOf, noteRead, noteSubscribers, noteSurvey, noteUploads, readLedger, readMemory, surveyNext } from './memory'
-import { boxOf, captionOf, channelOf, channelParam, clock, feedShelfOf, FEEDS, isFeed, shelfOf, videoOf, type Channel, type PosterInfo, type Video, type YtVideo } from './racks'
+import { agoShort, boxOf, captionOf, channelOf, channelParam, clock, feedShelfOf, FEEDS, isFeed, shelfOf, videoOf, type Channel, type PosterInfo, type Video, type YtVideo } from './racks'
 
 const HOME = 'https://www.youtube.com/'
 /** The pictures of every box a rack shows (its shelves x 3, measured; this until it is); a department: all of its own. */
@@ -35,7 +39,7 @@ const web = (sdk as any)?.web?.()
 const yt = (sdk as any)?.pageData?.('youtube')
 const settings = sdk?.settings?.()
 const data = sdk?.instanceData?.()
-const state = data?.live('state', () => ({ url: HOME, mode: 'racks' as Mode, filter: 'all' as Filter }))
+const state = data?.live('state', () => ({ url: HOME, mode: 'racks' as Mode, filter: 'all' as Filter, aisle: null as string | null, listFilter: 'all' as Filter }))
 
 type Mode = 'racks' | 'standard'
 /** 0.3.1: which racks the aisle shows (per copy). */
@@ -62,7 +66,7 @@ function pagesSetting(): 'auto' | 'desktop' | 'mobile' {
   return v === 'desktop' || v === 'mobile' ? v : 'auto'
 }
 
-function save(patch: Partial<{ url: string; mode: Mode; filter: Filter }>) {
+function save(patch: Partial<{ url: string; mode: Mode; filter: Filter; aisle: string | null; listFilter: Filter }>) {
   if (!state) return
   state.value.value = { ...(state.value.value ?? { url: HOME }), ...patch }
   state.changed()
@@ -258,6 +262,97 @@ function setFilter(ev: Event) {
   activeId.value = null
   void nextTick(() => requestAnimationFrame(stockVisible))
 }
+// ── 0.3.3: your own aisles (aisles.ts) ───────────────────────────────────────────────────────────────────────────
+const aislesDoc = ref<Aisles>({ version: 1, aisles: [] })
+/** The aisle this copy shows (null: every channel). */
+const aisleId = ref<string | null>(null)
+const currentAisle = computed(() => aislesDoc.value.aisles.find(a => a.id === aisleId.value) ?? null)
+/** Naming an aisle in the bar: a new one (for a channel, from its department), or the current one renamed. */
+const naming = ref<{ mode: 'new'; channelId?: string } | { mode: 'rename' } | null>(null)
+const nameDraft = ref('')
+const nameInput = ref<HTMLInputElement | null>(null)
+const confirmingDelete = ref(false)
+
+function aislesChanged() {
+  aislesDoc.value = { version: 1, aisles: aislesDoc.value.aisles.map(a => ({ ...a, channels: [...a.channels] })) }
+  if (!(sdk as any)?.inPreview?.()) void sdk?.configWrite?.(AISLES_DOC, aislesDoc.value).catch(err => console.warn('[GEM YT] aisles not saved', err))
+}
+function showAisle(id: string | null) {
+  aisleId.value = id
+  save({ aisle: id })
+  confirmingDelete.value = false
+  anchorId = null
+  settleAisle()
+  activeId.value = null
+}
+function setAisle(ev: Event) {
+  const select = ev.target as HTMLSelectElement
+  const v = select.value
+  if (v === '__new') { select.value = aisleId.value ?? ''; startNaming({ mode: 'new' }); return }
+  showAisle(v || null)
+}
+function startNaming(n: NonNullable<typeof naming.value>) {
+  naming.value = n
+  nameDraft.value = n.mode === 'rename' ? currentAisle.value?.name ?? '' : ''
+  void nextTick(() => { nameInput.value?.focus(); nameInput.value?.select() })
+}
+function commitName() {
+  const n = naming.value
+  if (!n || !nameDraft.value.trim()) { naming.value = null; return }
+  if (n.mode === 'rename') { if (aisleId.value && renameAisle(aislesDoc.value, aisleId.value, nameDraft.value)) aislesChanged() }
+  else {
+    const a = addAisle(aislesDoc.value, nameDraft.value)
+    if (a) {
+      if (n.channelId) toggleChannel(aislesDoc.value, a.id, n.channelId)
+      aislesChanged()
+      if (!n.channelId) showAisle(a.id)
+    }
+  }
+  naming.value = null
+}
+function deleteAisle() {
+  if (aisleId.value && removeAisle(aislesDoc.value, aisleId.value)) aislesChanged()
+  showAisle(null)
+}
+function toggleIn(aid: string, channelId: string) {
+  toggleChannel(aislesDoc.value, aid, channelId)
+  aislesChanged()
+}
+
+// ── 0.3.3: Since you were here ─────────────────────────────────────────────────────────────────────────────────────
+// Your channels' videos that came out since your last visit (the subscriptions feed and the racks read), newest first,
+// not the ones you watched; in the aisle shown. Not shown on a first visit, nor when there's nothing new.
+const SINCE = 'mine:since'
+/** When this visit began (saved with the memory) and when the last one did. */
+const visitAt = Date.now()
+const prevVisit = ref<number | null>(null)
+const sinceVideos = computed(() => {
+  const from = prevVisit.value
+  if (!from) return []
+  const only = currentAisle.value ? new Set(currentAisle.value.channels) : null
+  const seen = new Set<string>()
+  const out: Array<{ v: Video; t: number }> = []
+  const add = (v: Video, c: Channel | undefined) => {
+    if (!c || seen.has(v.id) || (only && !only.has(c.id)) || (v.watched ?? 0) >= 90) return
+    const t = time(v.published)
+    if (t === undefined || t <= from) return
+    seen.add(v.id)
+    out.push({ v: { ...v, channelName: c.name }, t })
+  }
+  for (const v of feeds.get('feed:subscriptions') ?? []) add(v, followed.value(v))
+  for (const c of channels.value) for (const v of videos.get(c.id) ?? []) add(v, c)
+  return out.sort((a, b) => b.t - a.t)
+})
+const sinceShelf = computed(() => {
+  const list = sinceVideos.value
+  if (!list.length || !prevVisit.value) return null
+  return {
+    id: SINCE, title: 'Since you were here',
+    note: `${list.length} new ${list.length === 1 ? 'video' : 'videos'} from your channels since your last visit (${agoShort(prevVisit.value, now.value)})`,
+    items: list.map(({ v }, i) => boxOf(v, null, i, pic(v), coming(v))),
+  }
+})
+
 // 0.3.2 (Guillaume: a channel picked in the list, then its rack moved away as the racks around it were read and it
 // turned out quiet): which racks are put away is settled when the aisle is arranged (the last session's at start, the
 // subscriptions feed's order, ⟳, the filter, the setting), not each time the ledger learns something. A rack found
@@ -269,7 +364,8 @@ function settleAisle() {
 watch(quietMs, settleAisle)
 /** The aisle: the racks' order, the put away ones at its end (the back room), as the filter says. */
 const aisle = computed(() => {
-  const list = ordered.value.filter(c => passes(c, filter.value))
+  const only = currentAisle.value ? new Set(currentAisle.value.channels) : null
+  const list = ordered.value.filter(c => passes(c, filter.value) && (!only || only.has(c.id)))
   return [...list.filter(c => !putAway.value.has(c.id)), ...list.filter(c => putAway.value.has(c.id))]
 })
 
@@ -315,13 +411,19 @@ const feedVideos = (id: string) => {
   const list = feeds.get(id)
   return list && id === 'feed:home' ? list.filter(v => !followed.value(v)) : list
 }
-const featuredShelves = computed(() => filter.value !== 'all' ? [] : FEEDS.map(f => feedShelfOf(f, feedVideos(f.id)?.map((v, i) => boxOf(v, null, i, pic(v), coming(v))))))
+const featuredShelves = computed(() => {
+  if (filter.value !== 'all') return []
+  const since = sinceShelf.value ? [sinceShelf.value] : []
+  // The feeds are YouTube's lists, for every channel: with the aisle of every channel only
+  if (currentAisle.value) return since
+  return [...since, ...FEEDS.map(f => feedShelfOf(f, feedVideos(f.id)?.map((v, i) => boxOf(v, null, i, pic(v), coming(v)))))]
+})
 /** The channel list in the bar: A to Z (200+ channels). */
 const byName = computed(() => [...channels.value].sort((a, b) => a.name.localeCompare(b.name)))
 const activeShelf = computed(() => {
   const id = activeId.value
   if (!id) return null
-  if (isFeed(id)) return featuredShelves.value.find(s => s.id === id) ?? null
+  if (isFeed(id) || id === SINCE) return featuredShelves.value.find(s => s.id === id) ?? null
   const c = channels.value.find(x => x.id === id)
   return c ? shelfFor(c) : null
 })
@@ -405,6 +507,7 @@ async function loadVideos(c: Channel, fresh: boolean, pictureCount = -1, prio = 
     reading.add(c.id)
     const r = await yt.read('channel-videos', { channel: param }, { fresh })
     reading.delete(c.id)
+    lastMiss = r.ok ? null : r.reason
     if (!r.ok) {
       if (r.reason === 'declined' || r.reason === 'busy') { problem.value = explain(r); return }
       readNow.add(c.id)
@@ -489,6 +592,7 @@ function stockVisible() {
   const byId = new Map(channels.value.map(c => [c.id, c]))
   wanted = []
   for (const { id, boxes } of seen) {
+    if (id === SINCE) { for (const { v } of sinceVideos.value.slice(0, boxes)) picture(v.thumbnail, THUMB, RACK); continue }
     // 0.3.0: a remembered rack shows what it had; its pictures are asked once it's read again this session
     if (isFeed(id)) {
       if (readNow.has(id)) for (const v of (feedVideos(id) ?? []).slice(0, boxes)) picture(v.thumbnail, THUMB, RACK)
@@ -533,6 +637,7 @@ watch([activeId, mode], () => { void nextTick(() => requestAnimationFrame(stockV
 
 async function selectShelf(id: string) {
   activeId.value = id
+  if (id === SINCE) { for (const { v } of sinceVideos.value) picture(v.thumbnail, THUMB, OPEN); return }
   if (isFeed(id)) { await loadFeed(id, false, -1, OPEN); return }
   const c = channels.value.find(x => x.id === id)
   if (c) await loadVideos(c, false, -1, OPEN)
@@ -546,7 +651,47 @@ function jump(ev: Event) {
   const select = ev.target as HTMLSelectElement
   const id = select.value
   select.value = ''
-  if (!id) return
+  if (id) goTo(id)
+}
+// ── 0.3.4: the channel list (GEM Shell's menu: typing jumps, long lists paged) ─────────────────────────────────────
+// Its own filter (the bar's left list: the same choices as the aisle's), A to Z. In an aisle, each channel has a
+// check: it puts the channel in that aisle or takes it out (the menu stays open); the row itself goes to its rack.
+const listFilter = ref<Filter>('all')
+const listCounts = computed(() => new Map(FILTERS.map(f => [f.value, channels.value.filter(c => passes(c, f.value)).length])))
+let listMenu: { close(): void } | null = null
+function openChannelList(ev: MouseEvent) {
+  const ui = (sdk as any)?.ui?.()
+  if (!ui?.openMenu) return
+  const btn = ev.currentTarget as HTMLElement
+  const rows = () => {
+    const a = currentAisle.value
+    const list = byName.value.filter(c => passes(c, listFilter.value))
+    const head = a
+      ? { type: 'header', label: `✓ puts a channel in “${a.name}”` }
+      : { type: 'header', label: `${list.length} ${list.length === 1 ? 'channel' : 'channels'}` }
+    return [head, ...list.map(c => {
+      const i = infos.value.get(c.id)
+      const detail = [c.subscribers !== undefined ? `${compactNum(c.subscribers)} subscribers` : '', i?.latest !== undefined ? agoShort(i.latest, now.value) : '', i?.flag ?? '']
+        .filter(Boolean).join(' · ')
+      return { id: c.id, label: c.name, detail: detail || undefined, ...(a ? { check: 'box', checked: a.channels.includes(c.id), checkTooltip: a.channels.includes(c.id) ? `Take it out of “${a.name}”` : `Put it in “${a.name}”` } : {}) }
+    })]
+  }
+  listMenu = ui.openMenu({
+    at: btn, items: rows, label: 'Your channels', checkToggles: 'column',
+    onPick: (row: { id: string }) => goTo(row.id),
+    onToggle: (row: { id: string }) => { if (currentAisle.value) toggleIn(currentAisle.value.id, row.id) },
+    onClose: () => { listMenu = null },
+  })
+}
+function setListFilter(ev: Event) {
+  listFilter.value = (ev.target as HTMLSelectElement).value as Filter
+  save({ listFilter: listFilter.value })
+}
+const hasMenu = computed(() => !!(sdk as any)?.ui?.()?.openMenu)
+const compactNum = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}K` : String(n)).replace('.0', '')
+
+/** A channel's rack, brought into view and held there. */
+function goTo(id: string) {
   activeId.value = null
   // 0.3.1: a channel the filter hides: the filter goes back to all
   const c = channels.value.find(x => x.id === id)
@@ -559,6 +704,7 @@ function jump(ev: Event) {
 function reloadHere() {
   const id = activeId.value
   if (!id) { void loadChannels(true); return }
+  if (id === SINCE) { void loadFeed('feed:subscriptions', true, -1, OPEN); return }
   if (isFeed(id)) { void loadFeed(id, true, -1, OPEN); return }
   const c = channels.value.find(x => x.id === id)
   if (c) void loadVideos(c, true)
@@ -586,19 +732,23 @@ function saveSoon() {
 }
 async function saveMemory() {
   if (!canSave || !channels.value.length) return
-  const mem = makeMemory(channels.value, ordered.value.map(c => c.id), videos, feeds, pictures, Date.now())
+  const mem = makeMemory(channels.value, ordered.value.map(c => c.id), videos, feeds, pictures, Date.now(), visitAt)
   await sdk?.configWrite?.(MEMORY_DOC, mem).catch(err => console.warn('[GEM YT] racks not remembered', err))
 }
 
 /** The last session's racks, drawn at once (before anything is read). */
 async function loadMemory() {
-  const [rawMem, rawLedger] = await Promise.all([
+  const [rawMem, rawLedger, rawAisles] = await Promise.all([
     sdk?.configRead?.(MEMORY_DOC).catch(() => null) ?? null,
     sdk?.configRead?.(LEDGER_DOC).catch(() => null) ?? null,
+    sdk?.configRead?.(AISLES_DOC).catch(() => null) ?? null,
   ])
+  aislesDoc.value = readAisles(rawAisles)
+  if (aisleId.value && !currentAisle.value) aisleId.value = null
   ledger.value = readLedger(rawLedger)
   ledgerVersion.value++
   const mem = readMemory(rawMem)
+  if (mem?.visitAt && mem.visitAt < visitAt) prevVisit.value = mem.visitAt
   if (!mem || channels.value.length) return
   channels.value = mem.channels
   for (const [id, list] of Object.entries(mem.videos)) videos.set(id, list)
@@ -610,9 +760,23 @@ async function loadMemory() {
 
 // The background survey: a channel never read (or not for a week) every SURVEY_GAP_MS while GEM YT is open on its
 // racks and nothing else is read, in the aisle's order, at most memory.ts's SURVEY_PER_DAY a day. No pictures.
+// 0.3.4: like a person, not a clock: 45 s to 2 min between reads; when YouTube stops giving its data (a check page,
+// a sign-in wall: two reads in a row without it) the survey pauses an hour.
 const SURVEY_GAP_MS = 45_000
-let surveyTimer: ReturnType<typeof setInterval> | null = null
+const SURVEY_SPREAD_MS = 75_000
+const SURVEY_PAUSE_MS = 3600_000
+let surveyTimer: ReturnType<typeof setTimeout> | null = null
+let surveyMisses = 0
+/** The last channel read's refusal (null: it read). */
+let lastMiss: string | null = null
+let alive = true
+let surveyPausedUntil = 0
+function nextSurvey() {
+  if (!alive) return
+  surveyTimer = setTimeout(() => { void surveyOne().finally(nextSurvey) }, SURVEY_GAP_MS + Math.random() * SURVEY_SPREAD_MS)
+}
 async function surveyOne() {
+  if (Date.now() < surveyPausedUntil) return
   if (mode.value !== 'racks' || problem.value || readsRunning || reading.size || loading.value || !yt) return
   if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
   const now = Date.now()
@@ -622,6 +786,9 @@ async function surveyOne() {
   noteSurvey(ledger.value, now)
   surveyId.value = c.id
   try { await loadVideos(c, false, 0, LATER) } finally { surveyId.value = null }
+  if (lastMiss === 'no-data' || lastMiss === 'failed' || lastMiss === 'needs-update') {
+    if (++surveyMisses >= 2) { surveyPausedUntil = Date.now() + SURVEY_PAUSE_MS; surveyMisses = 0; console.warn('[GEM YT] YouTube stopped answering the survey: paused for an hour') }
+  } else surveyMisses = 0
 }
 
 // ── Life ────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -638,10 +805,14 @@ onMounted(async () => {
   mode.value = state?.value.value?.mode === 'standard' || !yt ? 'standard' : 'racks'
   const f = state?.value.value?.filter
   if (f && FILTERS.some(x => x.value === f)) filter.value = f
+  const a = state?.value.value?.aisle
+  if (typeof a === 'string') aisleId.value = a
+  const lf = state?.value.value?.listFilter
+  if (lf && FILTERS.some(x => x.value === lf)) listFilter.value = lf
   if (yt) await loadMemory()
   if (mode.value === 'standard') await showStandard()
   else void loadChannels(false)
-  if (yt) surveyTimer = setInterval(() => { void surveyOne() }, SURVEY_GAP_MS)
+  if (yt) nextSurvey()
 })
 
 onBeforeUnmount(() => {
@@ -649,7 +820,10 @@ onBeforeUnmount(() => {
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
   queue.length = 0
   wanted = []
-  if (surveyTimer) clearInterval(surveyTimer)
+  alive = false
+  if (surveyTimer) clearTimeout(surveyTimer)
+  surveyTimer = null
+  listMenu?.close()
   clearInterval(nowTimer)
   // 0.3.0: what's pending is saved now
   if (saveTimer2) { clearTimeout(saveTimer2); saveTimer2 = null; void saveMemory() }
@@ -683,13 +857,48 @@ onBeforeUnmount(() => {
       </template>
       <template v-else>
         <button v-if="activeShelf" @click="activeId = null" title="All your channels">‹ Channels</button>
-        <label v-if="channels.length" class="glu-picker pick" title="Go to a channel’s rack">
+        <template v-if="channels.length && hasMenu">
+          <label class="glu-picker pick" title="Which channels the list shows">
+            <span>⚲</span>
+            <select :value="listFilter" @change="setListFilter">
+              <option v-for="f in FILTERS" :key="f.value" :value="f.value">{{ f.label }} ({{ listCounts.get(f.value) ?? 0 }})</option>
+            </select>
+          </label>
+          <button class="list-btn" :title="currentAisle ? `Your channels: check them to put them in “${currentAisle.name}”` : 'Go to a channel’s rack'" @click="openChannelList">
+            ▦ Channels{{ currentAisle ? ' ✓' : '' }} ▾
+          </button>
+        </template>
+        <label v-else-if="channels.length" class="glu-picker pick" title="Go to a channel’s rack">
           <span>▦</span>
           <select :value="''" @change="jump">
             <option value="" disabled>Channels</option>
             <option v-for="c in byName" :key="c.id" :value="c.id">{{ c.name }}</option>
           </select>
         </label>
+        <label v-if="channels.length && !activeShelf" class="glu-picker pick" title="Your aisles: your channels grouped your way">
+          <span>▤</span>
+          <select :value="aisleId ?? ''" @change="setAisle">
+            <option value="">Every channel ({{ channels.length }})</option>
+            <option v-for="a in aislesDoc.aisles" :key="a.id" :value="a.id">{{ a.name }} ({{ a.channels.length }})</option>
+            <option value="__new">+ New aisle…</option>
+          </select>
+        </label>
+        <template v-if="naming">
+          <input ref="nameInput" v-model="nameDraft" class="aisle-name" maxlength="40"
+                 :placeholder="naming.mode === 'rename' ? 'The aisle’s name' : 'New aisle’s name'"
+                 @keydown.enter.prevent="commitName" @keydown.esc.prevent="naming = null" />
+          <button title="Done" @click="commitName">✓</button>
+          <button title="Cancel" @click="naming = null">✕</button>
+        </template>
+        <template v-else-if="currentAisle && !activeShelf">
+          <button title="Rename this aisle" @click="startNaming({ mode: 'rename' })">✎</button>
+          <button v-if="!confirmingDelete" title="Delete this aisle (you still follow its channels)" @click="confirmingDelete = true">🗑</button>
+          <template v-else>
+            <span class="hint">Delete “{{ currentAisle.name }}”?</span>
+            <button @click="deleteAisle">Delete</button>
+            <button @click="confirmingDelete = false">Keep</button>
+          </template>
+        </template>
         <label v-if="channels.length && !activeShelf" class="glu-picker pick" title="Which racks the aisle shows">
           <span>⚲</span>
           <select :value="filter" @change="setFilter">
@@ -732,10 +941,22 @@ onBeforeUnmount(() => {
                 <span class="plaque-emblem" aria-hidden="true"><i></i></span>
                 <span class="plaque-copy">
                   <span class="plaque-word">GEM<b>YT</b></span>
-                  <span class="plaque-line">Presented for following {{ channels.length }} {{ channels.length === 1 ? 'channel' : 'channels' }}</span>
+                  <span v-if="currentAisle" class="plaque-line">The {{ currentAisle.name }} aisle · {{ currentAisle.channels.length }} {{ currentAisle.channels.length === 1 ? 'channel' : 'channels' }}</span>
+                  <span v-else class="plaque-line">Presented for following {{ channels.length }} {{ channels.length === 1 ? 'channel' : 'channels' }}</span>
                 </span>
               </span>
             </div>
+          </div>
+        </template>
+        <template #focus-tools>
+          <!-- 0.3.3: a channel's aisles, in its department -->
+          <div v-if="activeShelf && channels.some(c => c.id === activeShelf!.id)" class="aisle-chips" role="group" aria-label="This channel's aisles">
+            <span class="chips-label">Aisles</span>
+            <button v-for="a in aislesDoc.aisles" :key="a.id" class="chip" :class="{ on: a.channels.includes(activeShelf.id) }"
+                    :aria-pressed="a.channels.includes(activeShelf.id)" @click="toggleIn(a.id, activeShelf.id)">
+              {{ a.channels.includes(activeShelf.id) ? '✓' : '+' }} {{ a.name }}
+            </button>
+            <button class="chip new" @click="startNaming({ mode: 'new', channelId: activeShelf.id })">+ New aisle…</button>
           </div>
         </template>
         <template #marks="{ item }">
@@ -756,6 +977,14 @@ onBeforeUnmount(() => {
 .pick { height: 26px; min-width: 120px; }
 /* 0.2.4: the bar is outside the skinned surface (no --glu-* colours there): the list's own, dark */
 .pick select { color: #f1f1f3; color-scheme: dark; }
+/* 0.3.3: naming an aisle; a channel's aisles in its department */
+.list-btn { height: 26px; padding: 0 9px; white-space: nowrap; }
+.aisle-name { width: 150px; height: 24px; padding: 0 6px; border: 1px solid #ffffff30; border-radius: 4px; color: #f1f1f3; background: #15161a; font-size: 11px; }
+.aisle-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.chips-label { margin-right: 2px; opacity: .65; font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.chip { padding: 3px 9px; border: 1px solid #ffffff2a; border-radius: 999px; color: #d8d9de; background: #ffffff0d; cursor: pointer; font-size: 11px; }
+.chip.on { border-color: var(--glu-accent, #ff4545); color: #fff; background: color-mix(in srgb, var(--glu-accent, #ff4545) 35%, transparent); }
+.chip.new { border-style: dashed; }
 .pick option { color: #f1f1f3; background: #1b1c21; }
 .hint { font-size: 11px; opacity: .7; padding: 0 4px; }
 .spacer { flex: 1 1 auto; }

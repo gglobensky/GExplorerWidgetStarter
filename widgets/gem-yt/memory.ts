@@ -38,6 +38,8 @@ export type Memory = {
   order: string[]
   /** page address -> GEM Shell's local one */
   pictures: Record<string, string>
+  /** 0.3.3: when this visit began (the next one's "Since you were here" starts there) */
+  visitAt?: number
 }
 
 export type ChannelRecord = {
@@ -62,6 +64,7 @@ export function readMemory(raw: unknown): Memory | null {
   if (!channels.length) return null
   const ids = new Set(channels.map(c => c.id))
   const out: Memory = { version: 1, at: num(raw.at) ? raw.at : 0, channels, videos: {}, feeds: {}, order: [], pictures: {} }
+  if (num(raw.visitAt)) out.visitAt = raw.visitAt
   if (obj(raw.videos)) for (const [id, list] of Object.entries(raw.videos)) if (ids.has(id)) out.videos[id] = videos(list, RACK_KEEP)
   if (obj(raw.feeds)) for (const [id, list] of Object.entries(raw.feeds)) if (/^feed:[a-z]{1,20}$/.test(id)) out.feeds[id] = videos(list, FEED_KEEP)
   if (Array.isArray(raw.order)) out.order = raw.order.filter((id): id is string => typeof id === 'string' && ids.has(id))
@@ -73,8 +76,8 @@ export function readMemory(raw: unknown): Memory | null {
 
 /** The memory to save: only the pictures of what it keeps (so the document never grows past the racks). */
 export function makeMemory(channels: Channel[], order: string[], rackVideos: Map<string, Video[]>, feeds: Map<string, Video[]>,
-  pictures: Map<string, string>, now: number): Memory {
-  const mem: Memory = { version: 1, at: now, channels, videos: {}, feeds: {}, order, pictures: {} }
+  pictures: Map<string, string>, now: number, visitAt?: number): Memory {
+  const mem: Memory = { version: 1, at: now, channels, videos: {}, feeds: {}, order, pictures: {}, ...(visitAt ? { visitAt } : {}) }
   const keepPic = (url: string | undefined) => { const to = url && pictures.get(url); if (url && to) mem.pictures[url] = to }
   for (const c of channels) {
     keepPic(c.avatar)
