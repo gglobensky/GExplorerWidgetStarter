@@ -92,6 +92,9 @@ All of them are generic over your item type (`<script setup generic="T extends L
 
 ## History
 
+- **3.10.0 (2026-11-23):** things on their way. `LibraryArtwork.mode: 'loading'` (a picture coming: a shimmer, not
+  "No cover"); `LibraryShelf.loading` (its items coming: a spinner and "Stocking shelves…" over the rack's shelves, and
+  in its department while it has none). No new skin keys. First used by GEM YT 0.2.4.
 - **3.9.1 (2026-11-22):** a skinned video case's side was sized for a portrait box (a tall bar beside each case);
   the poster's caption darker (it hardly showed).
 - **3.9.0 (2026-11-22):** for GEM YT (online videos and their channels). Nothing changes for the Video Club or the

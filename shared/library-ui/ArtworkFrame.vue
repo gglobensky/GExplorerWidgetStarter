@@ -21,7 +21,7 @@ const artStyle = computed(() => ({
 </script>
 
 <template>
-  <span class="glu-artwork" :class="{ wide, cover: artwork.mode === 'cover', placeholder:artwork.mode === 'placeholder', 'with-icon': artwork.mode === 'placeholder' && !!artwork.icon }" :style="artStyle" role="img" :aria-label="alt">
+  <span class="glu-artwork" :class="{ wide, cover: artwork.mode === 'cover', placeholder:artwork.mode === 'placeholder', loading:artwork.mode === 'loading', 'with-icon': artwork.mode === 'placeholder' && !!artwork.icon }" :style="artStyle" role="img" :aria-label="alt">
     <img v-if="artwork.mode === 'placeholder' && artwork.icon" class="glu-artwork-icon" :src="artwork.icon.src" :style="iconStyle" alt="" draggable="false" />
   </span>
 </template>

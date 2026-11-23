@@ -7,7 +7,7 @@ import youtube from './rules/youtube.json'
 export default {
   api: '1.0',
   id: 'gem-yt',
-  version: '0.2.2',   // 0.1.0 (2026-11-22): Standard mode · 0.1.1: its YouTube rules (PageData) · 0.1.2: how long each page stays fresh · 0.2.0: GEM YT mode (racks) · 0.2.1: any size in a hub (the whole grid) · 0.2.2: every box a rack shows gets its picture
+  version: '0.2.5',   // 0.1.0 (2026-11-22): Standard mode · 0.1.1: its YouTube rules (PageData) · 0.1.2: how long each page stays fresh · 0.2.0: GEM YT mode (racks) · 0.2.1: any size in a hub (the whole grid) · 0.2.2: every box a rack shows gets its picture · 0.2.3: pictures in the order racks fill, racks read as they come into view, the wall's plaque, JPEG covers · 0.2.4: Fresh from your subscriptions and You may like first, pictures on their way shown, the channel list readable · 0.2.5: racks in the order their channels last posted, You may like without your channels, the channel list A to Z
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
   about: `# GEM YT
@@ -49,7 +49,7 @@ site: narrow, its mobile site; wide, the desktop one (Settings: always one or th
   capabilities: [
     { cap: 'Web', reason: 'Shows YouTube, and Google’s page to sign in.', domains: ['youtube.com', 'google.com'], userAdded: false },
     // 0.1.1 (GEM Shell 2026-11-22, page adapters 8c1): the rules GEM Shell reads YouTube's pages with for GEM YT mode
-    // (rules/youtube.json: your subscriptions, a channel's videos, your home page). Asked once GEM YT mode uses them.
+    // (rules/youtube.json: your subscriptions, their latest videos, a channel's videos, your home page). Asked once GEM YT mode uses them.
     { cap: 'PageData', reason: 'Shows your subscriptions and channels on racks (GEM YT mode).', rules: [youtube] },
   ],
 }

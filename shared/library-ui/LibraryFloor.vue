@@ -17,6 +17,7 @@
 // Platform sections (PC, consoles) will come here with the Game Library's emulation (plan 2026-10-31).
 // 3.9.0: variant 'video' (landscape cases): 3 boxes to a rack's row, fewer columns in a department; a shelf's `poster`
 // (a channel) sits on its rack's top instead of the sign, and beside the department's title.
+// 3.10.0: a shelf's `loading` (its items on their way): a spinner over the rack's shelves, and in its department.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useScrollHints } from 'gexplorer/widgets'
 import ArtworkFrame from './ArtworkFrame.vue'
@@ -299,7 +300,7 @@ defineExpose({ jumpTo })
             :key="shelf.id"
             type="button"
             class="glu-floor-rack"
-            :class="{ featured, spotlight: spotlight === shelf.id }"
+            :class="{ featured, spotlight: spotlight === shelf.id, loading: shelf.loading }"
             :data-shelf-id="shelf.id"
             :aria-label="`Browse ${shelf.title}, ${rackCounts.get(shelf.id) ?? 0} ${itemsNoun}`"
             @click="emit('select-shelf',shelf.id)"
@@ -332,6 +333,7 @@ defineExpose({ jumpTo })
                 <span class="glu-floor-rack-edge"></span>
               </span>
             </span>
+            <span v-if="shelf.loading" class="glu-floor-rack-loading" aria-hidden="true"><i></i>Stocking shelves…</span>
             <span class="glu-floor-rack-action">{{ featured ? 'Browse' : 'Enter department' }} <b aria-hidden="true">›</b></span>
           </button>
         </div>
@@ -354,6 +356,7 @@ defineExpose({ jumpTo })
         </div>
         <slot name="focus-tools" />
       </header>
+      <div v-if="activeShelf.loading && !departmentItems.length" class="glu-floor-focus-loading" role="status"><i aria-hidden="true"></i>Stocking shelves…</div>
       <!-- 2.7.0: a big department draws only the rows in view -->
       <div v-if="windowed" ref="focusRows" class="glu-floor-focus-window" :style="windowStyle">
         <div ref="focusBlock" class="glu-floor-focus-rows" :style="windowBlockStyle">

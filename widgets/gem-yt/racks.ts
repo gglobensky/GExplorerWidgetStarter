@@ -8,9 +8,15 @@ export type Channel = { id: string; name: string; handle?: string; avatar?: stri
 export type Video = {
   id: string; title: string; thumbnail?: string; length?: number; live?: boolean; published?: string
   publishedText?: string; views?: number; watched?: number
+  /** 0.2.4: on a feed (your subscriptions' latest, You may like): whose it is. */
+  channelId?: string; channelHandle?: string; channelName?: string
 }
 /** A box on GEM YT's shelves. */
-export type YtVideo = LibraryItem & { length?: number; live?: boolean; watched?: number; views?: number; publishedText?: string; channelId: string }
+export type YtVideo = LibraryItem & {
+  length?: number; live?: boolean; watched?: number; views?: number; publishedText?: string; channelId: string
+  /** 0.2.4: a feed's box says whose it is on its band. */
+  byline?: string
+}
 
 const str = (v: unknown) => (typeof v === 'string' ? v : undefined)
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
@@ -24,7 +30,7 @@ export function channelOf(it: Record<string, unknown>): Channel | null {
 export function videoOf(it: Record<string, unknown>): Video | null {
   const id = str(it.id), title = str(it.title)
   if (!id || !/^[\w-]{6,20}$/.test(id) || !title) return null
-  return { id, title, thumbnail: str(it.thumbnail), length: num(it.length), live: it.live === true, published: str(it.published), publishedText: str(it.publishedText), views: num(it.views), watched: num(it.watched) }
+  return { id, title, thumbnail: str(it.thumbnail), length: num(it.length), live: it.live === true, published: str(it.published), publishedText: str(it.publishedText), views: num(it.views), watched: num(it.watched), channelId: str(it.channelId), channelHandle: str(it.channelHandle), channelName: str(it.channelName) }
 }
 
 /** The channel page's parameter: its handle, else channel/<id>. */
@@ -49,12 +55,13 @@ export function clock(seconds: number): string {
   return h ? `${h}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}` : `${m}:${String(r).padStart(2, '0')}`
 }
 
-export function boxOf(v: Video, channel: Channel, rank: number, thumb: string | undefined): YtVideo {
+/** A box. thumb: its picture made; coming: still on its way (0.2.4: a shimmer, not "No picture"); feed: a feed's box (whose it is on its band). */
+export function boxOf(v: Video, channel: Channel | null, rank: number, thumb: string | undefined, coming = false): YtVideo {
   const year = v.published ? new Date(v.published).getFullYear() : 0
   return {
-    id: v.id, title: v.title, year: Number.isFinite(year) ? year : 0, primaryGenre: channel.name, genres: [], synopsis: '',
-    artwork: thumb ? { src: thumb, x: 50, y: 50, mode: 'cover' } : { src: '', x: 50, y: 50, mode: 'placeholder' },
-    addedRank: rank, channelId: channel.id,
+    id: v.id, title: v.title, year: Number.isFinite(year) ? year : 0, primaryGenre: channel?.name ?? v.channelName ?? '', genres: [], synopsis: '',
+    artwork: thumb ? { src: thumb, x: 50, y: 50, mode: 'cover' } : { src: '', x: 50, y: 50, mode: coming ? 'loading' : 'placeholder' },
+    addedRank: rank, channelId: channel?.id ?? v.channelId ?? '', byline: channel ? undefined : v.channelName,
     length: v.length, live: v.live, watched: v.watched, views: v.views, publishedText: v.publishedText,
   }
 }
@@ -62,6 +69,7 @@ export function boxOf(v: Video, channel: Channel, rank: number, thumb: string | 
 /** The line on a box's band: "3 days ago · 1.2K views" (live: "Live · 3K watching"). */
 export function captionOf(v: YtVideo): string {
   const parts: string[] = []
+  if (v.byline) parts.push(v.byline)
   if (v.live) parts.push('Live')
   else if (v.publishedText) parts.push(v.publishedText)
   if (v.views !== undefined) parts.push(`${compact(v.views)} ${v.live ? 'watching' : v.views === 1 ? 'view' : 'views'}`)
@@ -76,5 +84,24 @@ export function shelfOf(c: Channel, boxes: YtVideo[] | undefined, avatar: string
     note: boxes ? `${boxes.length} latest ${boxes.length === 1 ? 'video' : 'videos'}` : 'Stocking shelves…',
     items: boxes ?? [],
     poster: { src: avatar ?? '', round: true, caption: c.subscribers !== undefined ? `${compact(c.subscribers)} subscribers` : undefined },
+    loading: !boxes,
+  }
+}
+
+/** 0.2.4: the racks at the head of the aisle: YouTube's own lists (your subscriptions' latest, your home page). */
+export const FEEDS = [
+  { id: 'feed:subscriptions', page: 'subscription-feed', title: 'Fresh from your subscriptions' },
+  { id: 'feed:home', page: 'home', title: 'You may like' },
+] as const
+export type FeedId = (typeof FEEDS)[number]['id']
+export const isFeed = (id: string): id is FeedId => FEEDS.some(f => f.id === id)
+
+export function feedShelfOf(feed: (typeof FEEDS)[number], boxes: YtVideo[] | undefined): LibraryShelf<YtVideo> {
+  return {
+    id: feed.id,
+    title: feed.title,
+    note: boxes ? `${boxes.length} ${boxes.length === 1 ? 'video' : 'videos'}, as YouTube lists them` : 'Stocking shelves…',
+    items: boxes ?? [],
+    loading: !boxes,
   }
 }

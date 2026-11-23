@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "site": "youtube",
-  "version": "2026.11.23",
+  "version": "2026.11.23.3",
   "about": "YouTube's own page data (ytInitialData) -> channels and videos. Written against the shapes captured on 2026-11-22. GEM YT's rules (moved from GEM Shell, 2026-11-22: the widget brings them).",
   "domains": ["youtube.com"],
   "base": "https://www.youtube.com",
   "lang": "en",
-  "requires": ["paths", "each", "where", "first", "when", "matches", "eq", "exists", "startsWith", "text", "count", "duration", "relativeDate", "bestImage", "handle", "percent", "bool", "skipUnder"],
+  "requires": ["paths", "each", "where", "first", "when", "matches", "eq", "exists", "startsWith", "text", "count", "duration", "relativeDate", "bestImage", "handle", "percent", "bool", "skipUnder", "replace"],
   "pages": {
     "subscriptions": {
       "label": "your subscriptions",
@@ -22,6 +22,13 @@
       "params": { "channel": "^(@[\\w.-]{1,100}|channel/UC[\\w-]{22})$" },
       "data": { "var": "ytInitialData" },
       "collect": ["video", "channelInfo"]
+    },
+    "subscription-feed": {
+      "label": "the latest videos of your subscriptions",
+      "fresh": 15,
+      "url": "https://www.youtube.com/feed/subscriptions?hl=en",
+      "data": { "var": "ytInitialData" },
+      "collect": ["video"]
     },
     "home": {
       "label": "your home page",
@@ -64,7 +71,10 @@
       "fields": {
         "id": ["contentId"],
         "title": [{ "path": "metadata.lockupMetadataViewModel.title", "as": "text" }],
-        "thumbnail": [{ "path": "contentImage.thumbnailViewModel.image", "as": "bestImage" }],
+        "thumbnail": [
+          { "path": "contentId", "when": { "matches": ["contentId", "^[\\w-]{6,20}$"] }, "as": { "replace": ["^([\\w-]+)$", "https://i.ytimg.com/vi/$1/mqdefault.jpg"] } },
+          { "path": "contentImage.thumbnailViewModel.image", "as": "bestImage" }
+        ],
         "length": [{
           "each": "contentImage.thumbnailViewModel.overlays[*].thumbnailBottomOverlayViewModel.badges[*].thumbnailBadgeViewModel",
           "where": { "matches": ["text", "^\\d+(:\\d{1,2}){1,2}$"] }, "first": "text", "as": "duration"

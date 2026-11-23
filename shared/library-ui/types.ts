@@ -8,7 +8,8 @@ export type LibraryArtwork = {
   src: string
   x: number
   y: number
-  mode?: 'atlas' | 'cover' | 'placeholder'
+  /** 3.10.0: 'loading': its picture is on its way (a shimmer, not "No cover"). */
+  mode?: 'atlas' | 'cover' | 'placeholder' | 'loading'
   /**
    * 2.9.0: a placeholder's icon (a program's own, made by GEM Shell): drawn in the middle of the plain box, at most
    * twice its own size (an icon only drawn small stays crisp enough).
@@ -63,6 +64,8 @@ export type LibraryShelf<T extends LibraryItem = LibraryItem> = {
   groups?: Array<LibraryShelfGroup<T>>
   /** 3.9.0: a poster on the rack's top instead of its sign (and beside the department's title). */
   poster?: LibraryPoster
+  /** 3.10.0: its items are on their way: the rack says so (a spinner over its shelves), and its department. */
+  loading?: boolean
 }
 
 /** A row of a rack on the store floor: some of its boxes, and how many there are in all. */

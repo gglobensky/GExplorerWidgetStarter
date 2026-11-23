@@ -1,24 +1,26 @@
 <script setup lang="ts">
-// GEM YT 0.2 (2026-11-22). Two modes, per copy (its state):
+// GEM YT 0.2 (2026-11-22; 0.2.3: pictures in the order racks fill, racks read as they come into view, the wall and
+// its plaque; 0.2.4: two feed racks first, Fresh from your subscriptions and You may like; pictures on their way shown;
+// 0.2.5: the racks in the order their channels last posted, You may like without the channels you follow). Two modes, per copy (its state):
 //   - GEM YT (racks): the store floor of library-ui 3.9.0 (shared/library-ui): one rack per channel you follow, its
 //     poster on top (avatar, name, subscribers), its latest videos as DVD cases lying on their side. A click on a rack
 //     opens its department; a click on a case plays the video (Standard mode, on its page). The data is YouTube's own
 //     pages read by GEM Shell with this widget's rules (sdk.pageData('youtube'): rules/youtube.json; GEM Shell asks
 //     once), pictures through GEM Shell's image cache (pageData().image).
 //   - Standard: the real youtube.com in a web surface (0.1): back, forward, reload, home, sound, the ad blocking shield.
-// Racks are filled a few at a time (GEM Shell paces the reads: one at a time, 8 s apart): the first FIRST_RACKS
-// channels at once, any other when its department is opened. GEM Shell keeps what it read (subscriptions 6 h, a
+// Racks are filled as they come into view (GEM Shell paces the reads: one at a time, 8 s apart; 0.2.3: was the first 8
+// only): the racks on screen and half a screen ahead, in the aisle's order; a rack scrolled past before its turn waits
+// until it's seen again. A department is read when opened. GEM Shell keeps what it read (subscriptions 6 h, a
 // channel's videos 1 h: the rules' `fresh`); ⟳ reads again.
-import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import type { WidgetSdk } from 'gexplorer/widgets'
 import { LibraryFloor, skinClass, skinStyle } from '@shared/library-ui'
 import { BROADCAST } from './skin'
-import { boxOf, captionOf, channelOf, channelParam, clock, shelfOf, videoOf, type Channel, type Video, type YtVideo } from './racks'
+import { boxOf, captionOf, channelOf, channelParam, clock, feedShelfOf, FEEDS, isFeed, shelfOf, videoOf, type Channel, type Video, type YtVideo } from './racks'
 
 const HOME = 'https://www.youtube.com/'
-const FIRST_RACKS = 8
-/** 0.2.2: the pictures of every box a rack shows (6 shelves of 3); a department asks for all of its own. */
-const RACK_PICTURES = 18
+/** The pictures of every box a rack shows (its shelves x 3, measured; this until it is); a department: all of its own. */
+const RACK_PICTURES = 15
 const THUMB = { width: 320, height: 180 }
 const AVATAR = { width: 96, height: 96 }
 
@@ -116,19 +118,79 @@ const channels = ref<Channel[]>([])
 const videos = reactive(new Map<string, Video[]>())
 /** picture address (the page's) -> GEM Shell's local one */
 const pictures = reactive(new Map<string, string>())
+/** 0.2.4: pictures that couldn't be made ("No picture", not a shimmer) */
+const noPicture = reactive(new Set<string>())
+/** 0.2.4: feed id -> its videos (YouTube's own lists: FEEDS) */
+const feeds = reactive(new Map<string, Video[]>())
 const loading = ref(false)
 const activeId = ref<string | null>(null)
 const reading = reactive(new Set<string>())
 /** What stops the racks: the reason sdk.pageData gave, in words, and what can be done. */
 const problem = ref<{ text: string; action?: 'standard' | 'retry' } | null>(null)
 const floor = ref<{ jumpTo(id: string): void } | null>(null)
+const racksEl = ref<HTMLElement | null>(null)
 
-const shelves = computed(() => channels.value.map(c => {
+const pic = (v: Video) => (v.thumbnail ? pictures.get(v.thumbnail) : undefined)
+const coming = (v: Video) => !!v.thumbnail && !noPicture.has(v.thumbnail)
+// 0.2.5: the racks in the order their channels last posted (newest first), from Fresh from your subscriptions (YouTube's
+// own list of your subscriptions' latest videos) and the racks already read; channels seen in neither keep YouTube's
+// order after them. Set once that list is read (and again on ⟳), not as each rack comes in: racks don't jump around.
+const rackOrder = ref<Map<string, number> | null>(null)
+const ordered = computed(() => {
+  const order = rackOrder.value
+  if (!order) return channels.value
+  return [...channels.value].sort((a, b) => (order.get(a.id) ?? Infinity) - (order.get(b.id) ?? Infinity))
+})
+/** A channel by what a feed's video says of it: its id, else its handle, else its name. */
+const followed = computed(() => {
+  const ids = new Map<string, Channel>(), handles = new Map<string, Channel>(), names = new Map<string, Channel>()
+  for (const c of channels.value) {
+    ids.set(c.id, c)
+    if (c.handle) handles.set(c.handle.toLowerCase(), c)
+    names.set(c.name.toLowerCase(), c)
+  }
+  return (v: Video): Channel | undefined =>
+    (v.channelId && ids.get(v.channelId)) || (v.channelHandle && handles.get(v.channelHandle.toLowerCase())) || (v.channelName && names.get(v.channelName.toLowerCase())) || undefined
+})
+const time = (iso: string | undefined) => { const t = iso ? Date.parse(iso) : NaN; return Number.isFinite(t) ? t : undefined }
+
+function orderRacks() {
+  const latest = new Map<string, number>()
+  const feed = feeds.get('feed:subscriptions') ?? []
+  // The feed is newest first: a video without a date counts as just after the one before it
+  let last = Date.now()
+  for (const v of feed) {
+    const t = time(v.published) ?? last
+    last = t
+    const c = followed.value(v)
+    if (c && !(latest.get(c.id)! >= t)) latest.set(c.id, t)
+  }
+  for (const [id, list] of videos) {
+    const t = list.map(v => time(v.published)).find((x): x is number => x !== undefined)
+    if (t !== undefined && !(latest.get(id)! >= t)) latest.set(id, t)
+  }
+  const ranked = channels.value.filter(c => latest.has(c.id)).sort((a, b) => latest.get(b.id)! - latest.get(a.id)!)
+  const order = new Map<string, number>()
+  ranked.forEach((c, i) => order.set(c.id, i))
+  channels.value.forEach((c, i) => { if (!order.has(c.id)) order.set(c.id, ranked.length + i) })
+  rackOrder.value = order
+  void nextTick(() => requestAnimationFrame(stockVisible))
+}
+
+const shelves = computed(() => ordered.value.map(c => {
   const list = videos.get(c.id)
-  const boxes = list?.map((v, i) => boxOf(v, c, i, v.thumbnail ? pictures.get(v.thumbnail) : undefined))
+  const boxes = list?.map((v, i) => boxOf(v, c, i, pic(v), coming(v)))
   return shelfOf(c, boxes, c.avatar ? pictures.get(c.avatar) : undefined)
 }))
-const activeShelf = computed(() => shelves.value.find(s => s.id === activeId.value) ?? null)
+// 0.2.5: You may like without the channels you follow (YouTube's recommendations, past your subscriptions)
+const feedVideos = (id: string) => {
+  const list = feeds.get(id)
+  return list && id === 'feed:home' ? list.filter(v => !followed.value(v)) : list
+}
+const featuredShelves = computed(() => FEEDS.map(f => feedShelfOf(f, feedVideos(f.id)?.map((v, i) => boxOf(v, null, i, pic(v), coming(v))))))
+/** The channel list in the bar: A to Z (200+ channels). */
+const byName = computed(() => [...channels.value].sort((a, b) => a.name.localeCompare(b.name)))
+const activeShelf = computed(() => shelves.value.find(s => s.id === activeId.value) ?? featuredShelves.value.find(s => s.id === activeId.value) ?? null)
 const surfaceStyle = skinStyle(BROADCAST)
 const surfaceClass = skinClass(BROADCAST)
 
@@ -143,22 +205,35 @@ function explain(r: { reason: string; error?: string }): { text: string; action?
   }
 }
 
-// Pictures: 4 at a time (GEM Shell's image workers), in the order asked
-const queue: Array<{ url: string; size: { width: number; height: number } }> = []
+// Pictures: 4 at a time (GEM Shell's image workers), the most wanted first. CHANGED (0.2.3): a FIFO had every
+// channel's avatar (all of them, asked when the subscriptions came) ahead of the first rack's covers, so the covers
+// waited for the whole list and came in all at once at the end. Now: OPEN (the department open) before RACK (a rack
+// in view: its covers and its avatar) before LATER (anything else); in the order asked within each.
+const OPEN = 0, RACK = 1, LATER = 2
+const queue: Array<{ url: string; size: { width: number; height: number }; prio: number; n: number }> = []
+let asked = 0
 let running = 0
-function picture(url: string | undefined, size: { width: number; height: number }) {
-  if (!url || pictures.has(url) || queue.some(q => q.url === url)) return
-  queue.push({ url, size })
+function picture(url: string | undefined, size: { width: number; height: number }, prio = LATER) {
+  if (!url || pictures.has(url)) return
+  const q = queue.find(x => x.url === url)
+  if (q) { if (prio < q.prio) { q.prio = prio; q.n = asked++ } return }
+  queue.push({ url, size, prio, n: asked++ })
   pump()
 }
 let warned = 0
 function pump() {
   while (running < 4 && queue.length) {
-    const { url, size } = queue.shift()!
+    let best = 0
+    for (let i = 1; i < queue.length; i++)
+      if (queue[i].prio < queue[best].prio || queue[i].prio === queue[best].prio && queue[i].n < queue[best].n) best = i
+    const { url, size } = queue.splice(best, 1)[0]
     running++
     yt.image(url, size).then((r: any) => {
       if (r?.ok) pictures.set(url, r.url)
-      else if (warned++ < 3) console.warn('[GEM YT] picture not made:', url, r)
+      else {
+        noPicture.add(url)
+        if (warned++ < 3) console.warn('[GEM YT] picture not made:', url, r)
+      }
     })
       .catch(() => { })
       .finally(() => { running--; pump() })
@@ -174,14 +249,14 @@ async function loadChannels(fresh: boolean) {
   if (!r.ok) { problem.value = explain(r); return }
   channels.value = (r.items.channel ?? []).map(channelOf).filter(Boolean) as Channel[]
   if (!channels.value.length) { problem.value = { text: 'You follow no channel yet (or YouTube showed none).', action: 'standard' }; return }
-  for (const c of channels.value) picture(c.avatar, AVATAR)
-  if (fresh) videos.clear()
-  // The first racks, one after another (GEM Shell paces them)
-  for (const c of channels.value.slice(0, FIRST_RACKS)) await loadVideos(c, fresh, RACK_PICTURES)
+  if (fresh) { videos.clear(); feeds.clear(); noPicture.clear(); rackOrder.value = null; refreshing = true; refreshed.clear() }
+  // 0.2.3: the racks in view (and their avatars), one after another as GEM Shell paces them
+  await nextTick()
+  requestAnimationFrame(stockVisible)
 }
 
-/** A channel's latest videos (and the pictures of its first `pictures` ones; all: -1). */
-async function loadVideos(c: Channel, fresh: boolean, pictureCount = -1) {
+/** A channel's latest videos (and the pictures of its first `pictures` ones; all: -1), at priority `prio`. */
+async function loadVideos(c: Channel, fresh: boolean, pictureCount = -1, prio = OPEN) {
   if (reading.has(c.id)) return
   const param = channelParam(c)
   if (!param) { videos.set(c.id, []); return }
@@ -197,13 +272,111 @@ async function loadVideos(c: Channel, fresh: boolean, pictureCount = -1) {
     videos.set(c.id, (r.items.video ?? []).map(videoOf).filter(Boolean) as Video[])
   }
   const list = videos.get(c.id) ?? []
-  for (const v of pictureCount < 0 ? list : list.slice(0, pictureCount)) picture(v.thumbnail, THUMB)
+  picture(c.avatar, AVATAR, prio)
+  for (const v of pictureCount < 0 ? list : list.slice(0, pictureCount)) picture(v.thumbnail, THUMB, prio)
 }
+
+/** 0.2.4: a feed rack's videos (YouTube's own list) and the pictures of its first `pictureCount` (all: -1). */
+async function loadFeed(id: string, fresh: boolean, pictureCount = -1, prio = OPEN) {
+  const feed = FEEDS.find(f => f.id === id)
+  if (!feed || reading.has(id)) return
+  if (!feeds.has(id) || fresh) {
+    reading.add(id)
+    const r = await yt.read(feed.page, {}, { fresh })
+    reading.delete(id)
+    if (!r.ok) {
+      if (r.reason === 'declined' || r.reason === 'busy') { problem.value = explain(r); return }
+      console.warn(`[GEM YT] ${feed.title}: not read (${r.reason})`, r.error ?? '', r.problems ?? '')
+      feeds.set(id, [])
+      return
+    }
+    feeds.set(id, (r.items.video ?? []).map(videoOf).filter(Boolean) as Video[])
+    if (id === 'feed:subscriptions') orderRacks()
+  }
+  const list = feedVideos(id) ?? []
+  for (const v of pictureCount < 0 ? list : list.slice(0, pictureCount)) picture(v.thumbnail, THUMB, prio)
+}
+
+// ── Racks in view (0.2.3) ─────────────────────────────────────────────────────────────────────────────────────────
+// 200+ subscriptions: reading every rack (8 s each) would take half an hour and most of the day's 300 reads. Only the
+// racks the aisle shows, plus half a screen ahead, are read and pictured; scrolling brings the next ones.
+let wanted: string[] = []
+let boxesFor = new Map<string, number>()
+let readsRunning = false
+/** ⟳ on the aisle: each rack read again (not from GEM Shell's cache) the first time it's seen after. */
+let refreshing = false
+const refreshed = new Set<string>()
+
+/** The racks in the aisle's view (and half a screen to its right), in the aisle's order; with their shelf counts. */
+function racksInView(): Array<{ id: string; boxes: number }> {
+  const grid = racksEl.value?.querySelector<HTMLElement>('.glu-floor-rack-grid')
+  if (!grid) return []
+  const view = grid.getBoundingClientRect()
+  const ahead = view.width / 2
+  const out: Array<{ id: string; boxes: number }> = []
+  for (const el of grid.querySelectorAll<HTMLElement>('[data-shelf-id]')) {
+    const r = el.getBoundingClientRect()
+    if (r.right < view.left || r.left > view.right + ahead) continue
+    const shelves = el.querySelectorAll('.glu-floor-rack-shelf').length
+    out.push({ id: el.dataset.shelfId!, boxes: shelves ? shelves * 3 : RACK_PICTURES })
+  }
+  return out
+}
+
+/** The racks in view: their avatars asked first, then their videos read (one at a time) and their covers asked. */
+function stockVisible() {
+  if (mode.value !== 'racks' || activeId.value || !channels.value.length) return
+  const seen = racksInView()
+  if (!seen.length) return
+  const byId = new Map(channels.value.map(c => [c.id, c]))
+  wanted = []
+  for (const { id, boxes } of seen) {
+    if (isFeed(id)) {
+      if (feeds.has(id)) for (const v of (feedVideos(id) ?? []).slice(0, boxes)) picture(v.thumbnail, THUMB, RACK)
+      else wanted.push(id)
+      continue
+    }
+    const c = byId.get(id)
+    if (!c) continue
+    picture(c.avatar, AVATAR, RACK)
+    if (videos.has(id)) for (const v of (videos.get(id) ?? []).slice(0, boxes)) picture(v.thumbnail, THUMB, RACK)
+    else wanted.push(id)
+  }
+  boxesFor = new Map(seen.map(s => [s.id, s.boxes]))
+  void runReads()
+}
+
+async function runReads() {
+  if (readsRunning) return
+  readsRunning = true
+  try {
+    for (;;) {
+      if (problem.value) break
+      const id = wanted.find(x => !(isFeed(x) ? feeds.has(x) : videos.has(x)) && !reading.has(x))
+      if (!id) break
+      const fresh = refreshing && !refreshed.has(id)
+      refreshed.add(id)
+      if (isFeed(id)) { await loadFeed(id, fresh, boxesFor.get(id) ?? RACK_PICTURES, RACK); continue }
+      const c = channels.value.find(x => x.id === id)
+      if (!c) { wanted = wanted.filter(x => x !== id); continue }
+      await loadVideos(c, fresh, boxesFor.get(c.id) ?? RACK_PICTURES, RACK)
+    }
+  } finally { readsRunning = false }
+}
+
+let viewFrame = 0
+function onAisleMoved() {
+  if (viewFrame) return
+  viewFrame = requestAnimationFrame(() => { viewFrame = 0; stockVisible() })
+}
+let resizeObs: ResizeObserver | null = null
+watch([activeId, mode], () => { void nextTick(() => requestAnimationFrame(stockVisible)) })
 
 async function selectShelf(id: string) {
   activeId.value = id
+  if (isFeed(id)) { await loadFeed(id, false, -1, OPEN); return }
   const c = channels.value.find(x => x.id === id)
-  if (c) await loadVideos(c, false)
+  if (c) await loadVideos(c, false, -1, OPEN)
 }
 
 function play(item: YtVideo) {
@@ -219,6 +392,15 @@ function jump(ev: Event) {
   void nextTick(() => floor.value?.jumpTo(id))
 }
 
+/** ⟳: the open department read again, or the aisle (its racks again as they're seen). */
+function reloadHere() {
+  const id = activeId.value
+  if (!id) { void loadChannels(true); return }
+  if (isFeed(id)) { void loadFeed(id, true, -1, OPEN); return }
+  const c = channels.value.find(x => x.id === id)
+  if (c) void loadVideos(c, true)
+}
+
 function retry() { problem.value = null; void loadChannels(false) }
 
 // ── Life ────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -226,6 +408,10 @@ onMounted(async () => {
   if (!web) { status.value = 'GEM Shell can’t show web pages here.' }
   await state?.ready.catch(() => { })
   await settings?.ready.catch(() => { })
+  // 0.2.3: the aisle's scroll (caught on the way down: scroll doesn't bubble) and size bring racks into view
+  racksEl.value?.addEventListener('scroll', onAisleMoved, { capture: true, passive: true })
+  resizeObs = new ResizeObserver(onAisleMoved)
+  if (racksEl.value) resizeObs.observe(racksEl.value)
   mode.value = state?.value.value?.mode === 'standard' || !yt ? 'standard' : 'racks'
   if (mode.value === 'standard') await showStandard()
   else void loadChannels(false)
@@ -235,6 +421,10 @@ onBeforeUnmount(() => {
   for (const off of offs) off()
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
   queue.length = 0
+  wanted = []
+  racksEl.value?.removeEventListener('scroll', onAisleMoved, { capture: true })
+  resizeObs?.disconnect()
+  if (viewFrame) cancelAnimationFrame(viewFrame)
   state?.release()
   surface?.dispose()
 })
@@ -260,24 +450,23 @@ onBeforeUnmount(() => {
       </template>
       <template v-else>
         <button v-if="activeShelf" @click="activeId = null" title="All your channels">‹ Channels</button>
-        <strong v-else class="brand">GEM YT</strong>
         <label v-if="channels.length" class="glu-picker pick" title="Go to a channel’s rack">
           <span>▦</span>
           <select :value="''" @change="jump">
             <option value="" disabled>Channels</option>
-            <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
+            <option v-for="c in byName" :key="c.id" :value="c.id">{{ c.name }}</option>
           </select>
         </label>
         <span class="spacer"></span>
         <span v-if="loading || reading.size" class="hint">Stocking shelves…</span>
-        <button @click="activeShelf ? loadVideos(channels.find(c => c.id === activeId)!, true) : loadChannels(true)"
+        <button @click="reloadHere"
                 :disabled="loading || reading.size > 0" title="Read YouTube again">⟳</button>
         <button class="mode" @click="showStandard()" title="Standard mode: YouTube’s own pages">▶ YouTube</button>
       </template>
     </div>
     <div v-if="status && mode === 'standard'" class="status">{{ status }}</div>
 
-    <div v-if="mode === 'racks'" class="racks gem-library-surface" :class="surfaceClass" :style="surfaceStyle">
+    <div v-show="mode === 'racks'" ref="racksEl" class="racks gem-library-surface" :class="surfaceClass" :style="surfaceStyle">
       <div v-if="problem" class="note">
         <p>{{ problem.text }}</p>
         <button v-if="problem.action === 'retry'" @click="retry">Try again</button>
@@ -290,11 +479,26 @@ onBeforeUnmount(() => {
         variant="video"
         items-noun="videos"
         :shelves="shelves"
+        :featured="featuredShelves"
         :active-shelf="activeShelf"
         :caption="captionOf"
         @select-shelf="selectShelf"
         @open="play"
       >
+        <template #intro>
+          <!-- 0.2.3: the wall over the aisle, with GEM YT's plaque (our own emblem, not YouTube's logo) -->
+          <div class="wall">
+            <div class="plaque" role="img" :aria-label="`GEM YT: ${channels.length} channels`">
+              <span class="plaque-plate">
+                <span class="plaque-emblem" aria-hidden="true"><i></i></span>
+                <span class="plaque-copy">
+                  <span class="plaque-word">GEM<b>YT</b></span>
+                  <span class="plaque-line">Presented for following {{ channels.length }} {{ channels.length === 1 ? 'channel' : 'channels' }}</span>
+                </span>
+              </span>
+            </div>
+          </div>
+        </template>
         <template #marks="{ item }">
           <span v-if="item.live" class="sticker live">● LIVE</span>
           <span v-else-if="item.length" class="sticker">{{ clock(item.length) }}</span>
@@ -310,8 +514,10 @@ onBeforeUnmount(() => {
 .gem-yt { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .bar { display: flex; align-items: center; gap: 4px; padding: 4px; flex: 0 0 auto; }
 .bar button { min-width: 2em; }
-.brand { padding: 0 6px; letter-spacing: .08em; }
 .pick { height: 26px; min-width: 120px; }
+/* 0.2.4: the bar is outside the skinned surface (no --glu-* colours there): the list's own, dark */
+.pick select { color: #f1f1f3; color-scheme: dark; }
+.pick option { color: #f1f1f3; background: #1b1c21; }
 .hint { font-size: 11px; opacity: .7; padding: 0 4px; }
 .spacer { flex: 1 1 auto; }
 .badge { opacity: 0.7; padding: 0 2px; }
@@ -324,5 +530,23 @@ onBeforeUnmount(() => {
 .note p { margin: 0; }
 .sticker { position: absolute; z-index: 4; right: 4px; bottom: 4px; padding: 1px 4px; border-radius: 3px; color: #fff; background: #000c; font: 700 9px/1.3 "Segoe UI", system-ui, sans-serif; font-variant-numeric: tabular-nums; }
 .sticker.live { background: #d61f1f; }
+/* 0.2.3: the wall and its plaque: a shadow-box frame, a glass front, a brushed silver plate. The type: a heavy grotesque
+   (Segoe UI Black on Windows), tight like a broadcaster's wordmark. */
+.wall { position: relative; display: flex; align-items: center; justify-content: center; height: clamp(92px, 10cqw, 136px); margin: -10px -8px 4px;
+  background: radial-gradient(ellipse 38% 90% at 50% -10%, #ffffff1f, transparent 70%), repeating-linear-gradient(90deg, #0000 0 46px, #0000003d 46px 48px), linear-gradient(#24171b, #140d10 88%, #0c0809);
+  box-shadow: inset 0 -12px 16px -12px #000, 0 1px 0 #ffffff0d; }
+.plaque { position: relative; height: 76%; aspect-ratio: 3.1; padding: 5px; border-radius: 4px;
+  background: linear-gradient(150deg, #34343a, #101013 45%, #1d1d22); box-shadow: 0 14px 20px -6px #000d, 0 0 0 1px #000, inset 0 1px 0 #ffffff26, inset 0 -1px 0 #0009; }
+.plaque::after { content: ''; position: absolute; inset: 5px; border-radius: 2px; pointer-events: none;
+  background: linear-gradient(115deg, #ffffff00 30%, #ffffff1c 38%, #ffffff00 47%, #ffffff00 70%, #ffffff10 76%, #ffffff00 82%); box-shadow: inset 0 0 0 1px #ffffff14, inset 0 3px 8px #000c; }
+.plaque-plate { display: flex; align-items: center; gap: 4%; height: 100%; padding: 0 7%; border-radius: 2px; background: radial-gradient(ellipse at 50% 0%, #26262b, #0b0b0d 75%); }
+.plaque-emblem { flex: 0 0 auto; height: 70%; aspect-ratio: 1.08; clip-path: polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0 50%);
+  background: linear-gradient(135deg, #fbfbfc 0%, #b6b9c0 24%, #eff1f4 42%, #8b8e95 64%, #e2e4e8 82%, #a3a6ad 100%); display: grid; place-items: center; filter: drop-shadow(0 2px 2px #000); }
+.plaque-emblem i { width: 46%; height: 50%; margin-left: 10%; clip-path: polygon(0 0, 0 100%, 90% 50%); background: linear-gradient(160deg, #2c2d31, #0f0f11); }
+.plaque-copy { display: grid; gap: 3px; min-width: 0; }
+.plaque-word { font: 900 clamp(22px, 4.6cqw, 46px)/0.9 "Segoe UI Black", "Arial Black", "Helvetica Neue", Arial, sans-serif; letter-spacing: -0.045em; white-space: nowrap;
+  background: linear-gradient(175deg, #ffffff 0%, #c9ccd2 30%, #f3f4f6 48%, #8d9097 70%, #d9dbdf 100%); -webkit-background-clip: text; background-clip: text; color: transparent; filter: drop-shadow(0 1px 0 #000); }
+.plaque-word b { margin-left: 0.12em; font-weight: inherit; }
+.plaque-line { overflow: hidden; color: #b9bcc2; font: 600 clamp(7px, 0.85cqw, 10px)/1.2 "Segoe UI", system-ui, sans-serif; letter-spacing: 0.16em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
 .watched { position: absolute; z-index: 4; left: 0; bottom: 0; height: 3px; background: #ff3b3b; }
 </style>

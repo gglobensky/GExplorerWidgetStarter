@@ -136,6 +136,15 @@
 .glu-floor-focus-cases { display:flex; min-height:286px; align-items:flex-end; justify-content:center; gap:16px; padding:18px 28px 7px; background:linear-gradient(180deg,transparent 0 calc(100% - 28px),var(--skin-shelf-light, #a27a49) calc(100% - 28px) calc(100% - 26px),var(--skin-shelf, #6c492b) calc(100% - 25px) calc(100% - 18px),var(--skin-shelf-dark, #3d291a) calc(100% - 17px) calc(100% - 7px),var(--skin-shelf-dark, #21170f) calc(100% - 6px) 100%),var(--skin-unit-back, linear-gradient(180deg,#05080b,#121a20 22%,#080c10)); clip-path:polygon(var(--store-row-skew) 0,100% 0,calc(100% - var(--store-row-skew)) 100%,0 100%); }
 .glu-floor-focus-edge { height:9px; margin-top:-1px; background:linear-gradient(var(--skin-shelf, #3d291a),var(--skin-shelf-dark, #21170f)); clip-path:polygon(var(--store-row-skew) 0,100% 0,calc(100% - var(--store-row-skew)) 100%,0 100%); box-shadow:0 10px 16px #000a,inset 0 1px #f0c37d45; }
 .glu-floor.focused { height:auto; animation-name:glu-floor-zoom-in; }
+/* 3.10.0: on their way: a picture (a shimmer), a rack's items (a spinner over its shelves), a department's. */
+.glu-artwork.loading { background:linear-gradient(100deg,#161b1f 30%,#29323a 50%,#161b1f 70%) 0 0/250% 100%; animation:glu-art-loading 1.3s linear infinite; }
+.glu-artwork.loading::before,.glu-artwork.loading::after { content:none; }
+.glu-floor-rack-loading { position:absolute; z-index:2; top:52%; left:50%; display:flex; align-items:center; gap:8px; padding:6px 12px; border-radius:999px; color:var(--glu-muted,#b4b5bd); background:#000b; box-shadow:0 4px 12px #0008; font-size:9px; font-weight:700; letter-spacing:.14em; pointer-events:none; text-transform:uppercase; transform:translate(-50%,-50%); white-space:nowrap; }
+.glu-floor-focus-loading { display:flex; align-items:center; justify-content:center; gap:10px; padding:48px 0; color:var(--glu-muted,#b4b5bd); font-size:12px; }
+.glu-floor-rack-loading i,.glu-floor-focus-loading i { width:11px; height:11px; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:glu-spin .8s linear infinite; }
+@keyframes glu-art-loading { from { background-position:100% 0; } to { background-position:-150% 0; } }
+@keyframes glu-spin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion:reduce) { .glu-artwork.loading,.glu-floor-rack-loading i,.glu-floor-focus-loading i { animation:none; } }
 @keyframes glu-floor-arrive { from { opacity:0; transform:scale(.975) translateY(8px); } }
 @keyframes glu-floor-zoom-in { from { opacity:0; transform:scale(.88); } }
 @container (max-width:800px) {
