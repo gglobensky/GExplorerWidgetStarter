@@ -1,7 +1,9 @@
 <script setup lang="ts">
 // GEM YT 0.2 (2026-11-22; 0.2.3: pictures in the order racks fill, racks read as they come into view, the wall and
 // its plaque; 0.2.4: two feed racks first, Fresh from your subscriptions and You may like; pictures on their way shown;
-// 0.2.5: the racks in the order their channels last posted, You may like without the channels you follow). Two modes, per copy (its state):
+// 0.2.5: the racks in the order their channels last posted, You may like without the channels you follow;
+// 0.3.0: what it read is remembered between starts (memory.ts): racks drawn at once, read again behind them; each
+// channel's uploads and subscribers kept over time, and a slow background survey of the channels not read yet). Two modes, per copy (its state):
 //   - GEM YT (racks): the store floor of library-ui 3.9.0 (shared/library-ui): one rack per channel you follow, its
 //     poster on top (avatar, name, subscribers), its latest videos as DVD cases lying on their side. A click on a rack
 //     opens its department; a click on a case plays the video (Standard mode, on its page). The data is YouTube's own
@@ -12,10 +14,11 @@
 // only): the racks on screen and half a screen ahead, in the aisle's order; a rack scrolled past before its turn waits
 // until it's seen again. A department is read when opened. GEM Shell keeps what it read (subscriptions 6 h, a
 // channel's videos 1 h: the rules' `fresh`); ⟳ reads again.
-import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import type { WidgetSdk } from 'gexplorer/widgets'
 import { LibraryFloor, skinClass, skinStyle } from '@shared/library-ui'
 import { BROADCAST } from './skin'
+import { LEDGER_DOC, MEMORY_DOC, emptyLedger, lastUpload, makeMemory, noteRead, noteSubscribers, noteSurvey, noteUploads, readLedger, readMemory, surveyNext } from './memory'
 import { boxOf, captionOf, channelOf, channelParam, clock, feedShelfOf, FEEDS, isFeed, shelfOf, videoOf, type Channel, type Video, type YtVideo } from './racks'
 
 const HOME = 'https://www.youtube.com/'
@@ -99,7 +102,7 @@ async function showStandard(url?: string) {
 function showRacks() {
   mode.value = 'racks'
   save({ mode: 'racks' })
-  if (!channels.value.length && !problem.value) void loadChannels(false)
+  if (!readNow.has('subscriptions') && !problem.value && !loading.value) void loadChannels(false)
 }
 
 async function home() {
@@ -129,6 +132,15 @@ const reading = reactive(new Set<string>())
 const problem = ref<{ text: string; action?: 'standard' | 'retry' } | null>(null)
 const floor = ref<{ jumpTo(id: string): void } | null>(null)
 const racksEl = ref<HTMLElement | null>(null)
+/** 0.3.0: racks and feeds read in this session (the others are remembered ones, read again as they're seen). */
+const readNow = new Set<string>()
+/** 0.3.0: pictures GEM Shell confirmed this session (a remembered one is shown at once, asked again once its rack is read). */
+const verified = new Set<string>()
+/** 0.3.0: what GEM YT learns about each channel over time (memory.ts); ledgerVersion bumps on each change. */
+const ledger = shallowRef(emptyLedger())
+const ledgerVersion = ref(0)
+/** 0.3.0: the channel the background survey is reading (not "Stocking shelves…": nothing on screen waits for it). */
+const surveyId = ref<string | null>(null)
 
 const pic = (v: Video) => (v.thumbnail ? pictures.get(v.thumbnail) : undefined)
 const coming = (v: Video) => !!v.thumbnail && !noPicture.has(v.thumbnail)
@@ -169,6 +181,11 @@ function orderRacks() {
     const t = list.map(v => time(v.published)).find((x): x is number => x !== undefined)
     if (t !== undefined && !(latest.get(id)! >= t)) latest.set(id, t)
   }
+  // 0.3.0: and what the ledger knows (channels read in earlier sessions, or by the survey)
+  for (const c of channels.value) {
+    const t = lastUpload(ledger.value, c.id)
+    if (t !== undefined && !(latest.get(c.id)! >= t)) latest.set(c.id, t)
+  }
   const ranked = channels.value.filter(c => latest.has(c.id)).sort((a, b) => latest.get(b.id)! - latest.get(a.id)!)
   const order = new Map<string, number>()
   ranked.forEach((c, i) => order.set(c.id, i))
@@ -177,11 +194,15 @@ function orderRacks() {
   void nextTick(() => requestAnimationFrame(stockVisible))
 }
 
-const shelves = computed(() => ordered.value.map(c => {
-  const list = videos.get(c.id)
-  const boxes = list?.map((v, i) => boxOf(v, c, i, pic(v), coming(v)))
-  return shelfOf(c, boxes, c.avatar ? pictures.get(c.avatar) : undefined)
-}))
+const shelves = computed(() => {
+  void ledgerVersion.value
+  return ordered.value.map(c => {
+    const list = videos.get(c.id)
+    const boxes = list?.map((v, i) => boxOf(v, c, i, pic(v), coming(v)))
+    const latest = lastUpload(ledger.value, c.id) ?? list?.map(v => time(v.published)).find((t): t is number => t !== undefined)
+    return shelfOf(c, boxes, c.avatar ? pictures.get(c.avatar) : undefined, latest)
+  })
+})
 // 0.2.5: You may like without the channels you follow (YouTube's recommendations, past your subscriptions)
 const feedVideos = (id: string) => {
   const list = feeds.get(id)
@@ -214,7 +235,7 @@ const queue: Array<{ url: string; size: { width: number; height: number }; prio:
 let asked = 0
 let running = 0
 function picture(url: string | undefined, size: { width: number; height: number }, prio = LATER) {
-  if (!url || pictures.has(url)) return
+  if (!url || verified.has(url) || noPicture.has(url)) return
   const q = queue.find(x => x.url === url)
   if (q) { if (prio < q.prio) { q.prio = prio; q.n = asked++ } return }
   queue.push({ url, size, prio, n: asked++ })
@@ -229,9 +250,12 @@ function pump() {
     const { url, size } = queue.splice(best, 1)[0]
     running++
     yt.image(url, size).then((r: any) => {
-      if (r?.ok) pictures.set(url, r.url)
+      if (r?.ok) { verified.add(url); if (pictures.get(url) !== r.url) { pictures.set(url, r.url); saveSoon() } }
+      // A remembered picture of a rack not read yet this session: GEM Shell hands out only what it read; asked again later
+      else if (r?.reason === 'not-from-page') return
       else {
         noPicture.add(url)
+        pictures.delete(url)
         if (warned++ < 3) console.warn('[GEM YT] picture not made:', url, r)
       }
     })
@@ -249,7 +273,11 @@ async function loadChannels(fresh: boolean) {
   if (!r.ok) { problem.value = explain(r); return }
   channels.value = (r.items.channel ?? []).map(channelOf).filter(Boolean) as Channel[]
   if (!channels.value.length) { problem.value = { text: 'You follow no channel yet (or YouTube showed none).', action: 'standard' }; return }
-  if (fresh) { videos.clear(); feeds.clear(); noPicture.clear(); rackOrder.value = null; refreshing = true; refreshed.clear() }
+  noteSubscribers(ledger.value, channels.value, Date.now())
+  ledgerChanged()
+  // 0.3.0: ⟳ keeps what's shown (remembered) and reads every rack again as it's seen
+  if (fresh) { readNow.clear(); noPicture.clear(); refreshing = true; refreshed.clear() }
+  readNow.add('subscriptions')
   // 0.2.3: the racks in view (and their avatars), one after another as GEM Shell paces them
   await nextTick()
   requestAnimationFrame(stockVisible)
@@ -259,17 +287,23 @@ async function loadChannels(fresh: boolean) {
 async function loadVideos(c: Channel, fresh: boolean, pictureCount = -1, prio = OPEN) {
   if (reading.has(c.id)) return
   const param = channelParam(c)
-  if (!param) { videos.set(c.id, []); return }
-  if (!videos.has(c.id) || fresh) {
+  if (!param) { videos.set(c.id, []); readNow.add(c.id); return }
+  if (!readNow.has(c.id) || fresh) {
     reading.add(c.id)
     const r = await yt.read('channel-videos', { channel: param }, { fresh })
     reading.delete(c.id)
     if (!r.ok) {
       if (r.reason === 'declined' || r.reason === 'busy') { problem.value = explain(r); return }
-      videos.set(c.id, [])
+      readNow.add(c.id)
+      if (!videos.has(c.id)) videos.set(c.id, [])
       return
     }
-    videos.set(c.id, (r.items.video ?? []).map(videoOf).filter(Boolean) as Video[])
+    const list = (r.items.video ?? []).map(videoOf).filter(Boolean) as Video[]
+    readNow.add(c.id)
+    videos.set(c.id, list)
+    noteRead(ledger.value, c.id, list, Date.now())
+    ledgerChanged()
+    saveSoon()
   }
   const list = videos.get(c.id) ?? []
   picture(c.avatar, AVATAR, prio)
@@ -280,18 +314,29 @@ async function loadVideos(c: Channel, fresh: boolean, pictureCount = -1, prio = 
 async function loadFeed(id: string, fresh: boolean, pictureCount = -1, prio = OPEN) {
   const feed = FEEDS.find(f => f.id === id)
   if (!feed || reading.has(id)) return
-  if (!feeds.has(id) || fresh) {
+  if (!readNow.has(id) || fresh) {
     reading.add(id)
     const r = await yt.read(feed.page, {}, { fresh })
     reading.delete(id)
     if (!r.ok) {
       if (r.reason === 'declined' || r.reason === 'busy') { problem.value = explain(r); return }
       console.warn(`[GEM YT] ${feed.title}: not read (${r.reason})`, r.error ?? '', r.problems ?? '')
-      feeds.set(id, [])
+      readNow.add(id)
+      if (!feeds.has(id)) feeds.set(id, [])
       return
     }
-    feeds.set(id, (r.items.video ?? []).map(videoOf).filter(Boolean) as Video[])
-    if (id === 'feed:subscriptions') orderRacks()
+    const list = (r.items.video ?? []).map(videoOf).filter(Boolean) as Video[]
+    readNow.add(id)
+    feeds.set(id, list)
+    if (id === 'feed:subscriptions') {
+      // 0.3.0: the feed's videos are uploads of your channels: the ledger learns them without reading each channel
+      const byChannel = new Map<string, Video[]>()
+      for (const v of list) { const c = followed.value(v); if (c) byChannel.set(c.id, [...(byChannel.get(c.id) ?? []), v]) }
+      for (const [cid, vs] of byChannel) noteUploads(ledger.value, cid, vs)
+      ledgerChanged()
+      orderRacks()
+    }
+    saveSoon()
   }
   const list = feedVideos(id) ?? []
   for (const v of pictureCount < 0 ? list : list.slice(0, pictureCount)) picture(v.thumbnail, THUMB, prio)
@@ -331,15 +376,16 @@ function stockVisible() {
   const byId = new Map(channels.value.map(c => [c.id, c]))
   wanted = []
   for (const { id, boxes } of seen) {
+    // 0.3.0: a remembered rack shows what it had; its pictures are asked once it's read again this session
     if (isFeed(id)) {
-      if (feeds.has(id)) for (const v of (feedVideos(id) ?? []).slice(0, boxes)) picture(v.thumbnail, THUMB, RACK)
+      if (readNow.has(id)) for (const v of (feedVideos(id) ?? []).slice(0, boxes)) picture(v.thumbnail, THUMB, RACK)
       else wanted.push(id)
       continue
     }
     const c = byId.get(id)
     if (!c) continue
     picture(c.avatar, AVATAR, RACK)
-    if (videos.has(id)) for (const v of (videos.get(id) ?? []).slice(0, boxes)) picture(v.thumbnail, THUMB, RACK)
+    if (readNow.has(id)) for (const v of (videos.get(id) ?? []).slice(0, boxes)) picture(v.thumbnail, THUMB, RACK)
     else wanted.push(id)
   }
   boxesFor = new Map(seen.map(s => [s.id, s.boxes]))
@@ -352,7 +398,7 @@ async function runReads() {
   try {
     for (;;) {
       if (problem.value) break
-      const id = wanted.find(x => !(isFeed(x) ? feeds.has(x) : videos.has(x)) && !reading.has(x))
+      const id = wanted.find(x => !readNow.has(x) && !reading.has(x))
       if (!id) break
       const fresh = refreshing && !refreshed.has(id)
       refreshed.add(id)
@@ -403,6 +449,63 @@ function reloadHere() {
 
 function retry() { problem.value = null; void loadChannels(false) }
 
+// ── Memory (0.3.0): memory.ts ────────────────────────────────────────────────────────────────────────────────────
+const canSave = !(sdk as any)?.inPreview?.()
+const stocking = computed(() => [...reading].some(id => id !== surveyId.value))
+let saveTimer2: ReturnType<typeof setTimeout> | null = null
+let ledgerTimer: ReturnType<typeof setTimeout> | null = null
+
+function ledgerChanged() {
+  ledgerVersion.value++
+  if (!canSave || ledgerTimer) return
+  ledgerTimer = setTimeout(() => { ledgerTimer = null; void saveLedger() }, 5000)
+}
+async function saveLedger() {
+  if (canSave) await sdk?.configWrite?.(LEDGER_DOC, ledger.value).catch(err => console.warn('[GEM YT] ledger not saved', err))
+}
+function saveSoon() {
+  if (!canSave || saveTimer2) return
+  saveTimer2 = setTimeout(() => { saveTimer2 = null; void saveMemory() }, 4000)
+}
+async function saveMemory() {
+  if (!canSave || !channels.value.length) return
+  const mem = makeMemory(channels.value, ordered.value.map(c => c.id), videos, feeds, pictures, Date.now())
+  await sdk?.configWrite?.(MEMORY_DOC, mem).catch(err => console.warn('[GEM YT] racks not remembered', err))
+}
+
+/** The last session's racks, drawn at once (before anything is read). */
+async function loadMemory() {
+  const [rawMem, rawLedger] = await Promise.all([
+    sdk?.configRead?.(MEMORY_DOC).catch(() => null) ?? null,
+    sdk?.configRead?.(LEDGER_DOC).catch(() => null) ?? null,
+  ])
+  ledger.value = readLedger(rawLedger)
+  ledgerVersion.value++
+  const mem = readMemory(rawMem)
+  if (!mem || channels.value.length) return
+  channels.value = mem.channels
+  for (const [id, list] of Object.entries(mem.videos)) videos.set(id, list)
+  for (const [id, list] of Object.entries(mem.feeds)) feeds.set(id, list)
+  for (const [from, to] of Object.entries(mem.pictures)) pictures.set(from, to)
+  if (mem.order.length) rackOrder.value = new Map(mem.order.map((id, i) => [id, i]))
+}
+
+// The background survey: a channel never read (or not for a week) every SURVEY_GAP_MS while GEM YT is open on its
+// racks and nothing else is read, in the aisle's order, at most memory.ts's SURVEY_PER_DAY a day. No pictures.
+const SURVEY_GAP_MS = 45_000
+let surveyTimer: ReturnType<typeof setInterval> | null = null
+async function surveyOne() {
+  if (mode.value !== 'racks' || problem.value || readsRunning || reading.size || loading.value || !yt) return
+  if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+  const now = Date.now()
+  const id = surveyNext(ledger.value, ordered.value.map(c => c.id), x => readNow.has(x) || !channelParam(channels.value.find(c => c.id === x)!), now)
+  const c = id ? channels.value.find(x => x.id === id) : undefined
+  if (!c) return
+  noteSurvey(ledger.value, now)
+  surveyId.value = c.id
+  try { await loadVideos(c, false, 0, LATER) } finally { surveyId.value = null }
+}
+
 // ── Life ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 onMounted(async () => {
   if (!web) { status.value = 'GEM Shell can’t show web pages here.' }
@@ -413,8 +516,10 @@ onMounted(async () => {
   resizeObs = new ResizeObserver(onAisleMoved)
   if (racksEl.value) resizeObs.observe(racksEl.value)
   mode.value = state?.value.value?.mode === 'standard' || !yt ? 'standard' : 'racks'
+  if (yt) await loadMemory()
   if (mode.value === 'standard') await showStandard()
   else void loadChannels(false)
+  if (yt) surveyTimer = setInterval(() => { void surveyOne() }, SURVEY_GAP_MS)
 })
 
 onBeforeUnmount(() => {
@@ -422,6 +527,10 @@ onBeforeUnmount(() => {
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
   queue.length = 0
   wanted = []
+  if (surveyTimer) clearInterval(surveyTimer)
+  // 0.3.0: what's pending is saved now
+  if (saveTimer2) { clearTimeout(saveTimer2); saveTimer2 = null; void saveMemory() }
+  if (ledgerTimer) { clearTimeout(ledgerTimer); ledgerTimer = null; void saveLedger() }
   racksEl.value?.removeEventListener('scroll', onAisleMoved, { capture: true })
   resizeObs?.disconnect()
   if (viewFrame) cancelAnimationFrame(viewFrame)
@@ -458,9 +567,9 @@ onBeforeUnmount(() => {
           </select>
         </label>
         <span class="spacer"></span>
-        <span v-if="loading || reading.size" class="hint">Stocking shelves…</span>
+        <span v-if="loading || stocking" class="hint">Stocking shelves…</span>
         <button @click="reloadHere"
-                :disabled="loading || reading.size > 0" title="Read YouTube again">⟳</button>
+                :disabled="loading || stocking" title="Read YouTube again">⟳</button>
         <button class="mode" @click="showStandard()" title="Standard mode: YouTube’s own pages">▶ YouTube</button>
       </template>
     </div>

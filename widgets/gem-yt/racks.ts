@@ -76,14 +76,26 @@ export function captionOf(v: YtVideo): string {
   return parts.join(' · ')
 }
 
-/** A channel's rack: its poster (its avatar, its subscribers), its videos once read. */
-export function shelfOf(c: Channel, boxes: YtVideo[] | undefined, avatar: string | undefined): LibraryShelf<YtVideo> {
+/** 0.3.0: how long ago, short: "today", "3d ago", "2w ago", "5mo ago", "2y ago". */
+export function agoShort(ms: number, now = Date.now()): string {
+  const d = Math.floor((now - ms) / 86_400_000)
+  if (d < 1) return 'today'
+  if (d < 14) return `${d}d ago`
+  if (d < 60) return `${Math.floor(d / 7)}w ago`
+  if (d < 730) return `${Math.floor(d / 30.4)}mo ago`
+  return `${Math.floor(d / 365)}y ago`
+}
+
+/** A channel's rack: its poster (its avatar, its subscribers, 0.3.0: its latest upload), its videos once read. */
+export function shelfOf(c: Channel, boxes: YtVideo[] | undefined, avatar: string | undefined, latest?: number): LibraryShelf<YtVideo> {
+  const caption = [c.subscribers !== undefined ? `${compact(c.subscribers)} subscribers` : '', latest !== undefined ? agoShort(latest) : '']
+    .filter(Boolean).join(' · ')
   return {
     id: c.id,
     title: c.name,
     note: boxes ? `${boxes.length} latest ${boxes.length === 1 ? 'video' : 'videos'}` : 'Stocking shelves…',
     items: boxes ?? [],
-    poster: { src: avatar ?? '', round: true, caption: c.subscribers !== undefined ? `${compact(c.subscribers)} subscribers` : undefined },
+    poster: { src: avatar ?? '', round: true, caption: caption || undefined },
     loading: !boxes,
   }
 }
