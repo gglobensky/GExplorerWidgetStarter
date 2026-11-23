@@ -170,6 +170,45 @@ export function surveyNext(ledger: Ledger, order: string[], skip: (id: string) =
   return stale
 }
 
+/** 0.3.1: a channel's posting rhythm, from its ledger record. */
+export type Rhythm = {
+  /** Videos a week, oldest first (RHYTHM_WEEKS), 0 to 1 of the busiest; null: a week not known. */
+  bars: Array<number | null>
+  /** Videos a week over the weeks known (undefined: too little known). */
+  perWeek?: number
+  /** Well past its usual gap (3 times the median of its last gaps, a week at least). */
+  overdue: boolean
+  last?: number
+}
+export const RHYTHM_WEEKS = 12
+const WEEK_MS = 7 * DAY_MS
+
+export function rhythmOf(rec: ChannelRecord | undefined, now: number): Rhythm {
+  const ups = rec?.uploads ?? []
+  const last = ups[0]?.[1]
+  if (!ups.length) return { bars: [], overdue: false, last }
+  // What's known: a channel page lists its latest ~30 videos, so a busy channel's older weeks aren't known; a channel
+  // known only from the subscriptions feed isn't known before its oldest video there either
+  const oldest = ups[ups.length - 1][1]
+  const complete = rec?.readAt !== undefined && ups.length < 25
+  const knownFrom = complete ? -Infinity : oldest
+  const counts: Array<number | null> = []
+  for (let w = RHYTHM_WEEKS - 1; w >= 0; w--) {
+    const end = now - w * WEEK_MS, start = end - WEEK_MS
+    counts.push(start < knownFrom ? null : ups.filter(u => u[1] > start && u[1] <= end).length)
+  }
+  const known = counts.filter((c): c is number => c !== null)
+  const top = Math.max(1, ...known)
+  const bars = counts.map(c => (c === null ? null : c / top))
+  const perWeek = known.length >= 3 ? known.reduce((a, b) => a + b, 0) / known.length : undefined
+  const gaps: number[] = []
+  for (let i = 0; i + 1 < Math.min(ups.length, 11); i++) gaps.push(ups[i][1] - ups[i + 1][1])
+  gaps.sort((a, b) => a - b)
+  const median = gaps.length >= 3 ? gaps[Math.floor(gaps.length / 2)] : undefined
+  const overdue = median !== undefined && last !== undefined && now - last > Math.max(3 * median, WEEK_MS)
+  return { bars, perWeek, overdue, last }
+}
+
 export function noteSurvey(ledger: Ledger, now: number): void {
   const day = Math.floor(now / DAY_MS)
   if (ledger.survey.day !== day) ledger.survey = { day, count: 0 }

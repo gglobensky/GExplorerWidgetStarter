@@ -3,7 +3,8 @@
 // its plaque; 0.2.4: two feed racks first, Fresh from your subscriptions and You may like; pictures on their way shown;
 // 0.2.5: the racks in the order their channels last posted, You may like without the channels you follow;
 // 0.3.0: what it read is remembered between starts (memory.ts): racks drawn at once, read again behind them; each
-// channel's uploads and subscribers kept over time, and a slow background survey of the channels not read yet). Two modes, per copy (its state):
+// channel's uploads and subscribers kept over time, and a slow background survey of the channels not read yet;
+// 0.3.1: posting rhythm on the posters (a chart, ~2/wk, Overdue), quiet channels put away at the aisle's end, a filter). Two modes, per copy (its state):
 //   - GEM YT (racks): the store floor of library-ui 3.9.0 (shared/library-ui): one rack per channel you follow, its
 //     poster on top (avatar, name, subscribers), its latest videos as DVD cases lying on their side. A click on a rack
 //     opens its department; a click on a case plays the video (Standard mode, on its page). The data is YouTube's own
@@ -18,8 +19,8 @@ import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, 
 import type { WidgetSdk } from 'gexplorer/widgets'
 import { LibraryFloor, skinClass, skinStyle } from '@shared/library-ui'
 import { BROADCAST } from './skin'
-import { LEDGER_DOC, MEMORY_DOC, emptyLedger, lastUpload, makeMemory, noteRead, noteSubscribers, noteSurvey, noteUploads, readLedger, readMemory, surveyNext } from './memory'
-import { boxOf, captionOf, channelOf, channelParam, clock, feedShelfOf, FEEDS, isFeed, shelfOf, videoOf, type Channel, type Video, type YtVideo } from './racks'
+import { LEDGER_DOC, MEMORY_DOC, emptyLedger, lastUpload, makeMemory, rhythmOf, noteRead, noteSubscribers, noteSurvey, noteUploads, readLedger, readMemory, surveyNext } from './memory'
+import { boxOf, captionOf, channelOf, channelParam, clock, feedShelfOf, FEEDS, isFeed, shelfOf, videoOf, type Channel, type PosterInfo, type Video, type YtVideo } from './racks'
 
 const HOME = 'https://www.youtube.com/'
 /** The pictures of every box a rack shows (its shelves x 3, measured; this until it is); a department: all of its own. */
@@ -32,9 +33,11 @@ const web = (sdk as any)?.web?.()
 const yt = (sdk as any)?.pageData?.('youtube')
 const settings = sdk?.settings?.()
 const data = sdk?.instanceData?.()
-const state = data?.live('state', () => ({ url: HOME, mode: 'racks' as Mode }))
+const state = data?.live('state', () => ({ url: HOME, mode: 'racks' as Mode, filter: 'all' as Filter }))
 
 type Mode = 'racks' | 'standard'
+/** 0.3.1: which racks the aisle shows (per copy). */
+type Filter = 'all' | 'active' | 'overdue' | 'quiet' | 'gems' | 'rising' | 'big' | 'unknown'
 const mode = ref<Mode>('racks')
 
 // ── Standard mode (0.1) ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -57,7 +60,7 @@ function pagesSetting(): 'auto' | 'desktop' | 'mobile' {
   return v === 'desktop' || v === 'mobile' ? v : 'auto'
 }
 
-function save(patch: Partial<{ url: string; mode: Mode }>) {
+function save(patch: Partial<{ url: string; mode: Mode; filter: Filter }>) {
   if (!state) return
   state.value.value = { ...(state.value.value ?? { url: HOME }), ...patch }
   state.changed()
@@ -194,24 +197,88 @@ function orderRacks() {
   void nextTick(() => requestAnimationFrame(stockVisible))
 }
 
-const shelves = computed(() => {
+// ── 0.3.1: what the ledger says of each channel: its rhythm, quiet (put away), overdue; the filter ──────────────────
+const MONTH_MS = 30.44 * 24 * 3600_000
+/** "Quiet after" (Settings): months without a video. */
+const quietMs = computed(() => (Number(settings?.values?.quietAfter) || 6) * MONTH_MS)
+/** Now, a little coarse (every 10 min): enough for "3d ago". */
+const now = ref(Date.now())
+const nowTimer = setInterval(() => { now.value = Date.now() }, 600_000)
+type Info = PosterInfo & { quiet: boolean; overdue: boolean }
+const infos = computed(() => {
   void ledgerVersion.value
-  return ordered.value.map(c => {
-    const list = videos.get(c.id)
-    const boxes = list?.map((v, i) => boxOf(v, c, i, pic(v), coming(v)))
-    const latest = lastUpload(ledger.value, c.id) ?? list?.map(v => time(v.published)).find((t): t is number => t !== undefined)
-    return shelfOf(c, boxes, c.avatar ? pictures.get(c.avatar) : undefined, latest)
-  })
+  const out = new Map<string, Info>()
+  for (const c of channels.value) {
+    const r = rhythmOf(ledger.value.channels[c.id], now.value)
+    const latest = r.last ?? videos.get(c.id)?.map(v => time(v.published)).find((t): t is number => t !== undefined)
+    const quiet = latest !== undefined && now.value - latest > quietMs.value
+    const overdue = r.overdue && !quiet
+    const months = latest !== undefined ? Math.floor((now.value - latest) / MONTH_MS) : 0
+    out.set(c.id, {
+      latest, perWeek: quiet ? undefined : r.perWeek, bars: quiet ? undefined : r.bars, quiet, overdue, dim: quiet,
+      flag: quiet ? (months >= 24 ? `Quiet ${Math.floor(months / 12)} yr` : `Quiet ${months} mo`) : overdue ? 'Overdue' : undefined,
+    })
+  }
+  return out
 })
+const filter = ref<Filter>('all')
+const passes = (c: Channel, f: Filter): boolean => {
+  const i = infos.value.get(c.id)
+  const subs = c.subscribers
+  switch (f) {
+    case 'all': return true
+    case 'active': return !!i && i.latest !== undefined && !i.quiet
+    case 'overdue': return !!i?.overdue
+    case 'quiet': return !!i?.quiet
+    case 'gems': return subs !== undefined && subs < 10_000
+    case 'rising': return subs !== undefined && subs >= 10_000 && subs < 250_000
+    case 'big': return subs !== undefined && subs >= 250_000
+    case 'unknown': return !i || i.latest === undefined
+  }
+}
+const FILTERS: Array<{ value: Filter; label: string }> = [
+  { value: 'all', label: 'All channels' },
+  { value: 'active', label: 'Posting' },
+  { value: 'overdue', label: 'Overdue' },
+  { value: 'quiet', label: 'Gone quiet' },
+  { value: 'gems', label: 'Hidden gems (under 10K)' },
+  { value: 'rising', label: 'Rising (10K to 250K)' },
+  { value: 'big', label: 'Big (250K and up)' },
+  { value: 'unknown', label: 'Not known yet' },
+]
+const filterCounts = computed(() => new Map(FILTERS.map(f => [f.value, channels.value.filter(c => passes(c, f.value)).length])))
+function setFilter(ev: Event) {
+  filter.value = (ev.target as HTMLSelectElement).value as Filter
+  save({ filter: filter.value })
+  activeId.value = null
+  void nextTick(() => requestAnimationFrame(stockVisible))
+}
+/** The aisle: the racks' order, the quiet ones put away at its end (the back room), as the filter says. */
+const aisle = computed(() => {
+  const list = ordered.value.filter(c => passes(c, filter.value))
+  return [...list.filter(c => !infos.value.get(c.id)?.quiet), ...list.filter(c => infos.value.get(c.id)?.quiet)]
+})
+function shelfFor(c: Channel) {
+  const list = videos.get(c.id)
+  const boxes = list?.map((v, i) => boxOf(v, c, i, pic(v), coming(v)))
+  return shelfOf(c, boxes, c.avatar ? pictures.get(c.avatar) : undefined, infos.value.get(c.id))
+}
+const shelves = computed(() => aisle.value.map(shelfFor))
 // 0.2.5: You may like without the channels you follow (YouTube's recommendations, past your subscriptions)
 const feedVideos = (id: string) => {
   const list = feeds.get(id)
   return list && id === 'feed:home' ? list.filter(v => !followed.value(v)) : list
 }
-const featuredShelves = computed(() => FEEDS.map(f => feedShelfOf(f, feedVideos(f.id)?.map((v, i) => boxOf(v, null, i, pic(v), coming(v))))))
+const featuredShelves = computed(() => filter.value !== 'all' ? [] : FEEDS.map(f => feedShelfOf(f, feedVideos(f.id)?.map((v, i) => boxOf(v, null, i, pic(v), coming(v))))))
 /** The channel list in the bar: A to Z (200+ channels). */
 const byName = computed(() => [...channels.value].sort((a, b) => a.name.localeCompare(b.name)))
-const activeShelf = computed(() => shelves.value.find(s => s.id === activeId.value) ?? featuredShelves.value.find(s => s.id === activeId.value) ?? null)
+const activeShelf = computed(() => {
+  const id = activeId.value
+  if (!id) return null
+  if (isFeed(id)) return featuredShelves.value.find(s => s.id === id) ?? null
+  const c = channels.value.find(x => x.id === id)
+  return c ? shelfFor(c) : null
+})
 const surfaceStyle = skinStyle(BROADCAST)
 const surfaceClass = skinClass(BROADCAST)
 
@@ -435,6 +502,9 @@ function jump(ev: Event) {
   select.value = ''
   if (!id) return
   activeId.value = null
+  // 0.3.1: a channel the filter hides: the filter goes back to all
+  const c = channels.value.find(x => x.id === id)
+  if (c && !passes(c, filter.value)) { filter.value = 'all'; save({ filter: 'all' }) }
   void nextTick(() => floor.value?.jumpTo(id))
 }
 
@@ -516,6 +586,8 @@ onMounted(async () => {
   resizeObs = new ResizeObserver(onAisleMoved)
   if (racksEl.value) resizeObs.observe(racksEl.value)
   mode.value = state?.value.value?.mode === 'standard' || !yt ? 'standard' : 'racks'
+  const f = state?.value.value?.filter
+  if (f && FILTERS.some(x => x.value === f)) filter.value = f
   if (yt) await loadMemory()
   if (mode.value === 'standard') await showStandard()
   else void loadChannels(false)
@@ -528,6 +600,7 @@ onBeforeUnmount(() => {
   queue.length = 0
   wanted = []
   if (surveyTimer) clearInterval(surveyTimer)
+  clearInterval(nowTimer)
   // 0.3.0: what's pending is saved now
   if (saveTimer2) { clearTimeout(saveTimer2); saveTimer2 = null; void saveMemory() }
   if (ledgerTimer) { clearTimeout(ledgerTimer); ledgerTimer = null; void saveLedger() }
@@ -564,6 +637,12 @@ onBeforeUnmount(() => {
           <select :value="''" @change="jump">
             <option value="" disabled>Channels</option>
             <option v-for="c in byName" :key="c.id" :value="c.id">{{ c.name }}</option>
+          </select>
+        </label>
+        <label v-if="channels.length && !activeShelf" class="glu-picker pick" title="Which racks the aisle shows">
+          <span>⚲</span>
+          <select :value="filter" @change="setFilter">
+            <option v-for="f in FILTERS" :key="f.value" :value="f.value">{{ f.label }} ({{ filterCounts.get(f.value) ?? 0 }})</option>
           </select>
         </label>
         <span class="spacer"></span>

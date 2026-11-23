@@ -92,6 +92,9 @@ All of them are generic over your item type (`<script setup generic="T extends L
 
 ## History
 
+- **3.11.0 (2026-11-23):** a poster's `bars` (a little chart under its caption, null weeks drawn faint) and `flag`
+  (a sticker on its corner); a shelf's `dim` (put away: the rack faded and dusty, brighter on hover). No new skin keys.
+  First used by GEM YT 0.3.1 (posting rhythm, overdue and quiet channels).
 - **3.10.0 (2026-11-23):** things on their way. `LibraryArtwork.mode: 'loading'` (a picture coming: a shimmer, not
   "No cover"); `LibraryShelf.loading` (its items coming: a spinner and "Stocking shelves…" over the rack's shelves, and
   in its department while it has none). No new skin keys. First used by GEM YT 0.2.4.

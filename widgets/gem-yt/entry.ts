@@ -7,7 +7,7 @@ import youtube from './rules/youtube.json'
 export default {
   api: '1.0',
   id: 'gem-yt',
-  version: '0.3.0',   // 0.1.0 (2026-11-22): Standard mode · 0.1.1: its YouTube rules (PageData) · 0.1.2: how long each page stays fresh · 0.2.0: GEM YT mode (racks) · 0.2.1: any size in a hub (the whole grid) · 0.2.2: every box a rack shows gets its picture · 0.2.3: pictures in the order racks fill, racks read as they come into view, the wall's plaque, JPEG covers · 0.2.4: Fresh from your subscriptions and You may like first, pictures on their way shown, the channel list readable · 0.2.5: racks in the order their channels last posted, You may like without your channels, the channel list A to Z · 0.3.0: remembered between starts (racks at once), each channel's uploads and subscribers kept, a slow survey of the channels not read yet, the latest upload on each poster
+  version: '0.3.1',   // 0.1.0 (2026-11-22): Standard mode · 0.1.1: its YouTube rules (PageData) · 0.1.2: how long each page stays fresh · 0.2.0: GEM YT mode (racks) · 0.2.1: any size in a hub (the whole grid) · 0.2.2: every box a rack shows gets its picture · 0.2.3: pictures in the order racks fill, racks read as they come into view, the wall's plaque, JPEG covers · 0.2.4: Fresh from your subscriptions and You may like first, pictures on their way shown, the channel list readable · 0.2.5: racks in the order their channels last posted, You may like without your channels, the channel list A to Z · 0.3.0: remembered between starts (racks at once), each channel's uploads and subscribers kept, a slow survey of the channels not read yet, the latest upload on each poster · 0.3.1: posting rhythm on the posters, quiet channels put away, Overdue, a filter
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
   about: `# GEM YT
@@ -42,6 +42,15 @@ site: narrow, its mobile site; wide, the desktop one (Settings: always one or th
           { value: 'mobile', label: 'Always mobile' },
         ],
         hint: 'By size: the mobile site when the widget is narrow, the desktop site when it is wide. A change reloads the page; a video goes on where it was.',
+      },
+      {
+        key: 'quietAfter', type: 'choice', label: 'A channel has gone quiet after', default: '6',
+        choices: [
+          { value: '3', label: '3 months without a video' },
+          { value: '6', label: '6 months without a video' },
+          { value: '12', label: 'A year without a video' },
+        ],
+        hint: 'Quiet channels are put away at the end of the aisle, faded (the filter shows them all: Gone quiet).',
       },
     ],
   },

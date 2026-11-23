@@ -136,6 +136,16 @@
 .glu-floor-focus-cases { display:flex; min-height:286px; align-items:flex-end; justify-content:center; gap:16px; padding:18px 28px 7px; background:linear-gradient(180deg,transparent 0 calc(100% - 28px),var(--skin-shelf-light, #a27a49) calc(100% - 28px) calc(100% - 26px),var(--skin-shelf, #6c492b) calc(100% - 25px) calc(100% - 18px),var(--skin-shelf-dark, #3d291a) calc(100% - 17px) calc(100% - 7px),var(--skin-shelf-dark, #21170f) calc(100% - 6px) 100%),var(--skin-unit-back, linear-gradient(180deg,#05080b,#121a20 22%,#080c10)); clip-path:polygon(var(--store-row-skew) 0,100% 0,calc(100% - var(--store-row-skew)) 100%,0 100%); }
 .glu-floor-focus-edge { height:9px; margin-top:-1px; background:linear-gradient(var(--skin-shelf, #3d291a),var(--skin-shelf-dark, #21170f)); clip-path:polygon(var(--store-row-skew) 0,100% 0,calc(100% - var(--store-row-skew)) 100%,0 100%); box-shadow:0 10px 16px #000a,inset 0 1px #f0c37d45; }
 .glu-floor.focused { height:auto; animation-name:glu-floor-zoom-in; }
+/* 3.11.0: a poster's little chart and sticker; a rack put away (faded, dusty). */
+.glu-poster-bars { display:flex; align-items:flex-end; gap:1px; height:12px; margin-top:1px; }
+.glu-poster-bars i { flex:1 1 0; min-width:2px; max-width:6px; border-radius:1px 1px 0 0; background:var(--glu-accent,#c33); opacity:.85; }
+.glu-poster-bars i.unknown { background:#3a2e2233; opacity:1; }
+.glu-poster-flag { position:absolute; z-index:1; top:-7px; right:-6px; padding:2px 6px; border-radius:2px; color:#fff; background:var(--glu-accent,#c33); box-shadow:0 2px 5px #0007; font:800 8px/1.3 "Segoe UI",system-ui,sans-serif; letter-spacing:.1em; text-transform:uppercase; transform:rotate(6deg); white-space:nowrap; }
+.glu-floor-rack.dim .glu-poster-card { filter:grayscale(.85) sepia(.3) brightness(.78); transform:rotate(1.6deg) translateY(3px); }
+.glu-floor-rack.dim .glu-poster-flag { background:#6b6156; }
+.glu-floor-rack.dim .glu-floor-mini-case { filter:grayscale(.7) brightness(.7); }
+.glu-floor-rack-dust { position:absolute; z-index:2; inset:0; pointer-events:none; background:radial-gradient(ellipse 60% 22% at 100% 0,#d8d2c41c,transparent 70%),radial-gradient(ellipse 40% 18% at 0 0,#d8d2c414,transparent 70%),linear-gradient(#bdb6a60f,#bdb6a61c); mix-blend-mode:screen; }
+.glu-floor-rack.dim:hover .glu-poster-card,.glu-floor-rack.dim:focus-visible .glu-poster-card { filter:grayscale(.3) brightness(.95); }
 /* 3.10.0: on their way: a picture (a shimmer), a rack's items (a spinner over its shelves), a department's. */
 .glu-artwork.loading { background:linear-gradient(100deg,#161b1f 30%,#29323a 50%,#161b1f 70%) 0 0/250% 100%; animation:glu-art-loading 1.3s linear infinite; }
 .glu-artwork.loading::before,.glu-artwork.loading::after { content:none; }

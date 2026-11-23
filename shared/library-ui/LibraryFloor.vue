@@ -18,6 +18,7 @@
 // 3.9.0: variant 'video' (landscape cases): 3 boxes to a rack's row, fewer columns in a department; a shelf's `poster`
 // (a channel) sits on its rack's top instead of the sign, and beside the department's title.
 // 3.10.0: a shelf's `loading` (its items on their way): a spinner over the rack's shelves, and in its department.
+// 3.11.0: a poster's `bars` (a little chart) and `flag` (a sticker); a shelf's `dim` (faded, dusty: put away).
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useScrollHints } from 'gexplorer/widgets'
 import ArtworkFrame from './ArtworkFrame.vue'
@@ -300,7 +301,7 @@ defineExpose({ jumpTo })
             :key="shelf.id"
             type="button"
             class="glu-floor-rack"
-            :class="{ featured, spotlight: spotlight === shelf.id, loading: shelf.loading }"
+            :class="{ featured, spotlight: spotlight === shelf.id, loading: shelf.loading, dim: shelf.dim }"
             :data-shelf-id="shelf.id"
             :aria-label="`Browse ${shelf.title}, ${rackCounts.get(shelf.id) ?? 0} ${itemsNoun}`"
             @click="emit('select-shelf',shelf.id)"
@@ -308,7 +309,10 @@ defineExpose({ jumpTo })
             <span v-if="shelf.poster" class="glu-floor-rack-sign glu-floor-rack-poster">
               <span class="glu-poster-card">
                 <span class="glu-poster-pic" :class="{ round: shelf.poster.round }"><img v-if="shelf.poster.src" :src="shelf.poster.src" alt="" draggable="false" /></span>
-                <span class="glu-poster-copy"><strong>{{ shelf.title }}</strong><small>{{ shelf.poster.caption ?? titles(rackCounts.get(shelf.id) ?? 0) }}</small></span>
+                <span class="glu-poster-copy"><strong>{{ shelf.title }}</strong><small>{{ shelf.poster.caption ?? titles(rackCounts.get(shelf.id) ?? 0) }}</small>
+                  <span v-if="shelf.poster.bars?.length" class="glu-poster-bars" aria-hidden="true"><i v-for="(b, i) in shelf.poster.bars.slice(-26)" :key="i" :class="{ unknown: b === null }" :style="{ height: `${Math.round(12 + 88 * Math.max(0, Math.min(1, b ?? 1)))}%` }"></i></span>
+                </span>
+                <b v-if="shelf.poster.flag" class="glu-poster-flag">{{ shelf.poster.flag }}</b>
               </span>
             </span>
             <span v-else class="glu-floor-rack-sign"><strong>{{ shelf.title }}</strong><small>{{ titles(rackCounts.get(shelf.id) ?? 0) }}</small></span>
@@ -333,6 +337,7 @@ defineExpose({ jumpTo })
                 <span class="glu-floor-rack-edge"></span>
               </span>
             </span>
+            <span v-if="shelf.dim" class="glu-floor-rack-dust" aria-hidden="true"></span>
             <span v-if="shelf.loading" class="glu-floor-rack-loading" aria-hidden="true"><i></i>Stocking shelves…</span>
             <span class="glu-floor-rack-action">{{ featured ? 'Browse' : 'Enter department' }} <b aria-hidden="true">›</b></span>
           </button>

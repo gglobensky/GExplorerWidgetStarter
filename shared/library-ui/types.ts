@@ -27,7 +27,16 @@ export type LibraryCaseVariant = 'dvd' | 'bigbox' | 'video'
  * 3.9.0: a poster on top of a rack, in place of its sign (a channel: its picture, its name, a line under it). src: a
  * GEM Shell image address; round: the picture in a circle (an avatar).
  */
-export type LibraryPoster = { src: string; caption?: string; round?: boolean }
+export type LibraryPoster = {
+  src: string; caption?: string; round?: boolean
+  /**
+   * 3.11.0: a little bar chart under the caption (oldest first), each 0 to 1 of the poster's height for it; null: not
+   * known (drawn faint). GEM YT: videos a week. Up to 26.
+   */
+  bars?: Array<number | null>
+  /** 3.11.0: a sticker on the poster's corner ("Overdue", "Quiet 8 mo"). */
+  flag?: string
+}
 
 export type LibraryItem = {
   id: string
@@ -66,6 +75,8 @@ export type LibraryShelf<T extends LibraryItem = LibraryItem> = {
   poster?: LibraryPoster
   /** 3.10.0: its items are on their way: the rack says so (a spinner over its shelves), and its department. */
   loading?: boolean
+  /** 3.11.0: put away: its rack faded and dusty (GEM YT: a channel gone quiet). */
+  dim?: boolean
 }
 
 /** A row of a rack on the store floor: some of its boxes, and how many there are in all. */

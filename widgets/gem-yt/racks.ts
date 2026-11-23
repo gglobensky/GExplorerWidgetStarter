@@ -86,17 +86,29 @@ export function agoShort(ms: number, now = Date.now()): string {
   return `${Math.floor(d / 365)}y ago`
 }
 
-/** A channel's rack: its poster (its avatar, its subscribers, 0.3.0: its latest upload), its videos once read. */
-export function shelfOf(c: Channel, boxes: YtVideo[] | undefined, avatar: string | undefined, latest?: number): LibraryShelf<YtVideo> {
-  const caption = [c.subscribers !== undefined ? `${compact(c.subscribers)} subscribers` : '', latest !== undefined ? agoShort(latest) : '']
+/** 0.3.1: videos a week, in words: "~2/wk", "~3/mo"; '' when rarer or not known. */
+export function rateText(perWeek: number | undefined): string {
+  if (perWeek === undefined) return ''
+  if (perWeek >= 0.95) return `~${Math.round(perWeek)}/wk`
+  const month = perWeek * 4.35
+  return month >= 0.95 ? `~${Math.round(month)}/mo` : ''
+}
+
+/** What the ledger says on a rack's poster (0.3.0 latest upload; 0.3.1 rhythm, its chart, a sticker, put away). */
+export type PosterInfo = { latest?: number; perWeek?: number; bars?: Array<number | null>; flag?: string; dim?: boolean }
+
+/** A channel's rack: its poster (its avatar, its subscribers, what the ledger says), its videos once read. */
+export function shelfOf(c: Channel, boxes: YtVideo[] | undefined, avatar: string | undefined, info: PosterInfo = {}): LibraryShelf<YtVideo> {
+  const caption = [c.subscribers !== undefined ? `${compact(c.subscribers)} subscribers` : '', info.latest !== undefined ? agoShort(info.latest) : '', rateText(info.perWeek)]
     .filter(Boolean).join(' · ')
   return {
     id: c.id,
     title: c.name,
     note: boxes ? `${boxes.length} latest ${boxes.length === 1 ? 'video' : 'videos'}` : 'Stocking shelves…',
     items: boxes ?? [],
-    poster: { src: avatar ?? '', round: true, caption: caption || undefined },
+    poster: { src: avatar ?? '', round: true, caption: caption || undefined, ...(info.bars?.length ? { bars: info.bars } : {}), ...(info.flag ? { flag: info.flag } : {}) },
     loading: !boxes,
+    ...(info.dim ? { dim: true } : {}),
   }
 }
 
