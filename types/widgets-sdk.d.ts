@@ -1377,7 +1377,15 @@ declare module 'gexplorer/widgets' {
         pages(): Promise<PageDataPage[]>
         /** A page's items. fresh: read again (unless the last read is under a minute old). */
         read(page: string, params?: Record<string, string>, opts?: { fresh?: boolean }): Promise<PageDataResult>
+        /**
+         * 2026-11-22: a picture an item gave you (an avatar, a thumbnail), as a local address for <img> (GEM Shell's image
+         * cache, your room). Only addresses GEM Shell handed you in an item; re-encoded, at most 4096 px a side.
+         */
+        image(url: string, opts?: { width?: number; height?: number; fit?: 'cover' | 'contain'; format?: 'jpeg' | 'png' }): Promise<PageDataImageResult>
     }
+    export type PageDataImageResult =
+        | { ok: true; url: string; width: number; height: number }
+        | { ok: false; reason: 'not-from-page' | 'declined' | 'bad-argument' | 'failed'; error?: string }
 
     export interface WidgetWeb {
         surface(el: HTMLElement, opts: { url: string; version?: WebVersion }): Promise<WebSurface | { ok: false; reason: WebReason; error?: string }>

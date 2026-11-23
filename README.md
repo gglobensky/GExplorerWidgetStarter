@@ -592,6 +592,9 @@ capabilities: [
   ```
 
   `yt.pages()` lists your rules' pages (labels, parameters, what each collects).
+- **Pictures:** your page can't load the site's images. `await yt.image(item.thumbnail, { width: 320, height: 180 })`
+  gives `{ ok, url }`, a local address for `<img>` (GEM Shell's image cache, your room, kept for next time). Only
+  addresses GEM Shell gave you in an item (`not-from-page` otherwise); no Network permission needed.
 - **Cache and pace** (your user's account must look like a person browsing): a page stays fresh for its `fresh` minutes
   (in your rules, 1 to 1440; default 30), for every copy of your widget; `{ fresh: true }` reads again unless the last
   read is under a minute old. One read at a time per site, 8 s apart, 300 a day (then `busy`, or the last read).
