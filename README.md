@@ -583,7 +583,20 @@ capabilities: [
   rule naming one is refused; GEM Shell drops them from the page's data before it leaves the page); anything but plain
   data (no page fields, nothing typed in them).
 - **What you get:** text, numbers, true / false and short lists of those.
-- **The question** (coming with the widget API) is worded from your rules: each page's `label` ("your
+- **Reading:**
+
+  ```ts
+  const yt = sdk.pageData!('youtube')
+  const r = await yt.read('channel-videos', { channel: '@handle' })   // { ok, items: { video: [...] }, at, cached, problems }
+  if (!r.ok) show(r.reason)   // 'declined', 'no-data' (signed out?), 'needs-update' (the site changed), 'busy'...
+  ```
+
+  `yt.pages()` lists your rules' pages (labels, parameters, what each collects).
+- **Cache and pace** (your user's account must look like a person browsing): a page stays fresh for its `fresh` minutes
+  (in your rules, 1 to 1440; default 30), for every copy of your widget; `{ fresh: true }` reads again unless the last
+  read is under a minute old. One read at a time per site, 8 s apart, 300 a day (then `busy`, or the last read).
+  Copies asking at once share one read. Not in Appearance's preview (refused there).
+- **The question** is worded from your rules: each page's `label` ("your
   subscriptions"), each item kind's `label` ("channels") and its field names. The grant covers what the file reads:
   its pages (addresses, parameters), its kinds of items and their field names. A new version reading other ones is
   asked again; one that only fixes **how** they're read (the site moved something) is not.

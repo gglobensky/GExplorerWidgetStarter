@@ -6,7 +6,7 @@ import youtube from './rules/youtube.json'
 export default {
   api: '1.0',
   id: 'gem-yt',
-  version: '0.1.1',   // 0.1.0 (2026-11-22): Standard mode · 0.1.1: its YouTube rules (PageData, used from GEM YT mode on)
+  version: '0.1.2',   // 0.1.0 (2026-11-22): Standard mode · 0.1.1: its YouTube rules (PageData, used from GEM YT mode on) · 0.1.2: how long each page stays fresh
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
   about: `# GEM YT

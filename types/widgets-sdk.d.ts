@@ -99,6 +99,16 @@ declare module 'gexplorer/widgets' {
          */
         web?: () => WidgetWeb
         /**
+         * 2026-11-22 ('PageData' declared with your `rules`): a site's own page data, read by GEM Shell with your rules,
+         * signed in as your widget is, handed to you as items (README "Page data").
+         *   const yt = sdk.pageData!('youtube')
+         *   const r = await yt.read('subscriptions')            // { ok, items: { channel: [...] }, at, cached, problems }
+         *   if (!r.ok && r.reason === 'needs-update') ...        // the site changed: your rules need a fix
+         * One consent per site, worded from your rules. Cached for each page's `fresh` minutes (default 30); paced: one
+         * read at a time, 8 s apart, 300 a day per site.
+         */
+        pageData?: (site: string) => WidgetPageData
+        /**
          * 2026-11-01 ('Apps' declared): the programs installed on this computer, read-only, and starting a Microsoft
          * Store app (an Xbox game) by its id.
          *   const r = await sdk.installedApps!().list()                 // asks the user once
@@ -797,7 +807,7 @@ declare module 'gexplorer/widgets' {
         /**
          * 2026-11-22 (older GEM Shells: ignored): your sites' own page data, read by GEM Shell with YOUR rules files and
          * handed to you as items (README "Page data"). Declared with `rules: [ruleFile, ...]` (JSON files you import);
-         * each one's domains must be among your Web domains. The widget API comes in a later GEM Shell (8c3).
+         * each one's domains must be among your Web domains. Read with sdk.pageData(site) (GEM Shell 2026-11-22, 8c3).
          */
         | 'PageData'
 
@@ -1265,7 +1275,7 @@ declare module 'gexplorer/widgets' {
      */
     export type PageDataRules = {
         schema: number; site: string; version: string; domains: string[]; base?: string; lang?: string; requires?: string[]; about?: string
-        pages: Record<string, { label?: string; url: string; params?: Record<string, string>; data: { var: string }; collect: string[]; skipUnder?: string[] }>
+        pages: Record<string, { label?: string; /** minutes, 1 to 1440 (default 30) */ fresh?: number; url: string; params?: Record<string, string>; data: { var: string }; collect: string[]; skipUnder?: string[] }>
         items: Record<string, { label?: string; find: string; when?: unknown; key?: string; let?: Record<string, unknown>; fields: Record<string, unknown>; optional?: string[] }>
     }
     /**
@@ -1347,6 +1357,28 @@ declare module 'gexplorer/widgets' {
     export type WebAudio = { playing: boolean; muted: boolean }
     /** 2026-11-22: which version of sites a surface asks for (surface(el, { url, version })). */
     export type WebVersion = 'auto' | 'desktop' | 'mobile'
+    /**
+     * 2026-11-22: why sdk.pageData(site).read() gave nothing. not-declared (no usable rules for the site: the console
+     * says why), bad-argument (no such page, or a parameter missing or not matching its pattern), declined (the user
+     * said no), no-data (the page had none of its data: signed out?), needs-update (read, but nothing your rules collect
+     * was found: the site changed), busy (300 reads of the site today), failed.
+     */
+    export type PageDataReason = 'not-declared' | 'bad-argument' | 'declined' | 'no-data' | 'needs-update' | 'busy' | 'failed'
+    /** Text, numbers, true / false, short lists of those: what your rules' fields give. */
+    export type PageDataValue = string | number | boolean | Array<string | number | boolean>
+    export type PageDataItems = Record<string, Array<Record<string, PageDataValue>>>
+    export type PageDataResult =
+        | { ok: true; items: PageDataItems; /** when it was read (ms) */ at: number; /** from GEM Shell's cache */ cached: boolean; problems: string[] }
+        | { ok: false; reason: PageDataReason; error?: string; problems?: string[] }
+    export type PageDataPage = { name: string; label: string; params: string[]; collects: Array<{ kind: string; label: string; fields: string[] }> }
+    export interface WidgetPageData {
+        readonly site: string
+        /** Your rules' pages for this site (their labels, parameters, what each collects). */
+        pages(): Promise<PageDataPage[]>
+        /** A page's items. fresh: read again (unless the last read is under a minute old). */
+        read(page: string, params?: Record<string, string>, opts?: { fresh?: boolean }): Promise<PageDataResult>
+    }
+
     export interface WidgetWeb {
         surface(el: HTMLElement, opts: { url: string; version?: WebVersion }): Promise<WebSurface | { ok: false; reason: WebReason; error?: string }>
         /** userAdded only, right after the user's click or key press in your widget: the consent dialog for that domain. */

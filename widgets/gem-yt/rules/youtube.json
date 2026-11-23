@@ -10,12 +10,14 @@
   "pages": {
     "subscriptions": {
       "label": "your subscriptions",
+      "fresh": 360,
       "url": "https://www.youtube.com/feed/channels?hl=en",
       "data": { "var": "ytInitialData" },
       "collect": ["channel"]
     },
     "channel-videos": {
       "label": "a channel's videos",
+      "fresh": 60,
       "url": "https://www.youtube.com/{channel}/videos?hl=en",
       "params": { "channel": "^(@[\\w.-]{1,100}|channel/UC[\\w-]{22})$" },
       "data": { "var": "ytInitialData" },
@@ -23,6 +25,7 @@
     },
     "home": {
       "label": "your home page",
+      "fresh": 30,
       "url": "https://www.youtube.com/?hl=en",
       "data": { "var": "ytInitialData" },
       "collect": ["video"],
