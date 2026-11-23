@@ -4,7 +4,9 @@
 // 0.2.5: the racks in the order their channels last posted, You may like without the channels you follow;
 // 0.3.0: what it read is remembered between starts (memory.ts): racks drawn at once, read again behind them; each
 // channel's uploads and subscribers kept over time, and a slow background survey of the channels not read yet;
-// 0.3.1: posting rhythm on the posters (a chart, ~2/wk, Overdue), quiet channels put away at the aisle's end, a filter). Two modes, per copy (its state):
+// 0.3.1: posting rhythm on the posters (a chart, ~2/wk, Overdue), quiet channels put away at the aisle's end, a filter;
+// 0.3.2: the aisle holds still while you look: quiet racks are put away when it's (re)arranged, and a reorder keeps
+// the rack you went to, or the ones in view, where they were). Two modes, per copy (its state):
 //   - GEM YT (racks): the store floor of library-ui 3.9.0 (shared/library-ui): one rack per channel you follow, its
 //     poster on top (avatar, name, subscribers), its latest videos as DVD cases lying on their side. A click on a rack
 //     opens its department; a click on a case plays the video (Standard mode, on its page). The data is YouTube's own
@@ -194,6 +196,7 @@ function orderRacks() {
   ranked.forEach((c, i) => order.set(c.id, i))
   channels.value.forEach((c, i) => { if (!order.has(c.id)) order.set(c.id, ranked.length + i) })
   rackOrder.value = order
+  settleAisle()
   void nextTick(() => requestAnimationFrame(stockVisible))
 }
 
@@ -250,14 +253,57 @@ const filterCounts = computed(() => new Map(FILTERS.map(f => [f.value, channels.
 function setFilter(ev: Event) {
   filter.value = (ev.target as HTMLSelectElement).value as Filter
   save({ filter: filter.value })
+  anchorId = null
+  settleAisle()
   activeId.value = null
   void nextTick(() => requestAnimationFrame(stockVisible))
 }
-/** The aisle: the racks' order, the quiet ones put away at its end (the back room), as the filter says. */
+// 0.3.2 (Guillaume: a channel picked in the list, then its rack moved away as the racks around it were read and it
+// turned out quiet): which racks are put away is settled when the aisle is arranged (the last session's at start, the
+// subscriptions feed's order, ⟳, the filter, the setting), not each time the ledger learns something. A rack found
+// quiet meanwhile fades where it stands.
+const putAway = ref(new Set<string>())
+function settleAisle() {
+  putAway.value = new Set([...infos.value].filter(([, i]) => i.quiet).map(([id]) => id))
+}
+watch(quietMs, settleAisle)
+/** The aisle: the racks' order, the put away ones at its end (the back room), as the filter says. */
 const aisle = computed(() => {
   const list = ordered.value.filter(c => passes(c, filter.value))
-  return [...list.filter(c => !infos.value.get(c.id)?.quiet), ...list.filter(c => infos.value.get(c.id)?.quiet)]
+  return [...list.filter(c => !putAway.value.has(c.id)), ...list.filter(c => putAway.value.has(c.id))]
 })
+
+// 0.3.2: when the aisle does change order, what you're looking at stays put: the rack you went to (from the list,
+// until you scroll yourself), else the first rack in view, at the same place on screen.
+let anchorId: string | null = null
+let held: { id: string; left: number } | null = null
+const aisleGrid = () => racksEl.value?.querySelector<HTMLElement>('.glu-floor-rack-grid') ?? null
+const rackEl = (grid: HTMLElement, id: string) => grid.querySelector<HTMLElement>(`[data-shelf-id="${CSS.escape(id)}"]`)
+watch(() => aisle.value.map(c => c.id).join('|'), () => {
+  const grid = aisleGrid()
+  held = null
+  if (!grid || anchorId) return
+  const view = grid.getBoundingClientRect()
+  for (const el of grid.querySelectorAll<HTMLElement>('[data-shelf-id]')) {
+    const r = el.getBoundingClientRect()
+    if (r.right > view.left + 1) { held = { id: el.dataset.shelfId!, left: r.left - view.left }; break }
+  }
+}, { flush: 'pre' })
+watch(() => aisle.value.map(c => c.id).join('|'), () => {
+  const grid = aisleGrid()
+  if (!grid) return
+  if (anchorId) {
+    const el = rackEl(grid, anchorId)
+    if (el) grid.scrollTo({ left: Math.max(0, el.offsetLeft - (grid.clientWidth - el.offsetWidth) / 2), behavior: 'auto' })
+  } else if (held) {
+    const el = rackEl(grid, held.id)
+    if (el) grid.scrollLeft += el.getBoundingClientRect().left - grid.getBoundingClientRect().left - held.left
+  }
+  held = null
+  requestAnimationFrame(stockVisible)
+}, { flush: 'post' })
+/** You scrolled the aisle yourself: nothing is held any more. */
+function letGo() { anchorId = null }
 function shelfFor(c: Channel) {
   const list = videos.get(c.id)
   const boxes = list?.map((v, i) => boxOf(v, c, i, pic(v), coming(v)))
@@ -505,6 +551,7 @@ function jump(ev: Event) {
   // 0.3.1: a channel the filter hides: the filter goes back to all
   const c = channels.value.find(x => x.id === id)
   if (c && !passes(c, filter.value)) { filter.value = 'all'; save({ filter: 'all' }) }
+  anchorId = id
   void nextTick(() => floor.value?.jumpTo(id))
 }
 
@@ -558,6 +605,7 @@ async function loadMemory() {
   for (const [id, list] of Object.entries(mem.feeds)) feeds.set(id, list)
   for (const [from, to] of Object.entries(mem.pictures)) pictures.set(from, to)
   if (mem.order.length) rackOrder.value = new Map(mem.order.map((id, i) => [id, i]))
+  settleAisle()
 }
 
 // The background survey: a channel never read (or not for a week) every SURVEY_GAP_MS while GEM YT is open on its
@@ -583,6 +631,8 @@ onMounted(async () => {
   await settings?.ready.catch(() => { })
   // 0.2.3: the aisle's scroll (caught on the way down: scroll doesn't bubble) and size bring racks into view
   racksEl.value?.addEventListener('scroll', onAisleMoved, { capture: true, passive: true })
+  // 0.3.2: the wheel, a drag, the aisle's arrows, a key: you're moving the aisle yourself
+  for (const ev of ['wheel', 'pointerdown', 'keydown'] as const) racksEl.value?.addEventListener(ev, letGo, { capture: true, passive: true })
   resizeObs = new ResizeObserver(onAisleMoved)
   if (racksEl.value) resizeObs.observe(racksEl.value)
   mode.value = state?.value.value?.mode === 'standard' || !yt ? 'standard' : 'racks'
@@ -605,6 +655,7 @@ onBeforeUnmount(() => {
   if (saveTimer2) { clearTimeout(saveTimer2); saveTimer2 = null; void saveMemory() }
   if (ledgerTimer) { clearTimeout(ledgerTimer); ledgerTimer = null; void saveLedger() }
   racksEl.value?.removeEventListener('scroll', onAisleMoved, { capture: true })
+  for (const ev of ['wheel', 'pointerdown', 'keydown'] as const) racksEl.value?.removeEventListener(ev, letGo, { capture: true })
   resizeObs?.disconnect()
   if (viewFrame) cancelAnimationFrame(viewFrame)
   state?.release()
