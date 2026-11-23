@@ -594,7 +594,8 @@ capabilities: [
   `yt.pages()` lists your rules' pages (labels, parameters, what each collects).
 - **Pictures:** your page can't load the site's images. `await yt.image(item.thumbnail, { width: 320, height: 180 })`
   gives `{ ok, url }`, a local address for `<img>` (GEM Shell's image cache, your room, kept for next time). Only
-  addresses GEM Shell gave you in an item (`not-from-page` otherwise); no Network permission needed.
+  addresses GEM Shell gave you in an item (`not-from-page` otherwise); no Network permission needed. WebP and AVIF
+  pictures (YouTube's thumbnails) are converted like any image ("Image storage").
 - **Cache and pace** (your user's account must look like a person browsing): a page stays fresh for its `fresh` minutes
   (in your rules, 1 to 1440; default 30), for every copy of your widget; `{ fresh: true }` reads again unless the last
   read is under a minute old. One read at a time per site, 8 s apart, 300 a day (then `busy`, or the last read).
@@ -1006,6 +1007,12 @@ watch(filter, () => reopen())   // the user changed them: list again
 GEM Shell lists them on your widget's page ("Set by GEM Shell") when your widget follows them.
 
 ## Image storage
+
+**Formats:** GEM Shell reads JPEG, PNG, GIF, BMP and TIFF, and also **WebP, AVIF and HEIF** (GEM Shell 2026-11-22: it
+decodes those in a separate worker process, so a crafted file can't harm it). Whatever comes in, you get a **JPEG or
+PNG** back (`format`), re-encoded with nothing of the original file carried over. So **serve JPEG when you can choose**
+(your own server, an API's size option): it's read directly, nothing to convert. SVG is never read (it can hold scripts).
+This holds for every way in: `mediaImageCreate` (files, bytes, urls) and `sdk.pageData().image()`.
 
 `sdk.mediaImageCreate(…, { storage })` keeps images in one of two places (Settings ▸ Widget storage shows both):
 - `'cache'` (the default): **made again when needed**. Gone when unused for 30 days, beyond your room (500 MB), or

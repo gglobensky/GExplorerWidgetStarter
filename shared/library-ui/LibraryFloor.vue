@@ -15,6 +15,8 @@
 // A rack is reached from the widget's own top-bar list (the Video Club's "Genres", 2.4.0: the shop opens that rack's
 // department, as a click on it does). jumpTo(shelfId) on the floor's ref centres a rack in the aisle and lights it.
 // Platform sections (PC, consoles) will come here with the Game Library's emulation (plan 2026-10-31).
+// 3.9.0: variant 'video' (landscape cases): 3 boxes to a rack's row, fewer columns in a department; a shelf's `poster`
+// (a channel) sits on its rack's top instead of the sign, and beside the department's title.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useScrollHints } from 'gexplorer/widgets'
 import ArtworkFrame from './ArtworkFrame.vue'
@@ -71,6 +73,8 @@ defineSlots<{
 const FEATURED_ROWS = 3
 const MAX_ROWS = 10
 const RACK_CAPACITY = 6
+/** 3.9.0: landscape boxes take twice a DVD's room on a rack. */
+const rackCapacity = computed(() => (props.variant === 'video' ? 3 : RACK_CAPACITY))
 /** How many rows the racks' height holds (measured; FEATURED_ROWS until it is). */
 const fitRows = ref(FEATURED_ROWS)
 
@@ -98,11 +102,11 @@ const sections = computed(() => {
 function featuredRows(shelf: LibraryShelf<T>): LibraryFloorRow<T>[] {
   // Sets (Collections): one row each, never two sets on a row.
   if (shelf.groups?.length) return shelf.groups.slice(0, fitRows.value).map(group => ({
-    id:group.id, label:group.title, unit:props.setUnit, total:group.items.length, items:group.items.slice(0, RACK_CAPACITY),
+    id:group.id, label:group.title, unit:props.setUnit, total:group.items.length, items:group.items.slice(0, rackCapacity.value),
   }))
   const rows: LibraryFloorRow<T>[] = []
-  for (let index = 0; index < shelf.items.length && rows.length < fitRows.value; index += RACK_CAPACITY) {
-    const items = shelf.items.slice(index, index + RACK_CAPACITY)
+  for (let index = 0; index < shelf.items.length && rows.length < fitRows.value; index += rackCapacity.value) {
+    const items = shelf.items.slice(index, index + rackCapacity.value)
     const last = rows.length === fitRows.value - 1
     rows.push({ id:`${shelf.id}-${rows.length}`, total:last ? shelf.items.length - index : items.length, items })
   }
@@ -236,7 +240,9 @@ function jumpTo(shelfId: string) {
 
 function measure() {
   const width = root.value?.clientWidth ?? 0
-  columns.value = width >= 940 ? 6 : width >= 790 ? 5 : width >= 620 ? 4 : width >= 420 ? 3 : 2
+  columns.value = props.variant === 'video'
+    ? (width >= 1100 ? 4 : width >= 800 ? 3 : width >= 500 ? 2 : 1)
+    : (width >= 940 ? 6 : width >= 790 ? 5 : width >= 620 ? 4 : width >= 420 ? 3 : 2)
   measureRows()
   if (windowed.value) queueWindow()
 }
@@ -275,7 +281,7 @@ defineExpose({ jumpTo })
 </script>
 
 <template>
-  <section ref="root" class="glu-floor" :class="{ focused:activeShelf }">
+  <section ref="root" class="glu-floor" :class="{ focused:activeShelf, 'glu-floor-video': variant === 'video' }">
     <template v-if="!activeShelf">
       <header v-if="$slots.intro" class="glu-floor-intro"><slot name="intro" /></header>
       <div class="glu-floor-aisle">
@@ -298,7 +304,13 @@ defineExpose({ jumpTo })
             :aria-label="`Browse ${shelf.title}, ${rackCounts.get(shelf.id) ?? 0} ${itemsNoun}`"
             @click="emit('select-shelf',shelf.id)"
           >
-            <span class="glu-floor-rack-sign"><strong>{{ shelf.title }}</strong><small>{{ titles(rackCounts.get(shelf.id) ?? 0) }}</small></span>
+            <span v-if="shelf.poster" class="glu-floor-rack-sign glu-floor-rack-poster">
+              <span class="glu-poster-card">
+                <span class="glu-poster-pic" :class="{ round: shelf.poster.round }"><img v-if="shelf.poster.src" :src="shelf.poster.src" alt="" draggable="false" /></span>
+                <span class="glu-poster-copy"><strong>{{ shelf.title }}</strong><small>{{ shelf.poster.caption ?? titles(rackCounts.get(shelf.id) ?? 0) }}</small></span>
+              </span>
+            </span>
+            <span v-else class="glu-floor-rack-sign"><strong>{{ shelf.title }}</strong><small>{{ titles(rackCounts.get(shelf.id) ?? 0) }}</small></span>
             <span class="glu-floor-rack-shelves">
               <span v-for="row in rackRows.get(shelf.id) ?? []" :key="row.id" class="glu-floor-rack-shelf">
                 <span v-if="row.label" class="glu-floor-rack-row-label"><b>{{ row.label }}</b><small>{{ rowCountText(row) }}</small></span>
@@ -336,7 +348,10 @@ defineExpose({ jumpTo })
 
     <template v-else>
       <header class="glu-floor-focus-heading">
-        <div><h2>{{ activeShelf.title }}</h2><p>{{ departmentNote }}</p></div>
+        <div class="glu-floor-focus-title">
+          <span v-if="activeShelf.poster?.src" class="glu-poster-pic small" :class="{ round: activeShelf.poster.round }"><img :src="activeShelf.poster.src" alt="" draggable="false" /></span>
+          <div><h2>{{ activeShelf.title }}</h2><p>{{ departmentNote }}</p></div>
+        </div>
         <slot name="focus-tools" />
       </header>
       <!-- 2.7.0: a big department draws only the rows in view -->

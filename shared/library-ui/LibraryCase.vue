@@ -5,6 +5,8 @@
 // 3.6.0: tag (a label on the shelf's edge under the box: "37 h played") and pick (a handwritten staff-pick card leaning
 // on it: "Staff pick!\n94% of players loved it", the first line bold), both the widget's words (LibraryFloor tagFor,
 // pickFor).
+// 3.9.0: variant 'video', a DVD case lying on its side: the art (16:9) under the case's sleeve, a printed band under it
+// with the title and the caption (the cover's own type), the spine on its left. Same click, same events.
 import { computed } from 'vue'
 import ArtworkFrame from './ArtworkFrame.vue'
 import { formatYear, type LibraryCaseVariant, type LibraryItem } from './types'
@@ -44,9 +46,11 @@ defineSlots<{ marks?: (props: { item: T }) => any }>()
         <small v-if="captionText">{{ captionText }}</small>
       </span>
       <span class="glu-case-shell">
-        <ArtworkFrame :artwork="item.artwork" :alt="`${item.title} artwork`" />
+        <span v-if="variant === 'video'" class="glu-case-art"><ArtworkFrame :artwork="item.artwork" :alt="`${item.title} artwork`" /><slot name="marks" :item="item" /></span>
+        <ArtworkFrame v-else :artwork="item.artwork" :alt="`${item.title} artwork`" />
+        <span v-if="variant === 'video'" class="glu-case-band" aria-hidden="true"><b>{{ item.title }}</b><small v-if="captionText">{{ captionText }}</small></span>
         <span class="glu-case-shine" aria-hidden="true"></span>
-        <slot name="marks" :item="item" />
+        <slot v-if="variant !== 'video'" name="marks" :item="item" />
       </span>
       <span v-if="pickLines.length" class="glu-case-pick" aria-hidden="true"><b>{{ pickLines[0] }}</b><template v-for="(line, i) in pickLines.slice(1)" :key="i"><br />{{ line }}</template></span>
     </span>

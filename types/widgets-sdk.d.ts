@@ -3059,6 +3059,11 @@ declare module 'gexplorer/widgets' {
     }
 
     // ── Image assets (sdk.mediaImageCreate) ───────────────────────────────
+    /**
+     * What GEM Shell reads: JPEG, PNG, GIF (its first frame), BMP, TIFF, and (GEM Shell 2026-11-22) WebP, AVIF and
+     * HEIF, which it decodes in a separate worker process and converts. Every image you get is re-encoded as JPEG or
+     * PNG (`format`): serve JPEG when you can choose (it's read directly, nothing to convert). Not SVG.
+     */
     export type MediaImageSource =
         | { type: 'file'; path: string }
         | { type: 'thumbnail'; path: string; size?: number }

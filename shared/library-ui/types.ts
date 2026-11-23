@@ -16,8 +16,17 @@ export type LibraryArtwork = {
   icon?: { src: string; width: number; height: number }
 }
 
-/** The look of a box on the shelf. 'dvd' (movies), 'bigbox' (PC games, 2.1.0); consoles come later. */
-export type LibraryCaseVariant = 'dvd' | 'bigbox'
+/**
+ * The look of a box on the shelf. 'dvd' (movies), 'bigbox' (PC games, 2.1.0), 'video' (3.9.0: a DVD case lying on its
+ * side, 16:9 art under its sleeve and a printed title band: online videos, GEM YT); consoles come later.
+ */
+export type LibraryCaseVariant = 'dvd' | 'bigbox' | 'video'
+
+/**
+ * 3.9.0: a poster on top of a rack, in place of its sign (a channel: its picture, its name, a line under it). src: a
+ * GEM Shell image address; round: the picture in a circle (an avatar).
+ */
+export type LibraryPoster = { src: string; caption?: string; round?: boolean }
 
 export type LibraryItem = {
   id: string
@@ -52,6 +61,8 @@ export type LibraryShelf<T extends LibraryItem = LibraryItem> = {
   items: T[]
   /** The shelf's sets, each on its own shelf where the view can (Collections in the showroom). */
   groups?: Array<LibraryShelfGroup<T>>
+  /** 3.9.0: a poster on the rack's top instead of its sign (and beside the department's title). */
+  poster?: LibraryPoster
 }
 
 /** A row of a rack on the store floor: some of its boxes, and how many there are in all. */

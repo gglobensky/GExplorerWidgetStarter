@@ -92,6 +92,18 @@ All of them are generic over your item type (`<script setup generic="T extends L
 
 ## History
 
+- **3.9.1 (2026-11-22):** a skinned video case's side was sized for a portrait box (a tall bar beside each case);
+  the poster's caption darker (it hardly showed).
+- **3.9.0 (2026-11-22):** for GEM YT (online videos and their channels). Nothing changes for the Video Club or the
+  Game Shop, and every skin keeps working (no new skin value: the new parts read the existing ones).
+  - `variant: 'video'` (LibraryCase, LibraryFloor): a DVD case lying on its side, its 16:9 art under the sleeve, a
+    printed band under it with the title and the caption (`--skin-panel` / `--skin-panel-high`, edged with the
+    accent), a ridged spine on its left. The `marks` slot goes over the art. On the floor: 3 boxes to a rack's row,
+    1 to 4 columns in a department by its width.
+  - `LibraryShelf.poster` (`LibraryPoster`: `{ src, caption?, round? }`): a paper poster taped to the rack's top in
+    place of its sign (the picture framed in white, round for an avatar; the name in poster type; `caption`, else the
+    count), its edge in the accent; skinned, it hangs on the skin's sign board. The picture also sits beside the
+    department's title.
 - **3.8.0 (2026-11-09):** exported `.gemskin` files identify their compatibility family (`library-store`) through
   the shared GEM skin header. Old headerless library skins still load; another widget family's skin is identified by
   name instead of reported as corrupt. The extension remains `.gemskin` for every widget.
