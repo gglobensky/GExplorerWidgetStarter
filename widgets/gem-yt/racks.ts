@@ -3,7 +3,11 @@
 import type { LibraryItem, LibraryShelf } from '@shared/library-ui'
 
 /** A subscription (the rules' "channel" item). */
-export type Channel = { id: string; name: string; handle?: string; avatar?: string; subscribers?: number; videos?: number; verified?: boolean }
+export type Channel = {
+  id: string; name: string; handle?: string; avatar?: string; subscribers?: number; videos?: number; verified?: boolean
+  /** 0.3.5: the subscriptions list's snippet of its description (search, topics) */
+  description?: string
+}
 /** A video (the rules' "video" item). */
 export type Video = {
   id: string; title: string; thumbnail?: string; length?: number; live?: boolean; published?: string
@@ -24,7 +28,7 @@ const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : u
 export function channelOf(it: Record<string, unknown>): Channel | null {
   const id = str(it.id), name = str(it.name)
   if (!id || !name) return null
-  return { id, name, handle: str(it.handle), avatar: str(it.avatar), subscribers: num(it.subscribers), videos: num(it.videos), verified: it.verified === true }
+  return { id, name, handle: str(it.handle), avatar: str(it.avatar), subscribers: num(it.subscribers), videos: num(it.videos), verified: it.verified === true, description: str(it.description)?.slice(0, 300) }
 }
 
 export function videoOf(it: Record<string, unknown>): Video | null {

@@ -48,6 +48,8 @@ export type ChannelRecord = {
   uploads: Array<[string, number]>
   /** [day number (ms / 1 day), subscribers] */
   subs: Array<[number, number]>
+  /** 0.3.5: what the channel says of itself (its page's metadata): description (1000 characters), keywords (topics.ts) */
+  about?: { d?: string; k?: string[] }
 }
 export type Ledger = { version: 1; channels: Record<string, ChannelRecord>; survey: { day: number; count: number } }
 
@@ -110,6 +112,11 @@ export function readLedger(raw: unknown): Ledger {
       for (const u of r.uploads.slice(0, MAX_UPLOADS)) if (Array.isArray(u) && typeof u[0] === 'string' && ID.test(u[0]) && num(u[1])) rec.uploads.push([u[0], u[1]])
     if (Array.isArray(r.subs))
       for (const s of r.subs.slice(-MAX_SUBS)) if (Array.isArray(s) && num(s[0]) && num(s[1])) rec.subs.push([s[0], s[1]])
+    if (obj(r.about)) {
+      const d = typeof r.about.d === 'string' ? r.about.d.slice(0, 1000) : undefined
+      const k = Array.isArray(r.about.k) ? r.about.k.filter((t): t is string => typeof t === 'string' && t.length <= 40).slice(0, 30) : undefined
+      if (d || k?.length) rec.about = { ...(d ? { d } : {}), ...(k?.length ? { k } : {}) }
+    }
     out.channels[id] = rec
   }
   return out
@@ -149,6 +156,13 @@ export function noteSubscribers(ledger: Ledger, channels: Channel[], now: number
     else rec.subs.push([day, c.subscribers])
     if (rec.subs.length > MAX_SUBS) rec.subs.splice(0, rec.subs.length - MAX_SUBS)
   }
+}
+
+/** 0.3.5: what a channel says of itself, from its page (keywords already parsed: topics.ts). */
+export function noteAbout(ledger: Ledger, channelId: string, description: string | undefined, keywords: string[]): void {
+  const rec = recordOf(ledger, channelId)
+  const d = description?.slice(0, 1000)
+  rec.about = { ...(d ? { d } : {}), ...(keywords.length ? { k: keywords.slice(0, 30) } : {}) }
 }
 
 export function lastUpload(ledger: Ledger, channelId: string): number | undefined {

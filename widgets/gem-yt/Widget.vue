@@ -9,7 +9,9 @@
 // the rack you went to, or the ones in view, where they were; 0.3.3: your own aisles (aisles.ts), and Since you were
 // here: your channels' videos that came out since your last visit, first in the aisle; 0.3.4: the channel list is
 // GEM Shell's menu, with a filter of its own, and in an aisle a check beside each channel puts it in or takes it out;
-// the survey paces itself like a person (45 s to 2 min) and pauses an hour when YouTube stops answering). Two modes, per copy (its state):
+// the survey paces itself like a person (45 s to 2 min) and pauses an hour when YouTube stops answering;
+// 0.3.5: search your channels, topics from the creators' keywords (topics.ts) in both filters, "make an aisle of
+// these" in the channel list, and what a filter hides in an aisle said in the bar). Two modes, per copy (its state):
 //   - GEM YT (racks): the store floor of library-ui 3.9.0 (shared/library-ui): one rack per channel you follow, its
 //     poster on top (avatar, name, subscribers), its latest videos as DVD cases lying on their side. A click on a rack
 //     opens its department; a click on a case plays the video (Standard mode, on its page). The data is YouTube's own
@@ -25,7 +27,8 @@ import type { WidgetSdk } from 'gexplorer/widgets'
 import { LibraryFloor, skinClass, skinStyle } from '@shared/library-ui'
 import { BROADCAST } from './skin'
 import { AISLES_DOC, addAisle, readAisles, removeAisle, renameAisle, toggleChannel, type Aisles } from './aisles'
-import { LEDGER_DOC, MEMORY_DOC, emptyLedger, lastUpload, makeMemory, rhythmOf, noteRead, noteSubscribers, noteSurvey, noteUploads, readLedger, readMemory, surveyNext } from './memory'
+import { matches, parseKeywords, topicsOf } from './topics'
+import { LEDGER_DOC, MEMORY_DOC, emptyLedger, lastUpload, makeMemory, noteAbout, rhythmOf, noteRead, noteSubscribers, noteSurvey, noteUploads, readLedger, readMemory, surveyNext } from './memory'
 import { agoShort, boxOf, captionOf, channelOf, channelParam, clock, feedShelfOf, FEEDS, isFeed, shelfOf, videoOf, type Channel, type PosterInfo, type Video, type YtVideo } from './racks'
 
 const HOME = 'https://www.youtube.com/'
@@ -43,7 +46,7 @@ const state = data?.live('state', () => ({ url: HOME, mode: 'racks' as Mode, fil
 
 type Mode = 'racks' | 'standard'
 /** 0.3.1: which racks the aisle shows (per copy). */
-type Filter = 'all' | 'active' | 'overdue' | 'quiet' | 'gems' | 'rising' | 'big' | 'unknown'
+type Filter = 'all' | 'active' | 'overdue' | 'quiet' | 'gems' | 'rising' | 'big' | 'unknown' | `topic:${string}`
 const mode = ref<Mode>('racks')
 
 // ── Standard mode (0.1) ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -242,7 +245,27 @@ const passes = (c: Channel, f: Filter): boolean => {
     case 'big': return subs !== undefined && subs >= 250_000
     case 'unknown': return !i || i.latest === undefined
   }
+  // 0.3.5: a topic: the channel's own keywords have it
+  return f.startsWith('topic:') && !!ledger.value.channels[c.id]?.about?.k?.includes(f.slice(6))
 }
+// ── 0.3.5: topics and search (topics.ts) ──────────────────────────────────────────────────────────────────────────
+/** The topics your channels share (from the keywords of the channels read so far). */
+const topics = computed(() => {
+  void ledgerVersion.value
+  const kw = new Map<string, string[]>()
+  for (const c of channels.value) { const k = ledger.value.channels[c.id]?.about?.k; if (k?.length) kw.set(c.id, k) }
+  return topicsOf(kw)
+})
+const topicChoices = computed(() => topics.value.map(t => ({ value: `topic:${t.term}` as Filter, label: t.term, count: t.channels.length })))
+const isFilter = (v: unknown): v is Filter => typeof v === 'string' && (FILTERS.some(x => x.value === v) || (/^topic:.{1,40}$/.test(v)))
+const filterLabel = (f: Filter) => FILTERS.find(x => x.value === f)?.label ?? (f.startsWith('topic:') ? `About “${f.slice(6)}”` : f)
+/** Search your channels: name, handle, description, keywords, the titles of the videos known. */
+const query = ref('')
+const haystack = (c: Channel) => {
+  const about = ledger.value.channels[c.id]?.about
+  return [c.name, c.handle, c.description, about?.d, about?.k?.join(' '), ...(videos.get(c.id) ?? []).map(v => v.title)].filter(Boolean).join(' \n ')
+}
+const found = (c: Channel) => !query.value.trim() || matches(query.value.trim(), haystack(c))
 const FILTERS: Array<{ value: Filter; label: string }> = [
   { value: 'all', label: 'All channels' },
   { value: 'active', label: 'Posting' },
@@ -253,7 +276,7 @@ const FILTERS: Array<{ value: Filter; label: string }> = [
   { value: 'big', label: 'Big (250K and up)' },
   { value: 'unknown', label: 'Not known yet' },
 ]
-const filterCounts = computed(() => new Map(FILTERS.map(f => [f.value, channels.value.filter(c => passes(c, f.value)).length])))
+const filterCounts = computed(() => new Map([...FILTERS.map(f => [f.value, channels.value.filter(c => passes(c, f.value)).length] as const), ...topicChoices.value.map(t => [t.value, t.count] as const)]))
 function setFilter(ev: Event) {
   filter.value = (ev.target as HTMLSelectElement).value as Filter
   save({ filter: filter.value })
@@ -365,7 +388,7 @@ watch(quietMs, settleAisle)
 /** The aisle: the racks' order, the put away ones at its end (the back room), as the filter says. */
 const aisle = computed(() => {
   const only = currentAisle.value ? new Set(currentAisle.value.channels) : null
-  const list = ordered.value.filter(c => passes(c, filter.value) && (!only || only.has(c.id)))
+  const list = ordered.value.filter(c => passes(c, filter.value) && found(c) && (!only || only.has(c.id)))
   return [...list.filter(c => !putAway.value.has(c.id)), ...list.filter(c => putAway.value.has(c.id))]
 })
 
@@ -518,6 +541,9 @@ async function loadVideos(c: Channel, fresh: boolean, pictureCount = -1, prio = 
     readNow.add(c.id)
     videos.set(c.id, list)
     noteRead(ledger.value, c.id, list, Date.now())
+    // 0.3.5: what the channel says of itself (its page's metadata): search and topics
+    const info = r.items.channelInfo?.[0] as Record<string, unknown> | undefined
+    if (info) noteAbout(ledger.value, c.id, typeof info.description === 'string' ? info.description : undefined, parseKeywords(typeof info.keywords === 'string' ? info.keywords : undefined))
     ledgerChanged()
     saveSoon()
   }
@@ -657,7 +683,20 @@ function jump(ev: Event) {
 // Its own filter (the bar's left list: the same choices as the aisle's), A to Z. In an aisle, each channel has a
 // check: it puts the channel in that aisle or takes it out (the menu stays open); the row itself goes to its rack.
 const listFilter = ref<Filter>('all')
-const listCounts = computed(() => new Map(FILTERS.map(f => [f.value, channels.value.filter(c => passes(c, f.value)).length])))
+const listCounts = filterCounts
+/** 0.3.5: what the filter and the search hide of the aisle shown (said in the bar, with Show all). */
+const hiddenHere = computed(() => {
+  if (filter.value === 'all' && !query.value.trim()) return 0
+  const only = currentAisle.value ? new Set(currentAisle.value.channels) : null
+  const scope = channels.value.filter(c => !only || only.has(c.id))
+  return scope.length - scope.filter(c => passes(c, filter.value) && found(c)).length
+})
+function showEverything() {
+  query.value = ''
+  if (filter.value !== 'all') { filter.value = 'all'; save({ filter: 'all' }) }
+  anchorId = null
+  settleAisle()
+}
 let listMenu: { close(): void } | null = null
 function openChannelList(ev: MouseEvent) {
   const ui = (sdk as any)?.ui?.()
@@ -665,11 +704,20 @@ function openChannelList(ev: MouseEvent) {
   const btn = ev.currentTarget as HTMLElement
   const rows = () => {
     const a = currentAisle.value
-    const list = byName.value.filter(c => passes(c, listFilter.value))
+    const list = byName.value.filter(c => passes(c, listFilter.value) && found(c))
     const head = a
       ? { type: 'header', label: `✓ puts a channel in “${a.name}”` }
       : { type: 'header', label: `${list.length} ${list.length === 1 ? 'channel' : 'channels'}` }
-    return [head, ...list.map(c => {
+    // 0.3.5: a narrowed list (a filter, a search) can become an aisle, or go into the one shown, at once
+    const narrowed = listFilter.value !== 'all' || !!query.value.trim()
+    const extra: unknown[] = []
+    if (narrowed && list.length && a) {
+      const missing = list.filter(c => !a.channels.includes(c.id)).length
+      if (missing) extra.push({ id: '__addall', label: `Put these ${missing} in “${a.name}”`, icon: '✓' }, { type: 'separator' })
+    } else if (narrowed && list.length) {
+      extra.push({ id: '__make', label: `Make an aisle of these ${list.length}`, detail: `“${suggestedName()}”`, icon: '＋' }, { type: 'separator' })
+    }
+    return [head, ...extra, ...list.map(c => {
       const i = infos.value.get(c.id)
       const detail = [c.subscribers !== undefined ? `${compactNum(c.subscribers)} subscribers` : '', i?.latest !== undefined ? agoShort(i.latest, now.value) : '', i?.flag ?? '']
         .filter(Boolean).join(' · ')
@@ -678,10 +726,39 @@ function openChannelList(ev: MouseEvent) {
   }
   listMenu = ui.openMenu({
     at: btn, items: rows, label: 'Your channels', checkToggles: 'column',
-    onPick: (row: { id: string }) => goTo(row.id),
+    onPick: (row: { id: string }) => {
+      const list = byName.value.filter(c => passes(c, listFilter.value) && found(c))
+      if (row.id === '__make') {
+        const made = addAisle(aislesDoc.value, suggestedName())
+        if (!made) return
+        for (const c of list) toggleChannel(aislesDoc.value, made.id, c.id)
+        aislesChanged()
+        showAisle(made.id)
+        listFilter.value = 'all'
+        query.value = ''
+        save({ listFilter: 'all' })
+        // its name: rename it at once if it isn't right
+        startNaming({ mode: 'rename' })
+        return
+      }
+      if (row.id === '__addall') {
+        const a = currentAisle.value
+        if (!a) return
+        for (const c of list) if (!a.channels.includes(c.id)) toggleChannel(aislesDoc.value, a.id, c.id)
+        aislesChanged()
+        return
+      }
+      goTo(row.id)
+    },
     onToggle: (row: { id: string }) => { if (currentAisle.value) toggleIn(currentAisle.value.id, row.id) },
     onClose: () => { listMenu = null },
   })
+}
+/** A new aisle's name from what narrowed the list: the topic, the search, else the filter's. */
+function suggestedName(): string {
+  const f = listFilter.value
+  const n = f.startsWith('topic:') ? f.slice(6) : query.value.trim() || filterLabel(f)
+  return n.charAt(0).toUpperCase() + n.slice(1)
 }
 function setListFilter(ev: Event) {
   listFilter.value = (ev.target as HTMLSelectElement).value as Filter
@@ -804,11 +881,11 @@ onMounted(async () => {
   if (racksEl.value) resizeObs.observe(racksEl.value)
   mode.value = state?.value.value?.mode === 'standard' || !yt ? 'standard' : 'racks'
   const f = state?.value.value?.filter
-  if (f && FILTERS.some(x => x.value === f)) filter.value = f
+  if (isFilter(f)) filter.value = f
   const a = state?.value.value?.aisle
   if (typeof a === 'string') aisleId.value = a
   const lf = state?.value.value?.listFilter
-  if (lf && FILTERS.some(x => x.value === lf)) listFilter.value = lf
+  if (isFilter(lf)) listFilter.value = lf
   if (yt) await loadMemory()
   if (mode.value === 'standard') await showStandard()
   else void loadChannels(false)
@@ -862,6 +939,10 @@ onBeforeUnmount(() => {
             <span>⚲</span>
             <select :value="listFilter" @change="setListFilter">
               <option v-for="f in FILTERS" :key="f.value" :value="f.value">{{ f.label }} ({{ listCounts.get(f.value) ?? 0 }})</option>
+              <optgroup v-if="topicChoices.length" label="Topics (the channels’ own keywords)">
+                <option v-for="t in topicChoices" :key="t.value" :value="t.value">{{ t.label }} ({{ t.count }})</option>
+              </optgroup>
+              <option v-if="listFilter.startsWith('topic:') && !topicChoices.some(t => t.value === listFilter)" :value="listFilter">{{ filterLabel(listFilter) }} (0)</option>
             </select>
           </label>
           <button class="list-btn" :title="currentAisle ? `Your channels: check them to put them in “${currentAisle.name}”` : 'Go to a channel’s rack'" @click="openChannelList">
@@ -903,8 +984,16 @@ onBeforeUnmount(() => {
           <span>⚲</span>
           <select :value="filter" @change="setFilter">
             <option v-for="f in FILTERS" :key="f.value" :value="f.value">{{ f.label }} ({{ filterCounts.get(f.value) ?? 0 }})</option>
+            <optgroup v-if="topicChoices.length" label="Topics (the channels’ own keywords)">
+              <option v-for="t in topicChoices" :key="t.value" :value="t.value">{{ t.label }} ({{ t.count }})</option>
+            </optgroup>
+            <option v-if="filter.startsWith('topic:') && !topicChoices.some(t => t.value === filter)" :value="filter">{{ filterLabel(filter) }} (0)</option>
           </select>
         </label>
+        <input v-if="channels.length && !activeShelf" v-model="query" class="search" type="search" placeholder="Search your channels"
+               title="Names, descriptions, keywords and the titles of the videos known" @input="anchorId = null" />
+        <span v-if="hiddenHere && !activeShelf" class="hint">{{ hiddenHere }} hidden</span>
+        <button v-if="hiddenHere && !activeShelf" title="Clear the filter and the search" @click="showEverything">Show all</button>
         <span class="spacer"></span>
         <span v-if="loading || stocking" class="hint">Stocking shelves…</span>
         <button @click="reloadHere"
@@ -978,6 +1067,7 @@ onBeforeUnmount(() => {
 /* 0.2.4: the bar is outside the skinned surface (no --glu-* colours there): the list's own, dark */
 .pick select { color: #f1f1f3; color-scheme: dark; }
 /* 0.3.3: naming an aisle; a channel's aisles in its department */
+.search { width: 150px; height: 24px; padding: 0 7px; border: 1px solid #ffffff30; border-radius: 4px; color: #f1f1f3; background: #15161a; font-size: 11px; }
 .list-btn { height: 26px; padding: 0 9px; white-space: nowrap; }
 .aisle-name { width: 150px; height: 24px; padding: 0 6px; border: 1px solid #ffffff30; border-radius: 4px; color: #f1f1f3; background: #15161a; font-size: 11px; }
 .aisle-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
