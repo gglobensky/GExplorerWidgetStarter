@@ -542,6 +542,24 @@ async function onShieldClick(ev: MouseEvent) {
   your widget or the site from your shield. Don't work around the blocking in your widget.
 - Older GEM Shells: these are absent (`s.blocked === undefined`); hide your shield then.
 
+### Fullscreen and sound (GEM Shell 2026-11-22)
+
+- **Fullscreen** is the page's own (a video's fullscreen button): GEM Shell places the page over its whole window and
+  the window over its monitor. Esc, the page's button, or a GEM Shell dialog opening brings it back. Nothing to do in
+  your widget.
+- **Sound:** a page playing sound **keeps running when your widget is out of view** (another tab, GEM Shell
+  minimized): music and videos go on. Once it stops, GEM Shell puts it to sleep as usual. `s.playing`, `s.muted`,
+  `s.onAudio(cb)` and `s.mute(true | false)` let you show and switch it (a 🔊 in your toolbar).
+
+### Desktop or mobile sites (GEM Shell 2026-11-22)
+
+A surface asks sites for their desktop or their mobile version (like a phone would: YouTube then serves
+m.youtube.com). By default (`'auto'`) GEM Shell picks by the surface's width: mobile below 560 px, desktop above
+720 px, unchanged in between, and only once a resize has settled. Choose it yourself with
+`web.surface(el, { url, version: 'desktop' | 'mobile' | 'auto' })` or later `s.setVersion(mode)` (a setting of yours,
+say). `s.version` is the one asked now. A change loads the page again; a video playing goes on where it was. The site
+decides what it serves: a site without a mobile version just shows its page.
+
 ## Your size in a hub
 
 Give your limits in **pixels** (GEM Shell 2026-11-06): what your content needs, and what it can use.

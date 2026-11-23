@@ -1305,13 +1305,31 @@ declare module 'gexplorer/widgets' {
          * your widget, the site for every widget, Settings. Your widget can't turn blocking off itself.
          */
         showBlocking?(anchor?: HTMLElement | { x: number; y: number }): Promise<WebResult>
+        /** 2026-11-22 (older GEM Shells: absent): its page plays sound now (it keeps running out of view while it does). */
+        readonly playing?: boolean
+        /** 2026-11-22: its sound is off. */
+        readonly muted?: boolean
+        /** 2026-11-22: playing or muted changed. Returns the unsubscribe. */
+        onAudio?(cb: (info: WebAudio) => void): () => void
+        /** 2026-11-22: its sound off / on. */
+        mute?(muted: boolean): void
+        /** 2026-11-22 (older GEM Shells: absent): the version it asks sites for now. */
+        readonly version?: 'desktop' | 'mobile'
+        /** How it's chosen: 'auto' (by the surface's width), or what you set. */
+        readonly versionMode?: WebVersion
+        /** 'auto', 'desktop' or 'mobile'. A change loads the page again; a playing video goes on where it was. */
+        setVersion?(mode: WebVersion): void
         /** Ends it (GEM Shell also does when your widget's instance goes). */
         dispose(): void
     }
     /** 2026-11-22: page: blocked on the page shown now; total: since the surface opened; blocking: as WebSurface.blocking. */
     export type WebBlocked = { page: number; total: number; blocking: boolean }
+    /** 2026-11-22: a surface's sound. */
+    export type WebAudio = { playing: boolean; muted: boolean }
+    /** 2026-11-22: which version of sites a surface asks for (surface(el, { url, version })). */
+    export type WebVersion = 'auto' | 'desktop' | 'mobile'
     export interface WidgetWeb {
-        surface(el: HTMLElement, opts: { url: string }): Promise<WebSurface | { ok: false; reason: WebReason; error?: string }>
+        surface(el: HTMLElement, opts: { url: string; version?: WebVersion }): Promise<WebSurface | { ok: false; reason: WebReason; error?: string }>
         /** userAdded only, right after the user's click or key press in your widget: the consent dialog for that domain. */
         addDomain(domain: string): Promise<WebResult & { domain?: string }>
     }

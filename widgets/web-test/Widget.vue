@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // A TEST WIDGET for web surfaces (GEM Shell H9): a toolbar (address, Back / Forward / Reload, Add site) and a surface.
 // 0.1.2 (2026-11-22): the ad blocking shield (GEM Shell's counts; its click opens GEM Shell's menu).
+// 0.1.3 (2026-11-22): 🔊 / 🔇 while the page plays sound (s.playing, s.onAudio, s.mute).
 import { inject, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { WidgetSdk } from 'gexplorer/widgets'
 
@@ -12,6 +13,9 @@ const status = ref('')
 let surface: any = null
 let off: (() => void) | null = null
 let offBlocked: (() => void) | null = null
+let offAudio: (() => void) | null = null
+// The sound button: shown while the page plays sound or is muted (older GEM Shells: never)
+const sound = ref<{ playing: boolean; muted: boolean }>({ playing: false, muted: false })
 // The shield: shown when GEM Shell has ad blocking (older ones: blocked is undefined)
 const shield = ref<{ page: number; on: boolean } | null>(null)
 
@@ -25,9 +29,10 @@ onMounted(async () => {
     shield.value = { page: s.blocked, on: !!s.blocking }
     offBlocked = s.onBlocked?.((b: { page: number; blocking: boolean }) => { shield.value = { page: b.page, on: b.blocking } }) ?? null
   }
+  offAudio = s.onAudio?.((a: { playing: boolean; muted: boolean }) => { sound.value = a }) ?? null
 })
 
-onBeforeUnmount(() => { off?.(); offBlocked?.(); surface?.dispose() })
+onBeforeUnmount(() => { off?.(); offBlocked?.(); offAudio?.(); surface?.dispose() })
 
 async function showBlocking(ev: MouseEvent) {
   const r = await surface?.showBlocking?.(ev.currentTarget as HTMLElement)
@@ -58,6 +63,8 @@ async function addSite() {
       <input v-model="address" @keydown.enter="go" spellcheck="false" />
       <button @click="go">Go</button>
       <button @click="addSite" title="Allow the address's site (asks you)">Add site</button>
+      <button v-if="sound.playing || sound.muted" @click="surface?.mute?.(!sound.muted)"
+              :title="sound.muted ? 'Sound off: turn it on' : 'Playing: turn the sound off'">{{ sound.muted ? '🔇' : '🔊' }}</button>
       <button v-if="shield" class="shield" :class="{ off: !shield.on }" @click="showBlocking"
               :title="shield.on ? `${shield.page} ads and trackers blocked on this page` : 'Ad blocking is off here'">
         🛡 {{ shield.on ? shield.page : 'off' }}
