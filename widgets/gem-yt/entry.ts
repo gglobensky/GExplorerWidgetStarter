@@ -1,11 +1,12 @@
 import Widget from './Widget.vue'
+import youtube from './rules/youtube.json'
 
 // GEM YT (2026-11-22): YouTube in GEM Shell. 0.1: Standard mode (the real youtube.com in a web surface).
 // The plan: claude/plan-2026-11-23-youtube-adblock.md (7, 7c: GEM YT mode comes later, on the shell's YouTube adapter).
 export default {
   api: '1.0',
   id: 'gem-yt',
-  version: '0.1.0',   // 0.1.0 (2026-11-22): Standard mode
+  version: '0.1.1',   // 0.1.0 (2026-11-22): Standard mode · 0.1.1: its YouTube rules (PageData, used from GEM YT mode on)
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
   about: `# GEM YT
@@ -45,5 +46,8 @@ Coming: **GEM YT mode**, our own view of your subscriptions and channels, on rac
 
   capabilities: [
     { cap: 'Web', reason: 'Shows YouTube, and Google’s page to sign in.', domains: ['youtube.com', 'google.com'], userAdded: false },
+    // 0.1.1 (GEM Shell 2026-11-22, page adapters 8c1): the rules GEM Shell reads YouTube's pages with for GEM YT mode
+    // (rules/youtube.json: your subscriptions, a channel's videos, your home page). Asked once GEM YT mode uses them.
+    { cap: 'PageData', reason: 'Shows your subscriptions and channels on racks (GEM YT mode).', rules: [youtube] },
   ],
 }

@@ -560,6 +560,37 @@ m.youtube.com). By default (`'auto'`) GEM Shell picks by the surface's width: mo
 say). `s.version` is the one asked now. A change loads the page again; a video playing goes on where it was. The site
 decides what it serves: a site without a mobile version just shows its page.
 
+### Page data: your sites' own data, read with your rules (`PageData`, GEM Shell 2026-11-22)
+
+Many sites keep their page's data in a global (YouTube: `ytInitialData`). GEM Shell can read it for you, **signed in
+as your widget is**, and hand you clean items (channels, videos...) instead of the page. You bring the **rules**, a
+plain JSON file: which pages, where their data is, which items to collect and where each field is. GEM Shell keeps no
+site's rules of its own, and its rules engine runs nothing of yours: paths, conditions, iterators and a fixed set of
+transforms only (`text`, `count`, `duration`, `relativeDate`, `bestImage`... see GEM YT's `rules/youtube.json`).
+
+```ts
+import youtube from './rules/youtube.json'   // widgets/<you>/tsconfig.json: "compilerOptions": { "resolveJsonModule": true }
+
+capabilities: [
+  { cap: 'Web', reason: '…', domains: ['youtube.com', 'google.com'] },
+  { cap: 'PageData', reason: 'Shows your subscriptions on racks', rules: [youtube] },
+]
+```
+
+- **Each rules file is one site** (`site`), 8 at most. Its `domains` must be among your Web domains: GEM Shell reads
+  only pages your surfaces may show, in your widget's own browser profile.
+- **Never read:** sign-in and account pages; any key naming a password, a token, a key, a cookie or a session id (a
+  rule naming one is refused; GEM Shell drops them from the page's data before it leaves the page); anything but plain
+  data (no page fields, nothing typed in them).
+- **What you get:** text, numbers, true / false and short lists of those.
+- **The question** (coming with the widget API) is worded from your rules: each page's `label` ("your
+  subscriptions"), each item kind's `label` ("channels") and its field names. The grant covers what the file reads:
+  its pages (addresses, parameters), its kinds of items and their field names. A new version reading other ones is
+  asked again; one that only fixes **how** they're read (the site moved something) is not.
+- **Trying a fix without a rebuild:** put your edited file at `<GEM Shell's local data>\adapters\rules\<site>.json`;
+  GEM Shell uses it while it reads the same pages, items and fields as yours (it says so in the console otherwise).
+- Rules are part of your widget's code: reviewed with it, open like it.
+
 ## Your size in a hub
 
 Give your limits in **pixels** (GEM Shell 2026-11-06): what your content needs, and what it can use.

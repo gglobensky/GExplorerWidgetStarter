@@ -794,6 +794,12 @@ declare module 'gexplorer/widgets' {
         | 'Processes'
         /** 2026-11-07: build widgets from a project's files (sdk.dev). GEM Forge's only: refused to any other widget. */
         | 'Develop'
+        /**
+         * 2026-11-22 (older GEM Shells: ignored): your sites' own page data, read by GEM Shell with YOUR rules files and
+         * handed to you as items (README "Page data"). Declared with `rules: [ruleFile, ...]` (JSON files you import);
+         * each one's domains must be among your Web domains. The widget API comes in a later GEM Shell (8c3).
+         */
+        | 'PageData'
 
     /** sdk.terminal()'s shells: ids ('cmd', 'powershell', 'pwsh', 'bash', 'wsl:<distro>') and names. */
     export type TerminalShellInfo = { id: string; label: string; version?: string }
@@ -1248,7 +1254,20 @@ declare module 'gexplorer/widgets' {
      * Scoped ones (Read, Write, Metadata, Exec, Permissions: about a folder or a file) are asked when the path is known:
      * `together` on them is ignored, with a console warning.
      */
-    export type WidgetCapabilityDecl = { cap: string; reason?: string; together?: boolean; links?: AppLinkDecl[] }
+    export type WidgetCapabilityDecl = { cap: string; reason?: string; together?: boolean; links?: AppLinkDecl[]; /** PageData: your rules files (2026-11-22) */ rules?: PageDataRules[] }
+    /**
+     * 2026-11-22: a PageData rules file (schema 1), plain JSON. GEM Shell checks it and leaves it out, with a console
+     * error, when it can't be used: addresses only on its `domains` (each covered by your Web domains), never a sign-in
+     * or account page, no path naming a password, a token, a key, a cookie or a session id. `label`s (optional) word
+     * GEM Shell's question: a page's ("your subscriptions"), an item kind's ("channels"). The question and its grant
+     * cover what the file reads: its pages (addresses, parameters, page variable), its kinds of items and their field
+     * names. A new version reading other ones is asked again; one only fixing how they're read is not.
+     */
+    export type PageDataRules = {
+        schema: number; site: string; version: string; domains: string[]; base?: string; lang?: string; requires?: string[]; about?: string
+        pages: Record<string, { label?: string; url: string; params?: Record<string, string>; data: { var: string }; collect: string[]; skipUnder?: string[] }>
+        items: Record<string, { label?: string; find: string; when?: unknown; key?: string; let?: Record<string, unknown>; fields: Record<string, unknown>; optional?: string[] }>
+    }
     /**
      * entry.ts contexts.grid sizes (GEM Shell 2026-11-06; README "Your size in a hub"). width / height in px: what
      * your content needs (minSize) or can use (maxSize), turned into cells with the hub's cell size when the user adds

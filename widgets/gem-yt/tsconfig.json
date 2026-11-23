@@ -1,5 +1,6 @@
 {
   "extends": "../../tsconfig.json",
+  "compilerOptions": { "resolveJsonModule": true },
   "include": ["./**/*.ts", "./**/*.vue", "../../shared/**/*.ts", "../../shared/**/*.vue", "../../types/**/*.d.ts"],
   "exclude": ["./tests", "./preview", "../../shared/**/tests"]
 }

@@ -1,0 +1,112 @@
+{
+  "schema": 1,
+  "site": "youtube",
+  "version": "2026.11.23",
+  "about": "YouTube's own page data (ytInitialData) -> channels and videos. Written against the shapes captured on 2026-11-22. GEM YT's rules (moved from GEM Shell, 2026-11-22: the widget brings them).",
+  "domains": ["youtube.com"],
+  "base": "https://www.youtube.com",
+  "lang": "en",
+  "requires": ["paths", "each", "where", "first", "when", "matches", "eq", "exists", "startsWith", "text", "count", "duration", "relativeDate", "bestImage", "handle", "percent", "bool", "skipUnder"],
+  "pages": {
+    "subscriptions": {
+      "label": "your subscriptions",
+      "url": "https://www.youtube.com/feed/channels?hl=en",
+      "data": { "var": "ytInitialData" },
+      "collect": ["channel"]
+    },
+    "channel-videos": {
+      "label": "a channel's videos",
+      "url": "https://www.youtube.com/{channel}/videos?hl=en",
+      "params": { "channel": "^(@[\\w.-]{1,100}|channel/UC[\\w-]{22})$" },
+      "data": { "var": "ytInitialData" },
+      "collect": ["video", "channelInfo"]
+    },
+    "home": {
+      "label": "your home page",
+      "url": "https://www.youtube.com/?hl=en",
+      "data": { "var": "ytInitialData" },
+      "collect": ["video"],
+      "skipUnder": ["adSlotRenderer", "masthead"]
+    }
+  },
+  "items": {
+    "channel": {
+      "label": "channels",
+      "find": "channelRenderer",
+      "optional": ["subscribers", "videos", "description", "verified"],
+      "fields": {
+        "id": ["channelId", "navigationEndpoint.browseEndpoint.browseId"],
+        "name": [{ "path": "title", "as": "text" }],
+        "handle": [
+          { "path": "navigationEndpoint.browseEndpoint.canonicalBaseUrl", "as": "handle" },
+          { "path": "subscriberCountText", "as": ["text", "handle"] }
+        ],
+        "avatar": [{ "path": "thumbnail", "as": "bestImage" }],
+        "subscribers": [
+          { "path": "subscriberCountText", "when": { "matches": ["subscriberCountText", "subscribers?$"] }, "as": ["text", "count"] },
+          { "path": "videoCountText", "when": { "matches": ["videoCountText", "subscribers?$"] }, "as": ["text", "count"] }
+        ],
+        "videos": [
+          { "path": "videoCountText", "when": { "matches": ["videoCountText", "videos?$"] }, "as": ["text", "count"] }
+        ],
+        "description": [{ "path": "descriptionSnippet", "as": "text" }],
+        "verified": [{ "each": "ownerBadges[*].metadataBadgeRenderer.style", "where": { "startsWith": [".", "BADGE_STYLE_TYPE_VERIFIED"] }, "count": true, "as": "bool" }]
+      }
+    },
+    "video": {
+      "label": "videos",
+      "find": "lockupViewModel",
+      "when": { "eq": ["contentType", { "value": "LOCKUP_CONTENT_TYPE_VIDEO" }] },
+      "optional": ["length", "live", "views", "watched", "channelId", "channelHandle", "channelName", "channelAvatar"],
+      "fields": {
+        "id": ["contentId"],
+        "title": [{ "path": "metadata.lockupMetadataViewModel.title", "as": "text" }],
+        "thumbnail": [{ "path": "contentImage.thumbnailViewModel.image", "as": "bestImage" }],
+        "length": [{
+          "each": "contentImage.thumbnailViewModel.overlays[*].thumbnailBottomOverlayViewModel.badges[*].thumbnailBadgeViewModel",
+          "where": { "matches": ["text", "^\\d+(:\\d{1,2}){1,2}$"] }, "first": "text", "as": "duration"
+        }],
+        "live": [{
+          "each": "contentImage.thumbnailViewModel.overlays[*].thumbnailBottomOverlayViewModel.badges[*].thumbnailBadgeViewModel",
+          "where": { "matches": ["text", "^live$"] }, "count": true, "as": "bool"
+        }],
+        "published": [{
+          "each": "metadata.lockupMetadataViewModel.metadata.contentMetadataViewModel.metadataRows[*].metadataParts[*]",
+          "where": { "matches": ["text", " ago$"] }, "first": "text", "as": ["text", "relativeDate"]
+        }],
+        "publishedText": [{
+          "each": "metadata.lockupMetadataViewModel.metadata.contentMetadataViewModel.metadataRows[*].metadataParts[*]",
+          "where": { "matches": ["text", " ago$"] }, "first": "text", "as": "text"
+        }],
+        "views": [{
+          "each": "metadata.lockupMetadataViewModel.metadata.contentMetadataViewModel.metadataRows[*].metadataParts[*]",
+          "where": { "matches": ["text", "(views?|watching)$"] }, "first": "text", "as": ["text", "count"]
+        }],
+        "watched": [{ "path": "contentImage.thumbnailViewModel.overlays[*].thumbnailBottomOverlayViewModel.progressBar.thumbnailOverlayProgressBarViewModel.startPercent", "as": "percent" }],
+        "channelId": [
+          "metadata.lockupMetadataViewModel.image.decoratedAvatarViewModel.rendererContext.commandContext.onTap.innertubeCommand.browseEndpoint.browseId"
+        ],
+        "channelHandle": [
+          { "path": "metadata.lockupMetadataViewModel.image.decoratedAvatarViewModel.rendererContext.commandContext.onTap.innertubeCommand.browseEndpoint.canonicalBaseUrl", "as": "handle" }
+        ],
+        "channelName": [{
+          "each": "metadata.lockupMetadataViewModel.metadata.contentMetadataViewModel.metadataRows[*].metadataParts[*]",
+          "where": { "exists": "text.commandRuns" }, "first": "text", "as": "text"
+        }],
+        "channelAvatar": [{ "path": "metadata.lockupMetadataViewModel.image.decoratedAvatarViewModel.avatar.avatarViewModel.image", "as": "bestImage" }]
+      }
+    },
+    "channelInfo": {
+      "label": "the channel's details",
+      "find": "channelMetadataRenderer",
+      "optional": ["description"],
+      "fields": {
+        "id": ["externalId"],
+        "name": [{ "path": "title", "as": "text" }],
+        "handle": [{ "path": "vanityChannelUrl", "as": "handle" }],
+        "avatar": [{ "path": "avatar", "as": "bestImage" }],
+        "description": [{ "path": "description", "as": "text" }]
+      }
+    }
+  }
+}
