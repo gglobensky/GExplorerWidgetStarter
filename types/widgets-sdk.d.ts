@@ -3844,13 +3844,21 @@ declare module 'gexplorer/widgets' {
     export type WidgetMenuSeparator = { type: 'separator'; id?: string }
     /** A section's title (never focused or chosen). */
     export type WidgetMenuHeader = { type: 'header'; id?: string; label: string }
-    /** A row of ui.openMenu. Only id and label are needed. Text only (labels 120 characters, 300 rows a level, 6 levels). */
+    /** A row of ui.openMenu. Only id and label are needed. Text, and GEM Shell's own pictures (labels 120 characters, 300 rows a level, 6 levels). */
     export type WidgetMenuRow = {
         type?: 'item'
         id: string
         label: string
         /** A symbol before the label (an emoji, a glyph). */
         icon?: string
+        /**
+         * 2026-11-23: a picture before the label, in the icon's place: only a picture GEM Shell made for you, its local
+         * address as an image call gave it ("/wasset/….jpg" or ".png": mediaImageCreate, pageData().image). Anything else
+         * is left out: a menu never loads from the web. E.g. channels' avatars.
+         */
+        image?: string
+        /** 2026-11-23: the picture in a circle (an avatar). */
+        imageRound?: boolean
         /** A second, smaller line. */
         detail?: string
         /** Shown at the right ("F2"): a hint, not bound. */

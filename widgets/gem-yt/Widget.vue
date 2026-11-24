@@ -11,7 +11,10 @@
 // GEM Shell's menu, with a filter of its own, and in an aisle a check beside each channel puts it in or takes it out;
 // the survey paces itself like a person (45 s to 2 min) and pauses an hour when YouTube stops answering;
 // 0.3.5: search your channels, topics from the creators' keywords (topics.ts) in both filters, "make an aisle of
-// these" in the channel list, and what a filter hides in an aisle said in the bar). Two modes, per copy (its state):
+// these" in the channel list, and what a filter hides in an aisle said in the bar; 0.3.6: the bar in labelled
+// groups (Aisle, Show, the search, Channels): one filter for everything, and the channel list checks channels
+// everywhere: in an aisle its members, in Every channel a pick (the aisle shows only those; Save as aisle), with
+// their avatars). Two modes, per copy (its state):
 //   - GEM YT (racks): the store floor of library-ui 3.9.0 (shared/library-ui): one rack per channel you follow, its
 //     poster on top (avatar, name, subscribers), its latest videos as DVD cases lying on their side. A click on a rack
 //     opens its department; a click on a case plays the video (Standard mode, on its page). The data is YouTube's own
@@ -42,7 +45,7 @@ const web = (sdk as any)?.web?.()
 const yt = (sdk as any)?.pageData?.('youtube')
 const settings = sdk?.settings?.()
 const data = sdk?.instanceData?.()
-const state = data?.live('state', () => ({ url: HOME, mode: 'racks' as Mode, filter: 'all' as Filter, aisle: null as string | null, listFilter: 'all' as Filter }))
+const state = data?.live('state', () => ({ url: HOME, mode: 'racks' as Mode, filter: 'all' as Filter, aisle: null as string | null, picked: [] as string[] }))
 
 type Mode = 'racks' | 'standard'
 /** 0.3.1: which racks the aisle shows (per copy). */
@@ -69,7 +72,7 @@ function pagesSetting(): 'auto' | 'desktop' | 'mobile' {
   return v === 'desktop' || v === 'mobile' ? v : 'auto'
 }
 
-function save(patch: Partial<{ url: string; mode: Mode; filter: Filter; aisle: string | null; listFilter: Filter }>) {
+function save(patch: Partial<{ url: string; mode: Mode; filter: Filter; aisle: string | null; picked: string[] }>) {
   if (!state) return
   state.value.value = { ...(state.value.value ?? { url: HOME }), ...patch }
   state.changed()
@@ -290,6 +293,9 @@ const aislesDoc = ref<Aisles>({ version: 1, aisles: [] })
 /** The aisle this copy shows (null: every channel). */
 const aisleId = ref<string | null>(null)
 const currentAisle = computed(() => aislesDoc.value.aisles.find(a => a.id === aisleId.value) ?? null)
+/** 0.3.6: the pick (per copy): in Every channel, the channels the aisle is narrowed to. Declared here, before the aisle's
+ *  watchers below read it (they run at once: a later const would not exist yet). */
+const picked = ref<string[]>([])
 /** Naming an aisle in the bar: a new one (for a channel, from its department), or the current one renamed. */
 const naming = ref<{ mode: 'new'; channelId?: string } | { mode: 'rename' } | null>(null)
 const nameDraft = ref('')
@@ -311,8 +317,11 @@ function showAisle(id: string | null) {
 function setAisle(ev: Event) {
   const select = ev.target as HTMLSelectElement
   const v = select.value
-  if (v === '__new') { select.value = aisleId.value ?? ''; startNaming({ mode: 'new' }); return }
-  showAisle(v || null)
+  if (v === '__new') { select.value = aisleId.value ?? (picked.value.length ? '__picked' : ''); startNaming({ mode: 'new' }); return }
+  if (v === '__picked') { showAisle(null); return }
+  // Every channel: the pick let go too
+  if (!v) { setPicked([]); showAisle(null); return }
+  showAisle(v)
 }
 function startNaming(n: NonNullable<typeof naming.value>) {
   naming.value = n
@@ -352,7 +361,7 @@ const prevVisit = ref<number | null>(null)
 const sinceVideos = computed(() => {
   const from = prevVisit.value
   if (!from) return []
-  const only = currentAisle.value ? new Set(currentAisle.value.channels) : null
+  const only = scopeIds.value
   const seen = new Set<string>()
   const out: Array<{ v: Video; t: number }> = []
   const add = (v: Video, c: Channel | undefined) => {
@@ -386,8 +395,10 @@ function settleAisle() {
 }
 watch(quietMs, settleAisle)
 /** The aisle: the racks' order, the put away ones at its end (the back room), as the filter says. */
+/** 0.3.6: the channels the aisle is narrowed to: the aisle shown's, else the pick (in Every channel), else all. */
+const scopeIds = computed(() => currentAisle.value ? new Set(currentAisle.value.channels) : picked.value.length ? new Set(picked.value) : null)
 const aisle = computed(() => {
-  const only = currentAisle.value ? new Set(currentAisle.value.channels) : null
+  const only = scopeIds.value
   const list = ordered.value.filter(c => passes(c, filter.value) && found(c) && (!only || only.has(c.id)))
   return [...list.filter(c => !putAway.value.has(c.id)), ...list.filter(c => putAway.value.has(c.id))]
 })
@@ -438,7 +449,7 @@ const featuredShelves = computed(() => {
   if (filter.value !== 'all') return []
   const since = sinceShelf.value ? [sinceShelf.value] : []
   // The feeds are YouTube's lists, for every channel: with the aisle of every channel only
-  if (currentAisle.value) return since
+  if (scopeIds.value) return since
   return [...since, ...FEEDS.map(f => feedShelfOf(f, feedVideos(f.id)?.map((v, i) => boxOf(v, null, i, pic(v), coming(v)))))]
 })
 /** The channel list in the bar: A to Z (200+ channels). */
@@ -679,24 +690,30 @@ function jump(ev: Event) {
   select.value = ''
   if (id) goTo(id)
 }
-// ── 0.3.4: the channel list (GEM Shell's menu: typing jumps, long lists paged) ─────────────────────────────────────
-// Its own filter (the bar's left list: the same choices as the aisle's), A to Z. In an aisle, each channel has a
-// check: it puts the channel in that aisle or takes it out (the menu stays open); the row itself goes to its rack.
-const listFilter = ref<Filter>('all')
-const listCounts = filterCounts
-/** 0.3.5: what the filter and the search hide of the aisle shown (said in the bar, with Show all). */
-const hiddenHere = computed(() => {
-  if (filter.value === 'all' && !query.value.trim()) return 0
-  const only = currentAisle.value ? new Set(currentAisle.value.channels) : null
-  const scope = channels.value.filter(c => !only || only.has(c.id))
-  return scope.length - scope.filter(c => passes(c, filter.value) && found(c)).length
-})
-function showEverything() {
-  query.value = ''
-  if (filter.value !== 'all') { filter.value = 'all'; save({ filter: 'all' }) }
+// ── 0.3.4 / 0.3.6: the channel list (GEM Shell's menu: typing jumps, long lists paged, avatars) ──────────────────
+// The channels Show and the search let through, A to Z. Each has a check: in your own aisle, it's in that aisle; in
+// Every channel, it's picked (the aisle shows only the picked channels; Save as aisle keeps them). The row itself
+// goes to the channel's rack. 0.3.6: the list's own filter is gone (one filter, Show, for the racks and the list).
+function setPicked(ids: string[]) {
+  picked.value = ids
+  save({ picked: ids })
   anchorId = null
   settleAisle()
 }
+function togglePick(id: string) {
+  setPicked(picked.value.includes(id) ? picked.value.filter(x => x !== id) : [...picked.value, id])
+}
+/** The pick kept as an aisle (named at once: its name box opens). */
+function savePick() {
+  const made = addAisle(aislesDoc.value, 'Picked channels')
+  if (!made) return
+  for (const id of picked.value) toggleChannel(aislesDoc.value, made.id, id)
+  aislesChanged()
+  setPicked([])
+  showAisle(made.id)
+  startNaming({ mode: 'rename' })
+}
+const listed = () => byName.value.filter(c => passes(c, filter.value) && found(c))
 let listMenu: { close(): void } | null = null
 function openChannelList(ev: MouseEvent) {
   const ui = (sdk as any)?.ui?.()
@@ -704,43 +721,49 @@ function openChannelList(ev: MouseEvent) {
   const btn = ev.currentTarget as HTMLElement
   const rows = () => {
     const a = currentAisle.value
-    const list = byName.value.filter(c => passes(c, listFilter.value) && found(c))
-    const head = a
-      ? { type: 'header', label: `✓ puts a channel in “${a.name}”` }
-      : { type: 'header', label: `${list.length} ${list.length === 1 ? 'channel' : 'channels'}` }
-    // 0.3.5: a narrowed list (a filter, a search) can become an aisle, or go into the one shown, at once
-    const narrowed = listFilter.value !== 'all' || !!query.value.trim()
+    const list = listed()
+    const narrowed = filter.value !== 'all' || !!query.value.trim()
+    const inIt = (id: string) => (a ? a.channels.includes(id) : picked.value.includes(id))
+    const head = { type: 'header', label: a ? `✓ in “${a.name}” · ${list.length} shown` : `✓ picked: the aisle shows only those · ${list.length} shown` }
     const extra: unknown[] = []
-    if (narrowed && list.length && a) {
-      const missing = list.filter(c => !a.channels.includes(c.id)).length
-      if (missing) extra.push({ id: '__addall', label: `Put these ${missing} in “${a.name}”`, icon: '✓' }, { type: 'separator' })
-    } else if (narrowed && list.length) {
-      extra.push({ id: '__make', label: `Make an aisle of these ${list.length}`, detail: `“${suggestedName()}”`, icon: '＋' }, { type: 'separator' })
+    if (a) {
+      const missing = list.filter(c => !inIt(c.id)).length
+      if (narrowed && missing) extra.push({ id: '__addall', label: `Put these ${missing} in “${a.name}”`, icon: '✓' })
+    } else {
+      if (picked.value.length) extra.push({ id: '__save', label: `Save the ${picked.value.length} picked as an aisle…`, icon: '＋' }, { id: '__clear', label: 'Clear the pick', icon: '✕' })
+      if (narrowed && list.length) extra.push({ id: '__make', label: `Make an aisle of these ${list.length}`, detail: `“${suggestedName()}”`, icon: '＋' })
     }
+    if (extra.length) extra.push({ type: 'separator' })
     return [head, ...extra, ...list.map(c => {
       const i = infos.value.get(c.id)
       const detail = [c.subscribers !== undefined ? `${compactNum(c.subscribers)} subscribers` : '', i?.latest !== undefined ? agoShort(i.latest, now.value) : '', i?.flag ?? '']
         .filter(Boolean).join(' · ')
-      return { id: c.id, label: c.name, detail: detail || undefined, ...(a ? { check: 'box', checked: a.channels.includes(c.id), checkTooltip: a.channels.includes(c.id) ? `Take it out of “${a.name}”` : `Put it in “${a.name}”` } : {}) }
+      const on = inIt(c.id)
+      const avatar = c.avatar ? pictures.get(c.avatar) : undefined
+      return {
+        id: c.id, label: c.name, detail: detail || undefined, ...(avatar ? { image: avatar, imageRound: true } : { icon: '◯' }),
+        check: 'box', checked: on,
+        checkTooltip: a ? (on ? `Take it out of “${a.name}”` : `Put it in “${a.name}”`) : on ? 'Unpick it' : 'Pick it: the aisle shows only the picked channels',
+      }
     })]
   }
   listMenu = ui.openMenu({
     at: btn, items: rows, label: 'Your channels', checkToggles: 'column',
     onPick: (row: { id: string }) => {
-      const list = byName.value.filter(c => passes(c, listFilter.value) && found(c))
+      const list = listed()
       if (row.id === '__make') {
         const made = addAisle(aislesDoc.value, suggestedName())
         if (!made) return
         for (const c of list) toggleChannel(aislesDoc.value, made.id, c.id)
         aislesChanged()
-        showAisle(made.id)
-        listFilter.value = 'all'
         query.value = ''
-        save({ listFilter: 'all' })
-        // its name: rename it at once if it isn't right
+        if (filter.value !== 'all') { filter.value = 'all'; save({ filter: 'all' }) }
+        showAisle(made.id)
         startNaming({ mode: 'rename' })
         return
       }
+      if (row.id === '__save') { savePick(); return }
+      if (row.id === '__clear') { setPicked([]); return }
       if (row.id === '__addall') {
         const a = currentAisle.value
         if (!a) return
@@ -750,19 +773,31 @@ function openChannelList(ev: MouseEvent) {
       }
       goTo(row.id)
     },
-    onToggle: (row: { id: string }) => { if (currentAisle.value) toggleIn(currentAisle.value.id, row.id) },
+    onToggle: (row: { id: string }) => {
+      if (currentAisle.value) toggleIn(currentAisle.value.id, row.id)
+      else togglePick(row.id)
+    },
     onClose: () => { listMenu = null },
   })
 }
 /** A new aisle's name from what narrowed the list: the topic, the search, else the filter's. */
 function suggestedName(): string {
-  const f = listFilter.value
+  const f = filter.value
   const n = f.startsWith('topic:') ? f.slice(6) : query.value.trim() || filterLabel(f)
   return n.charAt(0).toUpperCase() + n.slice(1)
 }
-function setListFilter(ev: Event) {
-  listFilter.value = (ev.target as HTMLSelectElement).value as Filter
-  save({ listFilter: listFilter.value })
+/** 0.3.5: what the filter and the search hide of the aisle shown (said in the bar, with Show all). */
+const hiddenHere = computed(() => {
+  if (filter.value === 'all' && !query.value.trim()) return 0
+  const only = scopeIds.value
+  const scope = channels.value.filter(c => !only || only.has(c.id))
+  return scope.length - scope.filter(c => passes(c, filter.value) && found(c)).length
+})
+function showEverything() {
+  query.value = ''
+  if (filter.value !== 'all') { filter.value = 'all'; save({ filter: 'all' }) }
+  anchorId = null
+  settleAisle()
 }
 const hasMenu = computed(() => !!(sdk as any)?.ui?.()?.openMenu)
 const compactNum = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}K` : String(n)).replace('.0', '')
@@ -773,6 +808,9 @@ function goTo(id: string) {
   // 0.3.1: a channel the filter hides: the filter goes back to all
   const c = channels.value.find(x => x.id === id)
   if (c && !passes(c, filter.value)) { filter.value = 'all'; save({ filter: 'all' }) }
+  if (c && !found(c)) query.value = ''
+  // 0.3.6: not in the pick (Every channel): the pick is let go, so its rack is there
+  if (c && !currentAisle.value && picked.value.length && !picked.value.includes(c.id)) setPicked([])
   anchorId = id
   void nextTick(() => floor.value?.jumpTo(id))
 }
@@ -884,8 +922,8 @@ onMounted(async () => {
   if (isFilter(f)) filter.value = f
   const a = state?.value.value?.aisle
   if (typeof a === 'string') aisleId.value = a
-  const lf = state?.value.value?.listFilter
-  if (isFilter(lf)) listFilter.value = lf
+  const pk = state?.value.value?.picked
+  if (Array.isArray(pk)) picked.value = pk.filter((x: unknown): x is string => typeof x === 'string').slice(0, 1000)
   if (yt) await loadMemory()
   if (mode.value === 'standard') await showStandard()
   else void loadChannels(false)
@@ -933,72 +971,81 @@ onBeforeUnmount(() => {
         <button v-if="yt" class="mode" @click="showRacks" title="GEM YT mode: your channels on racks">▦ Racks</button>
       </template>
       <template v-else>
-        <button v-if="activeShelf" @click="activeId = null" title="All your channels">‹ Channels</button>
-        <template v-if="channels.length && hasMenu">
-          <label class="glu-picker pick" title="Which channels the list shows">
+        <button v-if="activeShelf" class="btn" @click="activeId = null" title="All your channels">‹ Back to the aisle</button>
+        <!-- 0.3.6: the bar in labelled groups: Aisle (which channels), Show (which of them), the search, Channels (the list) -->
+        <div v-if="channels.length && !activeShelf" class="grp" role="group" aria-label="Aisle">
+          <span class="grp-label">Aisle</span>
+          <label class="glu-picker pick" title="Your aisles: your channels grouped your way">
+            <span>▤</span>
+            <select :value="aisleId ?? (picked.length ? '__picked' : '')" @change="setAisle">
+              <option value="">Every channel ({{ channels.length }})</option>
+              <option v-if="picked.length && !aisleId" value="__picked">Picked channels ({{ picked.length }})</option>
+              <option v-for="a in aislesDoc.aisles" :key="a.id" :value="a.id">{{ a.name }} ({{ a.channels.length }})</option>
+              <option value="__new">+ New aisle…</option>
+            </select>
+          </label>
+          <template v-if="naming">
+            <input ref="nameInput" v-model="nameDraft" class="aisle-name" maxlength="40"
+                   :placeholder="naming.mode === 'rename' ? 'The aisle’s name' : 'New aisle’s name'"
+                   @keydown.enter.prevent="commitName" @keydown.esc.prevent="naming = null" />
+            <button class="btn icon" title="Done" @click="commitName">✓</button>
+            <button class="btn icon" title="Cancel" @click="naming = null">✕</button>
+          </template>
+          <template v-else-if="currentAisle">
+            <button class="btn icon" title="Rename this aisle" @click="startNaming({ mode: 'rename' })">✎</button>
+            <button v-if="!confirmingDelete" class="btn icon" title="Delete this aisle (you still follow its channels)" @click="confirmingDelete = true">🗑</button>
+            <template v-else>
+              <span class="hint">Delete “{{ currentAisle.name }}”?</span>
+              <button class="btn danger" @click="deleteAisle">Delete</button>
+              <button class="btn" @click="confirmingDelete = false">Keep</button>
+            </template>
+          </template>
+          <template v-else-if="picked.length">
+            <button class="btn" title="Keep the picked channels as an aisle" @click="savePick">Save as aisle</button>
+            <button class="btn icon" title="Clear the pick: every channel again" @click="setPicked([])">✕</button>
+          </template>
+        </div>
+        <div v-if="channels.length && !activeShelf" class="grp" role="group" aria-label="Show">
+          <span class="grp-label">Show</span>
+          <label class="glu-picker pick" title="Which racks the aisle shows (and which channels the list shows)">
             <span>⚲</span>
-            <select :value="listFilter" @change="setListFilter">
-              <option v-for="f in FILTERS" :key="f.value" :value="f.value">{{ f.label }} ({{ listCounts.get(f.value) ?? 0 }})</option>
+            <select :value="filter" @change="setFilter">
+              <option v-for="f in FILTERS" :key="f.value" :value="f.value">{{ f.label }} ({{ filterCounts.get(f.value) ?? 0 }})</option>
               <optgroup v-if="topicChoices.length" label="Topics (the channels’ own keywords)">
                 <option v-for="t in topicChoices" :key="t.value" :value="t.value">{{ t.label }} ({{ t.count }})</option>
               </optgroup>
-              <option v-if="listFilter.startsWith('topic:') && !topicChoices.some(t => t.value === listFilter)" :value="listFilter">{{ filterLabel(listFilter) }} (0)</option>
+              <option v-if="filter.startsWith('topic:') && !topicChoices.some(t => t.value === filter)" :value="filter">{{ filterLabel(filter) }} (0)</option>
             </select>
           </label>
-          <button class="list-btn" :title="currentAisle ? `Your channels: check them to put them in “${currentAisle.name}”` : 'Go to a channel’s rack'" @click="openChannelList">
-            ▦ Channels{{ currentAisle ? ' ✓' : '' }} ▾
-          </button>
-        </template>
-        <label v-else-if="channels.length" class="glu-picker pick" title="Go to a channel’s rack">
-          <span>▦</span>
-          <select :value="''" @change="jump">
-            <option value="" disabled>Channels</option>
-            <option v-for="c in byName" :key="c.id" :value="c.id">{{ c.name }}</option>
-          </select>
-        </label>
-        <label v-if="channels.length && !activeShelf" class="glu-picker pick" title="Your aisles: your channels grouped your way">
-          <span>▤</span>
-          <select :value="aisleId ?? ''" @change="setAisle">
-            <option value="">Every channel ({{ channels.length }})</option>
-            <option v-for="a in aislesDoc.aisles" :key="a.id" :value="a.id">{{ a.name }} ({{ a.channels.length }})</option>
-            <option value="__new">+ New aisle…</option>
-          </select>
-        </label>
-        <template v-if="naming">
-          <input ref="nameInput" v-model="nameDraft" class="aisle-name" maxlength="40"
-                 :placeholder="naming.mode === 'rename' ? 'The aisle’s name' : 'New aisle’s name'"
-                 @keydown.enter.prevent="commitName" @keydown.esc.prevent="naming = null" />
-          <button title="Done" @click="commitName">✓</button>
-          <button title="Cancel" @click="naming = null">✕</button>
-        </template>
-        <template v-else-if="currentAisle && !activeShelf">
-          <button title="Rename this aisle" @click="startNaming({ mode: 'rename' })">✎</button>
-          <button v-if="!confirmingDelete" title="Delete this aisle (you still follow its channels)" @click="confirmingDelete = true">🗑</button>
-          <template v-else>
-            <span class="hint">Delete “{{ currentAisle.name }}”?</span>
-            <button @click="deleteAisle">Delete</button>
-            <button @click="confirmingDelete = false">Keep</button>
+          <template v-if="hiddenHere">
+            <span class="hint">{{ hiddenHere }} hidden</span>
+            <button class="btn" title="Clear the filter and the search" @click="showEverything">Show all</button>
           </template>
-        </template>
-        <label v-if="channels.length && !activeShelf" class="glu-picker pick" title="Which racks the aisle shows">
-          <span>⚲</span>
-          <select :value="filter" @change="setFilter">
-            <option v-for="f in FILTERS" :key="f.value" :value="f.value">{{ f.label }} ({{ filterCounts.get(f.value) ?? 0 }})</option>
-            <optgroup v-if="topicChoices.length" label="Topics (the channels’ own keywords)">
-              <option v-for="t in topicChoices" :key="t.value" :value="t.value">{{ t.label }} ({{ t.count }})</option>
-            </optgroup>
-            <option v-if="filter.startsWith('topic:') && !topicChoices.some(t => t.value === filter)" :value="filter">{{ filterLabel(filter) }} (0)</option>
-          </select>
-        </label>
-        <input v-if="channels.length && !activeShelf" v-model="query" class="search" type="search" placeholder="Search your channels"
-               title="Names, descriptions, keywords and the titles of the videos known" @input="anchorId = null" />
-        <span v-if="hiddenHere && !activeShelf" class="hint">{{ hiddenHere }} hidden</span>
-        <button v-if="hiddenHere && !activeShelf" title="Clear the filter and the search" @click="showEverything">Show all</button>
-        <span class="spacer"></span>
+        </div>
+        <span v-if="channels.length && !activeShelf" class="search-wrap">
+          <input v-model="query" class="search" type="search" placeholder="⌕  Search your channels"
+                 title="Names, descriptions, keywords and the titles of the videos known" @input="anchorId = null" />
+        </span>
+        <span v-else class="spacer"></span>
+        <div v-if="channels.length" class="grp" role="group" aria-label="Channels">
+          <span class="grp-label">Channels</span>
+          <button v-if="hasMenu" class="btn list-btn"
+                  :title="currentAisle ? `Your channels: check them to put them in “${currentAisle.name}”` : 'Your channels: go to one, or check some to show only those'"
+                  @click="openChannelList">
+            ▦ {{ currentAisle ? 'Edit the aisle' : picked.length ? `Picked (${picked.length})` : 'Go to or pick' }} ▾
+          </button>
+          <label v-else class="glu-picker pick" title="Go to a channel’s rack">
+            <span>▦</span>
+            <select :value="''" @change="jump">
+              <option value="" disabled>Go to…</option>
+              <option v-for="c in byName" :key="c.id" :value="c.id">{{ c.name }}</option>
+            </select>
+          </label>
+        </div>
         <span v-if="loading || stocking" class="hint">Stocking shelves…</span>
-        <button @click="reloadHere"
+        <button class="btn icon" @click="reloadHere"
                 :disabled="loading || stocking" title="Read YouTube again">⟳</button>
-        <button class="mode" @click="showStandard()" title="Standard mode: YouTube’s own pages">▶ YouTube</button>
+        <button class="btn mode-btn" @click="showStandard()" title="Standard mode: YouTube’s own pages">▶ YouTube</button>
       </template>
     </div>
     <div v-if="status && mode === 'standard'" class="status">{{ status }}</div>
@@ -1031,6 +1078,7 @@ onBeforeUnmount(() => {
                 <span class="plaque-copy">
                   <span class="plaque-word">GEM<b>YT</b></span>
                   <span v-if="currentAisle" class="plaque-line">The {{ currentAisle.name }} aisle · {{ currentAisle.channels.length }} {{ currentAisle.channels.length === 1 ? 'channel' : 'channels' }}</span>
+                  <span v-else-if="picked.length" class="plaque-line">Your pick · {{ picked.length }} {{ picked.length === 1 ? 'channel' : 'channels' }}</span>
                   <span v-else class="plaque-line">Presented for following {{ channels.length }} {{ channels.length === 1 ? 'channel' : 'channels' }}</span>
                 </span>
               </span>
@@ -1061,8 +1109,19 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .gem-yt { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-.bar { display: flex; align-items: center; gap: 4px; padding: 4px; flex: 0 0 auto; }
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 5px 6px; flex: 0 0 auto; }
 .bar button { min-width: 2em; }
+/* 0.3.6: the bar's groups (a box, a small label) and its buttons in the racks' look */
+.grp { position: relative; display: flex; align-items: center; gap: 4px; padding: 13px 5px 4px; border: 1px solid #ffffff1f; border-radius: 8px; background: #ffffff08; }
+.grp-label { position: absolute; top: 2px; left: 8px; color: #9ea2aa; font: 700 8px/1.2 "Segoe UI", system-ui, sans-serif; letter-spacing: .16em; text-transform: uppercase; pointer-events: none; }
+.search-wrap { display: flex; flex: 1 1 auto; justify-content: center; min-width: 160px; }
+.search-wrap .search { width: min(420px, 100%); height: 30px; font-size: 12px; border-radius: 15px; padding: 0 14px; }
+.btn { height: 26px; padding: 0 10px; border: 1px solid #ffffff2e; border-radius: 6px; color: #e9eaee; background: #0b1117c9; font-size: 11px; cursor: pointer; white-space: nowrap; }
+.btn:hover:not(:disabled) { border-color: #ffffff55; background: #18212b; }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn.icon { min-width: 26px; padding: 0 6px; }
+.btn.danger { border-color: #d9484888; color: #ffb4b4; }
+.mode-btn { border-color: color-mix(in srgb, var(--glu-accent, #ff4545) 55%, transparent); }
 .pick { height: 26px; min-width: 120px; }
 /* 0.2.4: the bar is outside the skinned surface (no --glu-* colours there): the list's own, dark */
 .pick select { color: #f1f1f3; color-scheme: dark; }
