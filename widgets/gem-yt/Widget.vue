@@ -14,7 +14,9 @@
 // these" in the channel list, and what a filter hides in an aisle said in the bar; 0.3.6: the bar in labelled
 // groups (Aisle, Show, the search, Channels): one filter for everything, and the channel list checks channels
 // everywhere: in an aisle its members, in Every channel a pick (the aisle shows only those; Save as aisle), with
-// their avatars). Two modes, per copy (its state):
+// their avatars; 0.3.7: Order (latest video, A to Z, subscribers, posting most) and ⇤ back to the aisle's start;
+// 0.3.8: More videos in a channel's department (GEM Shell scrolls YouTube's page: sdk.pageData read { more }), kept
+// between starts for the channels you went further into, and older videos kept when a rack is read again). Two modes, per copy (its state):
 //   - GEM YT (racks): the store floor of library-ui 3.9.0 (shared/library-ui): one rack per channel you follow, its
 //     poster on top (avatar, name, subscribers), its latest videos as DVD cases lying on their side. A click on a rack
 //     opens its department; a click on a case plays the video (Standard mode, on its page). The data is YouTube's own
@@ -31,7 +33,7 @@ import { LibraryFloor, skinClass, skinStyle } from '@shared/library-ui'
 import { BROADCAST } from './skin'
 import { AISLES_DOC, addAisle, readAisles, removeAisle, renameAisle, toggleChannel, type Aisles } from './aisles'
 import { matches, parseKeywords, topicsOf } from './topics'
-import { LEDGER_DOC, MEMORY_DOC, emptyLedger, lastUpload, makeMemory, noteAbout, rhythmOf, noteRead, noteSubscribers, noteSurvey, noteUploads, readLedger, readMemory, surveyNext } from './memory'
+import { DEEP_CHANNELS, DEEP_KEEP, LEDGER_DOC, MEMORY_DOC, emptyLedger, lastUpload, makeMemory, noteAbout, rhythmOf, noteRead, noteSubscribers, noteSurvey, noteUploads, readLedger, readMemory, surveyNext } from './memory'
 import { agoShort, boxOf, captionOf, channelOf, channelParam, clock, feedShelfOf, FEEDS, isFeed, shelfOf, videoOf, type Channel, type PosterInfo, type Video, type YtVideo } from './racks'
 
 const HOME = 'https://www.youtube.com/'
@@ -45,10 +47,12 @@ const web = (sdk as any)?.web?.()
 const yt = (sdk as any)?.pageData?.('youtube')
 const settings = sdk?.settings?.()
 const data = sdk?.instanceData?.()
-const state = data?.live('state', () => ({ url: HOME, mode: 'racks' as Mode, filter: 'all' as Filter, aisle: null as string | null, picked: [] as string[] }))
+const state = data?.live('state', () => ({ url: HOME, mode: 'racks' as Mode, filter: 'all' as Filter, aisle: null as string | null, picked: [] as string[], sortBy: 'latest' as SortBy }))
 
 type Mode = 'racks' | 'standard'
 /** 0.3.1: which racks the aisle shows (per copy). */
+/** 0.3.7: the racks' order (per copy). */
+type SortBy = 'latest' | 'name' | 'subsDown' | 'subsUp' | 'rate'
 type Filter = 'all' | 'active' | 'overdue' | 'quiet' | 'gems' | 'rising' | 'big' | 'unknown' | `topic:${string}`
 const mode = ref<Mode>('racks')
 
@@ -72,7 +76,7 @@ function pagesSetting(): 'auto' | 'desktop' | 'mobile' {
   return v === 'desktop' || v === 'mobile' ? v : 'auto'
 }
 
-function save(patch: Partial<{ url: string; mode: Mode; filter: Filter; aisle: string | null; picked: string[] }>) {
+function save(patch: Partial<{ url: string; mode: Mode; filter: Filter; aisle: string | null; picked: string[]; sortBy: SortBy }>) {
   if (!state) return
   state.value.value = { ...(state.value.value ?? { url: HOME }), ...patch }
   state.changed()
@@ -235,6 +239,15 @@ const infos = computed(() => {
   return out
 })
 const filter = ref<Filter>('all')
+// 0.3.7: declared here, before the aisle's watchers (they read it at once)
+const sortBy = ref<SortBy>('latest')
+const SORTS: Array<{ value: SortBy; label: string }> = [
+  { value: 'latest', label: 'Latest video first' },
+  { value: 'name', label: 'A to Z' },
+  { value: 'subsDown', label: 'Most subscribers' },
+  { value: 'subsUp', label: 'Fewest subscribers' },
+  { value: 'rate', label: 'Posting most often' },
+]
 const passes = (c: Channel, f: Filter): boolean => {
   const i = infos.value.get(c.id)
   const subs = c.subscribers
@@ -280,6 +293,17 @@ const FILTERS: Array<{ value: Filter; label: string }> = [
   { value: 'unknown', label: 'Not known yet' },
 ]
 const filterCounts = computed(() => new Map([...FILTERS.map(f => [f.value, channels.value.filter(c => passes(c, f.value)).length] as const), ...topicChoices.value.map(t => [t.value, t.count] as const)]))
+function setSort(ev: Event) {
+  sortBy.value = (ev.target as HTMLSelectElement).value as SortBy
+  save({ sortBy: sortBy.value })
+  toStart()
+}
+/** 0.3.7: back to the aisle's start (its first rack). */
+function toStart() {
+  anchorId = null
+  activeId.value = null
+  void nextTick(() => aisleGrid()?.scrollTo({ left: 0, behavior: 'smooth' }))
+}
 function setFilter(ev: Event) {
   filter.value = (ev.target as HTMLSelectElement).value as Filter
   save({ filter: filter.value })
@@ -400,6 +424,18 @@ const scopeIds = computed(() => currentAisle.value ? new Set(currentAisle.value.
 const aisle = computed(() => {
   const only = scopeIds.value
   const list = ordered.value.filter(c => passes(c, filter.value) && found(c) && (!only || only.has(c.id)))
+  // 0.3.7: the order chosen (latest: the arranged order above); the unknown last, ties by name
+  const subs = (c: Channel) => c.subscribers
+  const rate = (c: Channel) => infos.value.get(c.id)?.perWeek
+  const by = (key: (c: Channel) => number | undefined, dir: 1 | -1) => (a: Channel, b: Channel) => {
+    const x = key(a), y = key(b)
+    if (x === undefined || y === undefined) return x === y ? a.name.localeCompare(b.name) : x === undefined ? 1 : -1
+    return (x - y) * dir || a.name.localeCompare(b.name)
+  }
+  if (sortBy.value === 'name') list.sort((a, b) => a.name.localeCompare(b.name))
+  else if (sortBy.value === 'subsDown') list.sort(by(subs, -1))
+  else if (sortBy.value === 'subsUp') list.sort(by(subs, 1))
+  else if (sortBy.value === 'rate') list.sort(by(rate, -1))
   return [...list.filter(c => !putAway.value.has(c.id)), ...list.filter(c => putAway.value.has(c.id))]
 })
 
@@ -550,7 +586,7 @@ async function loadVideos(c: Channel, fresh: boolean, pictureCount = -1, prio = 
     }
     const list = (r.items.video ?? []).map(videoOf).filter(Boolean) as Video[]
     readNow.add(c.id)
-    videos.set(c.id, list)
+    videos.set(c.id, merged(list, videos.get(c.id)))
     noteRead(ledger.value, c.id, list, Date.now())
     // 0.3.5: what the channel says of itself (its page's metadata): search and topics
     const info = r.items.channelInfo?.[0] as Record<string, unknown> | undefined
@@ -562,6 +598,56 @@ async function loadVideos(c: Channel, fresh: boolean, pictureCount = -1, prio = 
   picture(c.avatar, AVATAR, prio)
   for (const v of pictureCount < 0 ? list : list.slice(0, pictureCount)) picture(v.thumbnail, THUMB, prio)
 }
+
+/**
+ * 0.3.8: what was just read first (newest), then what was already known and isn't in it (older videos read with More
+ * videos before, or remembered): a rack read again doesn't lose a department's older videos. DEEP_KEEP at most.
+ */
+function merged(fresh: Video[], known: Video[] | undefined): Video[] {
+  if (!known?.length) return fresh
+  const ids = new Set(fresh.map(v => v.id))
+  return [...fresh, ...known.filter(v => !ids.has(v.id))].slice(0, DEEP_KEEP)
+}
+
+// ── 0.3.8: More videos (a channel's department) ──────────────────────────────────────────────────────────────────
+// GEM Shell reads the channel's page again and scrolls it `level` times (its rules: 5 at most), YouTube's own page
+// asking for the next videos; kept in GEM Shell's cache (the page's fresh minutes) and in the memory (deep channels).
+/** channel id -> how many scrolls were asked */
+const moreLevel = reactive(new Map<string, number>())
+const MORE_MAX = 5
+/** The channels you went further into, the last last (kept whole in the memory: memory.ts DEEP_KEEP). */
+let deepIds: string[] = []
+const loadingMore = ref<string | null>(null)
+async function loadMore(c: Channel) {
+  const param = channelParam(c)
+  if (!param || loadingMore.value || reading.has(c.id)) return
+  const level = Math.min(MORE_MAX, (moreLevel.get(c.id) ?? 0) + 1)
+  loadingMore.value = c.id
+  reading.add(c.id)
+  const before = videos.get(c.id)?.length ?? 0
+  try {
+    const r = await yt.read('channel-videos', { channel: param }, { more: level })
+    if (!r.ok) {
+      if (r.reason === 'declined' || r.reason === 'busy') problem.value = explain(r)
+      else console.warn(`[GEM YT] ${c.name}: more videos not read (${r.reason})`, r.error ?? '')
+      return
+    }
+    const list = (r.items.video ?? []).map(videoOf).filter(Boolean) as Video[]
+    // the list's end: fewer parts came than asked (nothing more to scroll)
+    moreLevel.set(c.id, r.more < level ? MORE_MAX + 1 : level)
+    videos.set(c.id, merged(list, videos.get(c.id)))
+    noteRead(ledger.value, c.id, list, Date.now())
+    ledgerChanged()
+    deepIds = [...deepIds.filter(x => x !== c.id), c.id].slice(-DEEP_CHANNELS)
+    saveSoon()
+    const all = videos.get(c.id) ?? []
+    for (const v of all.slice(before)) picture(v.thumbnail, THUMB, OPEN)
+  } finally {
+    reading.delete(c.id)
+    loadingMore.value = null
+  }
+}
+const canMore = (id: string) => (moreLevel.get(id) ?? 0) < MORE_MAX && (videos.get(id)?.length ?? 0) < DEEP_KEEP
 
 /** 0.2.4: a feed rack's videos (YouTube's own list) and the pictures of its first `pictureCount` (all: -1). */
 async function loadFeed(id: string, fresh: boolean, pictureCount = -1, prio = OPEN) {
@@ -847,7 +933,7 @@ function saveSoon() {
 }
 async function saveMemory() {
   if (!canSave || !channels.value.length) return
-  const mem = makeMemory(channels.value, ordered.value.map(c => c.id), videos, feeds, pictures, Date.now(), visitAt)
+  const mem = makeMemory(channels.value, ordered.value.map(c => c.id), videos, feeds, pictures, Date.now(), visitAt, deepIds)
   await sdk?.configWrite?.(MEMORY_DOC, mem).catch(err => console.warn('[GEM YT] racks not remembered', err))
 }
 
@@ -867,6 +953,7 @@ async function loadMemory() {
   if (!mem || channels.value.length) return
   channels.value = mem.channels
   for (const [id, list] of Object.entries(mem.videos)) videos.set(id, list)
+  deepIds = mem.deep ?? []
   for (const [id, list] of Object.entries(mem.feeds)) feeds.set(id, list)
   for (const [from, to] of Object.entries(mem.pictures)) pictures.set(from, to)
   if (mem.order.length) rackOrder.value = new Map(mem.order.map((id, i) => [id, i]))
@@ -922,6 +1009,8 @@ onMounted(async () => {
   if (isFilter(f)) filter.value = f
   const a = state?.value.value?.aisle
   if (typeof a === 'string') aisleId.value = a
+  const sb = state?.value.value?.sortBy
+  if (SORTS.some(x => x.value === sb)) sortBy.value = sb as SortBy
   const pk = state?.value.value?.picked
   if (Array.isArray(pk)) picked.value = pk.filter((x: unknown): x is string => typeof x === 'string').slice(0, 1000)
   if (yt) await loadMemory()
@@ -1005,6 +1094,16 @@ onBeforeUnmount(() => {
             <button class="btn icon" title="Clear the pick: every channel again" @click="setPicked([])">✕</button>
           </template>
         </div>
+        <div v-if="channels.length && !activeShelf" class="grp" role="group" aria-label="Order">
+          <span class="grp-label">Order</span>
+          <label class="glu-picker pick" title="The racks' order">
+            <span>⇅</span>
+            <select :value="sortBy" @change="setSort">
+              <option v-for="o in SORTS" :key="o.value" :value="o.value">{{ o.label }}</option>
+            </select>
+          </label>
+          <button class="btn icon" title="Back to the aisle’s start" @click="toStart">⇤</button>
+        </div>
         <div v-if="channels.length && !activeShelf" class="grp" role="group" aria-label="Show">
           <span class="grp-label">Show</span>
           <label class="glu-picker pick" title="Which racks the aisle shows (and which channels the list shows)">
@@ -1086,6 +1185,12 @@ onBeforeUnmount(() => {
           </div>
         </template>
         <template #focus-tools>
+          <!-- 0.3.8: older videos (GEM Shell scrolls YouTube's page for them) -->
+          <button v-if="activeShelf && channels.some(c => c.id === activeShelf!.id) && canMore(activeShelf.id)" class="btn more-btn"
+                  :disabled="!!loadingMore" title="Older videos: GEM Shell scrolls the channel’s page on YouTube for them"
+                  @click="loadMore(channels.find(c => c.id === activeShelf!.id)!)">
+            {{ loadingMore === activeShelf.id ? 'Fetching older videos…' : `＋ More videos (${videos.get(activeShelf.id)?.length ?? 0} so far)` }}
+          </button>
           <!-- 0.3.3: a channel's aisles, in its department -->
           <div v-if="activeShelf && channels.some(c => c.id === activeShelf!.id)" class="aisle-chips" role="group" aria-label="This channel's aisles">
             <span class="chips-label">Aisles</span>
@@ -1127,6 +1232,7 @@ onBeforeUnmount(() => {
 .pick select { color: #f1f1f3; color-scheme: dark; }
 /* 0.3.3: naming an aisle; a channel's aisles in its department */
 .search { width: 150px; height: 24px; padding: 0 7px; border: 1px solid #ffffff30; border-radius: 4px; color: #f1f1f3; background: #15161a; font-size: 11px; }
+.more-btn { margin-right: 8px; }
 .list-btn { height: 26px; padding: 0 9px; white-space: nowrap; }
 .aisle-name { width: 150px; height: 24px; padding: 0 6px; border: 1px solid #ffffff30; border-radius: 4px; color: #f1f1f3; background: #15161a; font-size: 11px; }
 .aisle-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }

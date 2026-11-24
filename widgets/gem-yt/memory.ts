@@ -16,6 +16,12 @@ export const MEMORY_DOC = 'gem-yt-memory'
 export const LEDGER_DOC = 'gem-yt-ledger'
 /** Videos kept per rack (what a rack shows) and per feed. */
 export const RACK_KEEP = 18
+/**
+ * 0.3.8: a channel whose department you went further into (More videos): all of what was read is kept (up to
+ * DEEP_KEEP), for the DEEP_CHANNELS last ones, so next time its older videos are there without scrolling YouTube again.
+ */
+export const DEEP_KEEP = 200
+export const DEEP_CHANNELS = 15
 export const FEED_KEEP = 30
 export const MAX_UPLOADS = 60
 export const MAX_SUBS = 180
@@ -40,6 +46,8 @@ export type Memory = {
   pictures: Record<string, string>
   /** 0.3.3: when this visit began (the next one's "Since you were here" starts there) */
   visitAt?: number
+  /** 0.3.8: the channels whose videos are all kept (DEEP_KEEP), the last explored last */
+  deep?: string[]
 }
 
 export type ChannelRecord = {
@@ -67,7 +75,9 @@ export function readMemory(raw: unknown): Memory | null {
   const ids = new Set(channels.map(c => c.id))
   const out: Memory = { version: 1, at: num(raw.at) ? raw.at : 0, channels, videos: {}, feeds: {}, order: [], pictures: {} }
   if (num(raw.visitAt)) out.visitAt = raw.visitAt
-  if (obj(raw.videos)) for (const [id, list] of Object.entries(raw.videos)) if (ids.has(id)) out.videos[id] = videos(list, RACK_KEEP)
+  if (Array.isArray(raw.deep)) out.deep = raw.deep.filter((id): id is string => typeof id === 'string' && ids.has(id)).slice(-DEEP_CHANNELS)
+  const deep = new Set(out.deep ?? [])
+  if (obj(raw.videos)) for (const [id, list] of Object.entries(raw.videos)) if (ids.has(id)) out.videos[id] = videos(list, deep.has(id) ? DEEP_KEEP : RACK_KEEP)
   if (obj(raw.feeds)) for (const [id, list] of Object.entries(raw.feeds)) if (/^feed:[a-z]{1,20}$/.test(id)) out.feeds[id] = videos(list, FEED_KEEP)
   if (Array.isArray(raw.order)) out.order = raw.order.filter((id): id is string => typeof id === 'string' && ids.has(id))
   if (obj(raw.pictures))
@@ -78,15 +88,18 @@ export function readMemory(raw: unknown): Memory | null {
 
 /** The memory to save: only the pictures of what it keeps (so the document never grows past the racks). */
 export function makeMemory(channels: Channel[], order: string[], rackVideos: Map<string, Video[]>, feeds: Map<string, Video[]>,
-  pictures: Map<string, string>, now: number, visitAt?: number): Memory {
-  const mem: Memory = { version: 1, at: now, channels, videos: {}, feeds: {}, order, pictures: {}, ...(visitAt ? { visitAt } : {}) }
+  pictures: Map<string, string>, now: number, visitAt?: number, deepIds: string[] = []): Memory {
+  const deep = deepIds.slice(-DEEP_CHANNELS)
+  const mem: Memory = { version: 1, at: now, channels, videos: {}, feeds: {}, order, pictures: {}, ...(visitAt ? { visitAt } : {}), ...(deep.length ? { deep } : {}) }
+  const deepSet = new Set(deep)
   const keepPic = (url: string | undefined) => { const to = url && pictures.get(url); if (url && to) mem.pictures[url] = to }
   for (const c of channels) {
     keepPic(c.avatar)
     const list = rackVideos.get(c.id)
     if (!list) continue
-    mem.videos[c.id] = list.slice(0, RACK_KEEP)
-    for (const v of mem.videos[c.id]) keepPic(v.thumbnail)
+    mem.videos[c.id] = list.slice(0, deepSet.has(c.id) ? DEEP_KEEP : RACK_KEEP)
+    // the pictures of what a rack shows (a deep channel's others are made again when its department is opened)
+    for (const v of mem.videos[c.id].slice(0, RACK_KEEP)) keepPic(v.thumbnail)
   }
   for (const [id, list] of feeds) {
     mem.feeds[id] = list.slice(0, FEED_KEEP)

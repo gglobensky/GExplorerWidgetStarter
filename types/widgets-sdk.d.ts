@@ -1275,7 +1275,9 @@ declare module 'gexplorer/widgets' {
      */
     export type PageDataRules = {
         schema: number; site: string; version: string; domains: string[]; base?: string; lang?: string; requires?: string[]; about?: string
-        pages: Record<string, { label?: string; /** minutes, 1 to 1440 (default 30) */ fresh?: number; url: string; params?: Record<string, string>; data: { var: string }; collect: string[]; skipUnder?: string[] }>
+        pages: Record<string, { label?: string; /** minutes, 1 to 1440 (default 30) */ fresh?: number; url: string; params?: Record<string, string>; data: { var: string }; collect: string[]; skipUnder?: string[]
+            /** 2026-11-23 (requires 'more'): the next parts of the list: the page's own requests at `response` (a path of the site) while GEM Shell scrolls it, `max` scrolls (1 to 10). Part of the grant. */
+            more?: { response: string; max: number } }>
         items: Record<string, { label?: string; find: string; when?: unknown; key?: string; let?: Record<string, unknown>; fields: Record<string, unknown>; optional?: string[] }>
     }
     /**
@@ -1368,15 +1370,19 @@ declare module 'gexplorer/widgets' {
     export type PageDataValue = string | number | boolean | Array<string | number | boolean>
     export type PageDataItems = Record<string, Array<Record<string, PageDataValue>>>
     export type PageDataResult =
-        | { ok: true; items: PageDataItems; /** when it was read (ms) */ at: number; /** from GEM Shell's cache */ cached: boolean; problems: string[] }
+        | { ok: true; items: PageDataItems; /** when it was read (ms) */ at: number; /** from GEM Shell's cache */ cached: boolean; problems: string[]; /** 2026-11-23: parts of the list read beyond the page (older shells: absent) */ more?: number }
         | { ok: false; reason: PageDataReason; error?: string; problems?: string[] }
-    export type PageDataPage = { name: string; label: string; params: string[]; collects: Array<{ kind: string; label: string; fields: string[] }> }
+    export type PageDataPage = { name: string; label: string; params: string[]; collects: Array<{ kind: string; label: string; fields: string[] }>; /** 2026-11-23: how many more parts a read may ask for (0: none) */ more?: number }
     export interface WidgetPageData {
         readonly site: string
         /** Your rules' pages for this site (their labels, parameters, what each collects). */
         pages(): Promise<PageDataPage[]>
-        /** A page's items. fresh: read again (unless the last read is under a minute old). */
-        read(page: string, params?: Record<string, string>, opts?: { fresh?: boolean }): Promise<PageDataResult>
+        /**
+         * A page's items. fresh: read again (unless the last read is under a minute old). 2026-11-23: more: on a page whose
+         * rules have `more`, GEM Shell scrolls it that many times (its max at most), adding the next parts of the list
+         * (each counts as a read of the day; kept in the cache: asking no more, or as many, again doesn't scroll again).
+         */
+        read(page: string, params?: Record<string, string>, opts?: { fresh?: boolean; more?: number }): Promise<PageDataResult>
         /**
          * 2026-11-22: a picture an item gave you (an avatar, a thumbnail), as a local address for <img> (GEM Shell's image
          * cache, your room). Only addresses GEM Shell handed you in an item; re-encoded, at most 4096 px a side.
