@@ -8,7 +8,7 @@ import youtube from './rules/youtube.json'
 export default {
   api: '1.0',
   id: 'gem-yt',
-  version: '0.22.1',    // what changed in each version: CHANGELOG.md
+  version: '0.24.2',    // what changed in each version: CHANGELOG.md
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
   about: `# GEM YT
@@ -39,7 +39,8 @@ keeps what it read for a while (⟳ reads again). **Standard mode** (▶ YouTube
   defaults: { data: {}, view: {} },
 
   // 0.15.0: the video you're watching outlives GEM YT's tab (GEM Shell's jobs hold its page: Settings, When GEM YT is hidden)
-  jobs: { watching: {} },
+  // watching: the page held while a video plays; scan: GEM Shell reading your channels once (sdk.pageData().scan)
+  jobs: { watching: {}, scan: {} },
 
   settings: {
     fields: [

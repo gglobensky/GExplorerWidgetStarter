@@ -1,12 +1,14 @@
 {
   "schema": 1,
   "site": "youtube",
-  "version": "2026.11.26.1",
+  "name": "YouTube",
+  "version": "2026.11.26.3",
   "about": "YouTube's own page data (ytInitialData) -> channels and videos. Written against the shapes captured on 2026-11-22. GEM YT's rules (moved from GEM Shell, 2026-11-22: the widget brings them).",
   "domains": ["youtube.com"],
   "base": "https://www.youtube.com",
   "lang": "en",
-  "requires": ["paths", "each", "where", "first", "when", "matches", "eq", "exists", "startsWith", "text", "count", "duration", "relativeDate", "bestImage", "handle", "percent", "bool", "skipUnder", "replace", "more", "responses", "number", "choices", "shapes"],
+  "requires": ["paths", "each", "where", "first", "when", "matches", "eq", "exists", "startsWith", "text", "count", "duration", "relativeDate", "bestImage", "handle", "percent", "bool", "skipUnder", "replace", "more", "responses", "number", "choices", "shapes", "challenge"],
+  "challenge": { "urls": ["https://www.google.com/sorry/"] },
   "shapes": {
     "text": [{ "key": "simpleText" }, { "key": "content" }, { "list": "runs", "key": "text" }],
     "images": ["sources", "thumbnails"]

@@ -1440,13 +1440,19 @@ declare module 'gexplorer/widgets' {
      * was found: the site changed; 2026-11-25: not on a page your rules mark `"mayBeEmpty": true`, where finding nothing
      * is a normal answer: ok with empty lists), busy (300 reads of the site today), failed.
      */
-    export type PageDataReason = 'not-declared' | 'bad-argument' | 'declined' | 'no-data' | 'needs-update' | 'busy' | 'failed'
+    export type PageDataReason = 'not-declared' | 'bad-argument' | 'declined' | 'no-data' | 'needs-update' | 'busy' | 'failed' | 'not-cached' | 'challenge'
     /** Text, numbers, true / false, short lists of those: what your rules' fields give. */
     export type PageDataValue = string | number | boolean | Array<string | number | boolean>
     export type PageDataItems = Record<string, Array<Record<string, PageDataValue>>>
     export type PageDataResult =
         | { ok: true; items: PageDataItems; /** when it was read (ms) */ at: number; /** from GEM Shell's cache */ cached: boolean; problems: string[]; /** 2026-11-23: parts of the list read beyond the page (older shells: absent) */ more?: number; /** 2026-11-25: the choice made before reading (older shells: absent: the page as it is) */ chosen?: string }
-        | { ok: false; reason: PageDataReason; error?: string; problems?: string[] }
+        /**
+         * 2026-11-26: reason 'challenge': the site asked whether a person is there (its rules' `challenge` addresses, or a
+         * captcha box on the page). GEM Shell shows that page to the person in a window of its own and holds your reads
+         * of the site (they wait) until it's answered or the window is closed; `url`: its address. Nothing to do on your
+         * side but not counting it as an empty page.
+         */
+        | { ok: false; reason: PageDataReason; error?: string; problems?: string[]; url?: string }
     export type PageDataPage = { name: string; label: string; params: string[]; collects: Array<{ kind: string; label: string; fields: string[] }>; /** 2026-11-23: how many more parts a read may ask for (0: none) */ more?: number }
     export interface WidgetPageData {
         readonly site: string
@@ -1462,13 +1468,39 @@ declare module 'gexplorer/widgets' {
          * Fenced: the text pattern may take no word of an action (Subscribe, Delete, Buy...), only a choice control is
          * clicked (a tab, an option), and after it nothing that could change anything leaves the page but the declared
          * response's request. Part of your PageData permission (the choice's label is in GEM Shell's question).
+         * 2026-11-26 (older GEM Shells: never called): onPart, with `more` or `choose`: the parts as they come, before the
+         * read ends: part 0 the page's list (with a choice, the chosen list), then 1, 2... each more of it. `items`: what
+         * that part adds (by each kind's key), plain like the result's; its pictures may be asked for (image()) at once.
+         * The result still has everything. A read already running for the same page gives this caller its result only.
+         * 2026-11-26: cachedOnly: only what GEM Shell has kept (any age: a scan's reads), never a read of the site;
+         * none: reason 'not-cached'.
          */
-        read(page: string, params?: Record<string, string>, opts?: { fresh?: boolean; more?: number; choose?: string }): Promise<PageDataResult>
+        read(page: string, params?: Record<string, string>, opts?: { fresh?: boolean; more?: number; choose?: string; onPart?: (p: { items: PageDataItems; part: number }) => void; cachedOnly?: boolean }): Promise<PageDataResult>
         /**
          * 2026-11-22: a picture an item gave you (an avatar, a thumbnail), as a local address for <img> (GEM Shell's image
          * cache, your room). Only addresses GEM Shell handed you in an item; re-encoded, at most 4096 px a side.
          */
         image(url: string, opts?: { width?: number; height?: number; fit?: 'cover' | 'contain'; format?: 'jpeg' | 'png' }): Promise<PageDataImageResult>
+        /**
+         * 2026-11-26 (older GEM Shells: absent): a list of reads of one page, run by GEM Shell as a job of this copy
+         * (`kind`: one your entry.ts `jobs` declares). It goes on while your widget isn't on screen: each entry is your
+         * own read (your PageData permission, the day's cap, the cache), 6 to 30 s after the last one (at once when
+         * the cache answered). Its card in the operations tray (while you're not on screen): the title, "37 of 231",
+         * Pause, Open, Stop. Asked again while it runs, the entries it doesn't have yet are added (new channels).
+         * 500 entries at most. It stops at the day's cap ('busy') or a refusal. Not kept across a restart: ask again
+         * for what you still lack (your own reads of what it did read are cached).
+         */
+        scan?(page: string, list: Array<Record<string, string>>, opts: { kind: string; title: string; fresh?: boolean }): PageDataScan | { ok: false; reason: 'bad-argument'; error: string }
+        /** 2026-11-26: this copy's scan of <kind> (since GEM Shell started): how far it got, and its handle; null: none. */
+        scanState?(kind: string): (PageDataScanState & { handle: PageDataScan }) | null
+    }
+    export type PageDataScanState = { running: boolean; paused: boolean; done: number; total: number; failed: number; stopped?: string }
+    export type PageDataScan = {
+        readonly ok: true
+        state(): PageDataScanState
+        /** Each read as it ends, while you listen: call the returned function on unmount. */
+        onItems(cb: (params: Record<string, string>, result: PageDataResult) => void): () => void
+        stop(): void
     }
     export type PageDataImageResult =
         | { ok: true; url: string; width: number; height: number }

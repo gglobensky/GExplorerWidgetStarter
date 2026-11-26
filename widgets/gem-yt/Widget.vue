@@ -15,7 +15,7 @@ const props = defineProps<{ placement?: { context?: string } }>()
 import type { WidgetSdk } from 'gexplorer/widgets'
 // 1.0 (0.10.0): the racks are gone; library-ui stays for its look (its stylesheet: the bar's pickers)
 import '@shared/library-ui'
-import { TAGS_DOC, addTag, readTags, removeTag, renameTag, toggleTag as toggleChannel, type Tags } from './core/tags'
+import { TAGS_DOC, addTag, readTags, tagNamed, toggleTag as toggleChannel } from './core/tags'
 import { matches, parseKeywords, topicsOf } from './core/topics'
 import { DEEP_CHANNELS, DEEP_KEEP, LEDGER_DOC, MEMORY_DOC, SURVEY_PER_DAY, emptyLedger, lastUpload, makeMemory, noteAbout, noteBanner, rhythmOf, noteRead, noteSubscribers, noteSurvey, noteUploads, readLedger, readMemory, surveyNext } from './core/memory'
 import { DISCOVER_DOC, channelUrl, emptyDiscover, featuredNext, hiddenCount, hide as hideSuggested, hideFeaturedBy, noteFeatured, noteSuggested, readDiscover, suggested, unhideAll, type FeaturedChannel, type Suggested } from './core/discover'
@@ -32,11 +32,13 @@ import type { CreatorCard, DiscoverCard, FeedSection, VideoCard } from './parts/
 import FeedPart from './parts/FeedPart.vue'
 import ChannelVideosPart from './parts/ChannelVideosPart.vue'
 import Ribbon from './parts/Ribbon.vue'
-import { VOTES_CREDIT, createVotes, type Votes } from './core/votes'
 import { hubSteps } from './parts/hubGrid'
 import { useToolbar } from './use/toolbar'
 import { useNowPlaying } from './use/nowPlaying'
 import { useWatchJob } from './use/watchJob'
+import { useVotes } from './use/votes'
+import { useEncourage } from './use/encourage'
+import { useTags } from './use/tags'
 
 const HOME = 'https://www.youtube.com/'
 const THUMB = { width: 320, height: 180 }
@@ -266,24 +268,8 @@ watch(playingChannel, c => {
 })
 const playingInfo = computed(() => ({ name: nowInfo.value.channelName, handle: nowInfo.value.channelHandle }))
 
-// ── 1.0, part 3: dislikes (core/votes.ts: Return YouTube Dislike), quick comment ───────────────────────────────────
-// One request per video played (kept for the day), only while the tiles show it and Settings' Show dislikes is on.
-const votesOn = computed(() => settings?.values?.dislikes !== false)
-const voteStore = sdk?.networkFetch ? createVotes(url => sdk.networkFetch!(url)) : null
-const votes = ref<Votes | null>(null)
-watch(() => [nowInfo.value.videoId, votesOn.value, showTiles.value] as const, async (w: unknown) => {
-  const [id, on, tiles] = w as readonly [string | null | undefined, boolean, boolean]
-  votes.value = null
-  if (!on || !tiles || !voteStore || !id) return
-  const v = await voteStore.get(id)
-  if (nowInfo.value.videoId === id && votesOn.value && showTiles.value) votes.value = v
-}, { immediate: true })
-/** The credit Return YouTube Dislike asks for: its site (GEM Shell asks before opening it) */
-function openVotesCredit() { void sdk?.openUrl?.(VOTES_CREDIT, { title: 'Return YouTube Dislike' }) }
-/** 💬 Comment: YouTube's comments over the video while the comments' tile doesn't show them; closed on the next video */
-const quickComment = ref(false)
-watch(() => nowInfo.value.videoId, () => { quickComment.value = false })
-watch(showTiles, on => { if (!on) quickComment.value = false })
+// Dislikes and 💬 Comment (use/votes.ts)
+const { votes, openVotesCredit, quickComment } = useVotes({ sdk, on: () => settings?.values?.dislikes !== false, videoId: () => nowInfo.value.videoId, tilesShown: showTiles })
 
 /** The Channel part's name: its videos (their own page). */
 function openPlayingChannel(id: string) { openCreator(id) }
@@ -294,39 +280,9 @@ async function home() {
   if (r && !r.ok) status.value = `Not loaded: ${r.error ?? r.reason}`
 }
 
-// ── 0.8.0: Encourage this creator (GEM Shell's switch, in its blocking menu; the widget only knows the count) ─────────
-const encouragedCount = ref<number | null>(null)
-const creatorEncouraged = ref<boolean | null>(null)
-async function readEncouraged() {
-  if (typeof web?.encouraged !== 'function') return
-  const n = await web.encouraged().catch(() => null)
-  if (typeof n === 'number') encouragedCount.value = n
-}
-// 0.9.6 (2026-11-25): which of your channels you encourage (GEM Shell answers for the ones GEM YT names, under its
-// PageData permission): the filter 💛 Encouraged. Asked again when the count changes or the channels are read.
-const encouragedIds = ref(new Set<string>())
-let encouragedAsked = ''
-async function readEncouragedIds() {
-  if (typeof web?.encouragedAmong !== 'function' || !channels.value.length) return
-  const ids = channels.value.map(c => c.id)
-  const key = `${encouragedCount.value ?? '?'}|${ids.length}`
-  if (key === encouragedAsked) return
-  encouragedAsked = key
-  const r = await web.encouragedAmong('youtube', ids).catch(() => null)
-  if (r?.ok && Array.isArray(r.ids)) encouragedIds.value = new Set(r.ids as string[])
-  else encouragedAsked = ''
-}
-/** The Channel part's 💛: at once (0.8.1: GEM Shell's encourage, after this click; its snackbar says so, with Undo);
- *  an older GEM Shell: its blocking menu beside the chip */
-async function encourageMenu(at: HTMLElement) {
-  if (typeof surface?.encourage === 'function') {
-    const r = await surface.encourage(!creatorEncouraged.value)
-    if (r && !r.ok) status.value = `Not changed: ${r.error ?? r.reason}`
-    return
-  }
-  const r = await surface?.showBlocking?.(at)
-  if (r && !r.ok) status.value = `No menu: ${r.error ?? r.reason}`
-}
+// Encourage this creator (use/encourage.ts)
+const { encouragedCount, creatorEncouraged, encouragedIds, readEncouraged, readEncouragedIds, encourageMenu } =
+  useEncourage({ web, surface: () => surface, channelIds: () => channels.value.map(c => c.id), status })
 
 async function showBlocking(ev: MouseEvent) {
   const r = await surface?.showBlocking?.(ev.currentTarget as HTMLElement)
@@ -509,66 +465,14 @@ function setFilter(ev: Event) {
   save({ filter: filter.value })
   settleOrder()
 }
-// ── 0.3.3: your own aisles (aisles.ts) ───────────────────────────────────────────────────────────────────────────
-const tagsDoc = ref<Tags>({ version: 1, aisles: [] })
-/** The aisle this copy shows (null: every channel). */
-const tagId = ref<string | null>(null)
-const currentTag = computed(() => tagsDoc.value.aisles.find(a => a.id === tagId.value) ?? null)
-/** 0.3.6: the pick (per copy): in Every channel, the channels the aisle is narrowed to. Declared here, before the aisle's
- *  watchers below read it (they run at once: a later const would not exist yet). */
-const picked = ref<string[]>([])
-/** Naming an aisle in the bar: a new one (for a channel, from its department), or the current one renamed. */
-const naming = ref<{ mode: 'new'; channelId?: string } | { mode: 'rename' } | null>(null)
-const nameDraft = ref('')
-const nameInput = ref<HTMLInputElement | null>(null)
-const confirmingDelete = ref(false)
-
-function tagsChanged() {
-  tagsDoc.value = { version: 1, aisles: tagsDoc.value.aisles.map(a => ({ ...a, channels: [...a.channels] })) }
-  if (!(sdk as any)?.inPreview?.()) void sdk?.configWrite?.(TAGS_DOC, tagsDoc.value).catch(err => console.warn('[GEM YT] aisles not saved', err))
-}
-function showTag(id: string | null) {
-  tagId.value = id
-  save({ aisle: id })
-  confirmingDelete.value = false
-  settleOrder()
-}
-function setTag(ev: Event) {
-  const select = ev.target as HTMLSelectElement
-  const v = select.value
-  if (v === '__new') { select.value = tagId.value ?? (picked.value.length ? '__picked' : ''); startNaming({ mode: 'new' }); return }
-  if (v === '__picked') { showTag(null); return }
-  // Every channel: the pick let go too
-  if (!v) { setPicked([]); showTag(null); return }
-  showTag(v)
-}
-function startNaming(n: NonNullable<typeof naming.value>) {
-  naming.value = n
-  nameDraft.value = n.mode === 'rename' ? currentTag.value?.name ?? '' : ''
-  void nextTick(() => { nameInput.value?.focus(); nameInput.value?.select() })
-}
-function commitName() {
-  const n = naming.value
-  if (!n || !nameDraft.value.trim()) { naming.value = null; return }
-  if (n.mode === 'rename') { if (tagId.value && renameTag(tagsDoc.value, tagId.value, nameDraft.value)) tagsChanged() }
-  else {
-    const a = addTag(tagsDoc.value, nameDraft.value)
-    if (a) {
-      if (n.channelId) toggleChannel(tagsDoc.value, a.id, n.channelId)
-      tagsChanged()
-      if (!n.channelId) showTag(a.id)
-    }
-  }
-  naming.value = null
-}
-function deleteTag() {
-  if (tagId.value && removeTag(tagsDoc.value, tagId.value)) tagsChanged()
-  showTag(null)
-}
-function toggleIn(aid: string, channelId: string) {
-  toggleChannel(tagsDoc.value, aid, channelId)
-  tagsChanged()
-}
+// ── Your tags (use/tags.ts) ──────────────────────────────────────────────────────────────────────────────────────────
+const { tagsDoc, tags, tagId, currentTag, addMembers, adoptTopic, picked, naming, nameDraft, nameInput, confirmingDelete, tagsChanged, showTag, setTag, startNaming, commitName, deleteTag, toggleIn } =
+  useTags({
+    sdk, remember: id => save({ aisle: id }), settle: () => settleOrder(), setPicked: ids => setPicked(ids),
+    keywordsOf: id => { void ledgerVersion.value; return ledger.value.channels[id]?.about?.k }, channelIds: () => channels.value.map(c => c.id),
+  })
+/** Keywords your creators share that aren't a tag yet: offered in the Tag picker (picking one adopts it) */
+const tagSuggestions = computed(() => topics.value.filter(t => !tagNamed(tagsDoc.value, t.term)))
 
 // ── 0.3.3: Since you were here ─────────────────────────────────────────────────────────────────────────────────────
 // Your channels' videos that came out since your last visit (the subscriptions feed and the racks read), newest first,
@@ -694,6 +598,8 @@ async function loadChannels(fresh: boolean) {
   // 0.3.0: ⟳ keeps what's shown (remembered) and reads every channel again as it's seen (Creators' tiles in view)
   if (fresh) { readNow.clear(); noPicture.clear(); refreshing = true; refreshed.clear() }
   readNow.add('subscriptions')
+  // the channels not read yet (all of them, the first time; then the new subscriptions): GEM Shell's scan
+  void scanChannels()
 }
 
 /** A channel's latest videos (and the pictures of its first `pictures` ones; all: -1), at priority `prio`. */
@@ -708,26 +614,80 @@ async function loadVideos(c: Channel, fresh: boolean, pictureCount = -1, prio = 
     lastMiss = r.ok ? null : r.reason
     if (!r.ok) {
       if (r.reason === 'declined' || r.reason === 'busy') { problem.value = explain(r); return }
+      // the site asked whether a person is there: GEM Shell shows it (its window); not an empty channel
+      if ((r.reason as string) === 'challenge') return
       readNow.add(c.id)
       if (!videos.has(c.id)) videos.set(c.id, [])
       return
     }
-    const list = (r.items.video ?? []).map(videoOf).filter(Boolean) as Video[]
-    readNow.add(c.id)
-    videos.set(c.id, merged(list, videos.get(c.id)))
-    noteRead(ledger.value, c.id, list, Date.now())
-    // 0.3.5: what the channel says of itself (its page's metadata): search and topics
-    const info = r.items.channelInfo?.[0] as Record<string, unknown> | undefined
-    if (info) noteAbout(ledger.value, c.id, typeof info.description === 'string' ? info.description : undefined, parseKeywords(typeof info.keywords === 'string' ? info.keywords : undefined))
-    // 0.4.0: its banner (Creators): asked at once when its tile is shown
-    noteBanner(ledger.value, c.id, (r.items.channelBanner?.[0] as Record<string, unknown> | undefined)?.image)
-    if (mode.value === 'creators') picture(ledger.value.channels[c.id]?.banner, BANNER, prio)
-    ledgerChanged()
-    saveSoon()
+    takeChannelRead(c, r.items, r.at, prio)
   }
   const list = videos.get(c.id) ?? []
   picture(c.avatar, AVATAR, prio)
   for (const v of pictureCount < 0 ? list : list.slice(0, pictureCount)) picture(v.thumbnail, THUMB, prio)
+}
+
+/** A channel's page as read (by GEM YT, or by GEM Shell's scan): its videos, what it says of itself, its banner. */
+function takeChannelRead(c: Channel, items: Record<string, Array<Record<string, unknown>>>, at: number, prio: number) {
+  const list = (items.video ?? []).map(videoOf).filter(Boolean) as Video[]
+  readNow.add(c.id)
+  videos.set(c.id, merged(list, videos.get(c.id)))
+  noteRead(ledger.value, c.id, list, at)
+  // what the channel says of itself (its page's metadata): search, its keywords (tags)
+  const info = items.channelInfo?.[0] as Record<string, unknown> | undefined
+  if (info) noteAbout(ledger.value, c.id, typeof info.description === 'string' ? info.description : undefined, parseKeywords(typeof info.keywords === 'string' ? info.keywords : undefined))
+  // its banner (Creators): asked at once when its tile is shown
+  noteBanner(ledger.value, c.id, (items.channelBanner?.[0] as Record<string, unknown> | undefined)?.image)
+  if (mode.value === 'creators') picture(ledger.value.channels[c.id]?.banner, BANNER, prio)
+  ledgerChanged()
+  saveSoon()
+}
+
+// ── Scanning your channels (GEM Shell's scans: sdk.pageData('youtube').scan) ───────────────────────────────────────
+// The channels never read are read once by GEM Shell, as a job ("Scanning your channels": its card in the operations
+// tray while GEM YT isn't on screen, Pause and Stop there), 6 to 30 s apart, whether GEM YT is open or not. Then only
+// new subscriptions are added (the subscriptions list read again shows them), and the slow survey keeps things fresh.
+// While GEM YT is open, each read is taken as it ends; coming back, what was read meanwhile is taken from GEM Shell's
+// cache (cachedOnly: never a read of YouTube).
+const SCAN_KIND = 'scan'
+const scanInfo = ref<{ done: number; total: number; running: boolean; paused: boolean } | null>(null)
+let scanOff: (() => void) | null = null
+function neverRead(): Channel[] {
+  return channels.value.filter(c => ledger.value.channels[c.id]?.readAt === undefined && !!channelParam(c))
+}
+function listenScan(h: { state(): { done: number; total: number; running: boolean; paused: boolean }; onItems(cb: (params: Record<string, string>, r: any) => void): () => void }) {
+  scanOff?.()
+  const byParam = new Map(channels.value.map(c => [channelParam(c), c] as const))
+  const tick = () => { const s = h.state(); scanInfo.value = { done: s.done, total: s.total, running: s.running, paused: s.paused } }
+  tick()
+  scanOff = h.onItems((params, r) => {
+    tick()
+    // the last one: the scan ends right after (its state then)
+    if (h.state().done >= h.state().total) setTimeout(tick, 400)
+    const c = byParam.get(params.channel)
+    if (c && r?.ok) takeChannelRead(c, r.items, r.at, LATER)
+  })
+}
+async function scanChannels() {
+  if (!yt || typeof (yt as any).scan !== 'function' || !alive) return
+  const was = (yt as any).scanState?.(SCAN_KIND) as { running: boolean; done: number; handle: any } | null
+  // what GEM Shell read while GEM YT wasn't on screen: from its cache
+  if (was && was.done > 0) {
+    for (const c of neverRead()) {
+      const r = await yt.read('channel-videos', { channel: channelParam(c)! }, { cachedOnly: true } as any)
+      if (!alive) return
+      if (r.ok) takeChannelRead(c, r.items, r.at, LATER)
+    }
+  }
+  const todo = neverRead()
+  if (!todo.length) { if (was?.running) listenScan(was.handle); else scanInfo.value = null; return }
+  const h = (yt as any).scan('channel-videos', todo.map(c => ({ channel: channelParam(c)! })), { kind: SCAN_KIND, title: 'Scanning your channels' })
+  if (!h?.ok) { console.warn('[GEM YT] the channels can’t be scanned here', h?.error); return }
+  if (!was?.running) {
+    const mins = Math.max(1, Math.round(todo.length * 18 / 60))
+    snack(`GEM YT is reading your ${todo.length} channel${todo.length === 1 ? '' : 's'} once, in the background (about ${mins} min). It goes on when GEM YT is closed; pause or stop it in the operations tray.`)
+  }
+  listenScan(h)
 }
 
 /**
@@ -756,7 +716,19 @@ async function loadMore(c: Channel) {
   loadingMore.value = c.id
   reading.add(c.id)
   try {
-    const r = await yt.read('channel-videos', { channel: param }, { more: level })
+    // the parts as they come (GEM Shell's streamed reads): the list grows while it's read
+    const known = videos.get(c.id)
+    const acc: Video[] = []
+    const r = await yt.read('channel-videos', { channel: param }, {
+      more: level,
+      onPart: (p: { items: Record<string, Array<Record<string, unknown>>> }) => {
+        const add = (p.items.video ?? []).map(videoOf).filter(Boolean) as Video[]
+        if (!add.length) return
+        acc.push(...add)
+        videos.set(c.id, merged(acc, known))
+        for (const v of add) picture(v.thumbnail, THUMB, OPEN)
+      },
+    })
     if (!r.ok) {
       if (r.reason === 'declined' || r.reason === 'busy') problem.value = explain(r)
       else console.warn(`[GEM YT] ${c.name}: more videos not read (${r.reason})`, r.error ?? '')
@@ -792,6 +764,8 @@ async function loadFeed(id: string, fresh: boolean, pictureCount = -1, prio = OP
     reading.delete(id)
     if (!r.ok) {
       if (r.reason === 'declined' || r.reason === 'busy') { problem.value = explain(r); return }
+      // the site asked whether a person is there: GEM Shell shows it (its window); not an empty channel
+      if ((r.reason as string) === 'challenge') return
       console.warn(`[GEM YT] ${feed.title}: not read (${r.reason})`, r.error ?? '', r.problems ?? '')
       readNow.add(id)
       if (!feeds.has(id)) feeds.set(id, [])
@@ -925,8 +899,7 @@ function openChannelList(ev: MouseEvent) {
       if (row.id === '__addall') {
         const a = currentTag.value
         if (!a) return
-        for (const c of list) if (!a.channels.includes(c.id)) toggleChannel(tagsDoc.value, a.id, c.id)
-        tagsChanged()
+        addMembers(a.id, list.map(c => c.id))
         return
       }
       pickChannel(row.id)
@@ -1000,8 +973,9 @@ function cardOf(c: Channel): CreatorCard {
       bannerComing: !!banner && !noPicture.has(banner),
       subscribers: c.subscribers, latest: i?.latest, rate: rateText(i?.perWeek) || undefined, bars: i?.bars, flag: i?.flag, dim: i?.dim,
       ghost: !!i?.quiet && i.latest !== undefined && now.value - i.latest >= DEAD_MS,
-      topics: (rec?.about?.k ?? []).filter(k => sharedTopics.value.has(k)).slice(0, 3),
-      tags: tagsDoc.value.aisles.filter(a => a.channels.includes(c.id)).map(a => ({ id: a.id, name: a.name })),
+      // a keyword that's a tag already shows as the tag (one kind of tag)
+      topics: (rec?.about?.k ?? []).filter(k => sharedTopics.value.has(k) && !tagNamed(tagsDoc.value, k)).slice(0, 3),
+      tags: tags.value.aisles.filter(a => a.channels.includes(c.id)).map(a => ({ id: a.id, name: a.name })),
       reading: reading.has(c.id),
     }
 }
@@ -1066,10 +1040,20 @@ async function loadSorted(c: Channel, sort: OtherSort, level = 0) {
   if (sort === 'popular' ? !list : !param) return
   sortedBusy.value = k
   try {
+    // the parts as they come (GEM Shell's streamed reads): the list grows while it's read
+    const before = sorted.get(k) ?? []
+    const acc: Video[] = []
+    const onPart = (p: { items: Record<string, Array<Record<string, unknown>>> }) => {
+      const add = [...(p.items.playlistVideo ?? []), ...(p.items.video ?? [])].map(videoOf).filter(Boolean) as Video[]
+      if (!add.length) return
+      const ids = new Set(acc.map(v => v.id))
+      for (const v of add) if (!ids.has(v.id)) { ids.add(v.id); acc.push(v); picture(v.thumbnail, THUMB, OPEN) }
+      sorted.set(k, [...acc, ...before.filter(v => !ids.has(v.id))])
+    }
     const more = level ? { more: level } : {}
     const r = sort === 'popular'
-      ? await yt.read('channel-popular', { list }, more)
-      : await yt.read('channel-videos', { channel: param }, { choose: 'oldest', ...more })
+      ? await yt.read('channel-popular', { list }, { ...more, onPart })
+      : await yt.read('channel-videos', { channel: param }, { choose: 'oldest', ...more, onPart })
     if (!r.ok) {
       sortedFailed.add(k)
       if (r.reason === 'declined' || r.reason === 'busy') problem.value = explain(r)
@@ -1119,8 +1103,10 @@ const channelSection = computed<FeedSection>(() => {
   }
   const list = c ? videos.get(c.id) ?? [] : []
   const busy = !!c && reading.has(c.id) && !list.length
+  // what's remembered shows at once; "updating…" while it's read again behind
+  const again = !!c && reading.has(c.id) && list.length > 0
   return {
-    id: 'channel', title: 'Videos', note: list.length ? `${list.length} so far` : undefined,
+    id: 'channel', title: 'Videos', note: list.length ? `${list.length} so far${again ? ' · updating…' : ''}` : undefined,
     cards: c ? list.map(v => ({ ...videoCard(v, c), channelId: undefined })) : [],
     empty: busy ? '' : 'No videos read yet.', reading: busy,
   }
@@ -1148,10 +1134,9 @@ function channelMoreVideos() {
 }
 function openChannelPage() { const h = viewedChannel.value?.handle; if (h) void showStandard(`https://www.youtube.com/${h}/videos`) }
 function newTagFor(channelId: string) { startNaming({ mode: 'new', channelId }) }
+/** A creator's keyword on a tile: the tag of that name (adopted if there's none yet) */
 function showTopic(term: string) {
-  filter.value = `topic:${term}` as Filter
-  save({ filter: filter.value })
-  settleOrder()
+  adoptTopic(term)
   creatorsPart.value?.toTop()
 }
 
@@ -1239,7 +1224,7 @@ const discoverCards = computed<DiscoverCard[]>(() => {
 function borrowedTags(s: Suggested): Array<{ name: string; from: string }> {
   const out: Array<{ name: string; from: string }> = []
   for (const b of s.by ?? []) {
-    for (const t of tagsDoc.value.aisles) {
+    for (const t of tags.value.aisles) {
       if (!t.channels.includes(b.id) || out.some(x => x.name === t.name)) continue
       out.push({ name: t.name, from: b.name })
       if (out.length >= 4) return out
@@ -1387,8 +1372,11 @@ function nextSurvey() {
 }
 async function surveyOne() {
   if (Date.now() < surveyPausedUntil) return
+  // while GEM Shell scans the channels, the survey waits (one reader at a time; the scan reads what it would)
+  if ((yt as any)?.scanState?.(SCAN_KIND)?.running) return
   // 0.4.0: on any of GEM YT's pages (not in Standard mode)
-  if (mode.value === 'standard' || problem.value || readsRunning || reading.size || loading.value || !yt) return
+  // not on a channel's page either: what you opened goes first (and GEM Shell reads one at a time)
+  if (mode.value === 'standard' || mode.value === 'channel' || problem.value || readsRunning || reading.size || loading.value || !yt) return
   if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
   const now = Date.now()
   const order = ordered.value.map(c => c.id)
@@ -1560,6 +1548,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  scanOff?.(); scanOff = null
   closePanel()
   if (compactPlayer.value) try { (sdk as any)?.ui?.()?.setHeaderStatus?.(null) } catch { /* a preview */ }
   for (const off of offs) off()
@@ -1616,6 +1605,11 @@ onBeforeUnmount(() => {
           <button v-for="p in PAGES" :key="p.value" class="btn page-btn" :class="{ on: mode === p.value }" role="tab"
                   :aria-selected="mode === p.value" :title="p.title" @click="mode === p.value ? undefined : showPage(p.value)">{{ p.label }}</button>
         </div>
+        <!-- GEM Shell reading your channels once (a job: its card, with Pause and Stop, is in the operations tray while GEM YT isn't on screen) -->
+        <span v-if="scanInfo?.running" class="scan-chip" role="status"
+              v-gex-tooltip="{ content: 'Scanning your channels', detail: 'GEM Shell reads each channel once (videos, tags, banner), slowly, even with GEM YT closed. Pause or stop it in the operations tray.' }">
+          <span class="scan-dot" aria-hidden="true"></span>{{ scanInfo.done }} / {{ scanInfo.total }}
+        </span>
         <!-- 0.3.6: the bar in labelled groups: Tag (which channels; 0.4.0: the aisles are tags), Show (which of them), the search, Channels (the list) -->
         <button v-if="mode === 'channel'" class="btn" :title="channelBackLabel" @click="closeChannel">‹ {{ channelBackLabel }}</button>
         <template v-if="mode !== 'discover' && mode !== 'channel'">
@@ -1626,7 +1620,10 @@ onBeforeUnmount(() => {
             <select :value="tagId ?? (picked.length ? '__picked' : '')" @change="setTag">
               <option value="">Every channel ({{ channels.length }})</option>
               <option v-if="picked.length && !tagId" value="__picked">Picked channels ({{ picked.length }})</option>
-              <option v-for="a in tagsDoc.aisles" :key="a.id" :value="a.id">{{ a.name }} ({{ a.channels.length }})</option>
+              <option v-for="a in tags.aisles" :key="a.id" :value="a.id">{{ a.name }} ({{ a.channels.length }})</option>
+              <optgroup v-if="tagSuggestions.length" label="Your creators’ own tags">
+                <option v-for="t in tagSuggestions" :key="t.term" :value="`topic:${t.term}`">{{ t.term }} ({{ t.channels.length }})</option>
+              </optgroup>
               <option value="__new">+ New tag…</option>
             </select>
           </label>
@@ -1668,9 +1665,6 @@ onBeforeUnmount(() => {
             <span>⚲</span>
             <select :value="filter" @change="setFilter">
               <option v-for="f in FILTERS" :key="f.value" :value="f.value">{{ f.label }} ({{ filterCounts.get(f.value) ?? 0 }})</option>
-              <optgroup v-if="topicChoices.length" label="Topics (the channels’ own keywords)">
-                <option v-for="t in topicChoices" :key="t.value" :value="t.value">{{ t.label }} ({{ t.count }})</option>
-              </optgroup>
               <option v-if="filter.startsWith('topic:') && !topicChoices.some(t => t.value === filter)" :value="filter">{{ filterLabel(filter) }} (0)</option>
             </select>
           </label>
@@ -1725,7 +1719,7 @@ onBeforeUnmount(() => {
       <ChannelVideosPart v-else-if="mode === 'channel'" :card="channelCard" :section="channelSection" :now="now" :back-label="channelBackLabel"
                          :more="channelMore" :sorts="channelSorts" :sort="channelSort" @sort="setChannelSort" @back="closeChannel" @play="playVideo" @more="channelMoreVideos" @open-page="openChannelPage" />
       <FeedPart v-else-if="mode === 'feed'" :sections="feedSections" @play="playVideo" @open-channel="openCreator" @shown="onFeedShown" />
-      <CreatorsPart v-else-if="mode === 'creators'" ref="creatorsPart" :cards="creatorCards" :tags="tagsDoc.aisles" :now="now" :empty="creatorsEmpty"
+      <CreatorsPart v-else-if="mode === 'creators'" ref="creatorsPart" :cards="creatorCards" :tags="tags.aisles" :now="now" :empty="creatorsEmpty"
                     @open="openCreator" @range="onCreatorsRange" @toggle-tag="toggleIn" @new-tag="newTagFor" @show-tag="showTag" @show-topic="showTopic" />
       <DiscoverPart v-else :cards="discoverCards" :now="now" :hidden="hiddenCount(discoverDoc)" :learning="learning" :picture-of="discoverPicture"
                     @open="openSuggested" @hide="hideSuggestion" @hide-by="hideAllFeaturedBy" @play="playVideo" @unhide="unhideSuggestions" @refresh="learnSuggestions(true)" />
@@ -1734,7 +1728,7 @@ onBeforeUnmount(() => {
       <!-- 1.0: the watch page's tiles, inside the surface's element (our page shows wherever YouTube's parts aren't) -->
       <!-- 0.16.0: in the sidebar, the compact player (the video, then Up next | Queue; ⤢ the list takes the space) -->
       <CompactTiles v-if="showTiles && compactPlayer" :now-line="nowLine" :now-what="nowWhat" :now-state="nowState" :queue="nowInfo.queue" :pip="pipState" :can-next="!!nextUrl" :bar-folded="barFolded" :saved="compactSaved" @save="keepCompact" @fold-bar="toggleBar" @pip="togglePip" @next="playNext" @regions="placeRegions" />
-      <WatchTiles v-if="showTiles && !compactPlayer" :layout="watchLayout" :now-line="nowLine" :now-what="nowWhat" :now-state="nowState" :card="playingCard" :playing="playingInfo" :tags="tagsDoc.aisles" :now="now" :queue="nowInfo.queue"
+      <WatchTiles v-if="showTiles && !compactPlayer" :layout="watchLayout" :now-line="nowLine" :now-what="nowWhat" :now-state="nowState" :card="playingCard" :playing="playingInfo" :tags="tags.aisles" :now="now" :queue="nowInfo.queue"
                   :votes="votes" :quick="quickComment" @quick="quickComment = $event" @credit="openVotesCredit" :pip="pipState" @pip="togglePip" :bar-folded="barFolded" @fold-bar="toggleBar"
                   :encouraged="nowInfo.channelHandle || nowInfo.channelName ? creatorEncouraged : null" @encourage="encourageMenu"
                   @update:layout="setWatchLayout" @regions="placeRegions" @open="openPlayingChannel" @open-handle="openHandle"
@@ -1801,6 +1795,10 @@ onBeforeUnmount(() => {
 .bar.std .chip.on { border-color: color-mix(in srgb, var(--glu-accent, #ff4545) 70%, transparent); color: #fff; background: color-mix(in srgb, var(--glu-accent, #ff4545) 28%, #0b1117); }
 .bar.std .chip.mode { border-color: color-mix(in srgb, var(--glu-accent, #ff4545) 45%, transparent); }
 .bar.std .chip.shield { font-variant-numeric: tabular-nums; }
+.scan-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border: 1px solid #ffffff24; border-radius: 12px;
+  color: var(--gex-fg-muted, #a6a9b1); font: 600 11px/1 "Segoe UI", system-ui, sans-serif; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.scan-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--glu-accent, #ff4545); animation: scan-pulse 1.6s ease-in-out infinite; }
+@keyframes scan-pulse { 50% { opacity: .3; } }
 /* 0.4.0: a GEM part's page; the page switch */
 .page { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .page > * { flex: 1 1 auto; min-height: 0; }

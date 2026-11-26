@@ -3,6 +3,12 @@
 YouTube in GEM Shell. Newest first. Before 1.0 (0.10.0), GEM YT mode showed your channels on racks; they were replaced
 by the pages (Feed, Creators, Discover, a channel's page, the watch page in tiles).
 
+- **0.24.2** (2026-11-26): Rules 2026.11.26.3: the site's name ("YouTube") for GEM Shell's sentences (the challenge window says YouTube, not youtube)
+- **0.24.1** (2026-11-26): Rules 2026.11.26.2: YouTube's "are you human" page (google.com/sorry) declared; GEM Shell shows it in a window of its own and GEM YT's reads wait until it's answered (a channel met by it isn't taken as empty)
+- **0.24.0** (2026-11-26): Scanning your channels: GEM Shell reads each channel not read yet once, as a job (6 to 30 s apart, even with GEM YT closed; its card in the operations tray has Pause and Stop), then only new subscriptions; a chip in the bar says how far it got, and coming back takes what it read meanwhile from GEM Shell's cache. The slow survey waits while it runs
+- **0.23.1** (2026-11-26): More videos, Most watched and Oldest first fill in as each part of the list comes (GEM Shell's streamed reads), their pictures asked at once
+- **0.23.0** (2026-11-26): One kind of tag: a tag also holds the channels whose creators use its name as a keyword (take one out: it stays out); the Tag picker offers your creators' shared keywords as tags (picking one adopts it), and a keyword on a tile opens its tag. A channel's page shows what's remembered at once ("updating…" while read again) or placeholder cards, and the background survey waits while you're on it
+- **0.22.2**: In the sidebar, the player's head shows only the play state (the title is in GEM Shell's header); dislikes, Encourage and your tags moved out of Widget.vue (use/)
 - **0.22.1**: In the sidebar, the video's title also shows in GEM Shell's header ("GEM YT · <title>", scrolling), as the local player's song does; the toolbar, what's playing and the job that keeps the page moved out of Widget.vue (use/)
 - **0.22.0** (2026-11-26): A cleanup, nothing changes for you: the history moved here, the racks' and aisles' old names became the tags' and the channels', one hub-grid helper and one list-tabs part instead of copies
 - **0.21.2**: GEM YT starts again (0.21.1: a value read before it was made, in the toolbar's part)

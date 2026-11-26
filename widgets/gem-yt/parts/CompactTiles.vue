@@ -15,7 +15,7 @@ import { listPart, type ListTab } from './listTabs'
 
 const props = defineProps<{
   nowLine: string
-  /** 0.21.1: the title and channel (scrolls), and the clock or Paused / Ended (stays) */
+  /** the title and channel (the tooltip on the state), and the clock or Paused / Ended */
   nowWhat?: string
   nowState?: string
   /** YouTube's queue ("3 / 12"), or null when there's none */
@@ -157,8 +157,9 @@ function gripKey(e: KeyboardEvent) {
 <template>
   <div ref="root" class="tiles">
     <div class="head" :style="{ height: `${HEAD}px` }">
-      <gex-marquee class="now" :text="(full ? '▶ ' : '') + (nowWhat || nowLine || 'YouTube')" :tip="true" />
-      <span v-if="nowState" class="state">{{ nowState }}</span>
+      <!-- the title is in GEM Shell's header ("GEM YT · <title>"); here the play state, ▶ while ⤢ hides the video -->
+      <span class="state" :title="nowWhat || nowLine">{{ full ? '▶ ' : '' }}{{ nowState }}</span>
+      <span class="spacer"></span>
       <button v-if="canNext" class="btn" v-gex-tooltip="{ content: 'Next video', detail: 'What YouTube plays next (your queue first)' }" @click="emit('next')">⏭</button>
       <button v-if="pip !== null && pip !== undefined" class="btn" :class="{ on: pip }" :aria-pressed="!!pip"
               :title="pip ? 'Bring the video back from its floating window' : 'Picture in picture: the video in a floating window'"
@@ -184,7 +185,6 @@ function gripKey(e: KeyboardEvent) {
 <style scoped>
 .tiles { position: absolute; inset: 0; overflow: hidden; background: var(--gex-bg, #0e0f12); color: var(--gex-fg, #e9eaee); }
 .head { position: absolute; left: 0; right: 0; top: 0; display: flex; gap: 6px; align-items: center; min-width: 0; padding: 0 2px 0 4px; overflow: hidden; }
-.now { flex: 1 1 auto; min-width: 0; overflow: hidden; font-size: 12px; font-weight: 600; }
 .state { flex: 0 0 auto; color: var(--gex-fg-muted, #a6a9b1); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .spacer { flex: 1 1 auto; }
 .grip { position: absolute; left: 0; right: 0; display: flex; align-items: center; justify-content: center; cursor: ns-resize; touch-action: none; outline: none; }

@@ -57,6 +57,11 @@ const badge = (c: VideoCard) => (c.live ? 'LIVE' : c.length ? clock(c.length) : 
             </div>
           </div>
         </article>
+        <!-- while the first videos are read: placeholder cards (the grid's shape at once) -->
+        <article v-for="n in (s.reading && !s.cards.length ? 8 : 0)" :key="`placeholder-${n}`" class="card placeholder" aria-hidden="true">
+          <div class="thumb coming"></div>
+          <div class="meta"><span class="avatar"></span><div class="text"><span class="bar"></span><span class="bar short"></span></div></div>
+        </article>
       </div>
       <button v-if="!all && !open.has(s.id) && s.cards.length > FIRST" class="more" @click="showAll(s)">Show all {{ s.cards.length }}</button>
     </section>
@@ -76,6 +81,8 @@ const badge = (c: VideoCard) => (c.live ? 'LIVE' : c.length ? clock(c.length) : 
 .thumb { position: relative; aspect-ratio: 16 / 9; padding: 0; overflow: hidden; border: 0; border-radius: 10px; background: var(--gex-surface, #16171b) center / cover no-repeat; cursor: pointer; }
 .thumb.coming { background: linear-gradient(100deg, #1d1f25 30%, #2a2c33 50%, #1d1f25 70%) 0 0 / 300% 100%; animation: shimmer 1.4s linear infinite; }
 @keyframes shimmer { to { background-position: -150% 0; } }
+.placeholder .bar { display: block; height: 10px; margin: 3px 0; border-radius: 5px; background: #ffffff14; }
+.placeholder .bar.short { width: 55%; }
 .thumb:hover { outline: 2px solid color-mix(in srgb, var(--gex-accent, #ff4545) 70%, transparent); }
 .badge { position: absolute; right: 6px; bottom: 6px; padding: 1px 5px; border-radius: 4px; color: #fff; background: #000000cc; font-size: 11px; font-weight: 700; }
 .badge.live { background: #cc0000; }
