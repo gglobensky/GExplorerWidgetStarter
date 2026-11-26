@@ -8,6 +8,7 @@ import youtube from './rules/youtube.json'
 export default {
   api: '1.0',
   id: 'gem-yt',
+  displayName: 'GEM YT',
   version: '0.24.2',    // what changed in each version: CHANGELOG.md
   license: 'PolyForm-Noncommercial-1.0.0',
   Component: Widget,
