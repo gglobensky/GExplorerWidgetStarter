@@ -1,4 +1,4 @@
-// GEM YT 0.3.5 (2026-11-23): what your channels are about, from the creators' own words: the keywords a creator gives
+// GEM YT 0.3.5 (2026-11-23; 0.4.0: moved to core/, shared by GEM YT's parts): what your channels are about, from the creators' own words: the keywords a creator gives
 // its channel (its page's metadata, read with its videos: no extra request) and the description (the subscriptions
 // list's snippet at once, the full one once the channel is read). For searching your channels, a topic filter, and
 // "make an aisle of these". Keywords are the creator's own and often noisy: suggestions, never truth. Pure.

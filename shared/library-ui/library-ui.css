@@ -136,6 +136,11 @@
 .glu-floor-focus-cases { display:flex; min-height:286px; align-items:flex-end; justify-content:center; gap:16px; padding:18px 28px 7px; background:linear-gradient(180deg,transparent 0 calc(100% - 28px),var(--skin-shelf-light, #a27a49) calc(100% - 28px) calc(100% - 26px),var(--skin-shelf, #6c492b) calc(100% - 25px) calc(100% - 18px),var(--skin-shelf-dark, #3d291a) calc(100% - 17px) calc(100% - 7px),var(--skin-shelf-dark, #21170f) calc(100% - 6px) 100%),var(--skin-unit-back, linear-gradient(180deg,#05080b,#121a20 22%,#080c10)); clip-path:polygon(var(--store-row-skew) 0,100% 0,calc(100% - var(--store-row-skew)) 100%,0 100%); }
 .glu-floor-focus-edge { height:9px; margin-top:-1px; background:linear-gradient(var(--skin-shelf, #3d291a),var(--skin-shelf-dark, #21170f)); clip-path:polygon(var(--store-row-skew) 0,100% 0,calc(100% - var(--store-row-skew)) 100%,0 100%); box-shadow:0 10px 16px #000a,inset 0 1px #f0c37d45; }
 .glu-floor.focused { height:auto; animation-name:glu-floor-zoom-in; }
+/* 3.12.0: the department's end (end-reached's sentinel, the focus-end slot), and a note there with a spinner. */
+.glu-floor-focus-end { display:flex; justify-content:center; min-height:1px; padding:14px 0 26px; }
+.glu-floor-end-note { display:flex; align-items:center; gap:10px; color:var(--glu-muted,#b4b5bd); font-size:12px; }
+.glu-floor-end-note i { width:11px; height:11px; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:glu-spin .8s linear infinite; }
+@media (prefers-reduced-motion:reduce) { .glu-floor-end-note i { animation:none; } }
 /* 3.11.0: a poster's little chart and sticker; a rack put away (faded, dusty). */
 .glu-poster-bars { display:flex; align-items:flex-end; gap:1px; height:12px; margin-top:1px; }
 .glu-poster-bars i { flex:1 1 0; min-width:2px; max-width:6px; border-radius:1px 1px 0 0; background:var(--glu-accent,#c33); opacity:.85; }

@@ -19,6 +19,7 @@
 // (a channel) sits on its rack's top instead of the sign, and beside the department's title.
 // 3.10.0: a shelf's `loading` (its items on their way): a spinner over the rack's shelves, and in its department.
 // 3.11.0: a poster's `bars` (a little chart) and `flag` (a sticker); a shelf's `dim` (faded, dusty: put away).
+// 3.12.0: `end-reached` (the department scrolled near its end) and the `focus-end` slot under its last row.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useScrollHints } from 'gexplorer/widgets'
 import ArtworkFrame from './ArtworkFrame.vue'
@@ -65,10 +66,14 @@ const emit = defineEmits<{
   (e:'select-shelf', shelfId:string):void
   (e:'open', item:T):void
   (e:'menu', item:T, event:MouseEvent):void
+  /** 3.12.0: the department was scrolled near its end (600 px): a widget may fetch more (a list that goes on). */
+  (e:'end-reached', shelfId:string):void
 }>()
 defineSlots<{
   intro?: () => any
   'focus-tools'?: () => any
+  /** 3.12.0: under the department's last row ("Loading more…", "That's all"). */
+  'focus-end'?: () => any
   marks?: (props: { item: T }) => any
 }>()
 /** The rows a rack shows at least, and at most (2.6.0: as many as its height holds, Guillaume). */
@@ -189,6 +194,24 @@ const windowStyle = computed(() => {
   return { position: 'relative' as const, height: pitch ? `${Math.max(0, count * pitch - rowGap.value)}px` : 'auto' }
 })
 const windowBlockStyle = computed(() => ({ transform: `translateY(${windowStart.value * rowPitch.value}px)` }))
+
+// 3.12.0: the department's end in view (600 px ahead): end-reached. Observed again when the shelf or its count
+// changes, so a list still too short after more came in asks again.
+const focusEnd = ref<HTMLElement | null>(null)
+let endObserver: IntersectionObserver | null = null
+function watchEnd() {
+  endObserver?.disconnect()
+  endObserver = null
+  const el = focusEnd.value
+  const id = props.activeShelf?.id
+  if (!el || !id || typeof IntersectionObserver === 'undefined') return
+  endObserver = new IntersectionObserver(entries => {
+    if (entries.some(e => e.isIntersecting) && props.activeShelf?.id === id) emit('end-reached', id)
+  }, { root: scrollerOf(el), rootMargin: '0px 0px 600px 0px' })
+  endObserver.observe(el)
+}
+watch(() => [props.activeShelf?.id, props.activeShelf?.items.length, !!focusEnd.value], () => void nextTick(watchEnd))
+onBeforeUnmount(() => endObserver?.disconnect())
 
 const featuredShelves = computed(() => props.featured ?? [])
 const racks = computed(() => [
@@ -416,6 +439,8 @@ defineExpose({ jumpTo })
         </div>
         </template>
       </div>
+      <!-- 3.12.0: the department's end: end-reached when it's near; what the widget says there -->
+      <div ref="focusEnd" class="glu-floor-focus-end"><slot name="focus-end" /></div>
     </template>
   </section>
 </template>

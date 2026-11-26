@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GEM YT 1.0 Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+/* VOICE  a shipped desktop app, calm and dense: GEM Shell's own chrome around YouTube's live page
+   IDEA   GEM Forge's pages of tiles: YouTube's regions placed in tiles (dashed "live page" edge) beside our GEM parts
+   PICTURE the app itself, open mid-use: a video playing, comments, up next, the creator's stats; a Creators page
+   COLOUR GEM Shell's night panels, one accent from Appearance (switchable), the ribbon the user's own picture
+   TYPE   Inter (the shell's Segoe UI on Windows), four sizes
+   LAYOUT wide: player + side column; medium: player over tabs; narrow: one column of tabs. Prototype controls above. */
+:root{color-scheme:light dark;--bg:light-dark(#eef0f3,#0b0d10);--win:light-dark(#ffffff,#121519);--panel:light-dark(#f6f7f9,#181c22);--panel2:light-dark(#eceef2,#1f242b);--edge:light-dark(#d9dde3,#2a3038);--ink:light-dark(#15181d,#eef1f5);--mute:light-dark(#5c6570,#9aa3ad);--acc:#ff4d5a;--accInk:#fff}
+:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 Inter,"Segoe UI",system-ui,sans-serif;overflow-x:clip}
+button,select,input{font:inherit;color:inherit}
+button{cursor:pointer}
+.proto{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;padding:10px max(2vw,16px);font-size:13px;color:var(--mute)}
+.proto b{color:var(--ink);font-weight:600}
+.seg{display:inline-flex;border:1px solid var(--edge);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:transparent;padding:7px 12px;min-height:34px}
+.seg button[aria-pressed=true]{background:var(--acc);color:var(--accInk)}
+.sw{width:26px;height:26px;border-radius:50%;border:2px solid var(--win);box-shadow:0 0 0 1px var(--edge)}
+.sw[aria-pressed=true]{box-shadow:0 0 0 2px var(--ink)}
+.stage{padding:0 max(2vw,16px) 24px;display:flex;justify-content:center}
+.app{width:100%;max-width:1280px;height:min(860px,calc(100svh - 70px));min-height:640px;display:flex;flex-direction:column;background:var(--win);border:1px solid var(--edge);border-radius:12px;overflow:hidden;transition:max-width .35s ease}
+.app[data-size=medium]{max-width:820px}.app[data-size=narrow]{max-width:400px}
+@media(prefers-reduced-motion:reduce){.app{transition:none}}
+.ribbon{position:relative;height:84px;flex:none;overflow:hidden}
+.ribbon svg{position:absolute;inset:0;width:100%;height:100%}
+.ribbon .who{position:absolute;left:16px;bottom:10px;display:flex;align-items:center;gap:10px;color:#fff;text-shadow:0 1px 3px #0009}
+.ribbon .who strong{font-size:20px;font-weight:800;letter-spacing:-.02em}
+.ribbon select{position:absolute;right:10px;top:10px;background:#0008;color:#fff;border:1px solid #fff4;border-radius:6px;padding:4px 6px;font-size:12px}
+.emblem{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,#fff,#b9bec6);display:grid;place-items:center}
+.emblem i{width:0;height:0;border-left:11px solid #1a1d22;border-top:7px solid transparent;border-bottom:7px solid transparent;margin-left:3px}
+.pages{display:flex;gap:2px;align-items:center;padding:6px 8px 0;border-bottom:1px solid var(--edge);flex:none;background:var(--panel)}
+.pages button{border:1px solid transparent;border-bottom:0;background:transparent;padding:8px 14px;border-radius:8px 8px 0 0;color:var(--mute);min-height:36px}
+.pages button[aria-selected=true]{background:var(--win);border-color:var(--edge);color:var(--ink);font-weight:600;margin-bottom:-1px}
+.pages .sp{flex:1}
+.pages .add{color:var(--ink)}
+.page{flex:1;display:none;padding:8px;overflow:auto}
+.page.on{display:grid}
+#watch{gap:var(--gap,8px);grid-template-columns:minmax(0,var(--left,2.2fr)) 10px minmax(0,1fr) 34px;grid-template-rows:minmax(0,1.45fr) minmax(0,1fr);grid-template-areas:"a s b b" "c s d d"}
+.app[data-size=medium] #watch{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);grid-template-areas:"a" "c"}
+.app[data-size=narrow] #watch{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);grid-template-areas:"a" "c"}
+.split{grid-area:s;cursor:col-resize;border-radius:4px;display:flex;align-items:center;justify-content:center}
+.split::after{content:"";width:3px;height:40px;border-radius:2px;background:var(--edge)}
+.split:hover::after{background:var(--acc)}
+.app:not([data-size=wide]) .split{display:none}
+.tile{display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--edge);border-radius:10px;overflow:hidden}
+.tile.live{border-style:dashed;border-color:color-mix(in srgb,var(--acc) 55%,var(--edge))}
+.tabs{display:flex;align-items:center;gap:2px;padding:4px 4px 0;background:var(--panel2);flex:none;overflow-x:auto}
+.tab{flex:none;display:flex;align-items:center;gap:6px;border:0;background:transparent;padding:6px 10px;border-radius:6px 6px 0 0;color:var(--mute);white-space:nowrap;min-height:32px}
+.tab[aria-selected=true]{background:var(--panel);color:var(--ink);font-weight:600}
+.kind{font-size:10px;font-weight:700;padding:1px 5px;border-radius:4px;background:var(--edge);color:var(--mute)}
+.kind.yt{background:color-mix(in srgb,var(--acc) 22%,transparent);color:var(--ink)}
+.tabs .more{margin-left:auto;border:0;background:transparent;color:var(--mute);padding:4px 8px;font-size:16px;min-height:32px}
+.body{flex:1;overflow:auto;padding:10px;position:relative}
+.menu{position:fixed;z-index:9;background:var(--win);border:1px solid var(--edge);border-radius:8px;box-shadow:0 12px 30px #0006;padding:4px;min-width:210px}
+.menu button,.menu .h{display:flex;justify-content:space-between;width:100%;text-align:left;border:0;background:transparent;padding:8px 10px;border-radius:5px}
+.menu button:hover{background:var(--panel2)}
+.menu .h{font-size:12px;color:var(--mute);cursor:default}
+.player{display:grid;gap:8px}
+.app[data-size=wide] .player{height:100%;display:flex;flex-direction:column}
+.app[data-size=wide] .screen{aspect-ratio:auto;flex:1 1 auto;min-height:140px}
+.screen{position:relative;aspect-ratio:16/9;border-radius:8px;overflow:hidden;background:#000}
+.screen svg{position:absolute;inset:0;width:100%;height:100%}
+.bar{position:absolute;left:0;right:0;bottom:0;padding:10px 12px;background:linear-gradient(transparent,#000c);color:#fff;font-size:12px;display:grid;gap:6px}
+.prog{height:4px;border-radius:2px;background:#fff4}.prog i{display:block;height:100%;width:38%;background:var(--acc);border-radius:2px}
+.vt{font-size:17px;font-weight:700;line-height:1.25}
+.meta{color:var(--mute);font-size:13px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.pill{border:1px solid var(--edge);background:var(--panel2);border-radius:999px;padding:6px 12px;min-height:34px}
+.pill.on{background:var(--acc);color:var(--accInk);border-color:transparent}
+.av{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-weight:800;color:#fff;flex:none;font-size:13px}
+.list{display:grid;gap:8px}
+.vid{display:grid;grid-template-columns:132px minmax(0,1fr);gap:10px;align-items:start;border:0;background:transparent;text-align:left;padding:4px;border-radius:8px}
+.vid:hover{background:var(--panel2)}
+.th{aspect-ratio:16/9;border-radius:6px;position:relative;overflow:hidden}
+.th em{position:absolute;right:4px;bottom:4px;background:#000c;color:#fff;font-style:normal;font-size:11px;padding:0 4px;border-radius:3px}
+.vid b{display:block;font-weight:600;line-height:1.3}
+.cm{display:grid;grid-template-columns:34px minmax(0,1fr);gap:10px;margin-bottom:12px}
+.cm p{margin:2px 0 0}
+.say{display:flex;gap:8px;margin-bottom:14px}
+.say input{flex:1;border:0;border-bottom:1px solid var(--edge);background:transparent;padding:8px 2px;font-size:16px}
+.note{font-size:12px;color:var(--mute);margin:8px 0 0}
+.stat{display:grid;grid-template-columns:repeat(auto-fit,minmax(7em,1fr));gap:8px;margin:10px 0}
+.stat div{background:var(--panel2);border-radius:8px;padding:8px 10px}
+.stat b{display:block;font-size:18px}
+.wk{display:flex;align-items:flex-end;gap:3px;height:54px;margin:6px 0 2px}
+.wk i{flex:1;background:var(--acc);border-radius:2px 2px 0 0;opacity:.85}
+.wk i.u{background:var(--edge);opacity:1}
+.stk{font-size:10px;font-weight:800;padding:2px 6px;border-radius:3px;background:var(--acc);color:#fff;text-transform:uppercase}
+.stk.q{background:#6b6156}
+.chip{border:1px solid var(--edge);border-radius:999px;padding:3px 9px;font-size:12px;background:transparent}
+.chip.on{border-color:var(--acc);background:color-mix(in srgb,var(--acc) 25%,transparent)}
+#creators,#discover{grid-template-rows:auto minmax(0,1fr);gap:8px}
+.cbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--panel);border:1px solid var(--edge);border-radius:10px;padding:8px}
+.cbar label{display:flex;flex-direction:column;font-size:11px;color:var(--mute);gap:2px}
+.cbar select,.cbar input{background:var(--win);border:1px solid var(--edge);border-radius:6px;padding:6px 8px;min-height:34px;font-size:14px}
+.cbar .q{flex:1 1 200px}.cbar .q input{width:100%}
+.cbar .hid{font-size:13px;color:var(--mute)}
+.grid{display:grid;grid-auto-rows:max-content;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px;overflow:auto;align-content:start;padding:2px}
+.ct{position:relative;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--edge);border-radius:10px;overflow:hidden;text-align:left;padding:0}
+.ct:hover{border-color:color-mix(in srgb,var(--acc) 60%,var(--edge))}
+.ct.dim{opacity:.62;filter:grayscale(.6)}
+.bn{height:58px;flex:none}
+.ct .av{position:absolute;left:10px;top:34px;width:44px;height:44px;border:3px solid var(--panel);font-size:15px}
+.ci{padding:26px 10px 10px;display:flex;flex-direction:column;align-items:flex-start;gap:4px;width:100%;color:inherit;font:inherit;cursor:pointer}
+.ci .wk{width:100%}
+.ci b{font-size:15px}
+.ct .pk{position:absolute;right:8px;top:8px;width:26px;height:26px;border-radius:6px;border:2px solid #fff;background:#0006;color:#fff;display:grid;place-items:center;font-weight:800}
+.ct .pk[aria-pressed=true]{background:var(--acc);border-color:var(--acc)}
+.ct .flag{position:absolute;right:42px;top:12px}
+.tg{display:flex;flex-wrap:wrap;gap:4px}
+.tg span{font-size:11px;color:var(--mute);background:var(--panel2);border-radius:4px;padding:1px 6px}
+.sample{font-size:12px;color:var(--mute);text-align:center;padding:0 16px 18px}
+.plq{padding:3px;border-radius:13px;background:var(--tier);box-shadow:0 2px 10px #0006}
+.plate{display:flex;align-items:center;gap:10px;background:linear-gradient(180deg,#1d2129f2,#11141af2);border-radius:10px;padding:5px 14px 5px 5px}
+.plq .emblem{background:var(--tier);box-shadow:inset 0 1px 0 #fff8,inset 0 -2px 4px #0003}
+.plate strong{display:block;font-size:18px;line-height:1.1}
+.plate small{display:block;font-size:11px;font-weight:600;letter-spacing:.04em;background:var(--tier);-webkit-background-clip:text;background-clip:text;color:transparent;text-shadow:none}
+.ryd{display:inline-flex;align-items:center;gap:6px;margin-left:auto;margin-right:6px;font-size:12px;color:var(--mute)}
+.ryd .rb{width:60px;height:4px;border-radius:2px;background:var(--edge);overflow:hidden}.ryd .rb i{display:block;height:100%;background:var(--acc)}
+.stripx{flex-direction:column;align-items:center;gap:10px;padding:10px 0;background:var(--panel2);border:1px solid var(--edge);border-radius:10px;color:var(--mute);cursor:pointer;min-width:0;overflow:hidden}
+.stripx:hover{color:var(--ink);border-color:var(--acc)}
+.stripx .vt2{writing-mode:vertical-rl;font-weight:600;font-size:13px;white-space:nowrap}
+.stripx .ic{width:24px;height:24px;border-radius:6px;display:grid;place-items:center;font-size:11px;font-weight:700;background:var(--panel);border:1px solid var(--edge);color:var(--ink);flex:none}
+.stripx .ic.av{border:0;color:#fff}
+.stripx .forced{writing-mode:vertical-rl;font-size:11px;opacity:.8}
+.compact .vid{grid-template-columns:minmax(0,1fr);gap:4px}
+.compact .vid b{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:12px}
+.compact .vid .meta{display:none}
+.compact .q{font-size:11px;padding:2px 6px}
+.compact .tabs{overflow-x:auto;scrollbar-width:none}.compact .kind{display:none}.compact .tab{padding-left:8px;padding-right:8px}
+.compact .row{flex-wrap:wrap}
+.panelx{border:0;background:transparent;color:var(--mute);padding:4px 8px;min-height:32px;font-size:15px}
+.strip{grid-area:b;grid-row:1/3;display:none;writing-mode:vertical-rl;align-items:center;justify-content:flex-start;gap:12px;padding:12px 0;background:var(--panel2);border:1px solid var(--edge);border-radius:10px;color:var(--mute);font-weight:600;cursor:pointer}
+.strip:hover{color:var(--ink)}
+.utag{font-size:11px;border-radius:999px;padding:1px 8px;background:color-mix(in srgb,var(--acc) 22%,transparent);border:1px solid color-mix(in srgb,var(--acc) 55%,transparent)}
+.addtag{font-size:11px;border-radius:999px;padding:1px 8px;border:1px dashed var(--edge);background:transparent;color:var(--mute)}
+.tagpick input{width:100%;border:1px solid var(--edge);border-radius:6px;padding:7px 8px;background:var(--panel);font-size:14px;margin-top:4px}
+.q{position:absolute;left:10px;top:10px;border:0;border-radius:6px;background:#000b;color:#fff;font-size:12px;padding:3px 7px;opacity:0}
+.qr{position:relative}.qr>.vid{width:100%}.qr:hover .q,.qr:focus-within .q,.q.on{opacity:1}
+.q.on{background:var(--acc)}
+.why{font-size:12px;color:var(--mute)}
+@media(max-width:600px){.proto{font-size:12px}.app{height:calc(100svh - 120px);min-height:560px}}
+</style>
+</head>
+<body>
+<div class="proto" role="group" aria-label="Prototype controls">
+  <b>Prototype</b>
+  <span>Widget size</span>
+  <span class="seg" id="sizes"><button data-s="wide" aria-pressed="true">Wide</button><button data-s="medium" aria-pressed="false">Medium</button><button data-s="narrow" aria-pressed="false">Narrow</button></span>
+  <span>Encouraged</span>
+  <span class="seg" id="encs"><button data-enc="0" aria-pressed="true">0</button><button data-enc="1" aria-pressed="false">1</button><button data-enc="5" aria-pressed="false">5</button><button data-enc="12" aria-pressed="false">12</button><button data-enc="30" aria-pressed="false">30</button></span>
+  <span>Settings</span>
+  <span class="seg"><button data-ryd="1" aria-pressed="true" title="In the widget's settings (control panel)">Show dislikes</button></span>
+  <span>Appearance accent</span>
+  <span id="accents" class="row"></span>
+</div>
+<div class="stage">
+  <div class="app" id="app" data-size="wide">
+    <div class="ribbon" id="ribbon">
+      <svg id="ribbonArt" viewBox="0 0 1200 84" preserveAspectRatio="xMidYMid slice" aria-hidden="true"></svg>
+      <div class="who"><div class="plq" id="plaque" title="Your GEM YT plaque: creators you encourage (their ads allowed)"><div class="plate"><span class="emblem"><i></i></span><span><strong>GEM YT</strong><small id="plqText"></small></span></div></div><strong id="ribbonTitle"></strong></div>
+      <select id="ribbonPick" aria-label="Header ribbon"><option value="mine">Your picture</option><option value="creator">The creator's banner</option><option value="theme">The theme's look</option></select>
+    </div>
+    <div class="pages" role="tablist" id="pagebar">
+      <button role="tab" aria-selected="true" data-p="watch">Watch</button>
+      <button role="tab" aria-selected="false" data-p="creators">Creators</button>
+      <button role="tab" aria-selected="false" data-p="discover">Discover</button>
+      <span class="sp"></span>
+      <button class="add" id="addPart" title="Add a part to this page">＋ Part</button>
+    </div>
+    <div class="page on" id="watch"></div>
+    <div class="page" id="creators">
+      <div class="cbar">
+        <label>Tag<select id="fAisle"></select></label>
+        <label>Show<select id="fShow"></select></label>
+        <label>Order<select id="fOrder"><option value="latest">Latest video first</option><option value="name">A to Z</option><option value="subsDown">Most subscribers</option><option value="subsUp">Fewest subscribers</option><option value="rate">Posting most often</option></select></label>
+        <label class="q">Search<input id="fQ" type="search" placeholder="Names, topics, titles"></label>
+        <span class="hid" id="hid"></span>
+        <button class="pill" id="savePick" hidden>Save the pick as a tag</button>
+      </div>
+      <div class="grid" id="cgrid"></div>
+    </div>
+    <div class="page" id="discover">
+      <div class="cbar"><span class="meta">Creators you don't follow yet: from YouTube's suggestions (without your channels), and the ones your creators feature. Smallest first.</span></div>
+      <div class="grid" id="dgrid"></div>
+    </div>
+  </div>
+</div>
+<p class="sample">Sample creators, videos and comments, made up for the prototype. In GEM YT the dashed tiles are YouTube's own live page, placed by GEM Shell; the others are GEM parts.</p>
+<script>
+{
+const $=s=>document.querySelector(s);
+const esc=t=>String(t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let seed=7;const rnd=()=>(seed=seed*16807%2147483647)/2147483647;
+const HUES=[352,18,42,145,172,198,222,262,292,320];
+const NAMES=["Pixel Harbor","Retro Lantern","Bytewise Kitchen","Moss & Gears","Northbound Builds","Quiet Cartridge","Tiny Forge Lab","Lumen Arcade","Paper Planet","Slow Signal","Dune Synth","Copper Kettle","Orbit Sketches","Fieldnote Films","Saltwater Retro","Glitch Garden","Cobalt Woodshop","Hollow Hills Audio","Midnight Modder","Sunday Splicer","Tinker Coast","Foxglove Plays","Ember Atlas","Velvet Circuit"];
+const TOPICS=[["retro","gaming","snes"],["retro","repair","consoles"],["cooking","recipes"],["woodworking","tools"],["electronics","diy"],["retro","gaming","collecting"],["3d printing","diy"],["arcade","retro"],["animation","art"],["radio","electronics"],["synth","music"],["cooking","baking"],["art","drawing"],["film","travel"],["retro","gaming","sega"],["gardening"],["woodworking"],["music","audio"],["modding","pc"],["editing","film"],["diy","repair"],["gaming","indie"],["travel","maps"],["electronics","music"]];
+const now=Date.now(),D=864e5;
+const C=NAMES.map((n,i)=>{const subs=Math.round(10**(3.2+rnd()*3.1));const quiet=i===9||i===16||i===22;const last=quiet?now-(190+rnd()*300)*D:now-rnd()*20*D;const rate=quiet?0:+(0.2+rnd()*3).toFixed(1);const bars=Array.from({length:12},(_,w)=>quiet?0:(i%5===2&&w<6?null:Math.round(Math.max(0,rate+rnd()*2-1))));return{id:'c'+i,name:n,hue:HUES[i%10]+i*3,subs,last,rate,bars,topics:TOPICS[i],overdue:!quiet&&i%7===3,quiet}});
+const fmt=n=>n>=1e6?(n/1e6).toFixed(1).replace('.0','')+'M':n>=1e3?(n/1e3).toFixed(n>=1e4?0:1).replace('.0','')+'K':String(n);
+const ago=t=>{const d=Math.floor((now-t)/D);return d<1?'today':d<14?d+'d ago':d<60?Math.floor(d/7)+'w ago':d<730?Math.floor(d/30.4)+'mo ago':Math.floor(d/365)+'y ago'};
+const rateTxt=r=>r>=1?'~'+Math.round(r)+'/wk':r*4.35>=1?'~'+Math.round(r*4.35)+'/mo':'';
+const art=(h,id)=>`<svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice" style="width:100%;height:100%;display:block"><defs><linearGradient id="g${id}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(${h} 70% 55%)"/><stop offset="1" stop-color="hsl(${h+40} 60% 22%)"/></linearGradient></defs><rect width="160" height="90" fill="url(#g${id})"/><circle cx="${40+(h%60)}" cy="38" r="26" fill="hsl(${h+180} 70% 70% / .35)"/><path d="M0 70 Q40 ${48+h%20} 80 66 T160 60 V90 H0Z" fill="hsl(${h} 50% 14% / .55)"/></svg>`;
+const av=c=>`<span class="av" style="background:hsl(${c.hue} 55% 42%)">${esc(c.name.split(' ').map(w=>w[0]).slice(0,2).join(''))}</span>`;
+let showDislikes=true,current=C[1],aisles={Retro:['c1','c5','c7','c14','c0'],Making:['c3','c4','c6','c16','c20'],'Weekend':['c2','c11']},aisle='',pick=[],queue=[],encouraged=0,tagFor=null;
+const D2=["Bramble Bytes","Low Tide Lab","Canvas & Coil","Fern Street Fix","Pocket Orrery","Night Owl Ports","Tallow Tapes","Kite Circuit","Second Spark","Marble Repairs"].map((n,i)=>({id:'d'+i,name:n,hue:HUES[(i*3)%10]+i*5,subs:[2300,7800,410,15200,960,4400,31000,1200,620,9100][i],why:i%3===0?'Featured by '+NAMES[(i*5)%NAMES.length]:'In your suggestions '+(2+i%4)+' times',topics:TOPICS[(i*7)%TOPICS.length]})).sort((a,b)=>a.subs-b.subs);
+const VIDEOS=i=>Array.from({length:9},(_,k)=>{const c=C[(i+k*5)%C.length];return{c,title:["I fixed the console nobody could fix","Every cartridge in the box, ranked","A week of one-pan dinners","The cheapest synth worth owning","Building a desk from one board","Why this game still holds up","Ten tools I'd buy again","Restoring a 1989 handheld","The map nobody drew"][k],len:`${8+k*3}:${String(10+k*7).slice(-2)}`,h:c.hue+k*11}});
+const PARTS={player:{t:'Player',yt:1},comments:{t:'Comments',yt:1},upnext:{t:'Up next',yt:1},desc:{t:'Description',yt:1},channel:{t:'Channel',yt:0},since:{t:'Since you were here',yt:0},queue:{t:'Queue',yt:0}};
+const LAYOUTS={wide:[{a:'a',p:['player']},{a:'b',p:['upnext','queue'],side:1},{a:'c',p:['comments','desc']},{a:'d',p:['channel','since'],side:1}],medium:[{a:'a',p:['player']},{a:'c',p:['upnext','queue','comments','channel','desc','since']}],narrow:[{a:'a',p:['player']},{a:'c',p:['upnext','queue','comments','channel','desc','since']}]};
+const active={};let size='wide';
+const body={
+ player(){const v=VIDEOS(C.indexOf(current))[0];return`<div class="player"><div class="screen">${art(current.hue,'p')}<div class="bar"><div class="prog"><i></i></div><div class="row" style="justify-content:space-between"><span>▶ 4:12 / ${v.len}</span><span>⚙ ⛶</span></div></div></div><div class="vt">${esc(v.title)}</div><div class="row">${av(current)}<div><b>${esc(current.name)}</b><div class="meta">${fmt(current.subs)} subscribers</div></div><span style="flex:1"></span><button class="pill">Subscribed</button><button class="pill">👍 1.2K</button></div></div>`},
+ comments(){const cs=[["Moss & Gears","The bit at 6:40 where the board finally boots made my day."],["Lumen Arcade","Which flux did you use? Mine keeps bridging the pins."],["Paper Planet","Watched this twice. The patience on this channel is unreal."],["Tinker Coast","Pinned this for my repair weekend."]];return`<div class="say"><span class="av" style="background:#555">G</span><input aria-label="Add a comment" placeholder="Add a comment…"></div>`+cs.map(([n,t],i)=>`<div class="cm">${av({name:n,hue:C[(i*7+3)%C.length].hue})}<div><b>${esc(n)}</b> <span class="meta">${i+2}h ago</span><p>${esc(t)}</p></div></div>`).join('')+`<p class="note">YouTube's own comments: you type and post in its box.</p>`},
+ upnext(){return`<div class="list">`+VIDEOS(C.indexOf(current)+2).map((v,i)=>{const k=v.c.id+'|'+i,on=queue.some(q=>q.k===k);return`<div class="qr"><button class="vid" data-play="${v.c.id}" title="${esc(v.title)} · ${esc(v.c.name)} · ${ago(v.c.last)} · ${v.len}"><span class="th">${art(v.h,'u'+i)}<em>${v.len}</em></span><span><b>${esc(v.title)}</b><span class="meta">${esc(v.c.name)} · ${ago(v.c.last)}</span></span></button><button class="q ${on?'on':''}" data-queue="${esc(k)}" data-title="${esc(v.title)}" data-ch="${v.c.id}" data-h="${v.h}">${on?'✓ Queued':'＋ Queue'}</button></div>`}).join('')+`</div><p class="note">YouTube's list; ＋ Queue is GEM YT's, played after this video.</p>`},
+ queue(){return queue.length?`<div class="list">`+queue.map((q,i)=>`<div class="qr"><button class="vid" data-qplay="${i}"><span class="th">${art(q.h,'q'+i)}<em>${i+1}</em></span><span><b>${esc(q.title)}</b><span class="meta">${esc(C.find(c=>c.id===q.ch).name)}</span></span></button><button class="q on" data-qdel="${i}">✕</button></div>`).join('')+`</div><p class="note">Plays in this order when the video ends.</p>`:`<p class="meta">Nothing queued. ＋ Queue on a video in Up next, or on any video GEM YT shows.</p>`},
+ desc(){return`<p class="meta">${fmt(current.subs*3+41)} views · ${ago(current.last)}</p><p>A long afternoon with a stubborn board, a borrowed oscilloscope and far too much coffee. Chapters below.</p><p class="meta">0:00 The patient · 2:10 Diagnosis · 6:40 First boot · 9:55 Cleanup</p>`},
+ channel(){const c=current,k=c.bars.filter(b=>b!==null),top=Math.max(1,...k);return`<div class="row">${av(c)}<div><b>${esc(c.name)}</b><div class="meta">${fmt(c.subs)} subscribers · ${ago(c.last)}</div></div>${c.quiet?'<span class="stk q">Quiet</span>':c.overdue?'<span class="stk">Overdue</span>':''}</div><div class="stat"><div><b>${rateTxt(c.rate)||'rarely'}</b>posting</div><div><b>${k.reduce((a,b)=>a+b,0)}</b>videos, 12 weeks</div><div><b>+${(1+c.subs%7)}%</b>subscribers, 6 months</div></div><div class="meta">Videos a week, the last 12 weeks</div><div class="wk">${c.bars.map(b=>b===null?'<i class="u" style="height:100%"></i>':`<i style="height:${8+92*b/top}%"></i>`).join('')}</div><p class="meta" style="margin:10px 0 4px">Your tags</p><div class="tg row">${Object.keys(aisles).map(a=>`<button class="chip ${aisles[a].includes(c.id)?'on':''}" data-aisle="${esc(a)}">${aisles[a].includes(c.id)?'✓':'+'} ${esc(a)}</button>`).join('')}</div><div class="row" style="margin-top:12px"><button class="pill ${c.enc?'on':''}" id="enc">${c.enc?'♥ Encouraged: ads allowed for this creator':'♥ Encourage this creator'}</button></div><p class="note">Encouraging lets this creator's ads through. The switch is GEM Shell's, not the widget's.</p>`},
+ since(){return`<div class="list">`+VIDEOS(3).slice(0,5).map((v,i)=>`<button class="vid" data-play="${v.c.id}"><span class="th">${art(v.h,'s'+i)}<em>${v.len}</em></span><span><b>${esc(v.title)}</b><span class="meta">${esc(v.c.name)} · ${i+1}h ago</span></span></button>`).join('')+`</div><p class="note">Your channels' videos since your last visit.</p>`}
+};
+let folded={},forced={},MIN_SIDE=150,COMPACT=300;
+const ICON={player:'▶',upnext:'≡',queue:()=>queue.length||'0',comments:'💬',desc:'¶',channel:()=>av(current).replace('class="av"','class="ic av"'),since:'✦'};
+function icon(p){const v=typeof ICON[p]==='function'?ICON[p]():ICON[p];return String(v).startsWith('<')?v:`<span class="ic">${v}</span>`}
+function sideWidth(){const w=$('#watch').clientWidth,f=parseFloat(getComputedStyle($('#watch')).getPropertyValue('--left'))||2.2;return (w-10-34-24)/(f+1)}
+function areasFor(){const fb=folded.b||forced.b,fd=folded.d||forced.d;
+ return [fb?'"a a a sb"':'"a s b b"', fd?'"c c c sd"':'"c s d d"'].join(' ')}
+function drawWatch(){
+ const w=$('#watch');const tiles=LAYOUTS[size];const wide=size==='wide';
+ if(wide){const tight=sideWidth()<MIN_SIDE;forced={b:tight,d:tight}}else forced={};
+ w.style.gridTemplateAreas=wide?areasFor():'';
+ const anyOpen=wide&&!((folded.b||forced.b)&&(folded.d||forced.d));
+ let html=anyOpen?'<div class="split" id="split" role="separator" aria-label="Resize columns" tabindex="0"></div>':'';
+ html+=tiles.map((t,ti)=>{const a=active[size+ti]&&t.p.includes(active[size+ti])?active[size+ti]:t.p[0];const live=PARTS[a].yt;
+  const fold=wide&&t.side&&(folded[t.a]||forced[t.a]);const byLayout=forced[t.a]&&!folded[t.a];
+  if(fold) return `<button class="stripx" style="display:flex;grid-area:s${t.a}" data-unfold="${t.a}" title="${byLayout?'Folded by the layout: not enough room. Widen the widget or drag the splitter.':'Open this panel'}">⟨${t.p.map(icon).join('')}<span class="vt2">${esc(t.p.map(p=>PARTS[p].t+(p==='queue'&&queue.length?` (${queue.length})`:'')).join(' · '))}</span>${byLayout?'<span class="forced">no room</span>':''}</button>`;
+  const ryd=a==='player'&&showDislikes?`<span class="ryd" title="Dislikes: an estimate from Return YouTube Dislike (hide it in the widget's settings)">👎 ~38<span class="rb"><i style="width:97%"></i></span>97%</span>`:'';
+  const compact=wide&&t.side&&sideWidth()<COMPACT;return`<section class="tile ${live?'live':''} ${compact?'compact':''}" style="grid-area:${t.a}"><div class="tabs" role="tablist">${t.p.map(p=>`<button class="tab" role="tab" aria-selected="${p===a}" data-tile="${ti}" data-part="${p}">${esc(PARTS[p].t)}${p==='queue'&&queue.length?` (${queue.length})`:''} <span class="kind ${PARTS[p].yt?'yt':''}">${PARTS[p].yt?'page':'GEM'}</span></button>`).join('')}${ryd}<button class="more" data-menu="${ti}" aria-label="Tile menu"${ryd?' style="margin-left:0"':''}>⋯</button>${wide&&t.side?`<button class="panelx" data-fold="${t.a}" title="Fold this panel">⟩</button>`:''}</div><div class="body">${body[a]()}</div></section>`}).join('');
+ w.innerHTML=html;
+}
+function closeMenu(){document.querySelectorAll('.menu').forEach(m=>m.remove())}
+function openMenu(x,y,html){closeMenu();const m=document.createElement('div');m.className='menu';m.innerHTML=html;document.body.append(m);const r=m.getBoundingClientRect();m.style.left=Math.min(x,innerWidth-r.width-8)+'px';m.style.top=Math.min(y,innerHeight-r.height-8)+'px';return m}
+function tileMenu(ti,x,y){const t=LAYOUTS[size][ti];const a=active[size+ti]&&t.p.includes(active[size+ti])?active[size+ti]:t.p[0];const others=LAYOUTS[size].map((o,i)=>i).filter(i=>i!==ti);
+ const m=openMenu(x,y,`<div class="h">${esc(PARTS[a].t)}</div>`+others.map(i=>`<button data-att="${i}">Attach to the ${esc(PARTS[LAYOUTS[size][i].p[0]].t)} tile</button>`).join('')+(t.p.length>1?(size!=='wide'||['a','b','c','d'].some(ar=>!LAYOUTS[size].some(o=>o.a===ar))?`<button data-det="1">Detach (its own tile)</button>`:`<button disabled title="The real grid finds room; this prototype has four spots">Detach: no free spot here</button>`):'')+`<button data-close="1">Close</button>`);
+ m.onclick=e=>{const b=e.target.closest('button');if(!b)return;t.p=t.p.filter(p=>p!==a);
+  if(b.dataset.att){LAYOUTS[size][+b.dataset.att].p.push(a);active[size+b.dataset.att]=a}
+  else if(b.dataset.det){const free=['b','c','d','a'].find(ar=>!LAYOUTS[size].some(o=>o.a===ar&&o.p.length));LAYOUTS[size].push({a:size==='wide'?free:'c',p:[a],side:free==='b'||free==='d'?1:0})}
+  if(!t.p.length)t.p.push(a);LAYOUTS[size]=LAYOUTS[size].filter(o=>o.p.length);closeMenu();drawWatch()}}
+function partMenu(x,y){const all=LAYOUTS[size].flatMap(t=>t.p);const m=openMenu(x,y,`<div class="h">Parts on this page</div>`+Object.entries(PARTS).map(([k,p])=>`<button data-add="${k}">${esc(p.t)}<span>${all.includes(k)?'✓':''}</span></button>`).join(''));
+ m.onclick=e=>{const b=e.target.closest('button');if(!b)return;const k=b.dataset.add;if(!all.includes(k)){LAYOUTS[size][LAYOUTS[size].length-1].p.push(k);active[size+(LAYOUTS[size].length-1)]=k}closeMenu();if(page!=='watch')showPage('watch');drawWatch()}}
+const FILTERS=[['all','All channels'],['active','Posting'],['overdue','Overdue'],['quiet','Gone quiet'],['gems','Hidden gems (under 10K)'],['rising','Rising (10K to 250K)'],['big','Big (250K and up)']];
+const topicCount={};C.forEach(c=>c.topics.forEach(t=>topicCount[t]=(topicCount[t]||0)+1));
+const topics=Object.entries(topicCount).filter(([,n])=>n>1).sort((a,b)=>b[1]-a[1]);
+const passes=(c,f)=>f==='all'||(f==='active'&&!c.quiet)||(f==='overdue'&&c.overdue)||(f==='quiet'&&c.quiet)||(f==='gems'&&c.subs<1e4)||(f==='rising'&&c.subs>=1e4&&c.subs<25e4)||(f==='big'&&c.subs>=25e4)||(f.startsWith('t:')&&c.topics.includes(f.slice(2)));
+function drawBar(){const fa=$('#fAisle'),fs=$('#fShow');fa.innerHTML=`<option value="">Every channel (${C.length})</option>`+(pick.length?`<option value="!pick">Your pick (${pick.length})</option>`:'')+Object.keys(aisles).map(a=>`<option value="${esc(a)}">${esc(a)} (${aisles[a].length})</option>`).join('');fa.value=aisle;
+ const f=fs.value||'all';fs.innerHTML=FILTERS.map(([v,l])=>`<option value="${v}">${esc(l)} (${C.filter(c=>passes(c,v)).length})</option>`).join('')+`<optgroup label="Topics (the channels' own keywords)">`+topics.map(([t,n])=>`<option value="t:${esc(t)}">${esc(t)} (${n})</option>`).join('')+`</optgroup>`;fs.value=f}
+function drawCreators(){const f=$('#fShow').value||'all',q=$('#fQ').value.trim().toLowerCase(),o=$('#fOrder').value;
+ const scope=aisle==='!pick'?pick:aisle?aisles[aisle]:null;let list=C.filter(c=>!scope||scope.includes(c.id));const all=list.length;
+ list=list.filter(c=>passes(c,f)&&(!q||(c.name+' '+c.topics.join(' ')).toLowerCase().includes(q)));
+ const by={latest:(a,b)=>b.last-a.last,name:(a,b)=>a.name.localeCompare(b.name),subsDown:(a,b)=>b.subs-a.subs,subsUp:(a,b)=>a.subs-b.subs,rate:(a,b)=>b.rate-a.rate}[o];list.sort(by);list=[...list.filter(c=>!c.quiet),...list.filter(c=>c.quiet)];
+ $('#hid').textContent=all-list.length?`${all-list.length} hidden`:'';$('#savePick').hidden=!(pick.length&&(aisle===''||aisle==='!pick'));
+ const inSet=id=>aisle&&aisle!=='!pick'?aisles[aisle].includes(id):pick.includes(id);
+ $('#cgrid').innerHTML=list.map(c=>{const k=c.bars.filter(b=>b!==null),top=Math.max(1,...k);return`<article class="ct ${c.quiet?'dim':''}"><div class="bn">${art(c.hue,'b'+c.id)}</div>${av(c)}<button class="pk" data-pick="${c.id}" aria-pressed="${inSet(c.id)}" title="${aisle&&aisle!=='!pick'?'In this aisle':'Pick: show only the picked'}">${inSet(c.id)?'✓':''}</button>${c.quiet?`<span class="stk q flag">Quiet</span>`:c.overdue?'<span class="stk flag">Overdue</span>':''}<button class="ci" data-open="${c.id}" style="border:0;background:transparent;text-align:left"><b>${esc(c.name)}</b><span class="meta">${fmt(c.subs)} subscribers · ${ago(c.last)}${rateTxt(c.rate)?' · '+rateTxt(c.rate):''}</span><span class="wk" style="height:22px;margin:2px 0">${c.bars.map(b=>b===null?'<i class="u" style="height:100%"></i>':`<i style="height:${10+90*b/top}%"></i>`).join('')}</span><span class="tg">${c.topics.map(t=>`<span title="Its own keyword">${esc(t)}</span>`).join('')}</span></button><div class="tg" style="padding:0 10px 10px">${Object.keys(aisles).filter(a=>aisles[a].includes(c.id)).map(a=>`<span class="utag">${esc(a)}</span>`).join('')}<button class="addtag" data-tagfor="${c.id}">＋ tag</button></div></article>`}).join('')||'<p class="meta">No channel matches. Clear the search or choose All channels.</p>'}
+function drawRibbon(){const v=$('#ribbonPick').value,s=$('#ribbonArt');const h=v==='creator'?current.hue:v==='theme'?0:205;
+ $('#ribbonTitle').textContent=v==='creator'?current.name:'';
+ s.innerHTML=v==='theme'?`<rect width="1200" height="84" fill="var(--acc)"/><rect width="1200" height="84" fill="url(#rg)"/><defs><linearGradient id="rg" x1="0" x2="1"><stop offset="0" stop-color="#000" stop-opacity=".55"/><stop offset="1" stop-color="#000" stop-opacity="0"/></linearGradient></defs>`
+ :`<defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="hsl(${h} 60% 30%)"/><stop offset="1" stop-color="hsl(${h+30} 70% 62%)"/></linearGradient></defs><rect width="1200" height="84" fill="url(#sky)"/><circle cx="930" cy="30" r="18" fill="hsl(${h+50} 90% 85%)"/>`+[0,1,2].map(l=>`<path d="M0 ${84-l*10} `+Array.from({length:13},(_,i)=>`L${i*100} ${54+l*9-((i*37+l*53+h)%26)}`).join(' ')+` L1200 ${60+l*8} V84 H0Z" fill="hsl(${h+10} ${30+l*10}% ${30-l*8}%)"/>`).join('')}
+function drawDiscover(){$('#dgrid').innerHTML=D2.map(c=>`<article class="ct"><div class="bn">${art(c.hue,'x'+c.id)}</div>${av(c)}<div class="ci"><b>${esc(c.name)}</b><span class="meta">${fmt(c.subs)} subscribers${c.subs<1e4?' · hidden gem':''}</span><span class="why">${esc(c.why)}</span><span class="tg">${c.topics.map(t=>`<span>${esc(t)}</span>`).join('')}</span><span class="row" style="margin-top:6px"><button class="pill">Open the channel</button><button class="pill">♥ Encourage</button></span></div></article>`).join('')}
+const TIERS=[[0,'Silver','linear-gradient(135deg,#ffffff,#9aa1ab 55%,#e9ecef)'],[1,'Gold','linear-gradient(135deg,#fff3b0,#d4a017)'],[5,'Diamond','linear-gradient(135deg,#e8fbff,#7fd4f5 50%,#c9b8ff)'],[10,'Ruby','linear-gradient(135deg,#ffd0d8,#d81b45)'],[25,'Opal','conic-gradient(from 30deg,#ffd6f0,#c8f0ff,#d8ffd0,#fff2c0,#ffd6f0)']];
+function drawPlaque(){const t=[...TIERS].reverse().find(([n])=>encouraged>=n);$('#plaque').style.setProperty('--tier',t[2]);$('#plqText').textContent=`${t[1].toUpperCase()} · ${encouraged?encouraged+' encouraged':'encourage a creator'}`}
+function tagMenu(id,x,y){const m=openMenu(x,y,`<div class="h">Tags</div>`+Object.keys(aisles).map(a=>`<button data-tt="${esc(a)}">${esc(a)}<span>${aisles[a].includes(id)?'✓':''}</span></button>`).join('')+`<div class="tagpick" style="padding:6px 8px"><input id="newTag" placeholder="New tag, then Enter" aria-label="New tag"></div>`);
+ m.onclick=e=>{const b=e.target.closest('button');if(!b)return;const a=aisles[b.dataset.tt];const i=a.indexOf(id);i<0?a.push(id):a.splice(i,1);closeMenu();drawBar();drawCreators()};
+ const inp=m.querySelector('#newTag');inp.focus();inp.onkeydown=e=>{if(e.key==='Enter'&&inp.value.trim()){const n=inp.value.trim().slice(0,40);aisles[n]=aisles[n]||[];if(!aisles[n].includes(id))aisles[n].push(id);closeMenu();drawBar();drawCreators()}}}
+let page='watch';function showPage(p){page=p;document.querySelectorAll('#pagebar [role=tab]').forEach(b=>b.setAttribute('aria-selected',b.dataset.p===p));document.querySelectorAll('.page').forEach(e=>e.classList.toggle('on',e.id===p))}
+function play(id){current=C.find(c=>c.id===id)||current;showPage('watch');drawWatch();drawRibbon()}
+document.addEventListener('click',e=>{const b=e.target.closest('button');if(!e.target.closest('.menu'))closeMenu();if(!b)return;const d=b.dataset;
+ if(d.p)showPage(d.p);else if(d.s){size=d.s;$('#app').dataset.size=size;document.querySelectorAll('#sizes button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.s===size));drawWatch()}
+ else if(d.tile){active[size+d.tile]=d.part;drawWatch()}else if(d.menu!==undefined){const r=b.getBoundingClientRect();tileMenu(+d.menu,r.right-210,r.bottom+4)}
+ else if(b.id==='addPart'){const r=b.getBoundingClientRect();partMenu(r.right-210,r.bottom+4)}
+ else if(d.play||d.open)play(d.play||d.open);
+ else if(d.aisle){const a=aisles[d.aisle];const i=a.indexOf(current.id);i<0?a.push(current.id):a.splice(i,1);drawWatch();drawBar()}
+ else if(d.pick){if(aisle&&aisle!=='!pick'){const a=aisles[aisle];const i=a.indexOf(d.pick);i<0?a.push(d.pick):a.splice(i,1)}else{const i=pick.indexOf(d.pick);i<0?pick.push(d.pick):pick.splice(i,1)}drawBar();drawCreators()}
+ else if(b.id==='savePick'){const n='Picked '+(Object.keys(aisles).length+1);aisles[n]=[...pick];pick=[];aisle=n;drawBar();drawCreators()}
+ else if(b.id==='enc'){current.enc=!current.enc;encouraged=Math.max(0,encouraged+(current.enc?1:-1));drawPlaque();drawWatch()}
+ else if(d.enc!==undefined){encouraged=+d.enc;document.querySelectorAll('#encs button').forEach(x=>x.setAttribute('aria-pressed',x===b));drawPlaque()}
+ else if(d.fold){folded[d.fold]=true;drawWatch()}else if(d.unfold){if(forced[d.unfold]&&!folded[d.unfold]){$('#watch').style.setProperty('--left','1.6fr')}folded[d.unfold]=false;drawWatch()}
+ else if(d.ryd!==undefined){showDislikes=!showDislikes;b.setAttribute('aria-pressed',showDislikes);drawWatch()}
+ else if(d.queue){const i=queue.findIndex(q=>q.k===d.queue);i<0?queue.push({k:d.queue,title:d.title,ch:d.ch,h:+d.h}):queue.splice(i,1);drawWatch()}
+ else if(d.qplay!==undefined){const q=queue.splice(+d.qplay,1)[0];play(q.ch)}
+ else if(d.qdel!==undefined){queue.splice(+d.qdel,1);drawWatch()}
+ else if(d.tagfor){const r=b.getBoundingClientRect();tagMenu(d.tagfor,r.left,r.bottom+4)}
+ else if(d.acc){document.documentElement.style.setProperty('--acc',d.acc);document.querySelectorAll('#accents .sw').forEach(x=>x.setAttribute('aria-pressed',x===b));drawRibbon()}});
+$('#accents').innerHTML=['#ff4d5a','#4c8dff','#2fbf86','#f0a030'].map((c,i)=>`<button class="sw" data-acc="${c}" style="background:${c}" aria-pressed="${i===0}" aria-label="Accent ${c}"></button>`).join('');
+$('#fAisle').onchange=e=>{aisle=e.target.value;drawCreators()};
+['#fShow','#fOrder'].forEach(s=>$(s).onchange=drawCreators);$('#fQ').oninput=drawCreators;$('#ribbonPick').onchange=drawRibbon;
+let drag=null;document.addEventListener('pointerdown',e=>{if(e.target.id==='split'){drag=$('#watch').getBoundingClientRect();e.target.setPointerCapture(e.pointerId)}});
+document.addEventListener('pointermove',e=>{if(!drag)return;const f=Math.min(4,Math.max(1,(e.clientX-drag.left)/(drag.right-e.clientX)));$('#watch').style.setProperty('--left',f.toFixed(2)+'fr');const sw=sideWidth();if((sw<MIN_SIDE)!==!!forced.b||(sw<COMPACT)!==!!document.querySelector('.compact'))drawWatch()});
+document.addEventListener('pointerup',()=>drag=null);
+new ResizeObserver(()=>{const sw=sideWidth();if(size==='wide'&&((sw<MIN_SIDE)!==!!forced.b||(sw<COMPACT)!==!!document.querySelector('.compact')))drawWatch()}).observe($('#watch'));
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeMenu()});
+drawWatch();drawBar();drawCreators();drawRibbon();drawDiscover();drawPlaque();
+}
+</script>
+</body>
+</html>

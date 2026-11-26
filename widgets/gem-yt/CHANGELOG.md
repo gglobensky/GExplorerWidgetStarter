@@ -1,0 +1,72 @@
+# GEM YT: changes
+
+YouTube in GEM Shell. Newest first. Before 1.0 (0.10.0), GEM YT mode showed your channels on racks; they were replaced
+by the pages (Feed, Creators, Discover, a channel's page, the watch page in tiles).
+
+- **0.22.0** (2026-11-26): A cleanup, nothing changes for you: the history moved here, the racks' and aisles' old names became the tags' and the channels', one hub-grid helper and one list-tabs part instead of copies
+- **0.21.2**: GEM YT starts again (0.21.1: a value read before it was made, in the toolbar's part)
+- **0.21.1**: The tab is Description everywhere (as in the hub's tiles); the video's title scrolls in the hub's and the sidebar's heads and the toolbar panel's (the clock stays beside it)
+- **0.21.0**: About (YouTube's description: the channel, Subscribe, likes) in the sidebar's and the toolbar panel's tabs; the toolbar's title scrolls (GEM Shell's marquee); the player alone in its tile shows its title, not "Player"; rules 2026.11.26.1: YouTube's text and picture forms and the analysis tool's words now in the rules (GEM Shell's engine knows none: it needs the feature 'shapes')
+- **0.20.0**: In the sidebar, as tall as the sidebar lets it; the player's video height, tab and ⤢ kept per copy
+- **0.19.0**: The bar above the video restyled (the page's moves in one group, chips), and ▴ next to ⧉ folds it away (▾ brings it back; kept per copy)
+- **0.18.1**: The panel fits GEM Shell's popover (no sideways scrollbar)
+- **0.18.0**: In the toolbar, a strip: what's playing, ⏯ ⏭ 🔊, ▣ the video and ☰ Up next | Queue in a panel under it (the page moved there as it is: GEM Shell's surface.moveTo; closing it keeps the sound)
+- **0.17.1**: ⏭ next video in the sidebar's player (rules 2026.11.25.8: the player's next button's address, GEM Shell asks again); the handle's tooltip says double-click fits
+- **0.17.0**: In the sidebar, a handle under the video sizes it (it snaps to the height with no black bars; double-click goes there)
+- **0.16.1**: The sidebar gives GEM YT a height of its own (the page and the video showed nothing there), and GEM YT starts in Add widget's preview
+- **0.16.0**: In the sidebar, a compact player: the video, then YouTube's Up next | Queue under it; ⤢ the list takes all the space (the video plays on), ⤡ brings it back
+- **0.15.0**: The video outlives GEM YT's tab: GEM Shell's job holds its page (Settings, When GEM YT is hidden: its sound, the video in the operations tray's card, or paused); coming back takes the same page back
+- **0.14.1**: With ▤ Tiles on, YouTube's desktop page even in a narrow widget (its mobile page has none of the tiles' parts, and its player paused itself)
+- **0.14.0**: ⧉ picture in picture in the video's tile (GEM Shell's surface.pip: the video floats over everything; the page keeps running while you're elsewhere)
+- **0.13.3**: Hide ▾ on a featured card: Hide all featured by … (now and later); both reasons said the same way (Featured by … · Suggested by YouTube …); your tags on the creators that feature a channel shown on its card; rules 2026.11.25.7: channel-featured mayBeEmpty (GEM Shell answers ok, empty)
+- **0.13.2**: A channel that features none is an answer, not YouTube refusing (the survey no longer pauses on it, and goes on to the next channel)
+- **0.13.1**: ⟳ Look for more reads one channel's featured channels at once too
+- **0.13.0**: Discover gets the channels your channels feature (their home tab's featured channels, read slowly in the background, once a month each; rules 2026.11.25.6: channel-featured, GEM Shell asks again), "Featured by …" on the cards, subscribers and 💎 hidden gems
+- **0.12.0**: The tile menu (right-click a tab or a tile's head): Detach (a part in a tile of its own), Attach to (another tile), Close (＋ Part brings it back; never the video)
+- **0.11.2**: One splitter under the video for the tiles below it (the video's tile no longer slides over Comments), 💬 alone when the tabs need the room, tabs that don't fit scroll
+- **0.11.1**: Wide from 1180 px, panels fold under 200 px, the Channel part in one row when that's all there is, the bar justified when narrow (and GEM Shell's page regions fix 9: the video fills its tile after a resize)
+- **0.11.0**: The video's tiles in three sizes (wide, medium, narrow: the widget's width), each arranged its own way and kept; a size shown the first time says so once
+- **0.10.1**: A channel's page sorts Oldest too (GEM Shell's reader clicks YouTube's own Oldest first: a page choice; rules 2026.11.25.4, GEM Shell asks again)
+- **0.10.0**: GEM YT 1.0's pages only: the racks are gone (a copy that showed them opens on Feed)
+- **0.9.6**: Show: 💛 Encouraged (GEM Shell says which of your channels you encourage)
+- **0.9.5**: Pictures left half-way (a channel's page left before they came) come once its videos are read again
+- **0.9.4**: A channel's page sorts Latest | Popular (YouTube's own list of its most watched; rules 2026.11.25.3: channel-popular, GEM Shell asks again)
+- **0.9.3**: Rules 2026.11.25.2: analysis (the page analysis tool's probes, its video page and how it finds a channel to read: from these rules, no YouTube in GEM Shell's tool)
+- **0.9.2**: Rules 2026.11.25.1: creator (GEM Shell's Encourage this creator reads whose video it is from YouTube's own player data, from these rules: no YouTube code left in GEM Shell)
+- **0.9.1**: The playing channel found by its id, from YouTube's own player data (GEM Shell's response reader; rules 2026.11.24.9: responses, GEM Shell asks again)
+- **0.9.0**: A channel's videos as their own page (‹ back to where you were; More videos), rules 2026.11.24.8: Up next's menus (YouTube's sheets) and the video's right-click menu let through the tiles' gaps
+- **0.8.2**: Rules 2026.11.24.7: right-click on a video in Up next, your queue or a comment opens its own ⋮ menu (GEM Shell's menus rules)
+- **0.8.1**: 💛 encourages at once (GEM Shell's snackbar, Undo)
+- **0.8.0**: GEM Shell's Encourage this creator: the plaque counts the creators you encourage, 💛 Encourage in the Channel part (GEM Shell's menu)
+- **0.7.1**: The comments box anchored to the bottom, 💬 in the comments' own tile, the votes padded, the Channel part short only when really low and filling its tile
+- **0.7.0**: GEM YT 1.0, part 3: the header ribbon (the creator's banner, your picture or the theme) with the plaque, dislikes from Return YouTube Dislike (Network, asked once; Settings: Show dislikes), 💬 Comment over the video, the Channel part in a low tile
+- **0.6.0**: GEM YT 1.0, part 2: Feed (since you were here, the latest from your channels, You may like without them), the first page
+- **0.5.3**: The fold tabs on the panels' inner edge
+- **0.5.2**: YouTube's own queue as a tab next to Up next, its popups shown over the tiles, padded comments, splitters in the hub grid's steps, fold tabs on the edge (rules 2026.11.24.6: pad, queue, overlays; GEM Shell asks again for the queue field)
+- **0.5.1**: Tiles also when YouTube moves to a video without a new page
+- **0.5.0**: GEM YT 1.0, part 1: the watch page in tiles (the video, Up next, Comments | Description, Channel; splitters, panels that fold, kept per copy), ▤ Tiles
+- **0.4.4**: Parts shows what's playing (GEM Shell S3: the title, the channel, Paused / Ended; rules 2026.11.24.5: now, GEM Shell asks again)
+- **0.4.3**: Parts: YouTube's header hidden over them, no sideways scroll, splitters (rules 2026.11.24.4: hide)
+- **0.4.2**: ▤ Parts in Standard mode (a try-out of GEM Shell's page regions: the video, Up next, the comments in tiles; rules 2026.11.24.3: regions, theme)
+- **0.4.1**: Creators: the avatar above the banner, tighter spacing, quiet channels dusty, inactive ones (2 years+) ghosts, Show: Inactive
+- **0.4.0**: The first GEM parts: Creators (every channel as a tile: banner, rhythm, topics, tags) and Discover (the channels YouTube keeps suggesting), a page switch; aisles are tags; the shared code in core/ (rules 2026.11.24.2: banners)
+- **0.3.10**: View counts read again (YouTube dropped the word "views"; rules 2026.11.24.1)
+- **0.3.9**: Older videos as you scroll to a department's end
+- **0.3.8**: More videos in a department, kept
+- **0.3.7**: Order, back to the aisle's start
+- **0.3.6**: The bar in labelled groups, one filter, picks, avatars in the channel list
+- **0.3.5**: Search, topics from the channels' keywords, make an aisle of these
+- **0.3.4**: The channel list with its own filter and, in an aisle, checks to put channels in; the survey paced like a person
+- **0.3.3**: Your own aisles, Since you were here
+- **0.3.2**: The aisle holds still while you look
+- **0.3.1**: Posting rhythm on the posters, quiet channels put away, Overdue, a filter
+- **0.3.0**: Remembered between starts (racks at once), each channel's uploads and subscribers kept, a slow survey of the channels not read yet, the latest upload on each poster
+- **0.2.5**: Racks in the order their channels last posted, You may like without your channels, the channel list A to Z
+- **0.2.4**: Fresh from your subscriptions and You may like first, pictures on their way shown, the channel list readable
+- **0.2.3**: Pictures in the order racks fill, racks read as they come into view, the wall's plaque, JPEG covers
+- **0.2.2**: Every box a rack shows gets its picture
+- **0.2.1**: Any size in a hub (the whole grid)
+- **0.2.0**: GEM YT mode (racks)
+- **0.1.2**: How long each page stays fresh
+- **0.1.1**: Its YouTube rules (PageData)
+- **0.1.0** (2026-11-22): Standard mode

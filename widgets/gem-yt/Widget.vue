@@ -1,60 +1,74 @@
 <script setup lang="ts">
-// GEM YT 0.2 (2026-11-22; 0.2.3: pictures in the order racks fill, racks read as they come into view, the wall and
-// its plaque; 0.2.4: two feed racks first, Fresh from your subscriptions and You may like; pictures on their way shown;
-// 0.2.5: the racks in the order their channels last posted, You may like without the channels you follow;
-// 0.3.0: what it read is remembered between starts (memory.ts): racks drawn at once, read again behind them; each
-// channel's uploads and subscribers kept over time, and a slow background survey of the channels not read yet;
-// 0.3.1: posting rhythm on the posters (a chart, ~2/wk, Overdue), quiet channels put away at the aisle's end, a filter;
-// 0.3.2: the aisle holds still while you look: quiet racks are put away when it's (re)arranged, and a reorder keeps
-// the rack you went to, or the ones in view, where they were; 0.3.3: your own aisles (aisles.ts), and Since you were
-// here: your channels' videos that came out since your last visit, first in the aisle; 0.3.4: the channel list is
-// GEM Shell's menu, with a filter of its own, and in an aisle a check beside each channel puts it in or takes it out;
-// the survey paces itself like a person (45 s to 2 min) and pauses an hour when YouTube stops answering;
-// 0.3.5: search your channels, topics from the creators' keywords (topics.ts) in both filters, "make an aisle of
-// these" in the channel list, and what a filter hides in an aisle said in the bar; 0.3.6: the bar in labelled
-// groups (Aisle, Show, the search, Channels): one filter for everything, and the channel list checks channels
-// everywhere: in an aisle its members, in Every channel a pick (the aisle shows only those; Save as aisle), with
-// their avatars; 0.3.7: Order (latest video, A to Z, subscribers, posting most) and ⇤ back to the aisle's start;
-// 0.3.8: More videos in a channel's department (GEM Shell scrolls YouTube's page: sdk.pageData read { more }), kept
-// between starts for the channels you went further into, and older videos kept when a rack is read again). Two modes, per copy (its state):
-//   - GEM YT (racks): the store floor of library-ui 3.9.0 (shared/library-ui): one rack per channel you follow, its
-//     poster on top (avatar, name, subscribers), its latest videos as DVD cases lying on their side. A click on a rack
-//     opens its department; a click on a case plays the video (Standard mode, on its page). The data is YouTube's own
-//     pages read by GEM Shell with this widget's rules (sdk.pageData('youtube'): rules/youtube.json; GEM Shell asks
-//     once), pictures through GEM Shell's image cache (pageData().image).
-//   - Standard: the real youtube.com in a web surface (0.1): back, forward, reload, home, sound, the ad blocking shield.
-// Racks are filled as they come into view (GEM Shell paces the reads: one at a time, 8 s apart; 0.2.3: was the first 8
-// only): the racks on screen and half a screen ahead, in the aisle's order; a rack scrolled past before its turn waits
-// until it's seen again. A department is read when opened. GEM Shell keeps what it read (subscriptions 6 h, a
-// channel's videos 1 h: the rules' `fresh`); ⟳ reads again.
+// GEM YT: YouTube in GEM Shell. History: CHANGELOG.md. Two modes, per copy (its state):
+//   - Standard: the real youtube.com in a web surface (sdk.web()): back, forward, reload, home, sound, the ad blocking
+//     shield. On a video's page, its parts in tiles (WatchTiles: page regions), or, in the sidebar, the compact player
+//     (CompactTiles); in the toolbar, a strip whose panel shows the video or the list (ToolbarStrip, ToolbarPanel).
+//     A job holds the page while GEM YT is hidden (its sound, the video in the tray's card, or paused).
+//   - GEM YT: its own pages, from YouTube's pages read by GEM Shell with rules/youtube.json (sdk.pageData('youtube'):
+//     GEM Shell asks once, paces the reads, caches pictures): Feed, Creators (your channels as tiles, filtered by tag
+//     and Show), Discover (channels YouTube suggests or your channels feature), a channel's page.
+// What it learns is kept between starts (core/memory.ts: the memory and the ledger); a slow background survey reads the
+// channels not read yet. core/ is pure (no SDK, no Vue); parts/ are the pages and tiles.
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
+// 0.16.0: the placement (sidebar: the compact player)
+const props = defineProps<{ placement?: { context?: string } }>()
 import type { WidgetSdk } from 'gexplorer/widgets'
-import { LibraryFloor, skinClass, skinStyle } from '@shared/library-ui'
-import { BROADCAST } from './skin'
-import { AISLES_DOC, addAisle, readAisles, removeAisle, renameAisle, toggleChannel, type Aisles } from './aisles'
-import { matches, parseKeywords, topicsOf } from './topics'
-import { DEEP_CHANNELS, DEEP_KEEP, LEDGER_DOC, MEMORY_DOC, emptyLedger, lastUpload, makeMemory, noteAbout, rhythmOf, noteRead, noteSubscribers, noteSurvey, noteUploads, readLedger, readMemory, surveyNext } from './memory'
-import { agoShort, boxOf, captionOf, channelOf, channelParam, clock, feedShelfOf, FEEDS, isFeed, shelfOf, videoOf, type Channel, type PosterInfo, type Video, type YtVideo } from './racks'
+// 1.0 (0.10.0): the racks are gone; library-ui stays for its look (its stylesheet: the bar's pickers)
+import '@shared/library-ui'
+import { TAGS_DOC, addTag, readTags, removeTag, renameTag, toggleTag as toggleChannel, type Tags } from './core/tags'
+import { matches, parseKeywords, topicsOf } from './core/topics'
+import { DEEP_CHANNELS, DEEP_KEEP, LEDGER_DOC, MEMORY_DOC, SURVEY_PER_DAY, emptyLedger, lastUpload, makeMemory, noteAbout, noteBanner, rhythmOf, noteRead, noteSubscribers, noteSurvey, noteUploads, readLedger, readMemory, surveyNext } from './core/memory'
+import { DISCOVER_DOC, channelUrl, emptyDiscover, featuredNext, hiddenCount, hide as hideSuggested, hideFeaturedBy, noteFeatured, noteSuggested, readDiscover, suggested, unhideAll, type FeaturedChannel, type Suggested } from './core/discover'
+import { agoShort, channelOf, channelParam, compact, FEEDS, rateText, videoOf, type Channel, type PosterInfo, type Video } from './core/items'
+import CreatorsPart from './parts/CreatorsPart.vue'
+import WatchTiles from './parts/WatchTiles.vue'
+import CompactTiles from './parts/CompactTiles.vue'
+import { readCompact, type CompactSaved } from './parts/compactState'   // 0.20.0
+import ToolbarStrip from './parts/ToolbarStrip.vue'   // 0.18.0
+import ToolbarPanel from './parts/ToolbarPanel.vue'
+import { defaultLayoutFor, isWatchUrl, LAYOUT_SIZES, readLayout, sizeFor, type LayoutSize, type WatchLayout } from './core/watchLayout'
+import DiscoverPart from './parts/DiscoverPart.vue'
+import type { CreatorCard, DiscoverCard, FeedSection, VideoCard } from './parts/cards'
+import FeedPart from './parts/FeedPart.vue'
+import ChannelVideosPart from './parts/ChannelVideosPart.vue'
+import Ribbon from './parts/Ribbon.vue'
+import { VOTES_CREDIT, createVotes, type Votes } from './core/votes'
+import { hubSteps } from './parts/hubGrid'
+import { listPart, type ListTab } from './parts/listTabs'
 
 const HOME = 'https://www.youtube.com/'
-/** The pictures of every box a rack shows (its shelves x 3, measured; this until it is); a department: all of its own. */
-const RACK_PICTURES = 15
 const THUMB = { width: 320, height: 180 }
 const AVATAR = { width: 96, height: 96 }
+/** 0.4.0: a banner on a Creators tile (YouTube's are 6.2 : 1) */
+const BANNER = { width: 640, height: 104 }
 
 const sdk = inject<WidgetSdk>('widgetSdk')
 const web = (sdk as any)?.web?.()
 const yt = (sdk as any)?.pageData?.('youtube')
 const settings = sdk?.settings?.()
 const data = sdk?.instanceData?.()
-const state = data?.live('state', () => ({ url: HOME, mode: 'racks' as Mode, filter: 'all' as Filter, aisle: null as string | null, picked: [] as string[], sortBy: 'latest' as SortBy }))
+const state = data?.live('state', () => ({ url: HOME, mode: 'feed' as Mode, page: 'feed' as Page, filter: 'all' as Filter, aisle: null as string | null, picked: [] as string[], sortBy: 'latest' as SortBy, tiles: true, watchLayout: null as unknown, watchLayouts: null as unknown, sizesTold: [] as string[], ribbon: 'banner' as RibbonLook, ribbonPicture: null as RibbonPicture | null, ribbonChannel: null as string | null, barFolded: false, compact: null as unknown }))
 
-type Mode = 'racks' | 'standard'
-/** 0.3.1: which racks the aisle shows (per copy). */
-/** 0.3.7: the racks' order (per copy). */
+/** 0.7.0: the header ribbon's look (per copy), and your own picture for it (a persistent picture GEM Shell made) */
+type RibbonLook = 'banner' | 'picture' | 'theme' | 'off'
+type RibbonPicture = { assetId: string; url: string }
+/** 0.4.0: GEM YT's pages (the GEM parts), and Standard mode (YouTube's own site). 1.0 (0.10.0): the racks are gone. */
+type Page = 'feed' | 'creators' | 'discover'
+/** 0.9.0: 'channel', a channel's videos (from a page: not kept, ‹ goes back to it) */
+type Mode = Page | 'standard' | 'channel'
+const PAGES: Array<{ value: Page; label: string; title: string }> = [
+  // 1.0, part 2: Feed first (what's new for you)
+  { value: 'feed', label: '☰ Feed', title: 'What’s new: since you were here, the latest from your channels, You may like' },
+  { value: 'creators', label: '◉ Creators', title: 'Your channels as tiles: their rhythm, topics and tags' },
+  { value: 'discover', label: '✦ Discover', title: 'Channels YouTube keeps suggesting that you don’t follow' },
+]
+const isPage = (v: unknown): v is Page => v === 'feed' || v === 'creators' || v === 'discover'
+/** The page shown last (Standard mode's way back). */
+const lastPage = ref<Page>('feed')
+/** 0.3.7: the channels' order (per copy). */
 type SortBy = 'latest' | 'name' | 'subsDown' | 'subsUp' | 'rate'
-type Filter = 'all' | 'active' | 'overdue' | 'quiet' | 'gems' | 'rising' | 'big' | 'unknown' | `topic:${string}`
-const mode = ref<Mode>('racks')
+type Filter = 'all' | 'active' | 'overdue' | 'quiet' | 'dead' | 'gems' | 'rising' | 'big' | 'unknown' | 'encouraged' | `topic:${string}`
+const mode = ref<Mode>('feed')
 
 // ── Standard mode (0.1) ─────────────────────────────────────────────────────────────────────────────────────────────
 const frame = ref<HTMLElement | null>(null)
@@ -75,8 +89,17 @@ function pagesSetting(): 'auto' | 'desktop' | 'mobile' {
   const v = settings?.values?.pages
   return v === 'desktop' || v === 'mobile' ? v : 'auto'
 }
+/**
+ * 0.14.1: the version asked of YouTube. With ▤ Tiles on, 'auto' means desktop: the tiles are YouTube's desktop page's
+ * parts (the rules' regions). A narrow widget (under 560 px) got the mobile page, whose parts the regions don't find:
+ * the whole page showed under the tiles, and m.youtube.com's player paused itself. Mobile only when you choose it.
+ */
+function versionWanted(): 'auto' | 'desktop' | 'mobile' {
+  const v = pagesSetting()
+  return v === 'auto' && tilesOn.value ? 'desktop' : v
+}
 
-function save(patch: Partial<{ url: string; mode: Mode; filter: Filter; aisle: string | null; picked: string[]; sortBy: SortBy }>) {
+function save(patch: Partial<{ url: string; mode: Mode; page: Page; filter: Filter; aisle: string | null; picked: string[]; sortBy: SortBy; tiles: boolean; watchLayout: WatchLayout; watchLayouts: Partial<Record<LayoutSize, WatchLayout>>; sizesTold: string[]; ribbon: RibbonLook; ribbonPicture: RibbonPicture | null; ribbonChannel: string | null; barFolded: boolean; compact: CompactSaved }>) {
   if (!state) return
   state.value.value = { ...(state.value.value ?? { url: HOME }), ...patch }
   state.changed()
@@ -91,19 +114,34 @@ function remember(url: string) {
 
 async function openSurface(url: string) {
   if (surface || !web) return
-  const s = await web.surface(frame.value!, { url, version: pagesSetting() })
+  // 0.15.0: the page kept by GEM YT's job (key "main") comes back as it is
+  const s = await web.surface(frame.value!, { url, version: versionWanted(), key: 'main' })
   if (!s || s.ok === false) { status.value = `YouTube can’t be shown: ${s?.error ?? s?.reason}`; return }
   surface = s
+  canPip.value = typeof s?.pip === 'function'   // 0.14.0
   mobile.value = s.version === 'mobile'
-  offs.push(s.onNavigate((u: string) => { remember(u); mobile.value = s.version === 'mobile' }))
+  currentUrl.value = s.url ?? url
+  offs.push(s.onNavigate((u: string) => { remember(u); currentUrl.value = u; mobile.value = s.version === 'mobile' }))
+  if (tilesOn.value && mode.value === 'standard') void watchNow()
   if (typeof s.blocked === 'number') {
     shield.value = { page: s.blocked, on: !!s.blocking }
-    const off = s.onBlocked?.((b: { page: number; blocking: boolean }) => { shield.value = { page: b.page, on: b.blocking } })
+    const off = s.onBlocked?.((b: { page: number; blocking: boolean; encouraged?: number; creatorEncouraged?: boolean }) => {
+      shield.value = { page: b.page, on: b.blocking }
+      // 0.8.0: GEM Shell's Encourage this creator: the count (the plaque) and whether this video's creator is one
+      if (typeof b.encouraged === 'number') encouragedCount.value = b.encouraged
+      creatorEncouraged.value = typeof b.creatorEncouraged === 'boolean' ? b.creatorEncouraged : null
+    })
     if (off) offs.push(off)
   }
   const offAudio = s.onAudio?.((a: { playing: boolean; muted: boolean }) => { sound.value = a })
   if (offAudio) offs.push(offAudio)
-  const offSettings = settings?.onChange((_values: unknown, key: string | null) => { if (key === 'pages' || key === null) s.setVersion?.(pagesSetting()) })
+  const offSettings = settings?.onChange((_values: unknown, key: string | null) => {
+    if (key === 'pages' || key === null) s.setVersion?.(versionWanted())
+    if (key === 'hidden' || key === null) syncJob()   // 0.15.0
+  })
+  syncJob()   // 0.15.0: a page taken back is held again at once
+  // 0.14.1: ▤ Tiles on or off changes what 'auto' means
+  offs.push(watch(tilesOn, () => { if (s.versionMode !== versionWanted()) s.setVersion?.(versionWanted()) }))
   if (offSettings) offs.push(offSettings)
 }
 
@@ -118,15 +156,356 @@ async function showStandard(url?: string) {
   }
 }
 
-function showRacks() {
-  mode.value = 'racks'
-  save({ mode: 'racks' })
+/** 0.4.0: a page of GEM YT (Feed, Creators, Discover). */
+function showPage(p: Page) {
+  mode.value = p
+  lastPage.value = p
+  save({ mode: p, page: p })
   if (!readNow.has('subscriptions') && !problem.value && !loading.value) void loadChannels(false)
+  if (p === 'discover') void learnSuggestions(false)
+  if (p === 'feed') loadFeeds(false)
+  void readEncouraged()
 }
+function showPages() { showPage(lastPage.value) }
+
+// ── 1.0, part 1: the watch page in tiles (parts/WatchTiles.vue, core/watchLayout.ts) ───────────────────────────
+// On a /watch page (Standard mode's view), YouTube's page in tiles: the video, Up next, Comments | Description (tabs),
+// and our Channel part, each tile where the copy's layout says (splitters, panels that fold: GEM Shell's gridPlace);
+// YouTube's own parts placed there by GEM Shell (S2: sdk.web() surface.regions). Any other page (home, search, a
+// channel): the whole page, as before. ▤ Tiles turns them off (kept per copy).
+const tilesOn = ref(true)
+/** 0.19.0: the bar above the video folded away (the toggle next to ⧉; only while the tiles show: else it stays) */
+const barFolded = ref(false)
+/** 0.20.0: the sidebar player's height, tab and ⤢, kept per copy */
+const compactSaved = ref<CompactSaved>(readCompact(null))
+function keepCompact(c: CompactSaved) { compactSaved.value = c; save({ compact: c }) }
+// What the page says now (S3), declared before the watchers that read it at once
+const nowInfo = ref<Record<string, string | null>>({})
+const media = ref<{ playing: boolean; time: number; duration: number; ended: boolean; pip?: boolean } | null>(null)
+// 0.14.0: picture in picture (GEM Shell's surface.pip: the page's own video in the system's floating window). null:
+// this GEM Shell can't. Its state from the last answer, then from the media watch (you may close its window).
+const pipOn = ref(false)
+watch(() => media.value?.pip, v => { if (typeof v === 'boolean') pipOn.value = v })
+const canPip = ref(false)
+
+// ── 0.15.0: the video outlives GEM YT (GEM Shell's jobs: the page held, the operations tray's card) ───────────────
+// While a video is open in Standard mode, a job "watching" holds the page: leaving GEM YT (another tab) then only
+// lets go of it, and GEM Shell keeps it as the setting says (its sound; the video in the job's card; paused).
+// Coming back takes the same page back (no reload). Picture in picture keeps playing whatever the setting.
+type Hidden = 'audio' | 'video' | 'pause'
+function hiddenSetting(): Hidden {
+  const v = settings?.values?.hidden
+  return v === 'video' || v === 'pause' ? v : 'audio'
+}
+let watchJob: any = null
+let jobRefused = false
+function syncJob() {
+  const jobs = (sdk as any)?.jobs?.()
+  if (!jobs || !surface || jobRefused) return
+  const vid = mode.value === 'standard' ? nowInfo.value.videoId : null
+  if (!vid) {
+    const running = watchJob ?? jobs.current?.('watching')
+    if (running?.alive) running.end()
+    watchJob = null
+    return
+  }
+  const title = `Watching: ${nowInfo.value.title || 'a YouTube video'}`
+  try {
+    watchJob = jobs.ensure('watching', { title })
+    watchJob.update({ title })
+    watchJob.hold(surface, { whenHidden: pipOn.value ? 'audio' : hiddenSetting(), show: 'player' })
+  } catch (err) {
+    jobRefused = true   // an older GEM Shell (no web pages in jobs): as before, the page closes with GEM YT
+    console.warn('[GEM YT] the video can’t outlive GEM YT here', err)
+  }
+}
+watch([() => nowInfo.value.videoId, () => nowInfo.value.title, mode, pipOn], () => syncJob())
+const pipState = computed(() => (canPip.value ? pipOn.value : null))
+/** 0.17.1: the player's next video (the rules' now "next": the ⏭ button's address), opened in the same page */
+const nextUrl = computed(() => {
+  const h = nowInfo.value.next
+  if (!h) return null
+  try {
+    const u = new URL(h, 'https://www.youtube.com')
+    return /(^|\.)youtube\.com$/.test(u.hostname) && u.pathname === '/watch' && u.searchParams.get('v') ? u.href : null
+  } catch { return null }
+})
+function playNext() { if (nextUrl.value) void surface?.load(nextUrl.value) }
+async function togglePip() {
+  if (!surface?.pip) return
+  const r = await surface.pip('toggle')
+  if (r.ok) { pipOn.value = r.on; return }
+  const why = String(r.error ?? r.reason)
+  snack(/^unsupported|NotSupportedError/.test(why)
+    ? 'This GEM Shell’s browser doesn’t allow picture in picture.'
+    : /^no-video/.test(why) ? 'No video to float yet: play one first.' : `Picture in picture didn’t start (${why}).`)
+}
+/** The hub grid's columns and rows (the tiles' steps) */
+const hubGrid = hubSteps(sdk)
+const watchLayout = ref<WatchLayout>(defaultLayoutFor('wide', hubGrid.cols, hubGrid.rows))
+// 0.11.0: a layout per size (wide, medium, narrow: the widget's width), the ones you arranged kept per copy; a size not
+// arranged yet gets its default, and says once (per copy and size) that it can be arranged too
+const layoutSize = ref<LayoutSize>('wide')
+const layouts = ref<Partial<Record<LayoutSize, WatchLayout>>>({})
+const sizesTold = ref<string[]>([])
+function showSizeLayout() {
+  watchLayout.value = layouts.value[layoutSize.value] ?? defaultLayoutFor(layoutSize.value, hubGrid.cols, hubGrid.rows)
+}
+const currentUrl = ref('')
+// 0.5.1: a watch page by its address, or by what the page itself says (its v= parameter, asked once a second): YouTube
+// moves to a video without a new page, and older GEM Shells didn't tell the widget its address then
+/** 0.16.0: GEM YT in the sidebar: the watch page as a compact player (plan-2026-11-25-gem-yt-compact.md) */
+const compactPlayer = computed(() => props.placement?.context === 'sidebar')
+/** 0.18.0: in the toolbar, a strip (the page plays out of view; ▣ / ☰ open a panel with the video or the list) */
+const inToolbar = computed(() => props.placement?.context === 'toolbar')
+const showTiles = computed(() => !inToolbar.value && tilesOn.value && mode.value === 'standard' && (isWatchUrl(currentUrl.value) || !!nowInfo.value.videoId))
+let regionsShown = false
+async function placeRegions(place: Record<string, { x: number; y: number; width: number; height: number }>) {
+  if (!surface?.regions || !showTiles.value) return
+  regionsShown = true
+  const r = await surface.regions('youtube', place)
+  if (!r.ok) status.value = `Tiles: ${r.error ?? r.reason}`
+}
+// Leaving the watch page (or ▤ Tiles off): the whole page again
+watch(showTiles, on => {
+  if (!on && regionsShown && surface?.regions) { regionsShown = false; void surface.regions('youtube', null) }
+})
+// What's playing is watched while tiles are on in Standard mode (on any page: it says when a video page comes)
+watch(() => tilesOn.value && mode.value === 'standard', on => { if (on) void watchNow(); else stopWatching() })
+const barHidden = computed(() => barFolded.value && mode.value === 'standard' && showTiles.value)
+function toggleBar() { barFolded.value = !barFolded.value; save({ barFolded: barFolded.value }) }
+function toggleTiles() {
+  if (!surface?.regions) { status.value = 'This GEM Shell can’t show YouTube in tiles yet (it needs page regions).'; return }
+  tilesOn.value = !tilesOn.value
+  status.value = ''
+  save({ tiles: tilesOn.value })
+}
+function setWatchLayout(l: WatchLayout) {
+  watchLayout.value = l
+  layouts.value = { ...layouts.value, [layoutSize.value]: l }
+  // wide also as before (an older GEM YT reads that one)
+  save({ watchLayouts: { ...layouts.value }, ...(layoutSize.value === 'wide' ? { watchLayout: l } : {}) })
+}
+const SIZE_WORDS: Record<LayoutSize, string> = { wide: 'wide', medium: 'medium-sized', narrow: 'narrow' }
+watch(() => [layoutSize.value, showTiles.value] as const, ([size, on]) => {
+  if (!on || compactPlayer.value || inToolbar.value || size === 'wide' || layouts.value[size] || sizesTold.value.includes(size)) return   // 0.16.0: not the compact player's
+  sizesTold.value = [...sizesTold.value, size]
+  save({ sizesTold: sizesTold.value })
+  snack(`GEM YT arranged the video’s tiles for a ${SIZE_WORDS[size]} widget. Drag the lines and fold the panels as you like: this size remembers how you leave it.`)
+})
+
+// ── What's playing (GEM Shell S3: the page's media, the rules' "now" fields) ──────────────────────────────────────
+// The Player's head (the title, the channel, Paused / Ended) and the Channel part. The Queue (part 2) will use "ended".
+let stopNow: (() => void) | null = null
+let stopMedia: (() => void) | null = null
+// 0.9.1 (GEM Shell's response reader): whose video it is, from YouTube's own player data (its channel id: the playing
+// channel found by id, not only by its handle or name on the page). Kept only when it's the address's video (an ad's
+// player data names the ad).
+let stopData: (() => void) | null = null
+const owner = ref<{ videoId: string; channelId: string; name?: string } | null>(null)
+const videoOfPage = (u: string) => { try { return new URL(u).searchParams.get('v') } catch { return null } }
+let watching = false
+async function watchNow() {
+  if (watching || !surface?.onMedia || !surface.now) return
+  watching = true
+  stopMedia = surface.onMedia((m: NonNullable<typeof media.value>) => { media.value = m })
+  const r = await surface.now('youtube', (f: Record<string, string | null>) => { nowInfo.value = f })
+  if (r.ok) stopNow = r.stop ?? null
+  else console.warn('[GEM YT] what’s playing: not watched', r.error ?? r.reason)
+  if (surface?.onData && watching) {
+    const d = await surface.onData('youtube', (x: { page: string; items: Record<string, Array<Record<string, unknown>>> }) => {
+      const v = videoOfPage(x.page)
+      for (const o of x.items.videoOwner ?? [])
+        if (v && o.videoId === v && typeof o.channelId === 'string' && o.channelId)
+          owner.value = { videoId: v, channelId: o.channelId, name: typeof o.name === 'string' ? o.name : undefined }
+    })
+    if (d.ok) stopData = d.stop ?? null
+    else console.warn('[GEM YT] whose video: not read', d.error ?? d.reason)
+  }
+}
+function stopWatching() {
+  watching = false
+  stopNow?.(); stopNow = null
+  stopMedia?.(); stopMedia = null
+  stopData?.(); stopData = null
+  owner.value = null
+  nowInfo.value = {}
+  media.value = null
+}
+const clockOf = (s: number) => { const t = Math.floor(s); const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, x = t % 60; return `${h ? `${h}:${String(m).padStart(2, '0')}` : m}:${String(x).padStart(2, '0')}` }
+// 0.21.1: what's playing and its state apart (the title scrolls in GEM Shell's marquee; the clock beside it changes every
+// second and would restart it)
+const nowWhat = computed(() => { const n = nowInfo.value; return [n.title, n.channelName ?? n.channelHandle].filter(Boolean).join(' — ') })
+const nowState = computed(() => {
+  const m = media.value
+  return !m ? '' : m.ended ? 'Ended' : !m.playing ? (m.time ? `Paused ${clockOf(m.time)}` : '') : m.duration ? `${clockOf(m.time)} / ${clockOf(m.duration)}` : ''
+})
+const nowLine = computed(() => [nowWhat.value, nowState.value].filter(Boolean).join(' · '))
+// 0.21.2: the toolbar's part moved here, after what its watchers read at once (currentUrl, nowLine): declared before
+// them, a watcher's first run read a const not made yet ("Cannot access … before initialization")
+// ── 0.18.0: the toolbar (parts/ToolbarStrip.vue, parts/ToolbarPanel.vue) ─────────────────────────────────────────
+// The page sits in the frame (1 px, out of view: its sound keeps it running). ▣ or ☰ opens a panel under the strip
+// (ui.openPopover); its body reports itself and GEM YT moves the page over it (surface.moveTo: no reload), then places
+// YouTube's player or list there (page regions). Closed: the page goes back to the frame, still playing.
+const watchingVideo = computed(() => !!nowInfo.value.videoId || isWatchUrl(currentUrl.value))
+const stripTitle = computed(() => (watchingVideo.value ? nowInfo.value.title || nowLine.value || 'YouTube' : 'YouTube'))
+const stripAvatar = computed(() => playingCard.value?.avatar)
+const stripInitial = computed(() => (nowInfo.value.channelName || 'Y').slice(0, 1).toUpperCase())
+const canMedia = computed(() => typeof surface?.media === 'function' || !!media.value)
+type PanelView = 'video' | 'list'
+type PanelTab = ListTab
+const panel = shallowRef<{ handle: { close(): void; update(p: Record<string, unknown>): void }; view: PanelView; tab: PanelTab; el: HTMLElement | null; w: number; h: number } | null>(null)
+const panelTick = ref(0)
+const panelView = computed(() => { void panelTick.value; return panel.value?.view ?? null })
+function panelProps(view: PanelView, tab: PanelTab) {
+  return {
+    view, tab, watching: watchingVideo.value, title: stripTitle.value, queue: nowInfo.value.queue ?? null,
+    onBody: panelBody, onView: (v: PanelView) => setPanel(v, null), onTab: (t: PanelTab) => setPanel(null, t),
+  }
+}
+function openPanel(view: PanelView, anchor: HTMLElement) {
+  const ui = (sdk as any)?.ui?.()
+  if (!surface || !ui?.openPopover) return
+  if (typeof surface.moveTo !== 'function') { snack('This GEM Shell can’t show the video in a panel yet.'); return }
+  const old = panel.value
+  if (old) { old.handle.close() }
+  if (old && old.view === view) return
+  const tab: PanelTab = old?.tab ?? 'upNext'
+  let mine: typeof panel.value = null
+  const h = ui.openPopover({
+    anchor, component: ToolbarPanel, props: panelProps(view, tab), placement: 'below', maxWidth: 640, maxHeight: 640,
+    onClose: () => { if (panel.value === mine) { panel.value = null; panelTick.value++; panelSent = ''; pageHome() } },
+  })
+  if (!h) return
+  mine = { handle: h, view, tab, el: null, w: 0, h: 0 }
+  panel.value = mine
+  panelTick.value++
+}
+function setPanel(view: PanelView | null, tab: PanelTab | null) {
+  const p = panel.value
+  if (!p) return
+  p.view = view ?? p.view
+  p.tab = tab ?? p.tab
+  p.handle.update(panelProps(p.view, p.tab))
+  panelTick.value++
+}
+/** The panel's body (null: gone), with its size */
+function panelBody(el: HTMLElement | null, w: number, h: number) {
+  const p = panel.value
+  if (!p) return
+  if (!el) { if (p.el) { p.el = null; pageHome() } return }
+  if (el !== p.el) {
+    if (!surface?.moveTo?.(el)) return
+    p.el = el
+  }
+  p.w = w; p.h = h
+  panelTick.value++
+}
+/** The page back in the frame (out of view): the whole page again, so a panel opened later starts clean */
+function pageHome() {
+  if (!surface || !frame.value) return
+  surface.moveTo?.(frame.value)
+  void surface.regions?.('youtube', null)
+}
+// What the panel's body shows: YouTube's player or its list, else the whole page (not on a video: browse, pick one)
+let panelSent = ''
+watch(() => [panelTick.value, watchingVideo.value, nowInfo.value.queue] as const, () => {
+  const p = panel.value
+  if (!p?.el || !surface?.regions || p.w < 120 || p.h < 68) return
+  const part = p.view === 'video' ? 'player' : listPart(p.tab, !!nowInfo.value.queue)
+  const place = watchingVideo.value ? { [part]: { x: 0, y: 0, width: Math.floor(p.w), height: Math.floor(p.h) } } : null
+  const k = JSON.stringify(place)
+  if (k === panelSent) return
+  panelSent = k
+  void surface.regions('youtube', place).then((r: any) => { if (r && !r.ok) status.value = `Panel: ${r.error ?? r.reason}` })
+})
+// The panel's head follows what's playing
+watch(() => [watchingVideo.value, stripTitle.value, nowInfo.value.queue] as const, () => {
+  const p = panel.value
+  if (p) p.handle.update(panelProps(p.view, p.tab))
+})
+async function toggleMedia() {
+  if (!surface?.media) return
+  const r = await surface.media('toggle')
+  if (r?.ok && media.value) media.value = { ...media.value, playing: r.playing }
+}
+function toggleMute() { surface?.mute?.(!sound.value.muted) }
+
+/** The playing channel, if it's one of yours: its card (pictures asked once it's known). */
+const playingChannel = computed(() => {
+  const n = nowInfo.value
+  const o = owner.value && owner.value.videoId === n.videoId ? owner.value : null
+  if (!o && !n.channelHandle && !n.channelName) return undefined
+  return followed.value({ id: '', title: '', channelId: o?.channelId, channelHandle: n.channelHandle ?? undefined, channelName: n.channelName ?? o?.name ?? undefined })
+})
+const playingCard = computed(() => { void ledgerVersion.value; const c = playingChannel.value; return c ? cardOf(c) : null })
+watch(playingChannel, c => {
+  if (!c) return
+  picture(c.avatar, AVATAR, OPEN)
+  picture(ledger.value.channels[c.id]?.banner, BANNER, OPEN)
+})
+const playingInfo = computed(() => ({ name: nowInfo.value.channelName, handle: nowInfo.value.channelHandle }))
+
+// ── 1.0, part 3: dislikes (core/votes.ts: Return YouTube Dislike), quick comment ───────────────────────────────────
+// One request per video played (kept for the day), only while the tiles show it and Settings' Show dislikes is on.
+const votesOn = computed(() => settings?.values?.dislikes !== false)
+const voteStore = sdk?.networkFetch ? createVotes(url => sdk.networkFetch!(url)) : null
+const votes = ref<Votes | null>(null)
+watch(() => [nowInfo.value.videoId, votesOn.value, showTiles.value] as const, async (w: unknown) => {
+  const [id, on, tiles] = w as readonly [string | null | undefined, boolean, boolean]
+  votes.value = null
+  if (!on || !tiles || !voteStore || !id) return
+  const v = await voteStore.get(id)
+  if (nowInfo.value.videoId === id && votesOn.value && showTiles.value) votes.value = v
+}, { immediate: true })
+/** The credit Return YouTube Dislike asks for: its site (GEM Shell asks before opening it) */
+function openVotesCredit() { void sdk?.openUrl?.(VOTES_CREDIT, { title: 'Return YouTube Dislike' }) }
+/** 💬 Comment: YouTube's comments over the video while the comments' tile doesn't show them; closed on the next video */
+const quickComment = ref(false)
+watch(() => nowInfo.value.videoId, () => { quickComment.value = false })
+watch(showTiles, on => { if (!on) quickComment.value = false })
+
+/** The Channel part's name: its videos (their own page). */
+function openPlayingChannel(id: string) { openCreator(id) }
+function openHandle(handle: string) { void surface?.load(`https://www.youtube.com/${handle}/videos`) }
 
 async function home() {
   const r = await surface?.load(HOME)
   if (r && !r.ok) status.value = `Not loaded: ${r.error ?? r.reason}`
+}
+
+// ── 0.8.0: Encourage this creator (GEM Shell's switch, in its blocking menu; the widget only knows the count) ─────────
+const encouragedCount = ref<number | null>(null)
+const creatorEncouraged = ref<boolean | null>(null)
+async function readEncouraged() {
+  if (typeof web?.encouraged !== 'function') return
+  const n = await web.encouraged().catch(() => null)
+  if (typeof n === 'number') encouragedCount.value = n
+}
+// 0.9.6 (2026-11-25): which of your channels you encourage (GEM Shell answers for the ones GEM YT names, under its
+// PageData permission): the filter 💛 Encouraged. Asked again when the count changes or the channels are read.
+const encouragedIds = ref(new Set<string>())
+let encouragedAsked = ''
+async function readEncouragedIds() {
+  if (typeof web?.encouragedAmong !== 'function' || !channels.value.length) return
+  const ids = channels.value.map(c => c.id)
+  const key = `${encouragedCount.value ?? '?'}|${ids.length}`
+  if (key === encouragedAsked) return
+  encouragedAsked = key
+  const r = await web.encouragedAmong('youtube', ids).catch(() => null)
+  if (r?.ok && Array.isArray(r.ids)) encouragedIds.value = new Set(r.ids as string[])
+  else encouragedAsked = ''
+}
+/** The Channel part's 💛: at once (0.8.1: GEM Shell's encourage, after this click; its snackbar says so, with Undo);
+ *  an older GEM Shell: its blocking menu beside the chip */
+async function encourageMenu(at: HTMLElement) {
+  if (typeof surface?.encourage === 'function') {
+    const r = await surface.encourage(!creatorEncouraged.value)
+    if (r && !r.ok) status.value = `Not changed: ${r.error ?? r.reason}`
+    return
+  }
+  const r = await surface?.showBlocking?.(at)
+  if (r && !r.ok) status.value = `No menu: ${r.error ?? r.reason}`
 }
 
 async function showBlocking(ev: MouseEvent) {
@@ -136,6 +515,8 @@ async function showBlocking(ev: MouseEvent) {
 
 // ── GEM YT mode (0.2) ───────────────────────────────────────────────────────────────────────────────────────────────
 const channels = ref<Channel[]>([])
+// 0.9.6: the Encouraged filter asked again when the count changes or the channels are read (here: after both exist)
+watch(() => [encouragedCount.value, channels.value.length] as const, () => { void readEncouragedIds() })
 /** channel id -> its videos (absent: not read yet) */
 const videos = reactive(new Map<string, Video[]>())
 /** picture address (the page's) -> GEM Shell's local one */
@@ -145,12 +526,9 @@ const noPicture = reactive(new Set<string>())
 /** 0.2.4: feed id -> its videos (YouTube's own lists: FEEDS) */
 const feeds = reactive(new Map<string, Video[]>())
 const loading = ref(false)
-const activeId = ref<string | null>(null)
 const reading = reactive(new Set<string>())
-/** What stops the racks: the reason sdk.pageData gave, in words, and what can be done. */
+/** What stops GEM YT's pages: the reason sdk.pageData gave, in words, and what can be done. */
 const problem = ref<{ text: string; action?: 'standard' | 'retry' } | null>(null)
-const floor = ref<{ jumpTo(id: string): void } | null>(null)
-const racksEl = ref<HTMLElement | null>(null)
 /** 0.3.0: racks and feeds read in this session (the others are remembered ones, read again as they're seen). */
 const readNow = new Set<string>()
 /** 0.3.0: pictures GEM Shell confirmed this session (a remembered one is shown at once, asked again once its rack is read). */
@@ -161,14 +539,12 @@ const ledgerVersion = ref(0)
 /** 0.3.0: the channel the background survey is reading (not "Stocking shelves…": nothing on screen waits for it). */
 const surveyId = ref<string | null>(null)
 
-const pic = (v: Video) => (v.thumbnail ? pictures.get(v.thumbnail) : undefined)
-const coming = (v: Video) => !!v.thumbnail && !noPicture.has(v.thumbnail)
-// 0.2.5: the racks in the order their channels last posted (newest first), from Fresh from your subscriptions (YouTube's
-// own list of your subscriptions' latest videos) and the racks already read; channels seen in neither keep YouTube's
-// order after them. Set once that list is read (and again on ⟳), not as each rack comes in: racks don't jump around.
-const rackOrder = ref<Map<string, number> | null>(null)
+// 0.2.5: your channels in the order they last posted (newest first), from Fresh from your subscriptions (YouTube's
+// own list of your subscriptions' latest videos) and the channels already read; channels seen in neither keep YouTube's
+// order after them. Set once that list is read (and again on ⟳), not as each channel comes in: tiles don't jump around.
+const channelOrder = ref<Map<string, number> | null>(null)
 const ordered = computed(() => {
-  const order = rackOrder.value
+  const order = channelOrder.value
   if (!order) return channels.value
   return [...channels.value].sort((a, b) => (order.get(a.id) ?? Infinity) - (order.get(b.id) ?? Infinity))
 })
@@ -185,7 +561,7 @@ const followed = computed(() => {
 })
 const time = (iso: string | undefined) => { const t = iso ? Date.parse(iso) : NaN; return Number.isFinite(t) ? t : undefined }
 
-function orderRacks() {
+function orderChannels() {
   const latest = new Map<string, number>()
   const feed = feeds.get('feed:subscriptions') ?? []
   // The feed is newest first: a video without a date counts as just after the one before it
@@ -209,13 +585,14 @@ function orderRacks() {
   const order = new Map<string, number>()
   ranked.forEach((c, i) => order.set(c.id, i))
   channels.value.forEach((c, i) => { if (!order.has(c.id)) order.set(c.id, ranked.length + i) })
-  rackOrder.value = order
-  settleAisle()
-  void nextTick(() => requestAnimationFrame(stockVisible))
+  channelOrder.value = order
+  settleOrder()
 }
 
 // ── 0.3.1: what the ledger says of each channel: its rhythm, quiet (put away), overdue; the filter ──────────────────
 const MONTH_MS = 30.44 * 24 * 3600_000
+/** 0.4.1: a channel this long without a video is inactive (a ghost on its Creators tile; Show: Inactive). */
+const DEAD_MS = 24 * MONTH_MS
 /** "Quiet after" (Settings): months without a video. */
 const quietMs = computed(() => (Number(settings?.values?.quietAfter) || 6) * MONTH_MS)
 /** Now, a little coarse (every 10 min): enough for "3d ago". */
@@ -256,10 +633,13 @@ const passes = (c: Channel, f: Filter): boolean => {
     case 'active': return !!i && i.latest !== undefined && !i.quiet
     case 'overdue': return !!i?.overdue
     case 'quiet': return !!i?.quiet
+    // 0.4.1: two years or more without a video (Creators draws them as ghosts)
+    case 'dead': return !!i?.quiet && i.latest !== undefined && now.value - i.latest >= DEAD_MS
     case 'gems': return subs !== undefined && subs < 10_000
     case 'rising': return subs !== undefined && subs >= 10_000 && subs < 250_000
     case 'big': return subs !== undefined && subs >= 250_000
     case 'unknown': return !i || i.latest === undefined
+    case 'encouraged': return encouragedIds.value.has(c.id)   // 0.9.6
   }
   // 0.3.5: a topic: the channel's own keywords have it
   return f.startsWith('topic:') && !!ledger.value.channels[c.id]?.about?.k?.includes(f.slice(6))
@@ -287,10 +667,12 @@ const FILTERS: Array<{ value: Filter; label: string }> = [
   { value: 'active', label: 'Posting' },
   { value: 'overdue', label: 'Overdue' },
   { value: 'quiet', label: 'Gone quiet' },
+  { value: 'dead', label: 'Inactive (2 years and more)' },
   { value: 'gems', label: 'Hidden gems (under 10K)' },
   { value: 'rising', label: 'Rising (10K to 250K)' },
   { value: 'big', label: 'Big (250K and up)' },
   { value: 'unknown', label: 'Not known yet' },
+  { value: 'encouraged', label: '💛 Encouraged' },
 ]
 const filterCounts = computed(() => new Map([...FILTERS.map(f => [f.value, channels.value.filter(c => passes(c, f.value)).length] as const), ...topicChoices.value.map(t => [t.value, t.count] as const)]))
 function setSort(ev: Event) {
@@ -298,25 +680,20 @@ function setSort(ev: Event) {
   save({ sortBy: sortBy.value })
   toStart()
 }
-/** 0.3.7: back to the aisle's start (its first rack). */
+/** 0.3.7: back to the start (Creators' first tile). */
 function toStart() {
-  anchorId = null
-  activeId.value = null
-  void nextTick(() => aisleGrid()?.scrollTo({ left: 0, behavior: 'smooth' }))
+  creatorsPart.value?.toTop()
 }
 function setFilter(ev: Event) {
   filter.value = (ev.target as HTMLSelectElement).value as Filter
   save({ filter: filter.value })
-  anchorId = null
-  settleAisle()
-  activeId.value = null
-  void nextTick(() => requestAnimationFrame(stockVisible))
+  settleOrder()
 }
 // ── 0.3.3: your own aisles (aisles.ts) ───────────────────────────────────────────────────────────────────────────
-const aislesDoc = ref<Aisles>({ version: 1, aisles: [] })
+const tagsDoc = ref<Tags>({ version: 1, aisles: [] })
 /** The aisle this copy shows (null: every channel). */
-const aisleId = ref<string | null>(null)
-const currentAisle = computed(() => aislesDoc.value.aisles.find(a => a.id === aisleId.value) ?? null)
+const tagId = ref<string | null>(null)
+const currentTag = computed(() => tagsDoc.value.aisles.find(a => a.id === tagId.value) ?? null)
 /** 0.3.6: the pick (per copy): in Every channel, the channels the aisle is narrowed to. Declared here, before the aisle's
  *  watchers below read it (they run at once: a later const would not exist yet). */
 const picked = ref<string[]>([])
@@ -326,53 +703,51 @@ const nameDraft = ref('')
 const nameInput = ref<HTMLInputElement | null>(null)
 const confirmingDelete = ref(false)
 
-function aislesChanged() {
-  aislesDoc.value = { version: 1, aisles: aislesDoc.value.aisles.map(a => ({ ...a, channels: [...a.channels] })) }
-  if (!(sdk as any)?.inPreview?.()) void sdk?.configWrite?.(AISLES_DOC, aislesDoc.value).catch(err => console.warn('[GEM YT] aisles not saved', err))
+function tagsChanged() {
+  tagsDoc.value = { version: 1, aisles: tagsDoc.value.aisles.map(a => ({ ...a, channels: [...a.channels] })) }
+  if (!(sdk as any)?.inPreview?.()) void sdk?.configWrite?.(TAGS_DOC, tagsDoc.value).catch(err => console.warn('[GEM YT] aisles not saved', err))
 }
-function showAisle(id: string | null) {
-  aisleId.value = id
+function showTag(id: string | null) {
+  tagId.value = id
   save({ aisle: id })
   confirmingDelete.value = false
-  anchorId = null
-  settleAisle()
-  activeId.value = null
+  settleOrder()
 }
-function setAisle(ev: Event) {
+function setTag(ev: Event) {
   const select = ev.target as HTMLSelectElement
   const v = select.value
-  if (v === '__new') { select.value = aisleId.value ?? (picked.value.length ? '__picked' : ''); startNaming({ mode: 'new' }); return }
-  if (v === '__picked') { showAisle(null); return }
+  if (v === '__new') { select.value = tagId.value ?? (picked.value.length ? '__picked' : ''); startNaming({ mode: 'new' }); return }
+  if (v === '__picked') { showTag(null); return }
   // Every channel: the pick let go too
-  if (!v) { setPicked([]); showAisle(null); return }
-  showAisle(v)
+  if (!v) { setPicked([]); showTag(null); return }
+  showTag(v)
 }
 function startNaming(n: NonNullable<typeof naming.value>) {
   naming.value = n
-  nameDraft.value = n.mode === 'rename' ? currentAisle.value?.name ?? '' : ''
+  nameDraft.value = n.mode === 'rename' ? currentTag.value?.name ?? '' : ''
   void nextTick(() => { nameInput.value?.focus(); nameInput.value?.select() })
 }
 function commitName() {
   const n = naming.value
   if (!n || !nameDraft.value.trim()) { naming.value = null; return }
-  if (n.mode === 'rename') { if (aisleId.value && renameAisle(aislesDoc.value, aisleId.value, nameDraft.value)) aislesChanged() }
+  if (n.mode === 'rename') { if (tagId.value && renameTag(tagsDoc.value, tagId.value, nameDraft.value)) tagsChanged() }
   else {
-    const a = addAisle(aislesDoc.value, nameDraft.value)
+    const a = addTag(tagsDoc.value, nameDraft.value)
     if (a) {
-      if (n.channelId) toggleChannel(aislesDoc.value, a.id, n.channelId)
-      aislesChanged()
-      if (!n.channelId) showAisle(a.id)
+      if (n.channelId) toggleChannel(tagsDoc.value, a.id, n.channelId)
+      tagsChanged()
+      if (!n.channelId) showTag(a.id)
     }
   }
   naming.value = null
 }
-function deleteAisle() {
-  if (aisleId.value && removeAisle(aislesDoc.value, aisleId.value)) aislesChanged()
-  showAisle(null)
+function deleteTag() {
+  if (tagId.value && removeTag(tagsDoc.value, tagId.value)) tagsChanged()
+  showTag(null)
 }
 function toggleIn(aid: string, channelId: string) {
-  toggleChannel(aislesDoc.value, aid, channelId)
-  aislesChanged()
+  toggleChannel(tagsDoc.value, aid, channelId)
+  tagsChanged()
 }
 
 // ── 0.3.3: Since you were here ─────────────────────────────────────────────────────────────────────────────────────
@@ -399,29 +774,19 @@ const sinceVideos = computed(() => {
   for (const c of channels.value) for (const v of videos.get(c.id) ?? []) add(v, c)
   return out.sort((a, b) => b.t - a.t)
 })
-const sinceShelf = computed(() => {
-  const list = sinceVideos.value
-  if (!list.length || !prevVisit.value) return null
-  return {
-    id: SINCE, title: 'Since you were here',
-    note: `${list.length} new ${list.length === 1 ? 'video' : 'videos'} from your channels since your last visit (${agoShort(prevVisit.value, now.value)})`,
-    items: list.map(({ v }, i) => boxOf(v, null, i, pic(v), coming(v))),
-  }
-})
-
 // 0.3.2 (Guillaume: a channel picked in the list, then its rack moved away as the racks around it were read and it
 // turned out quiet): which racks are put away is settled when the aisle is arranged (the last session's at start, the
 // subscriptions feed's order, ⟳, the filter, the setting), not each time the ledger learns something. A rack found
 // quiet meanwhile fades where it stands.
 const putAway = ref(new Set<string>())
-function settleAisle() {
+function settleOrder() {
   putAway.value = new Set([...infos.value].filter(([, i]) => i.quiet).map(([id]) => id))
 }
-watch(quietMs, settleAisle)
+watch(quietMs, settleOrder)
 /** The aisle: the racks' order, the put away ones at its end (the back room), as the filter says. */
 /** 0.3.6: the channels the aisle is narrowed to: the aisle shown's, else the pick (in Every channel), else all. */
-const scopeIds = computed(() => currentAisle.value ? new Set(currentAisle.value.channels) : picked.value.length ? new Set(picked.value) : null)
-const aisle = computed(() => {
+const scopeIds = computed(() => currentTag.value ? new Set(currentTag.value.channels) : picked.value.length ? new Set(picked.value) : null)
+const shownChannels = computed(() => {
   const only = scopeIds.value
   const list = ordered.value.filter(c => passes(c, filter.value) && found(c) && (!only || only.has(c.id)))
   // 0.3.7: the order chosen (latest: the arranged order above); the unknown last, ties by name
@@ -439,67 +804,13 @@ const aisle = computed(() => {
   return [...list.filter(c => !putAway.value.has(c.id)), ...list.filter(c => putAway.value.has(c.id))]
 })
 
-// 0.3.2: when the aisle does change order, what you're looking at stays put: the rack you went to (from the list,
-// until you scroll yourself), else the first rack in view, at the same place on screen.
-let anchorId: string | null = null
-let held: { id: string; left: number } | null = null
-const aisleGrid = () => racksEl.value?.querySelector<HTMLElement>('.glu-floor-rack-grid') ?? null
-const rackEl = (grid: HTMLElement, id: string) => grid.querySelector<HTMLElement>(`[data-shelf-id="${CSS.escape(id)}"]`)
-watch(() => aisle.value.map(c => c.id).join('|'), () => {
-  const grid = aisleGrid()
-  held = null
-  if (!grid || anchorId) return
-  const view = grid.getBoundingClientRect()
-  for (const el of grid.querySelectorAll<HTMLElement>('[data-shelf-id]')) {
-    const r = el.getBoundingClientRect()
-    if (r.right > view.left + 1) { held = { id: el.dataset.shelfId!, left: r.left - view.left }; break }
-  }
-}, { flush: 'pre' })
-watch(() => aisle.value.map(c => c.id).join('|'), () => {
-  const grid = aisleGrid()
-  if (!grid) return
-  if (anchorId) {
-    const el = rackEl(grid, anchorId)
-    if (el) grid.scrollTo({ left: Math.max(0, el.offsetLeft - (grid.clientWidth - el.offsetWidth) / 2), behavior: 'auto' })
-  } else if (held) {
-    const el = rackEl(grid, held.id)
-    if (el) grid.scrollLeft += el.getBoundingClientRect().left - grid.getBoundingClientRect().left - held.left
-  }
-  held = null
-  requestAnimationFrame(stockVisible)
-}, { flush: 'post' })
-/** You scrolled the aisle yourself: nothing is held any more. */
-function letGo() { anchorId = null }
-function shelfFor(c: Channel) {
-  const list = videos.get(c.id)
-  const boxes = list?.map((v, i) => boxOf(v, c, i, pic(v), coming(v)))
-  return shelfOf(c, boxes, c.avatar ? pictures.get(c.avatar) : undefined, infos.value.get(c.id))
-}
-const shelves = computed(() => aisle.value.map(shelfFor))
 // 0.2.5: You may like without the channels you follow (YouTube's recommendations, past your subscriptions)
 const feedVideos = (id: string) => {
   const list = feeds.get(id)
   return list && id === 'feed:home' ? list.filter(v => !followed.value(v)) : list
 }
-const featuredShelves = computed(() => {
-  if (filter.value !== 'all') return []
-  const since = sinceShelf.value ? [sinceShelf.value] : []
-  // The feeds are YouTube's lists, for every channel: with the aisle of every channel only
-  if (scopeIds.value) return since
-  return [...since, ...FEEDS.map(f => feedShelfOf(f, feedVideos(f.id)?.map((v, i) => boxOf(v, null, i, pic(v), coming(v)))))]
-})
 /** The channel list in the bar: A to Z (200+ channels). */
 const byName = computed(() => [...channels.value].sort((a, b) => a.name.localeCompare(b.name)))
-const activeShelf = computed(() => {
-  const id = activeId.value
-  if (!id) return null
-  if (isFeed(id) || id === SINCE) return featuredShelves.value.find(s => s.id === id) ?? null
-  const c = channels.value.find(x => x.id === id)
-  return c ? shelfFor(c) : null
-})
-const surfaceStyle = skinStyle(BROADCAST)
-const surfaceClass = skinClass(BROADCAST)
-
 function explain(r: { reason: string; error?: string }): { text: string; action?: 'standard' | 'retry' } {
   switch (r.reason) {
     case 'declined': return { text: 'GEM YT needs your permission to read your YouTube pages (GEM Shell asks: Try again).', action: 'retry' }
@@ -560,12 +871,9 @@ async function loadChannels(fresh: boolean) {
   if (!channels.value.length) { problem.value = { text: 'You follow no channel yet (or YouTube showed none).', action: 'standard' }; return }
   noteSubscribers(ledger.value, channels.value, Date.now())
   ledgerChanged()
-  // 0.3.0: ⟳ keeps what's shown (remembered) and reads every rack again as it's seen
+  // 0.3.0: ⟳ keeps what's shown (remembered) and reads every channel again as it's seen (Creators' tiles in view)
   if (fresh) { readNow.clear(); noPicture.clear(); refreshing = true; refreshed.clear() }
   readNow.add('subscriptions')
-  // 0.2.3: the racks in view (and their avatars), one after another as GEM Shell paces them
-  await nextTick()
-  requestAnimationFrame(stockVisible)
 }
 
 /** A channel's latest videos (and the pictures of its first `pictures` ones; all: -1), at priority `prio`. */
@@ -591,6 +899,9 @@ async function loadVideos(c: Channel, fresh: boolean, pictureCount = -1, prio = 
     // 0.3.5: what the channel says of itself (its page's metadata): search and topics
     const info = r.items.channelInfo?.[0] as Record<string, unknown> | undefined
     if (info) noteAbout(ledger.value, c.id, typeof info.description === 'string' ? info.description : undefined, parseKeywords(typeof info.keywords === 'string' ? info.keywords : undefined))
+    // 0.4.0: its banner (Creators): asked at once when its tile is shown
+    noteBanner(ledger.value, c.id, (r.items.channelBanner?.[0] as Record<string, unknown> | undefined)?.image)
+    if (mode.value === 'creators') picture(ledger.value.channels[c.id]?.banner, BANNER, prio)
     ledgerChanged()
     saveSoon()
   }
@@ -624,7 +935,6 @@ async function loadMore(c: Channel) {
   const level = Math.min(MORE_MAX, (moreLevel.get(c.id) ?? 0) + 1)
   loadingMore.value = c.id
   reading.add(c.id)
-  const before = videos.get(c.id)?.length ?? 0
   try {
     const r = await yt.read('channel-videos', { channel: param }, { more: level })
     if (!r.ok) {
@@ -641,7 +951,10 @@ async function loadMore(c: Channel) {
     deepIds = [...deepIds.filter(x => x !== c.id), c.id].slice(-DEEP_CHANNELS)
     saveSoon()
     const all = videos.get(c.id) ?? []
-    for (const v of all.slice(before)) picture(v.thumbnail, THUMB, OPEN)
+    // 0.9.5: every picture still missing, not only the new ones' (merged puts the fresh first: the tail wasn't the new
+    // ones), so pictures left half-way earlier (a page left before they came, another session) come now: GEM Shell
+    // hands out a picture once it read its page again (picture() skips those already made)
+    for (const v of all) picture(v.thumbnail, THUMB, OPEN)
   } finally {
     reading.delete(c.id)
     loadingMore.value = null
@@ -673,64 +986,24 @@ async function loadFeed(id: string, fresh: boolean, pictureCount = -1, prio = OP
       for (const v of list) { const c = followed.value(v); if (c) byChannel.set(c.id, [...(byChannel.get(c.id) ?? []), v]) }
       for (const [cid, vs] of byChannel) noteUploads(ledger.value, cid, vs)
       ledgerChanged()
-      orderRacks()
+      orderChannels()
     }
+    // 0.4.0: Discover learns the channels You may like suggests (not yours)
+    if (id === 'feed:home' && noteSuggested(discoverDoc.value, list, v => !!followed.value(v), Date.now())) discoverChanged()
     saveSoon()
   }
   const list = feedVideos(id) ?? []
   for (const v of pictureCount < 0 ? list : list.slice(0, pictureCount)) picture(v.thumbnail, THUMB, prio)
 }
 
-// ── Racks in view (0.2.3) ─────────────────────────────────────────────────────────────────────────────────────────
-// 200+ subscriptions: reading every rack (8 s each) would take half an hour and most of the day's 300 reads. Only the
-// racks the aisle shows, plus half a screen ahead, are read and pictured; scrolling brings the next ones.
+// ── Channels in view (0.2.3; 1.0: Creators' tiles) ────────────────────────────────────────────────────────────────
+// 200+ subscriptions: reading every channel (8 s each) would take half an hour and most of the day's 300 reads. Only
+// the ones Creators shows are read (onCreatorsRange), one at a time as GEM Shell paces them.
 let wanted: string[] = []
-let boxesFor = new Map<string, number>()
 let readsRunning = false
-/** ⟳ on the aisle: each rack read again (not from GEM Shell's cache) the first time it's seen after. */
+/** ⟳: each channel read again (not from GEM Shell's cache) the first time it's seen after. */
 let refreshing = false
 const refreshed = new Set<string>()
-
-/** The racks in the aisle's view (and half a screen to its right), in the aisle's order; with their shelf counts. */
-function racksInView(): Array<{ id: string; boxes: number }> {
-  const grid = racksEl.value?.querySelector<HTMLElement>('.glu-floor-rack-grid')
-  if (!grid) return []
-  const view = grid.getBoundingClientRect()
-  const ahead = view.width / 2
-  const out: Array<{ id: string; boxes: number }> = []
-  for (const el of grid.querySelectorAll<HTMLElement>('[data-shelf-id]')) {
-    const r = el.getBoundingClientRect()
-    if (r.right < view.left || r.left > view.right + ahead) continue
-    const shelves = el.querySelectorAll('.glu-floor-rack-shelf').length
-    out.push({ id: el.dataset.shelfId!, boxes: shelves ? shelves * 3 : RACK_PICTURES })
-  }
-  return out
-}
-
-/** The racks in view: their avatars asked first, then their videos read (one at a time) and their covers asked. */
-function stockVisible() {
-  if (mode.value !== 'racks' || activeId.value || !channels.value.length) return
-  const seen = racksInView()
-  if (!seen.length) return
-  const byId = new Map(channels.value.map(c => [c.id, c]))
-  wanted = []
-  for (const { id, boxes } of seen) {
-    if (id === SINCE) { for (const { v } of sinceVideos.value.slice(0, boxes)) picture(v.thumbnail, THUMB, RACK); continue }
-    // 0.3.0: a remembered rack shows what it had; its pictures are asked once it's read again this session
-    if (isFeed(id)) {
-      if (readNow.has(id)) for (const v of (feedVideos(id) ?? []).slice(0, boxes)) picture(v.thumbnail, THUMB, RACK)
-      else wanted.push(id)
-      continue
-    }
-    const c = byId.get(id)
-    if (!c) continue
-    picture(c.avatar, AVATAR, RACK)
-    if (readNow.has(id)) for (const v of (videos.get(id) ?? []).slice(0, boxes)) picture(v.thumbnail, THUMB, RACK)
-    else wanted.push(id)
-  }
-  boxesFor = new Map(seen.map(s => [s.id, s.boxes]))
-  void runReads()
-}
 
 async function runReads() {
   if (readsRunning) return
@@ -742,39 +1015,19 @@ async function runReads() {
       if (!id) break
       const fresh = refreshing && !refreshed.has(id)
       refreshed.add(id)
-      if (isFeed(id)) { await loadFeed(id, fresh, boxesFor.get(id) ?? RACK_PICTURES, RACK); continue }
       const c = channels.value.find(x => x.id === id)
       if (!c) { wanted = wanted.filter(x => x !== id); continue }
-      await loadVideos(c, fresh, boxesFor.get(c.id) ?? RACK_PICTURES, RACK)
+      await loadVideos(c, fresh, 0, RACK)
     }
   } finally { readsRunning = false }
 }
 
-let viewFrame = 0
-function onAisleMoved() {
-  if (viewFrame) return
-  viewFrame = requestAnimationFrame(() => { viewFrame = 0; stockVisible() })
-}
-let resizeObs: ResizeObserver | null = null
-watch([activeId, mode], () => { void nextTick(() => requestAnimationFrame(stockVisible)) })
-
-async function selectShelf(id: string) {
-  activeId.value = id
-  if (id === SINCE) { for (const { v } of sinceVideos.value) picture(v.thumbnail, THUMB, OPEN); return }
-  if (isFeed(id)) { await loadFeed(id, false, -1, OPEN); return }
-  const c = channels.value.find(x => x.id === id)
-  if (c) await loadVideos(c, false, -1, OPEN)
-}
-
-function play(item: YtVideo) {
-  void showStandard(`https://www.youtube.com/watch?v=${encodeURIComponent(item.id)}`)
-}
-
+/** The channel list without GEM Shell's menu (an older shell): a channel chosen opens its videos. */
 function jump(ev: Event) {
   const select = ev.target as HTMLSelectElement
   const id = select.value
   select.value = ''
-  if (id) goTo(id)
+  if (id) openCreator(id)
 }
 // ── 0.3.4 / 0.3.6: the channel list (GEM Shell's menu: typing jumps, long lists paged, avatars) ──────────────────
 // The channels Show and the search let through, A to Z. Each has a check: in your own aisle, it's in that aisle; in
@@ -783,20 +1036,19 @@ function jump(ev: Event) {
 function setPicked(ids: string[]) {
   picked.value = ids
   save({ picked: ids })
-  anchorId = null
-  settleAisle()
+  settleOrder()
 }
 function togglePick(id: string) {
   setPicked(picked.value.includes(id) ? picked.value.filter(x => x !== id) : [...picked.value, id])
 }
 /** The pick kept as an aisle (named at once: its name box opens). */
 function savePick() {
-  const made = addAisle(aislesDoc.value, 'Picked channels')
+  const made = addTag(tagsDoc.value, 'Picked channels')
   if (!made) return
-  for (const id of picked.value) toggleChannel(aislesDoc.value, made.id, id)
-  aislesChanged()
+  for (const id of picked.value) toggleChannel(tagsDoc.value, made.id, id)
+  tagsChanged()
   setPicked([])
-  showAisle(made.id)
+  showTag(made.id)
   startNaming({ mode: 'rename' })
 }
 const listed = () => byName.value.filter(c => passes(c, filter.value) && found(c))
@@ -806,18 +1058,18 @@ function openChannelList(ev: MouseEvent) {
   if (!ui?.openMenu) return
   const btn = ev.currentTarget as HTMLElement
   const rows = () => {
-    const a = currentAisle.value
+    const a = currentTag.value
     const list = listed()
     const narrowed = filter.value !== 'all' || !!query.value.trim()
     const inIt = (id: string) => (a ? a.channels.includes(id) : picked.value.includes(id))
-    const head = { type: 'header', label: a ? `✓ in “${a.name}” · ${list.length} shown` : `✓ picked: the aisle shows only those · ${list.length} shown` }
+    const head = { type: 'header', label: a ? `✓ in “${a.name}” · ${list.length} shown` : `✓ picked: Creators shows only those · ${list.length} shown` }
     const extra: unknown[] = []
     if (a) {
       const missing = list.filter(c => !inIt(c.id)).length
       if (narrowed && missing) extra.push({ id: '__addall', label: `Put these ${missing} in “${a.name}”`, icon: '✓' })
     } else {
-      if (picked.value.length) extra.push({ id: '__save', label: `Save the ${picked.value.length} picked as an aisle…`, icon: '＋' }, { id: '__clear', label: 'Clear the pick', icon: '✕' })
-      if (narrowed && list.length) extra.push({ id: '__make', label: `Make an aisle of these ${list.length}`, detail: `“${suggestedName()}”`, icon: '＋' })
+      if (picked.value.length) extra.push({ id: '__save', label: `Save the ${picked.value.length} picked as a tag…`, icon: '＋' }, { id: '__clear', label: 'Clear the pick', icon: '✕' })
+      if (narrowed && list.length) extra.push({ id: '__make', label: `Make a tag of these ${list.length}`, detail: `“${suggestedName()}”`, icon: '＋' })
     }
     if (extra.length) extra.push({ type: 'separator' })
     return [head, ...extra, ...list.map(c => {
@@ -829,7 +1081,7 @@ function openChannelList(ev: MouseEvent) {
       return {
         id: c.id, label: c.name, detail: detail || undefined, ...(avatar ? { image: avatar, imageRound: true } : { icon: '◯' }),
         check: 'box', checked: on,
-        checkTooltip: a ? (on ? `Take it out of “${a.name}”` : `Put it in “${a.name}”`) : on ? 'Unpick it' : 'Pick it: the aisle shows only the picked channels',
+        checkTooltip: a ? (on ? `Take it out of “${a.name}”` : `Put it in “${a.name}”`) : on ? 'Unpick it' : 'Pick it: Creators shows only the picked channels',
       }
     })]
   }
@@ -838,29 +1090,29 @@ function openChannelList(ev: MouseEvent) {
     onPick: (row: { id: string }) => {
       const list = listed()
       if (row.id === '__make') {
-        const made = addAisle(aislesDoc.value, suggestedName())
+        const made = addTag(tagsDoc.value, suggestedName())
         if (!made) return
-        for (const c of list) toggleChannel(aislesDoc.value, made.id, c.id)
-        aislesChanged()
+        for (const c of list) toggleChannel(tagsDoc.value, made.id, c.id)
+        tagsChanged()
         query.value = ''
         if (filter.value !== 'all') { filter.value = 'all'; save({ filter: 'all' }) }
-        showAisle(made.id)
+        showTag(made.id)
         startNaming({ mode: 'rename' })
         return
       }
       if (row.id === '__save') { savePick(); return }
       if (row.id === '__clear') { setPicked([]); return }
       if (row.id === '__addall') {
-        const a = currentAisle.value
+        const a = currentTag.value
         if (!a) return
-        for (const c of list) if (!a.channels.includes(c.id)) toggleChannel(aislesDoc.value, a.id, c.id)
-        aislesChanged()
+        for (const c of list) if (!a.channels.includes(c.id)) toggleChannel(tagsDoc.value, a.id, c.id)
+        tagsChanged()
         return
       }
-      goTo(row.id)
+      pickChannel(row.id)
     },
     onToggle: (row: { id: string }) => {
-      if (currentAisle.value) toggleIn(currentAisle.value.id, row.id)
+      if (currentTag.value) toggleIn(currentTag.value.id, row.id)
       else togglePick(row.id)
     },
     onClose: () => { listMenu = null },
@@ -882,40 +1134,337 @@ const hiddenHere = computed(() => {
 function showEverything() {
   query.value = ''
   if (filter.value !== 'all') { filter.value = 'all'; save({ filter: 'all' }) }
-  anchorId = null
-  settleAisle()
+  settleOrder()
 }
 const hasMenu = computed(() => !!(sdk as any)?.ui?.()?.openMenu)
 const compactNum = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}K` : String(n)).replace('.0', '')
 
-/** A channel's rack, brought into view and held there. */
-function goTo(id: string) {
-  activeId.value = null
-  // 0.3.1: a channel the filter hides: the filter goes back to all
-  const c = channels.value.find(x => x.id === id)
-  if (c && !passes(c, filter.value)) { filter.value = 'all'; save({ filter: 'all' }) }
-  if (c && !found(c)) query.value = ''
-  // 0.3.6: not in the pick (Every channel): the pick is let go, so its rack is there
-  if (c && !currentAisle.value && picked.value.length && !picked.value.includes(c.id)) setPicked([])
-  anchorId = id
-  void nextTick(() => floor.value?.jumpTo(id))
+/** 0.4.0: a channel picked in the list: its videos (1.0: its own page). */
+function pickChannel(id: string) {
+  openCreator(id)
 }
 
-/** ⟳: the open department read again, or the aisle (its racks again as they're seen). */
+/** ⟳: the page shown read again (Creators: every channel again as it's seen). */
 function reloadHere() {
-  const id = activeId.value
-  if (!id) { void loadChannels(true); return }
-  if (id === SINCE) { void loadFeed('feed:subscriptions', true, -1, OPEN); return }
-  if (isFeed(id)) { void loadFeed(id, true, -1, OPEN); return }
-  const c = channels.value.find(x => x.id === id)
-  if (c) void loadVideos(c, true)
+  if (mode.value === 'discover') { void learnSuggestions(true); return }
+  if (mode.value === 'feed') { loadFeeds(true); return }
+  if (mode.value === 'channel' && viewedChannel.value) {
+    const c = viewedChannel.value
+    const sort = channelSort.value
+    if (sort !== 'latest') { sorted.delete(sortKey(sort, c.id)); sortedLevel.delete(sortKey(sort, c.id)); void loadSorted(c, sort) }
+    else void loadVideos(c, true)
+    return
+  }
+  void loadChannels(true)
 }
 
 function retry() { problem.value = null; void loadChannels(false) }
 
+// ── 0.4.0: Creators (parts/CreatorsPart.vue) ─────────────────────────────────────────────────────────────────────
+// The channels the bar lets through (the tag, Show, the search), in its order: the racks' aisle, as tiles. The tiles
+// in view get their avatars and banners; a channel never read (or not for a week) is read, one at a time as GEM Shell
+// paces them (its banner, rhythm and topics come with it), like the racks in view; no video pictures.
+const creatorsPart = ref<{ toTop(): void } | null>(null)
+const READ_AGAIN_MS = 7 * 24 * 3600_000
+/** The topics of a channel shown on its tile: its keywords that your channels share, 3 at most. */
+const sharedTopics = computed(() => new Set(topics.value.map(t => t.term)))
+/** 1.0: a channel's card (Creators' tiles, the watch page's Channel part). */
+function cardOf(c: Channel): CreatorCard {
+    const i = infos.value.get(c.id)
+    const rec = ledger.value.channels[c.id]
+    const banner = rec?.banner
+    return {
+      id: c.id, name: c.name, handle: c.handle,
+      avatar: c.avatar ? pictures.get(c.avatar) : undefined,
+      banner: banner ? pictures.get(banner) : undefined,
+      bannerComing: !!banner && !noPicture.has(banner),
+      subscribers: c.subscribers, latest: i?.latest, rate: rateText(i?.perWeek) || undefined, bars: i?.bars, flag: i?.flag, dim: i?.dim,
+      ghost: !!i?.quiet && i.latest !== undefined && now.value - i.latest >= DEAD_MS,
+      topics: (rec?.about?.k ?? []).filter(k => sharedTopics.value.has(k)).slice(0, 3),
+      tags: tagsDoc.value.aisles.filter(a => a.channels.includes(c.id)).map(a => ({ id: a.id, name: a.name })),
+      reading: reading.has(c.id),
+    }
+}
+const creatorCards = computed<CreatorCard[]>(() => {
+  void ledgerVersion.value
+  return shownChannels.value.map(cardOf)
+})
+const creatorsEmpty = computed(() => (hiddenHere.value ? `The filter and the search hide ${hiddenHere.value}: Show all.` : currentTag.value ? `No channel tagged “${currentTag.value.name}” yet: ＋ on a tile tags it.` : undefined))
+function onCreatorsRange(ids: string[]) {
+  if (mode.value !== 'creators') return
+  const byId = new Map(channels.value.map(c => [c.id, c]))
+  const toRead: string[] = []
+  for (const id of ids) {
+    const c = byId.get(id)
+    if (!c) continue
+    picture(c.avatar, AVATAR, RACK)
+    picture(ledger.value.channels[id]?.banner, BANNER, RACK)
+    const at = ledger.value.channels[id]?.readAt
+    if (!readNow.has(id) && (at === undefined || Date.now() - at > READ_AGAIN_MS)) toRead.push(id)
+  }
+  wanted = toRead
+  void runReads()
+}
+/** A tile, a channel's name: the channel's videos (0.9.0: their own page). */
+function openCreator(id: string) {
+  const c = channels.value.find(x => x.id === id)
+  if (!c) return
+  if (mode.value !== 'channel' && isPage(mode.value)) lastPage.value = mode.value
+  channelView.value = id
+  channelSort.value = 'latest'   // 0.9.4: a channel opens on its latest videos
+  mode.value = 'channel'
+  void loadVideos(c, false, -1, OPEN)
+  void readEncouraged()
+}
+
+// ── 0.9.0: a channel's videos (parts/ChannelVideosPart.vue) ─────────────────────────────────────────────────────
+const channelView = ref<string | null>(null)
+const viewedChannel = computed(() => (channelView.value ? channels.value.find(c => c.id === channelView.value) ?? null : null))
+const channelCard = computed(() => { void ledgerVersion.value; return viewedChannel.value ? cardOf(viewedChannel.value) : null })
+// 0.9.4: Latest (the channel's videos page) or Popular (YouTube's own list of the channel's most watched: the playlist
+// UULP + its id; rules 2026.11.25.3: channel-popular). 0.10.1: or Oldest (the channel's videos page, GEM Shell's reader
+// clicking its own Oldest first: a page choice, rules 2026.11.25.4). Kept for the session only (the memory keeps the latest).
+type ChannelSort = 'latest' | 'popular' | 'oldest'
+type OtherSort = Exclude<ChannelSort, 'latest'>
+const channelSort = ref<ChannelSort>('latest')
+/** "<sort>|<channel id>" -> its videos in that order; how far More went; the one being read; those that failed */
+const sorted = reactive(new Map<string, Video[]>())
+const sortedLevel = reactive(new Map<string, number>())
+const sortedBusy = ref<string | null>(null)
+const sortedFailed = reactive(new Set<string>())
+const sortKey = (sort: OtherSort, id: string) => `${sort}|${id}`
+const SORT_WORDS: Record<OtherSort, { title: string; failed: string }> = {
+  popular: { title: 'Most watched', failed: 'YouTube didn’t give this channel’s most watched videos.' },
+  oldest: { title: 'Oldest first', failed: 'YouTube didn’t give this channel’s oldest videos (or this GEM Shell can’t choose an order on a page yet).' },
+}
+const popularList = (c: Channel) => (/^UC[\w-]{22}$/.test(c.id) ? `UULP${c.id.slice(2)}` : null)
+async function loadSorted(c: Channel, sort: OtherSort, level = 0) {
+  if (sortedBusy.value || !yt) return
+  const k = sortKey(sort, c.id)
+  const list = sort === 'popular' ? popularList(c) : null
+  const param = sort === 'oldest' ? channelParam(c) : null
+  if (sort === 'popular' ? !list : !param) return
+  sortedBusy.value = k
+  try {
+    const more = level ? { more: level } : {}
+    const r = sort === 'popular'
+      ? await yt.read('channel-popular', { list }, more)
+      : await yt.read('channel-videos', { channel: param }, { choose: 'oldest', ...more })
+    if (!r.ok) {
+      sortedFailed.add(k)
+      if (r.reason === 'declined' || r.reason === 'busy') problem.value = explain(r)
+      else console.warn(`[GEM YT] ${c.name}: ${sort} videos not read (${r.reason})`, r.error ?? '')
+      return
+    }
+    // An older GEM Shell reads the page as it is (Latest): not Oldest
+    if (sort === 'oldest' && r.chosen !== 'oldest') { sortedFailed.add(k); console.warn(`[GEM YT] ${c.name}: this GEM Shell made no choice (page choices: a newer GEM Shell)`); return }
+    sortedFailed.delete(k)
+    // YouTube's order; a list read further keeps the same first ones
+    const seen = new Set<string>()
+    const got = ([...(r.items.playlistVideo ?? []), ...(r.items.video ?? [])].map(videoOf).filter(Boolean) as Video[])
+      .filter(v => !seen.has(v.id) && seen.add(v.id))
+    const known = sorted.get(k) ?? []
+    sorted.set(k, [...got, ...known.filter(v => !seen.has(v.id))])
+    if (level) sortedLevel.set(k, r.more < level ? MORE_MAX + 1 : level)
+    for (const v of sorted.get(k) ?? []) picture(v.thumbnail, THUMB, OPEN)   // 0.9.5: all still missing (see loadMore)
+  } finally {
+    sortedBusy.value = null
+  }
+}
+function setChannelSort(sort: ChannelSort) {
+  channelSort.value = sort
+  const c = viewedChannel.value
+  if (sort !== 'latest' && c && !sorted.has(sortKey(sort, c.id))) void loadSorted(c, sort)
+}
+const channelSorts = computed(() => {
+  const c = viewedChannel.value
+  return [
+    { id: 'latest', label: 'Latest' },
+    ...(c && popularList(c) ? [{ id: 'popular', label: 'Popular' }] : []),
+    ...(c && channelParam(c) ? [{ id: 'oldest', label: 'Oldest' }] : []),
+  ]
+})
+const channelSection = computed<FeedSection>(() => {
+  const c = viewedChannel.value
+  const sort = channelSort.value
+  if (c && sort !== 'latest') {
+    const k = sortKey(sort, c.id)
+    const list = sorted.get(k) ?? []
+    const busy = sortedBusy.value === k && !list.length
+    return {
+      id: `channel-${sort}`, title: SORT_WORDS[sort].title, note: list.length ? `${list.length} so far` : undefined,
+      cards: list.map(v => ({ ...videoCard(v, c), channelId: undefined })),
+      empty: busy ? '' : sortedFailed.has(k) ? SORT_WORDS[sort].failed : 'Not read yet.', reading: busy,
+    }
+  }
+  const list = c ? videos.get(c.id) ?? [] : []
+  const busy = !!c && reading.has(c.id) && !list.length
+  return {
+    id: 'channel', title: 'Videos', note: list.length ? `${list.length} so far` : undefined,
+    cards: c ? list.map(v => ({ ...videoCard(v, c), channelId: undefined })) : [],
+    empty: busy ? '' : 'No videos read yet.', reading: busy,
+  }
+})
+const channelMore = computed(() => {
+  const c = viewedChannel.value
+  const sort = channelSort.value
+  if (c && sort !== 'latest') {
+    const k = sortKey(sort, c.id)
+    const n = sorted.get(k)?.length ?? 0
+    if (!n || (sortedLevel.get(k) ?? 0) >= MORE_MAX || n >= DEEP_KEEP) return null
+    return { label: 'More videos', busy: sortedBusy.value === k }
+  }
+  if (!c || !(videos.get(c.id)?.length) || !canMore(c.id)) return null
+  return { label: 'More videos', busy: loadingMore.value === c.id }
+})
+const channelBackLabel = computed(() => `Back to ${PAGES.find(p => p.value === lastPage.value)?.label.replace(/^\S+\s/, '') ?? 'the page'}`)
+function closeChannel() { channelView.value = null; showPage(lastPage.value) }
+function channelMoreVideos() {
+  const c = viewedChannel.value
+  if (!c) return
+  const sort = channelSort.value
+  if (sort !== 'latest') void loadSorted(c, sort, Math.min(MORE_MAX, (sortedLevel.get(sortKey(sort, c.id)) ?? 0) + 1))
+  else void loadMore(c)
+}
+function openChannelPage() { const h = viewedChannel.value?.handle; if (h) void showStandard(`https://www.youtube.com/${h}/videos`) }
+function newTagFor(channelId: string) { startNaming({ mode: 'new', channelId }) }
+function showTopic(term: string) {
+  filter.value = `topic:${term}` as Filter
+  save({ filter: filter.value })
+  settleOrder()
+  creatorsPart.value?.toTop()
+}
+
+// ── 1.0, part 2: Feed (parts/FeedPart.vue) ───────────────────────────────────────────────────────────────────────
+// Since you were here, the latest from your channels (both narrowed by the bar's Tag), You may like without your
+// channels: the racks' featured shelves, as a page of cards. A card plays in the watch page's tiles.
+function loadFeeds(fresh: boolean) {
+  void loadFeed('feed:subscriptions', fresh, 16, OPEN)
+  void loadFeed('feed:home', fresh, 16, OPEN)
+}
+const agoOf = (v: Video) => { const t = time(v.published); return t !== undefined ? agoShort(t, now.value) : v.publishedText }
+function videoCard(v: Video, c?: Channel): VideoCard {
+  const avatarUrl = c?.avatar ?? v.channelAvatar
+  return {
+    id: v.id, title: v.title, thumb: v.thumbnail ? pictures.get(v.thumbnail) : undefined,
+    coming: !!v.thumbnail && !pictures.has(v.thumbnail) && !noPicture.has(v.thumbnail),
+    length: v.length, live: v.live, watched: v.watched, channelName: c?.name ?? v.channelName,
+    avatar: avatarUrl ? pictures.get(avatarUrl) : undefined,
+    line: [agoOf(v), v.views !== undefined ? `${compact(v.views)} ${v.live ? 'watching' : v.views === 1 ? 'view' : 'views'}` : ''].filter(Boolean).join(' · '),
+    channelId: c?.id,
+  }
+}
+const feedSections = computed<FeedSection[]>(() => {
+  const only = scopeIds.value
+  const tag = currentTag.value ? ` tagged “${currentTag.value.name}”` : ''
+  const since = sinceVideos.value
+  const latest = (feeds.get('feed:subscriptions') ?? [])
+    .map(v => ({ v, c: followed.value(v) }))
+    .filter(({ c }) => !only || (c && only.has(c.id)))
+  const mayLike = only ? [] : feedVideos('feed:home') ?? []
+  return [
+    ...(prevVisit.value ? [{
+      id: 'since', title: 'Since you were here',
+      note: since.length ? `${since.length} new from your channels${tag} since ${agoShort(prevVisit.value, now.value)}` : undefined,
+      cards: since.map(({ v }) => videoCard(v, followed.value(v))),
+      empty: `Nothing new from your channels${tag} since your last visit.`,
+    }] : []),
+    {
+      id: 'latest', title: `Latest from your channels${tag}`, cards: latest.map(({ v, c }) => videoCard(v, c)),
+      empty: reading.has('feed:subscriptions') ? '' : 'Nothing yet: ⟳ reads YouTube again.', reading: reading.has('feed:subscriptions'),
+    },
+    ...(only ? [] : [{
+      id: 'mayLike', title: 'You may like', note: 'YouTube’s suggestions, without your own channels (Discover learns from them)',
+      cards: mayLike.map(v => videoCard(v)), empty: reading.has('feed:home') ? '' : 'Nothing yet: ⟳ reads YouTube again.', reading: reading.has('feed:home'),
+    }]),
+  ]
+})
+/** The pictures of the cards shown (thumbnails, avatars): the first ones of each section, all of an opened one. */
+const feedShown = reactive(new Map<string, number>())
+function askFeedPictures() {
+  for (const s of feedSections.value)
+    for (const c of s.cards.slice(0, feedShown.get(s.id) ?? 8)) {
+      const v = (feeds.get('feed:subscriptions') ?? []).find(x => x.id === c.id) ?? (feeds.get('feed:home') ?? []).find(x => x.id === c.id)
+        ?? sinceVideos.value.find(x => x.v.id === c.id)?.v
+      if (!v) continue
+      picture(v.thumbnail, THUMB, OPEN)
+      const ch = c.channelId ? channels.value.find(x => x.id === c.channelId) : undefined
+      picture(ch?.avatar ?? v.channelAvatar, AVATAR, LATER)
+    }
+}
+watch(() => (mode.value === 'feed' ? feedSections.value.map(s => s.cards.length).join() : ''), k => { if (k) askFeedPictures() })
+function onFeedShown(id: string, count: number) { feedShown.set(id, count); askFeedPictures() }
+
+// ── 0.4.0: Discover (parts/DiscoverPart.vue, core/discover.ts) ──────────────────────────────────────────────────
+const discoverDoc = ref(emptyDiscover())
+const discoverVersion = ref(0)
+let discoverTimer: ReturnType<typeof setTimeout> | null = null
+function discoverChanged() {
+  discoverVersion.value++
+  if (!canSave || discoverTimer) return
+  discoverTimer = setTimeout(() => { discoverTimer = null; void saveDiscover() }, 3000)
+}
+async function saveDiscover() {
+  if (canSave) await sdk?.configWrite?.(DISCOVER_DOC, discoverDoc.value).catch(err => console.warn('[GEM YT] Discover not saved', err))
+}
+const follows = (s: Suggested) => !!followed.value({ id: '', title: '', channelId: s.id, channelHandle: s.handle, channelName: s.name })
+const discoverCards = computed<DiscoverCard[]>(() => {
+  void discoverVersion.value
+  return suggested(discoverDoc.value, follows).map(s => ({
+    id: s.id, name: s.name, handle: s.handle, avatar: s.avatar, count: s.n, last: s.last, videos: s.videos,
+    featuredBy: s.by?.map(b => ({ id: b.id, name: b.name })), subscribers: s.subscribers, tags: borrowedTags(s),
+  }))
+})
+/** 0.13.3: your tags on the channels that feature it (no read needed), 4 at most, each once. */
+function borrowedTags(s: Suggested): Array<{ name: string; from: string }> {
+  const out: Array<{ name: string; from: string }> = []
+  for (const b of s.by ?? []) {
+    for (const t of tagsDoc.value.aisles) {
+      if (!t.channels.includes(b.id) || out.some(x => x.name === t.name)) continue
+      out.push({ name: t.name, from: b.name })
+      if (out.length >= 4) return out
+    }
+  }
+  return out
+}
+function hideAllFeaturedBy(by: { id: string; name: string }) {
+  hideFeaturedBy(discoverDoc.value, by)
+  discoverChanged()
+  snack(`Discover won’t show the channels ${by.name} features (Show them brings them back).`)
+}
+const learning = computed(() => reading.has('feed:home') || [...reading].some(k => k.startsWith('featured:')))
+/** Your home page read (again: fresh), for Discover to learn from; then the cards' pictures. */
+async function learnSuggestions(fresh: boolean) {
+  if (!yt) return
+  if (fresh || !readNow.has('feed:home')) await loadFeed('feed:home', fresh, 0, OPEN)
+  askDiscoverPictures()
+  // 0.13.1: ⟳ Look for more also reads one of your channels' featured channels (the next one due) at once
+  if (fresh) {
+    const fid = featuredNext(discoverDoc.value, ordered.value.map(c => c.id), x => !channelParam(channels.value.find(c => c.id === x)!), Date.now())
+    const fc = fid ? channels.value.find(x => x.id === fid) : undefined
+    if (fc) { await readFeatured(fc); askDiscoverPictures() }
+  }
+}
+/** The pictures of the first cards (GEM Shell makes only what this session read: the rest stay plain). */
+function askDiscoverPictures() {
+  for (const c of discoverCards.value.slice(0, 60)) {
+    picture(c.avatar, AVATAR, LATER)
+    for (const v of c.videos) picture(v.thumbnail, THUMB, LATER)
+  }
+}
+watch(() => discoverCards.value.length, () => { if (mode.value === 'discover') askDiscoverPictures() })
+const discoverPicture = (url: string | undefined) => (url ? pictures.get(url) : undefined)
+function openSuggested(id: string) {
+  const s = discoverDoc.value.channels[id]
+  if (s) void showStandard(channelUrl(s))
+}
+function hideSuggestion(id: string) { hideSuggested(discoverDoc.value, id); discoverChanged() }
+function unhideSuggestions() { unhideAll(discoverDoc.value); discoverChanged() }
+function playVideo(id: string) { void showStandard(`https://www.youtube.com/watch?v=${encodeURIComponent(id)}`) }
+
 // ── Memory (0.3.0): memory.ts ────────────────────────────────────────────────────────────────────────────────────
 const canSave = !(sdk as any)?.inPreview?.()
-const stocking = computed(() => [...reading].some(id => id !== surveyId.value))
+const stocking = computed(() => [...reading].some(id => id !== surveyId.value && !id.startsWith('featured:')))
 let saveTimer2: ReturnType<typeof setTimeout> | null = null
 let ledgerTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -933,19 +1482,23 @@ function saveSoon() {
 }
 async function saveMemory() {
   if (!canSave || !channels.value.length) return
-  const mem = makeMemory(channels.value, ordered.value.map(c => c.id), videos, feeds, pictures, Date.now(), visitAt, deepIds)
+  // 0.4.0: and the banners (Creators) and the suggested channels' avatars (Discover)
+  const extra = [...channels.value.map(c => ledger.value.channels[c.id]?.banner), ...Object.values(discoverDoc.value.channels).map(s => s.avatar)].filter((u): u is string => !!u)
+  const mem = makeMemory(channels.value, ordered.value.map(c => c.id), videos, feeds, pictures, Date.now(), visitAt, deepIds, extra)
   await sdk?.configWrite?.(MEMORY_DOC, mem).catch(err => console.warn('[GEM YT] racks not remembered', err))
 }
 
 /** The last session's racks, drawn at once (before anything is read). */
 async function loadMemory() {
-  const [rawMem, rawLedger, rawAisles] = await Promise.all([
+  const [rawMem, rawLedger, rawTags, rawDiscover] = await Promise.all([
     sdk?.configRead?.(MEMORY_DOC).catch(() => null) ?? null,
     sdk?.configRead?.(LEDGER_DOC).catch(() => null) ?? null,
-    sdk?.configRead?.(AISLES_DOC).catch(() => null) ?? null,
+    sdk?.configRead?.(TAGS_DOC).catch(() => null) ?? null,
+    sdk?.configRead?.(DISCOVER_DOC).catch(() => null) ?? null,
   ])
-  aislesDoc.value = readAisles(rawAisles)
-  if (aisleId.value && !currentAisle.value) aisleId.value = null
+  tagsDoc.value = readTags(rawTags)
+  discoverDoc.value = readDiscover(rawDiscover)
+  if (tagId.value && !currentTag.value) tagId.value = null
   ledger.value = readLedger(rawLedger)
   ledgerVersion.value++
   const mem = readMemory(rawMem)
@@ -956,8 +1509,8 @@ async function loadMemory() {
   deepIds = mem.deep ?? []
   for (const [id, list] of Object.entries(mem.feeds)) feeds.set(id, list)
   for (const [from, to] of Object.entries(mem.pictures)) pictures.set(from, to)
-  if (mem.order.length) rackOrder.value = new Map(mem.order.map((id, i) => [id, i]))
-  settleAisle()
+  if (mem.order.length) channelOrder.value = new Map(mem.order.map((id, i) => [id, i]))
+  settleOrder()
 }
 
 // The background survey: a channel never read (or not for a week) every SURVEY_GAP_MS while GEM YT is open on its
@@ -973,24 +1526,170 @@ let surveyMisses = 0
 let lastMiss: string | null = null
 let alive = true
 let surveyPausedUntil = 0
+let surveyTurn = 0
+/** 0.13.2: featured reads in a row that found no shelf (a warning at FEATURED_NONE_WARN) */
+let featuredNone = 0
+const FEATURED_NONE_WARN = 25
+/** 0.13.0: a channel's featured channels (its home tab's shelf: the rules' channel-featured), noted for Discover. */
+async function readFeatured(c: Channel) {
+  const param = channelParam(c)
+  if (!param) return
+  const key = `featured:${c.id}`
+  if (reading.has(key)) return
+  reading.add(key)
+  const r = await yt.read('channel-featured', { channel: param }, {}).finally(() => reading.delete(key))
+  // 0.13.2: most channels feature no channel: GEM Shell says "needs-update" (nothing the rules collect on the page).
+  // That's an answer (it features none), not YouTube refusing: noted, so the next read is another channel's, and the
+  // survey isn't paused. Many in a row (FEATURED_NONE_WARN) may mean YouTube moved its shelf: said once in the console.
+  const none = !r.ok && r.reason === 'needs-update'
+  lastMiss = r.ok || none ? null : r.reason
+  if (!r.ok && !none) {
+    console.warn(`[GEM YT] ${c.name}'s featured channels not read: ${r.reason}${r.error ? ` (${r.error})` : ''}`)
+    if (r.reason === 'declined' || r.reason === 'busy') problem.value = explain(r)
+    return
+  }
+  // (0.13.3: GEM Shell answers ok with nothing on this page now (the rules' mayBeEmpty): counted the same way)
+  if (none || !(r.ok && r.items.featuredChannel?.length)) {
+    if (++featuredNone === FEATURED_NONE_WARN) console.warn(`[GEM YT] ${FEATURED_NONE_WARN} channels in a row feature no channel: if YouTube shows some, its featured shelf moved (run the page analysis tool on channel-home)`)
+  } else featuredNone = 0
+  const str = (v: unknown) => (typeof v === 'string' ? v : undefined)
+  const list: FeaturedChannel[] = (r.ok ? r.items.featuredChannel ?? [] : []).map((x: Record<string, unknown>) => ({
+    id: str(x.id) ?? '', name: str(x.name) ?? '', handle: str(x.handle), avatar: str(x.avatar),
+    subscribers: typeof x.subscribers === 'number' ? x.subscribers : undefined,
+  })).filter((f: FeaturedChannel) => f.id && f.name)
+  const isMine = (f: FeaturedChannel) => !!followed.value({ id: '', title: '', channelId: f.id, channelHandle: f.handle, channelName: f.name })
+  if (noteFeatured(discoverDoc.value, { id: c.id, name: c.name }, list, isMine, Date.now())) discoverChanged()
+  console.info(list.length ? `[GEM YT] ${c.name} features ${list.length} channel(s), ${list.filter(f => !isMine(f)).length} you don’t follow` : `[GEM YT] ${c.name} features no channel`)
+}
 function nextSurvey() {
   if (!alive) return
   surveyTimer = setTimeout(() => { void surveyOne().finally(nextSurvey) }, SURVEY_GAP_MS + Math.random() * SURVEY_SPREAD_MS)
 }
 async function surveyOne() {
   if (Date.now() < surveyPausedUntil) return
-  if (mode.value !== 'racks' || problem.value || readsRunning || reading.size || loading.value || !yt) return
+  // 0.4.0: on any of GEM YT's pages (not in Standard mode)
+  if (mode.value === 'standard' || problem.value || readsRunning || reading.size || loading.value || !yt) return
   if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
   const now = Date.now()
-  const id = surveyNext(ledger.value, ordered.value.map(c => c.id), x => readNow.has(x) || !channelParam(channels.value.find(c => c.id === x)!), now)
+  const order = ordered.value.map(c => c.id)
+  // 0.13.0: every other turn (or when no channel's videos are due), a channel's featured channels for Discover
+  const featuredTurn = surveyTurn++ % 2 === 1
+  const id = featuredTurn ? null : surveyNext(ledger.value, order, x => readNow.has(x) || !channelParam(channels.value.find(c => c.id === x)!), now)
   const c = id ? channels.value.find(x => x.id === id) : undefined
-  if (!c) return
-  noteSurvey(ledger.value, now)
-  surveyId.value = c.id
-  try { await loadVideos(c, false, 0, LATER) } finally { surveyId.value = null }
+  if (!c) {
+    // the same day's cap as the survey's reads (memory.ts)
+    if (ledger.value.survey.day === Math.floor(now / 86400_000) && ledger.value.survey.count >= SURVEY_PER_DAY) return
+    const fid = featuredNext(discoverDoc.value, order, x => !channelParam(channels.value.find(c => c.id === x)!), now)
+    const fc = fid ? channels.value.find(x => x.id === fid) : undefined
+    if (!fc) return
+    noteSurvey(ledger.value, now)
+    await readFeatured(fc)
+  } else {
+    noteSurvey(ledger.value, now)
+    surveyId.value = c.id
+    try { await loadVideos(c, false, 0, LATER) } finally { surveyId.value = null }
+  }
   if (lastMiss === 'no-data' || lastMiss === 'failed' || lastMiss === 'needs-update') {
-    if (++surveyMisses >= 2) { surveyPausedUntil = Date.now() + SURVEY_PAUSE_MS; surveyMisses = 0; console.warn('[GEM YT] YouTube stopped answering the survey: paused for an hour') }
+    if (++surveyMisses >= 2) { surveyPausedUntil = Date.now() + SURVEY_PAUSE_MS; surveyMisses = 0; console.warn(`[GEM YT] YouTube stopped answering the survey (twice: ${lastMiss}): paused for an hour`) }
   } else surveyMisses = 0
+}
+
+// ── 1.0, part 3: the header ribbon (parts/Ribbon.vue) ─────────────────────────────────────────────────────────────
+// Across the top of GEM YT's pages: the banner of the creator you watched last (one of yours), your own picture, or the
+// theme's colours; the plaque on it. Per copy. Hidden when the widget is low.
+const ribbonLook = ref<RibbonLook>('banner')
+const ribbonPicture = ref<RibbonPicture | null>(null)
+const ribbonChannel = ref<string | null>(null)
+const RIBBON = { width: 1600, height: 265 }
+const rootEl = ref<HTMLElement | null>(null)
+const rootH = ref(1000)
+let rootObs: ResizeObserver | null = null
+watch(rootEl, el => {
+  rootObs?.disconnect()
+  if (!el) return
+  rootObs = new ResizeObserver(() => {
+    rootH.value = el.clientHeight
+    // 0.11.0: the layout for the widget's size (not before it's measured)
+    if (el.clientWidth > 0) {
+      const size = sizeFor(el.clientWidth, layoutSize.value)
+      if (size !== layoutSize.value) { layoutSize.value = size; showSizeLayout() }
+    }
+  })
+  rootObs.observe(el)
+}, { flush: 'post' })
+const ribbonShown = computed(() => ribbonLook.value !== 'off' && rootH.value >= 420)
+watch(playingChannel, c => {
+  if (!c || c.id === ribbonChannel.value) return
+  ribbonChannel.value = c.id
+  save({ ribbonChannel: c.id })
+})
+/** Whose banner: the last one watched, else the first of your channels with a banner */
+const ribbonOwner = computed(() => {
+  void ledgerVersion.value
+  const has = (id: string) => !!ledger.value.channels[id]?.banner
+  const id = ribbonChannel.value && has(ribbonChannel.value) ? ribbonChannel.value : channels.value.find(c => has(c.id))?.id
+  return id ? { id, name: channels.value.find(c => c.id === id)?.name, banner: ledger.value.channels[id]!.banner! } : null
+})
+/** The banner, made wide for the ribbon (only once GEM Shell read it this session); meanwhile the tiles' size */
+const ribbonBanner = ref<string | undefined>()
+watch(() => (ribbonShown.value && ribbonLook.value === 'banner' ? ribbonOwner.value?.banner : undefined), async src => {
+  ribbonBanner.value = undefined
+  if (!src || !yt) return
+  picture(src, BANNER, OPEN)
+  const r = await yt.image(src, RIBBON).catch(() => null)
+  if (r?.ok && ribbonOwner.value?.banner === src) ribbonBanner.value = r.url
+}, { immediate: true })
+const ribbonImage = computed(() => {
+  if (ribbonLook.value === 'picture') return ribbonPicture.value?.url
+  if (ribbonLook.value !== 'banner') return undefined
+  const src = ribbonOwner.value?.banner
+  return ribbonBanner.value ?? (src ? pictures.get(src) : undefined)
+})
+function snack(text: string) { void (sdk as any)?.ui?.()?.snack?.({ text }) }
+function setRibbon(look: RibbonLook) {
+  ribbonLook.value = look
+  save({ ribbon: look })
+}
+/** Your picture: the file dialog, then GEM Shell makes it ribbon-sized and keeps it (the old one deleted) */
+async function chooseRibbonPicture() {
+  const ui = (sdk as any)?.ui?.()
+  if (!ui?.openFiles || !sdk?.mediaImageCreate) { snack('This GEM Shell can’t make pictures for GEM YT (it needs the Media permission).'); return }
+  const paths: string[] | null = await ui.openFiles({ title: 'A picture for the ribbon', filters: [{ label: 'Pictures', extensions: ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tif', 'tiff'] }] })
+  if (!paths?.length) return
+  try {
+    const img = await sdk.mediaImageCreate({ type: 'file', path: paths[0] } as any, { ...RIBBON, fit: 'cover', storage: 'persistent' })
+    const old = ribbonPicture.value
+    ribbonPicture.value = { assetId: img.assetId, url: img.url }
+    ribbonLook.value = 'picture'
+    save({ ribbon: 'picture', ribbonPicture: ribbonPicture.value })
+    if (old && old.assetId !== img.assetId) void sdk.mediaImageDelete?.(old.assetId).catch(() => { })
+  } catch (e: any) {
+    snack(e?.code === 'E_FORMAT' || e?.code === 'E_NOT_IMAGE' ? 'GEM Shell can’t read that picture (JPEG, PNG, GIF, BMP or TIFF).' : `The picture wasn’t made (${e?.code ?? e?.message ?? e}).`)
+  }
+}
+function ribbonMenu(ev: MouseEvent) {
+  const ui = (sdk as any)?.ui?.()
+  if (!ui?.openMenu) return
+  const owner = ribbonOwner.value
+  ui.openMenu({
+    at: ev.type === 'contextmenu' ? ev : (ev.currentTarget as HTMLElement),
+    label: 'The ribbon',
+    items: () => [
+      { type: 'header', label: 'The ribbon' },
+      { id: 'banner', label: 'The creator’s banner', detail: owner?.name ? `${owner.name}: the last one you watched` : 'The last creator you watched', check: 'radio', checked: ribbonLook.value === 'banner' },
+      { id: 'picture', label: ribbonPicture.value ? 'Your picture' : 'Your picture…', detail: ribbonPicture.value ? undefined : 'Choose one on this computer', check: 'radio', checked: ribbonLook.value === 'picture' },
+      { id: 'theme', label: 'The theme’s colours', check: 'radio', checked: ribbonLook.value === 'theme' },
+      ...(ribbonPicture.value ? [{ id: 'another', label: 'Another picture…', icon: '🖼' }] : []),
+      { type: 'separator' },
+      { id: 'off', label: 'Hide the ribbon', icon: '✕', detail: 'The bar’s ▭ shows it again' },
+    ],
+    onToggle: (row: { id: string }) => pickRibbon(row.id),
+    onPick: (row: { id: string }) => pickRibbon(row.id),
+  })
+}
+function pickRibbon(id: string) {
+  if (id === 'another' || (id === 'picture' && !ribbonPicture.value)) void chooseRibbonPicture()
+  else if (id === 'banner' || id === 'picture' || id === 'theme' || id === 'off') setRibbon(id)
 }
 
 // ── Life ────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -998,28 +1697,50 @@ onMounted(async () => {
   if (!web) { status.value = 'GEM Shell can’t show web pages here.' }
   await state?.ready.catch(() => { })
   await settings?.ready.catch(() => { })
-  // 0.2.3: the aisle's scroll (caught on the way down: scroll doesn't bubble) and size bring racks into view
-  racksEl.value?.addEventListener('scroll', onAisleMoved, { capture: true, passive: true })
-  // 0.3.2: the wheel, a drag, the aisle's arrows, a key: you're moving the aisle yourself
-  for (const ev of ['wheel', 'pointerdown', 'keydown'] as const) racksEl.value?.addEventListener(ev, letGo, { capture: true, passive: true })
-  resizeObs = new ResizeObserver(onAisleMoved)
-  if (racksEl.value) resizeObs.observe(racksEl.value)
-  mode.value = state?.value.value?.mode === 'standard' || !yt ? 'standard' : 'racks'
+  const savedPage = state?.value.value?.page ?? state?.value.value?.mode
+  if (isPage(savedPage)) lastPage.value = savedPage
+  // 1.0: the watch page's tiles (on unless turned off) and their layout
+  tilesOn.value = state?.value.value?.tiles !== false
+  barFolded.value = state?.value.value?.barFolded === true   // 0.19.0
+  compactSaved.value = readCompact(state?.value.value?.compact)   // 0.20.0
+  // 0.11.0: a layout per size (0.10's one layout is the wide one)
+  const saved = state?.value.value?.watchLayouts as Record<string, unknown> | null | undefined
+  const kept: Partial<Record<LayoutSize, WatchLayout>> = {}
+  for (const size of LAYOUT_SIZES) {
+    const raw = saved && typeof saved === 'object' ? saved[size] : size === 'wide' ? state?.value.value?.watchLayout : undefined
+    if (raw) kept[size] = readLayout(raw, hubGrid.cols, hubGrid.rows, size)
+  }
+  layouts.value = kept
+  const told = state?.value.value?.sizesTold
+  if (Array.isArray(told)) sizesTold.value = told.filter((x: unknown): x is string => typeof x === 'string').slice(0, 3)
+  if (rootEl.value?.clientWidth) layoutSize.value = sizeFor(rootEl.value.clientWidth, null)
+  showSizeLayout()
+  // 1.0, part 3: the ribbon
+  const rl = state?.value.value?.ribbon
+  if (rl === 'banner' || rl === 'picture' || rl === 'theme' || rl === 'off') ribbonLook.value = rl
+  const rp = state?.value.value?.ribbonPicture as RibbonPicture | null | undefined
+  if (rp && typeof rp.assetId === 'string' && typeof rp.url === 'string' && rp.url.startsWith('/')) ribbonPicture.value = { assetId: rp.assetId, url: rp.url }
+  if (ribbonLook.value === 'picture' && !ribbonPicture.value) ribbonLook.value = 'banner'
+  const rc = state?.value.value?.ribbonChannel
+  if (typeof rc === 'string') ribbonChannel.value = rc
+  mode.value = inToolbar.value || state?.value.value?.mode === 'standard' || !yt ? 'standard' : lastPage.value   // 0.18.0: the toolbar plays
   const f = state?.value.value?.filter
   if (isFilter(f)) filter.value = f
   const a = state?.value.value?.aisle
-  if (typeof a === 'string') aisleId.value = a
+  if (typeof a === 'string') tagId.value = a
   const sb = state?.value.value?.sortBy
   if (SORTS.some(x => x.value === sb)) sortBy.value = sb as SortBy
   const pk = state?.value.value?.picked
   if (Array.isArray(pk)) picked.value = pk.filter((x: unknown): x is string => typeof x === 'string').slice(0, 1000)
   if (yt) await loadMemory()
   if (mode.value === 'standard') await showStandard()
-  else void loadChannels(false)
+  else { void loadChannels(false); if (mode.value === 'discover') void learnSuggestions(false); if (mode.value === 'feed') loadFeeds(false) }
   if (yt) nextSurvey()
+  void readEncouraged()
 })
 
 onBeforeUnmount(() => {
+  if (panel.value) { const p = panel.value; panel.value = null; p.handle.close() }   // 0.18.0
   for (const off of offs) off()
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
   queue.length = 0
@@ -1029,84 +1750,100 @@ onBeforeUnmount(() => {
   surveyTimer = null
   listMenu?.close()
   clearInterval(nowTimer)
+  if (discoverTimer) { clearTimeout(discoverTimer); discoverTimer = null; void saveDiscover() }
   // 0.3.0: what's pending is saved now
   if (saveTimer2) { clearTimeout(saveTimer2); saveTimer2 = null; void saveMemory() }
   if (ledgerTimer) { clearTimeout(ledgerTimer); ledgerTimer = null; void saveLedger() }
-  racksEl.value?.removeEventListener('scroll', onAisleMoved, { capture: true })
-  for (const ev of ['wheel', 'pointerdown', 'keydown'] as const) racksEl.value?.removeEventListener(ev, letGo, { capture: true })
-  resizeObs?.disconnect()
-  if (viewFrame) cancelAnimationFrame(viewFrame)
+  rootObs?.disconnect()
+  stopWatching()
   state?.release()
   surface?.dispose()
 })
 </script>
 
 <template>
-  <div class="gem-yt">
-    <div class="bar">
+  <div ref="rootEl" class="gem-yt" :class="{ 'in-sidebar': props.placement?.context === 'sidebar', 'in-toolbar': inToolbar }">
+    <!-- 0.18.0: the toolbar's strip (everything else is hidden there; the frame stays, 1 px) -->
+    <ToolbarStrip v-if="inToolbar" :title="stripTitle" :avatar="stripAvatar" :initial="stripInitial" :watching="watchingVideo"
+                  :playing="!!media?.playing" :muted="sound.muted" :can-next="!!nextUrl" :can-media="canMedia" :panel="panelView"
+                  @toggle="toggleMedia" @next="playNext" @mute="toggleMute" @expand="openPanel" />
+    <div v-show="!barHidden" class="bar" :class="{ std: mode === 'standard' }">
       <template v-if="mode === 'standard'">
-        <button @click="surface?.back()" title="Back">‹</button>
-        <button @click="surface?.forward()" title="Forward">›</button>
-        <button @click="surface?.reload()" title="Reload">⟳</button>
-        <button @click="home" title="YouTube’s home">⌂</button>
+        <!-- 0.19.0: the standard bar restyled: the page's moves in one group, then chips -->
+        <div class="seg" role="group" aria-label="Page">
+          <button v-gex-tooltip="'Back'" @click="surface?.back()">‹</button>
+          <button v-gex-tooltip="'Forward'" @click="surface?.forward()">›</button>
+          <button v-gex-tooltip="'Reload'" @click="surface?.reload()">⟳</button>
+          <button v-gex-tooltip="'YouTube’s home'" @click="home">⌂</button>
+        </div>
         <span class="spacer"></span>
-        <span v-if="mobile" class="badge" title="YouTube’s mobile site (the widget is narrow; Settings: always desktop)">📱</span>
-        <button v-if="sound.playing || sound.muted" @click="surface?.mute?.(!sound.muted)"
-                :title="sound.muted ? 'Sound off: turn it on' : 'Playing: turn the sound off'">{{ sound.muted ? '🔇' : '🔊' }}</button>
-        <button v-if="shield" class="shield" :class="{ off: !shield.on }" @click="showBlocking"
-                :title="shield.on ? `${shield.page} ads and trackers blocked on this page` : 'Ad blocking is off here'">
+        <span v-if="mobile" class="badge" v-gex-tooltip="{ content: 'YouTube’s mobile site', detail: 'The widget is narrow. Settings: always desktop' }">📱</span>
+        <button v-if="sound.playing || sound.muted" class="chip" @click="surface?.mute?.(!sound.muted)"
+                v-gex-tooltip="sound.muted ? 'Sound off: turn it on' : 'Playing: turn the sound off'">{{ sound.muted ? '🔇' : '🔊' }}</button>
+        <button v-if="shield" class="chip shield" :class="{ off: !shield.on }" @click="showBlocking"
+                v-gex-tooltip="shield.on ? `${shield.page} ads and trackers blocked on this page` : 'Ad blocking is off here'">
           🛡 {{ shield.on ? shield.page : 'off' }}
         </button>
-        <button v-if="yt" class="mode" @click="showRacks" title="GEM YT mode: your channels on racks">▦ Racks</button>
+        <button class="chip" :class="{ on: tilesOn }" @click="toggleTiles"
+                v-gex-tooltip="tilesOn ? { content: 'Videos in tiles', detail: 'The video, Up next, the comments, the channel. Click for YouTube’s whole page' } : { content: 'YouTube’s whole page', detail: 'Click for videos in tiles' }">▤ Tiles</button>
+        <button v-if="yt" class="chip mode" @click="showPages" v-gex-tooltip="{ content: 'GEM YT', detail: 'Your channels: Feed, Creators, Discover' }">▦ GEM YT</button>
       </template>
       <template v-else>
-        <button v-if="activeShelf" class="btn" @click="activeId = null" title="All your channels">‹ Back to the aisle</button>
-        <!-- 0.3.6: the bar in labelled groups: Aisle (which channels), Show (which of them), the search, Channels (the list) -->
-        <div v-if="channels.length && !activeShelf" class="grp" role="group" aria-label="Aisle">
-          <span class="grp-label">Aisle</span>
-          <label class="glu-picker pick" title="Your aisles: your channels grouped your way">
+        <!-- 0.4.0: GEM YT's pages -->
+        <div class="grp pages" role="tablist" aria-label="Page">
+          <span class="grp-label">Page</span>
+          <button v-for="p in PAGES" :key="p.value" class="btn page-btn" :class="{ on: mode === p.value }" role="tab"
+                  :aria-selected="mode === p.value" :title="p.title" @click="mode === p.value ? undefined : showPage(p.value)">{{ p.label }}</button>
+        </div>
+        <!-- 0.3.6: the bar in labelled groups: Tag (which channels; 0.4.0: the aisles are tags), Show (which of them), the search, Channels (the list) -->
+        <button v-if="mode === 'channel'" class="btn" :title="channelBackLabel" @click="closeChannel">‹ {{ channelBackLabel }}</button>
+        <template v-if="mode !== 'discover' && mode !== 'channel'">
+        <div v-if="channels.length" class="grp" role="group" aria-label="Tag">
+          <span class="grp-label">Tag</span>
+          <label class="glu-picker pick" title="Your tags: your channels grouped your way">
             <span>▤</span>
-            <select :value="aisleId ?? (picked.length ? '__picked' : '')" @change="setAisle">
+            <select :value="tagId ?? (picked.length ? '__picked' : '')" @change="setTag">
               <option value="">Every channel ({{ channels.length }})</option>
-              <option v-if="picked.length && !aisleId" value="__picked">Picked channels ({{ picked.length }})</option>
-              <option v-for="a in aislesDoc.aisles" :key="a.id" :value="a.id">{{ a.name }} ({{ a.channels.length }})</option>
-              <option value="__new">+ New aisle…</option>
+              <option v-if="picked.length && !tagId" value="__picked">Picked channels ({{ picked.length }})</option>
+              <option v-for="a in tagsDoc.aisles" :key="a.id" :value="a.id">{{ a.name }} ({{ a.channels.length }})</option>
+              <option value="__new">+ New tag…</option>
             </select>
           </label>
           <template v-if="naming">
-            <input ref="nameInput" v-model="nameDraft" class="aisle-name" maxlength="40"
-                   :placeholder="naming.mode === 'rename' ? 'The aisle’s name' : 'New aisle’s name'"
+            <input ref="nameInput" v-model="nameDraft" class="tag-name" maxlength="40"
+                   :placeholder="naming.mode === 'rename' ? 'The tag’s name' : 'New tag’s name'"
                    @keydown.enter.prevent="commitName" @keydown.esc.prevent="naming = null" />
             <button class="btn icon" title="Done" @click="commitName">✓</button>
             <button class="btn icon" title="Cancel" @click="naming = null">✕</button>
           </template>
-          <template v-else-if="currentAisle">
-            <button class="btn icon" title="Rename this aisle" @click="startNaming({ mode: 'rename' })">✎</button>
-            <button v-if="!confirmingDelete" class="btn icon" title="Delete this aisle (you still follow its channels)" @click="confirmingDelete = true">🗑</button>
+          <template v-else-if="currentTag">
+            <button class="btn icon" title="Rename this tag" @click="startNaming({ mode: 'rename' })">✎</button>
+            <button v-if="!confirmingDelete" class="btn icon" title="Delete this tag (you still follow its channels)" @click="confirmingDelete = true">🗑</button>
             <template v-else>
-              <span class="hint">Delete “{{ currentAisle.name }}”?</span>
-              <button class="btn danger" @click="deleteAisle">Delete</button>
+              <span class="hint">Delete “{{ currentTag.name }}”?</span>
+              <button class="btn danger" @click="deleteTag">Delete</button>
               <button class="btn" @click="confirmingDelete = false">Keep</button>
             </template>
           </template>
           <template v-else-if="picked.length">
-            <button class="btn" title="Keep the picked channels as an aisle" @click="savePick">Save as aisle</button>
+            <button class="btn" title="Keep the picked channels as a tag" @click="savePick">Save as tag</button>
             <button class="btn icon" title="Clear the pick: every channel again" @click="setPicked([])">✕</button>
           </template>
         </div>
-        <div v-if="channels.length && !activeShelf" class="grp" role="group" aria-label="Order">
+        <template v-if="mode !== 'feed'">
+        <div v-if="channels.length" class="grp" role="group" aria-label="Order">
           <span class="grp-label">Order</span>
-          <label class="glu-picker pick" title="The racks' order">
+          <label class="glu-picker pick" title="The order of your channels">
             <span>⇅</span>
             <select :value="sortBy" @change="setSort">
               <option v-for="o in SORTS" :key="o.value" :value="o.value">{{ o.label }}</option>
             </select>
           </label>
-          <button class="btn icon" title="Back to the aisle’s start" @click="toStart">⇤</button>
+          <button class="btn icon" title="Back to the start" @click="toStart">⇤</button>
         </div>
-        <div v-if="channels.length && !activeShelf" class="grp" role="group" aria-label="Show">
+        <div v-if="channels.length" class="grp" role="group" aria-label="Show">
           <span class="grp-label">Show</span>
-          <label class="glu-picker pick" title="Which racks the aisle shows (and which channels the list shows)">
+          <label class="glu-picker pick" title="Which of your channels the page shows (and the list)">
             <span>⚲</span>
             <select :value="filter" @change="setFilter">
               <option v-for="f in FILTERS" :key="f.value" :value="f.value">{{ f.label }} ({{ filterCounts.get(f.value) ?? 0 }})</option>
@@ -1121,19 +1858,19 @@ onBeforeUnmount(() => {
             <button class="btn" title="Clear the filter and the search" @click="showEverything">Show all</button>
           </template>
         </div>
-        <span v-if="channels.length && !activeShelf" class="search-wrap">
+        <span v-if="channels.length" class="search-wrap">
           <input v-model="query" class="search" type="search" placeholder="⌕  Search your channels"
-                 title="Names, descriptions, keywords and the titles of the videos known" @input="anchorId = null" />
+                 title="Names, descriptions, keywords and the titles of the videos known" />
         </span>
         <span v-else class="spacer"></span>
         <div v-if="channels.length" class="grp" role="group" aria-label="Channels">
           <span class="grp-label">Channels</span>
           <button v-if="hasMenu" class="btn list-btn"
-                  :title="currentAisle ? `Your channels: check them to put them in “${currentAisle.name}”` : 'Your channels: go to one, or check some to show only those'"
+                  :title="currentTag ? `Your channels: check them to put them in “${currentTag.name}”` : 'Your channels: go to one, or check some to show only those'"
                   @click="openChannelList">
-            ▦ {{ currentAisle ? 'Edit the aisle' : picked.length ? `Picked (${picked.length})` : 'Go to or pick' }} ▾
+            ▦ {{ currentTag ? 'Edit the tag' : picked.length ? `Picked (${picked.length})` : 'Go to or pick' }} ▾
           </button>
-          <label v-else class="glu-picker pick" title="Go to a channel’s rack">
+          <label v-else class="glu-picker pick" title="Open a channel’s videos">
             <span>▦</span>
             <select :value="''" @change="jump">
               <option value="" disabled>Go to…</option>
@@ -1141,7 +1878,12 @@ onBeforeUnmount(() => {
             </select>
           </label>
         </div>
-        <span v-if="loading || stocking" class="hint">Stocking shelves…</span>
+        </template>
+        <span v-else class="spacer"></span>
+        </template>
+        <span v-else class="spacer"></span>
+        <span v-if="loading || stocking" class="hint">Reading…</span>
+        <button v-if="ribbonLook === 'off'" class="btn icon" title="Show the ribbon (your picture, the creator’s banner, the plaque)" @click="setRibbon('banner')">▭</button>
         <button class="btn icon" @click="reloadHere"
                 :disabled="loading || stocking" title="Read YouTube again">⟳</button>
         <button class="btn mode-btn" @click="showStandard()" title="Standard mode: YouTube’s own pages">▶ YouTube</button>
@@ -1149,71 +1891,46 @@ onBeforeUnmount(() => {
     </div>
     <div v-if="status && mode === 'standard'" class="status">{{ status }}</div>
 
-    <div v-show="mode === 'racks'" ref="racksEl" class="racks gem-library-surface" :class="surfaceClass" :style="surfaceStyle">
+    <!-- 0.4.0: the GEM parts -->
+    <div v-if="mode === 'creators' || mode === 'discover' || mode === 'feed' || mode === 'channel'" class="page">
+      <Ribbon v-if="ribbonShown && mode !== 'channel'" :look="ribbonLook === 'off' ? 'theme' : ribbonLook" :image="ribbonImage" :credit="ribbonOwner?.name"
+              :channels="channels.length" :encouraged="encouragedCount" @menu="ribbonMenu" />
       <div v-if="problem" class="note">
         <p>{{ problem.text }}</p>
         <button v-if="problem.action === 'retry'" @click="retry">Try again</button>
         <button v-if="problem.action === 'standard'" @click="showStandard()">Standard mode</button>
       </div>
-      <div v-else-if="loading && !channels.length" class="note"><p>Stocking shelves…</p></div>
-      <LibraryFloor
-        v-else
-        ref="floor"
-        variant="video"
-        items-noun="videos"
-        :shelves="shelves"
-        :featured="featuredShelves"
-        :active-shelf="activeShelf"
-        :caption="captionOf"
-        @select-shelf="selectShelf"
-        @open="play"
-      >
-        <template #intro>
-          <!-- 0.2.3: the wall over the aisle, with GEM YT's plaque (our own emblem, not YouTube's logo) -->
-          <div class="wall">
-            <div class="plaque" role="img" :aria-label="`GEM YT: ${channels.length} channels`">
-              <span class="plaque-plate">
-                <span class="plaque-emblem" aria-hidden="true"><i></i></span>
-                <span class="plaque-copy">
-                  <span class="plaque-word">GEM<b>YT</b></span>
-                  <span v-if="currentAisle" class="plaque-line">The {{ currentAisle.name }} aisle · {{ currentAisle.channels.length }} {{ currentAisle.channels.length === 1 ? 'channel' : 'channels' }}</span>
-                  <span v-else-if="picked.length" class="plaque-line">Your pick · {{ picked.length }} {{ picked.length === 1 ? 'channel' : 'channels' }}</span>
-                  <span v-else class="plaque-line">Presented for following {{ channels.length }} {{ channels.length === 1 ? 'channel' : 'channels' }}</span>
-                </span>
-              </span>
-            </div>
-          </div>
-        </template>
-        <template #focus-tools>
-          <!-- 0.3.8: older videos (GEM Shell scrolls YouTube's page for them) -->
-          <button v-if="activeShelf && channels.some(c => c.id === activeShelf!.id) && canMore(activeShelf.id)" class="btn more-btn"
-                  :disabled="!!loadingMore" title="Older videos: GEM Shell scrolls the channel’s page on YouTube for them"
-                  @click="loadMore(channels.find(c => c.id === activeShelf!.id)!)">
-            {{ loadingMore === activeShelf.id ? 'Fetching older videos…' : `＋ More videos (${videos.get(activeShelf.id)?.length ?? 0} so far)` }}
-          </button>
-          <!-- 0.3.3: a channel's aisles, in its department -->
-          <div v-if="activeShelf && channels.some(c => c.id === activeShelf!.id)" class="aisle-chips" role="group" aria-label="This channel's aisles">
-            <span class="chips-label">Aisles</span>
-            <button v-for="a in aislesDoc.aisles" :key="a.id" class="chip" :class="{ on: a.channels.includes(activeShelf.id) }"
-                    :aria-pressed="a.channels.includes(activeShelf.id)" @click="toggleIn(a.id, activeShelf.id)">
-              {{ a.channels.includes(activeShelf.id) ? '✓' : '+' }} {{ a.name }}
-            </button>
-            <button class="chip new" @click="startNaming({ mode: 'new', channelId: activeShelf.id })">+ New aisle…</button>
-          </div>
-        </template>
-        <template #marks="{ item }">
-          <span v-if="item.live" class="sticker live">● LIVE</span>
-          <span v-else-if="item.length" class="sticker">{{ clock(item.length) }}</span>
-          <span v-if="item.watched" class="watched" :style="{ width: `${item.watched}%` }"></span>
-        </template>
-      </LibraryFloor>
+      <div v-else-if="loading && !channels.length" class="note"><p>Reading your channels…</p></div>
+      <ChannelVideosPart v-else-if="mode === 'channel'" :card="channelCard" :section="channelSection" :now="now" :back-label="channelBackLabel"
+                         :more="channelMore" :sorts="channelSorts" :sort="channelSort" @sort="setChannelSort" @back="closeChannel" @play="playVideo" @more="channelMoreVideos" @open-page="openChannelPage" />
+      <FeedPart v-else-if="mode === 'feed'" :sections="feedSections" @play="playVideo" @open-channel="openCreator" @shown="onFeedShown" />
+      <CreatorsPart v-else-if="mode === 'creators'" ref="creatorsPart" :cards="creatorCards" :tags="tagsDoc.aisles" :now="now" :empty="creatorsEmpty"
+                    @open="openCreator" @range="onCreatorsRange" @toggle-tag="toggleIn" @new-tag="newTagFor" @show-tag="showTag" @show-topic="showTopic" />
+      <DiscoverPart v-else :cards="discoverCards" :now="now" :hidden="hiddenCount(discoverDoc)" :learning="learning" :picture-of="discoverPicture"
+                    @open="openSuggested" @hide="hideSuggestion" @hide-by="hideAllFeaturedBy" @play="playVideo" @unhide="unhideSuggestions" @refresh="learnSuggestions(true)" />
     </div>
-    <div v-show="mode === 'standard'" ref="frame" class="frame"></div>
+    <div v-show="mode === 'standard'" ref="frame" class="frame">
+      <!-- 1.0: the watch page's tiles, inside the surface's element (our page shows wherever YouTube's parts aren't) -->
+      <!-- 0.16.0: in the sidebar, the compact player (the video, then Up next | Queue; ⤢ the list takes the space) -->
+      <CompactTiles v-if="showTiles && compactPlayer" :now-line="nowLine" :now-what="nowWhat" :now-state="nowState" :queue="nowInfo.queue" :pip="pipState" :can-next="!!nextUrl" :bar-folded="barFolded" :saved="compactSaved" @save="keepCompact" @fold-bar="toggleBar" @pip="togglePip" @next="playNext" @regions="placeRegions" />
+      <WatchTiles v-if="showTiles && !compactPlayer" :layout="watchLayout" :now-line="nowLine" :now-what="nowWhat" :now-state="nowState" :card="playingCard" :playing="playingInfo" :tags="tagsDoc.aisles" :now="now" :queue="nowInfo.queue"
+                  :votes="votes" :quick="quickComment" @quick="quickComment = $event" @credit="openVotesCredit" :pip="pipState" @pip="togglePip" :bar-folded="barFolded" @fold-bar="toggleBar"
+                  :encouraged="nowInfo.channelHandle || nowInfo.channelName ? creatorEncouraged : null" @encourage="encourageMenu"
+                  @update:layout="setWatchLayout" @regions="placeRegions" @open="openPlayingChannel" @open-handle="openHandle"
+                  @toggle-tag="toggleIn" @new-tag="newTagFor" @show-tag="(id: string) => { showPage('creators'); showTag(id) }" />
+    </div>
   </div>
 </template>
 
 <style scoped>
 .gem-yt { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+/* 0.16.1: the sidebar makes a widget as tall as its content: GEM YT fills what it's given (the page, the tiles), so it
+   takes a height of its own there (else the frame was 0 px tall: no page, no video) */
+.gem-yt.in-sidebar { height: max(380px, 100vh); }   /* 0.20.0: as tall as the sidebar lets it (it shrinks to the place's maximum) */
+/* 0.18.0: the toolbar: the strip only; the page's frame 1 px, out of view (it plays on: its sound) */
+.gem-yt.in-toolbar { height: 100%; }
+.gem-yt.in-toolbar > :not(.tb-strip):not(.frame) { display: none !important; }
+.gem-yt.in-toolbar > .frame { position: absolute !important; left: 0; top: 0; width: 1px !important; height: 1px !important; overflow: hidden; opacity: 0; pointer-events: none; }
 .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 5px 6px; flex: 0 0 auto; }
 .bar button { min-width: 2em; }
 /* 0.3.6: the bar's groups (a box, a small label) and its buttons in the racks' look */
@@ -1221,6 +1938,15 @@ onBeforeUnmount(() => {
 .grp-label { position: absolute; top: 2px; left: 8px; color: #9ea2aa; font: 700 8px/1.2 "Segoe UI", system-ui, sans-serif; letter-spacing: .16em; text-transform: uppercase; pointer-events: none; }
 .search-wrap { display: flex; flex: 1 1 auto; justify-content: center; min-width: 160px; }
 .search-wrap .search { width: min(420px, 100%); height: 30px; font-size: 12px; border-radius: 15px; padding: 0 14px; }
+/* 0.11.1: a narrow widget: the bar's groups fill their rows (justified), their pickers and buttons stretch */
+.bar { container-type: inline-size; }
+@container (max-width: 760px) {
+  .bar > .grp, .bar > .search-wrap { flex: 1 1 auto; }
+  .bar > .grp > .pick, .bar > .grp > .list-btn { flex: 1 1 auto; }
+  .bar > .grp > .pick select { flex: 1 1 auto; min-width: 0; }
+  .bar > .grp.pages > .page-btn { flex: 1 1 0; }
+  .bar > .search-wrap .search { width: 100%; }
+}
 .btn { height: 26px; padding: 0 10px; border: 1px solid #ffffff2e; border-radius: 6px; color: #e9eaee; background: #0b1117c9; font-size: 11px; cursor: pointer; white-space: nowrap; }
 .btn:hover:not(:disabled) { border-color: #ffffff55; background: #18212b; }
 .btn:disabled { opacity: .45; cursor: default; }
@@ -1230,46 +1956,38 @@ onBeforeUnmount(() => {
 .pick { height: 26px; min-width: 120px; }
 /* 0.2.4: the bar is outside the skinned surface (no --glu-* colours there): the list's own, dark */
 .pick select { color: #f1f1f3; color-scheme: dark; }
-/* 0.3.3: naming an aisle; a channel's aisles in its department */
+/* 0.3.3: naming a tag */
 .search { width: 150px; height: 24px; padding: 0 7px; border: 1px solid #ffffff30; border-radius: 4px; color: #f1f1f3; background: #15161a; font-size: 11px; }
-.more-btn { margin-right: 8px; }
 .list-btn { height: 26px; padding: 0 9px; white-space: nowrap; }
-.aisle-name { width: 150px; height: 24px; padding: 0 6px; border: 1px solid #ffffff30; border-radius: 4px; color: #f1f1f3; background: #15161a; font-size: 11px; }
-.aisle-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
-.chips-label { margin-right: 2px; opacity: .65; font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
-.chip { padding: 3px 9px; border: 1px solid #ffffff2a; border-radius: 999px; color: #d8d9de; background: #ffffff0d; cursor: pointer; font-size: 11px; }
-.chip.on { border-color: var(--glu-accent, #ff4545); color: #fff; background: color-mix(in srgb, var(--glu-accent, #ff4545) 35%, transparent); }
-.chip.new { border-style: dashed; }
+.tag-name { width: 150px; height: 24px; padding: 0 6px; border: 1px solid #ffffff30; border-radius: 4px; color: #f1f1f3; background: #15161a; font-size: 11px; }
 .pick option { color: #f1f1f3; background: #1b1c21; }
 .hint { font-size: 11px; opacity: .7; padding: 0 4px; }
 .spacer { flex: 1 1 auto; }
 .badge { opacity: 0.7; padding: 0 2px; }
 .status { font-size: 12px; padding: 2px 6px; opacity: 0.8; flex: 0 0 auto; }
 .frame { flex: 1 1 auto; min-height: 0; position: relative; }
+.bar button.on { border-color: var(--glu-accent, #ff4545); }
+/* 0.19.0: the standard bar: a segmented group for the page's moves, chips for the rest */
+.bar.std { gap: 6px; padding: 6px 8px; }
+.bar.std .seg { display: flex; height: 28px; overflow: hidden; border: 1px solid #ffffff24; border-radius: 8px; background: #0b1117d9; }
+.bar.std .seg button { width: 30px; min-width: 0; height: 100%; padding: 0; border: 0; border-radius: 0; color: #e9eaee; background: transparent; font-size: 15px; line-height: 1; cursor: pointer; }
+.bar.std .seg button + button { border-left: 1px solid #ffffff14; }
+.bar.std .seg button:hover { background: #ffffff14; }
+.bar.std .seg button:active { background: #ffffff22; }
+.bar.std .chip { display: inline-flex; align-items: center; gap: 5px; height: 28px; min-width: 0; padding: 0 11px; border: 1px solid #ffffff24; border-radius: 14px;
+  color: #e9eaee; background: #0b1117d9; font: 600 11px/1 "Segoe UI", system-ui, sans-serif; letter-spacing: .02em; white-space: nowrap; cursor: pointer; }
+.bar.std .chip:hover { border-color: #ffffff4d; background: #18212b; }
+.bar.std .chip.on { border-color: color-mix(in srgb, var(--glu-accent, #ff4545) 70%, transparent); color: #fff; background: color-mix(in srgb, var(--glu-accent, #ff4545) 28%, #0b1117); }
+.bar.std .chip.mode { border-color: color-mix(in srgb, var(--glu-accent, #ff4545) 45%, transparent); }
+.bar.std .chip.shield { font-variant-numeric: tabular-nums; }
+/* 0.4.0: a GEM part's page; the page switch */
+.page { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.page > * { flex: 1 1 auto; min-height: 0; }
+.page > .note { flex: 0 0 auto; }
+.page > .ribbon { flex: 0 0 auto; }
+.page-btn.on { border-color: var(--glu-accent, #ff4545); color: #fff; background: color-mix(in srgb, var(--glu-accent, #ff4545) 30%, #0b1117); }
 .shield { min-width: 3.5em; font-variant-numeric: tabular-nums; }
 .shield.off { opacity: 0.6; }
-.racks { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 8px 17px 34px; container-type: inline-size; }
 .note { display: grid; gap: 10px; justify-items: center; max-width: 420px; margin: 18% auto 0; text-align: center; }
 .note p { margin: 0; }
-.sticker { position: absolute; z-index: 4; right: 4px; bottom: 4px; padding: 1px 4px; border-radius: 3px; color: #fff; background: #000c; font: 700 9px/1.3 "Segoe UI", system-ui, sans-serif; font-variant-numeric: tabular-nums; }
-.sticker.live { background: #d61f1f; }
-/* 0.2.3: the wall and its plaque: a shadow-box frame, a glass front, a brushed silver plate. The type: a heavy grotesque
-   (Segoe UI Black on Windows), tight like a broadcaster's wordmark. */
-.wall { position: relative; display: flex; align-items: center; justify-content: center; height: clamp(92px, 10cqw, 136px); margin: -10px -8px 4px;
-  background: radial-gradient(ellipse 38% 90% at 50% -10%, #ffffff1f, transparent 70%), repeating-linear-gradient(90deg, #0000 0 46px, #0000003d 46px 48px), linear-gradient(#24171b, #140d10 88%, #0c0809);
-  box-shadow: inset 0 -12px 16px -12px #000, 0 1px 0 #ffffff0d; }
-.plaque { position: relative; height: 76%; aspect-ratio: 3.1; padding: 5px; border-radius: 4px;
-  background: linear-gradient(150deg, #34343a, #101013 45%, #1d1d22); box-shadow: 0 14px 20px -6px #000d, 0 0 0 1px #000, inset 0 1px 0 #ffffff26, inset 0 -1px 0 #0009; }
-.plaque::after { content: ''; position: absolute; inset: 5px; border-radius: 2px; pointer-events: none;
-  background: linear-gradient(115deg, #ffffff00 30%, #ffffff1c 38%, #ffffff00 47%, #ffffff00 70%, #ffffff10 76%, #ffffff00 82%); box-shadow: inset 0 0 0 1px #ffffff14, inset 0 3px 8px #000c; }
-.plaque-plate { display: flex; align-items: center; gap: 4%; height: 100%; padding: 0 7%; border-radius: 2px; background: radial-gradient(ellipse at 50% 0%, #26262b, #0b0b0d 75%); }
-.plaque-emblem { flex: 0 0 auto; height: 70%; aspect-ratio: 1.08; clip-path: polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0 50%);
-  background: linear-gradient(135deg, #fbfbfc 0%, #b6b9c0 24%, #eff1f4 42%, #8b8e95 64%, #e2e4e8 82%, #a3a6ad 100%); display: grid; place-items: center; filter: drop-shadow(0 2px 2px #000); }
-.plaque-emblem i { width: 46%; height: 50%; margin-left: 10%; clip-path: polygon(0 0, 0 100%, 90% 50%); background: linear-gradient(160deg, #2c2d31, #0f0f11); }
-.plaque-copy { display: grid; gap: 3px; min-width: 0; }
-.plaque-word { font: 900 clamp(22px, 4.6cqw, 46px)/0.9 "Segoe UI Black", "Arial Black", "Helvetica Neue", Arial, sans-serif; letter-spacing: -0.045em; white-space: nowrap;
-  background: linear-gradient(175deg, #ffffff 0%, #c9ccd2 30%, #f3f4f6 48%, #8d9097 70%, #d9dbdf 100%); -webkit-background-clip: text; background-clip: text; color: transparent; filter: drop-shadow(0 1px 0 #000); }
-.plaque-word b { margin-left: 0.12em; font-weight: inherit; }
-.plaque-line { overflow: hidden; color: #b9bcc2; font: 600 clamp(7px, 0.85cqw, 10px)/1.2 "Segoe UI", system-ui, sans-serif; letter-spacing: 0.16em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
-.watched { position: absolute; z-index: 4; left: 0; bottom: 0; height: 3px; background: #ff3b3b; }
 </style>

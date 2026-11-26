@@ -1328,6 +1328,12 @@ declare module 'gexplorer/widgets' {
         readonly blocked?: number
         /** 2026-11-22: blocking applies to this surface now (on in Settings, for its site and for this copy of your widget). */
         readonly blocking?: boolean
+        /** 2026-11-24 (Encourage this creator): how many creators the user encourages (never which; the list is the user's, in GEM Shell's Settings). */
+        readonly encouraged?: number
+        /** 2026-11-24: this page is an encouraged creator's: not filtered, its ads play (the user's choice, in the shield's menu). */
+        readonly creatorEncouraged?: boolean
+        /** 2026-11-24 (Encourage, fix 1): after the user's click or key press in the widget, the creator of the page it shows encouraged (true) or not; GEM Shell's snackbar says so, with Undo. Older shells: absent (use showBlocking). */
+        encourage?(on: boolean): Promise<WebResult>
         /** 2026-11-22: the count or the state changed (throttled). Returns the unsubscribe. */
         onBlocked?(cb: (info: WebBlocked) => void): () => void
         /**
@@ -1344,33 +1350,102 @@ declare module 'gexplorer/widgets' {
         onAudio?(cb: (info: WebAudio) => void): () => void
         /** 2026-11-22: its sound off / on. */
         mute?(muted: boolean): void
+        /**
+         * 2026-11-25 (older GEM Shells: absent): the page's video (the one playing, else the largest) in picture in
+         * picture, the system's floating window over everything, or out of it ('toggle' by default). Right after a
+         * click or key press in your widget (no-gesture otherwise): GEM Shell forwards that gesture to the page. While a
+         * video floats, the page keeps running out of view (like sound). error: "unsupported:…" (the browser doesn't
+         * allow it), "no-video:…", or the page's own refusal.
+         */
+        pip?(on?: boolean | 'toggle'): Promise<{ ok: true; on: boolean } | { ok: false; reason: WebReason; error?: string }>
+        /** 2026-11-25: a video of the page is in picture in picture now (onMedia's `pip` says when it changes). */
+        readonly inPip?: boolean
+        /**
+         * 2026-11-25 (older GEM Shells: absent): the page goes over another element of your widget (its box, one of
+         * its open popovers or floating windows) as it is: no reload, a playing video goes on. Send its regions again
+         * for the new element's size. false: not an element of your widget.
+         */
+        moveTo?(el: HTMLElement): boolean
+        /**
+         * 2026-11-25 (older GEM Shells: absent): the page's main video (playing first, then the largest) played,
+         * paused or toggled. 'play' and 'toggle' right after a click or key press in your widget (no-gesture
+         * otherwise); 'pause' at any time. The state after.
+         */
+        media?(what: 'play' | 'pause' | 'toggle'): Promise<{ ok: true; playing: boolean } | { ok: false; reason: WebReason; error?: string }>
         /** 2026-11-22 (older GEM Shells: absent): the version it asks sites for now. */
         readonly version?: 'desktop' | 'mobile'
         /** How it's chosen: 'auto' (by the surface's width), or what you set. */
         readonly versionMode?: WebVersion
         /** 'auto', 'desktop' or 'mobile'. A change loads the page again; a playing video goes on where it was. */
         setVersion?(mode: WebVersion): void
+        /**
+         * 2026-11-24 (older GEM Shells: absent): parts of the page placed into your tiles, from ONE live page (one
+         * player, one load). `place`: each region's rectangle in px from the surface element's top-left; the regions are
+         * those your rules file declares for `site` ("regions": names and selectors; the first selector that matches
+         * wins). Your own page shows everywhere else over the element (its tiles' heads, your own parts, the gaps):
+         * put those INSIDE the surface's element. null: the whole page again. At least 120 x 68 px each, 8 at most.
+         * theme (default true): the site's colour variables from GEM Shell's Appearance (your rules file's "theme":
+         * { "--site-var": "bg" | "surface" | "surface-2" | "fg" | "fg-muted" | "border" | "accent" | "accent-fg" |
+         * "danger" }). Call it again when your tiles move (it replaces the last placement).
+         */
+        regions?(site: string, place: Record<string, WebRegionRect> | null, opts?: { theme?: boolean }): Promise<WebResult>
+        /**
+         * 2026-11-24 (older GEM Shells: absent): the page's main video / audio, about once a second while it changes:
+         * { playing, time, duration, ended } (seconds). No permission. Returns a function that stops listening.
+         */
+        onMedia?(cb: (m: WebMedia) => void): () => void
+        /**
+         * 2026-11-24 (older GEM Shells: absent): what the page shown says NOW, from your rules file's "now" fields for
+         * `site`: cb({ name: text | null }) each time they change (about once a second at most). Under your PageData
+         * permission (the field names are part of it: GEM Shell asks). Each field: a parameter of the page's address
+         * ({ "param": "v" }), or one element's attribute or text ({ "selector": [...], "attr": "href" } | "text": true),
+         * 200 characters at most, `match`: a pattern whose first group is kept. Never a form field, never on a sign-in
+         * page. One `now` per surface: a second call replaces the first. stop() ends it.
+         *   "now": { "label": "the video you're watching", "fields": { "videoId": { "param": "v" },
+         *            "title": { "selector": "ytd-watch-metadata #title h1", "text": true } } }
+         */
+        now?(site: string, cb: (fields: Record<string, string | null>) => void): Promise<WebResult & { stop?: () => void }>
+        /**
+         * 2026-11-24 (older GEM Shells: absent): what the page shown GETS from its site, read through your rules file's
+         * "responses" for `site`: cb({ response, page, items }) each time one comes. Each response: a name, the page's own
+         * JSON responses at `url` (a path on your rules' domains) and / or its global `var` (read when a document loads,
+         * not after the site moved on in-page), and the kinds of `items` taken out of them (the same item rules as your
+         * pages). You get those items only, as plain values (never the response). Under your PageData permission (the
+         * names, paths, variables and items are part of it: GEM Shell asks). JSON only, status 200, 6 MB at most, 30 per
+         * 10 s; never a request's body, never on a sign-in page. One `onData` per surface: a second call replaces the
+         * first. stop() ends it. Needs "requires": ["responses"].
+         *   "responses": { "video": { "url": "/youtubei/v1/player", "var": "ytInitialPlayerResponse", "item": "videoOwner" } }
+         */
+        onData?(site: string, cb: (d: WebData) => void): Promise<WebResult & { stop?: () => void }>
         /** Ends it (GEM Shell also does when your widget's instance goes). */
         dispose(): void
     }
     /** 2026-11-22: page: blocked on the page shown now; total: since the surface opened; blocking: as WebSurface.blocking. */
-    export type WebBlocked = { page: number; total: number; blocking: boolean }
+    export type WebBlocked = { page: number; total: number; blocking: boolean; /** 2026-11-24 */ encouraged?: number; /** 2026-11-24 */ creatorEncouraged?: boolean }
     /** 2026-11-22: a surface's sound. */
     export type WebAudio = { playing: boolean; muted: boolean }
+    /** 2026-11-24: the page's main video / audio (WebSurface.onMedia): seconds. */
+    /** 2026-11-25: pip, a video of the page is in picture in picture (older GEM Shells: absent). */
+    export type WebMedia = { playing: boolean; time: number; duration: number; ended: boolean; pip?: boolean }
+    /** 2026-11-24: what one response (or the page's global) carried (WebSurface.onData); page: the address it came on. */
+    export type WebData = { response: string; page: string; items: Record<string, Array<Record<string, string | number | boolean | Array<string | number | boolean>>>> }
+    /** 2026-11-24: a region's place, px from the surface element's top-left (WebSurface.regions). */
+    export type WebRegionRect = { x: number; y: number; width: number; height: number }
     /** 2026-11-22: which version of sites a surface asks for (surface(el, { url, version })). */
     export type WebVersion = 'auto' | 'desktop' | 'mobile'
     /**
      * 2026-11-22: why sdk.pageData(site).read() gave nothing. not-declared (no usable rules for the site: the console
      * says why), bad-argument (no such page, or a parameter missing or not matching its pattern), declined (the user
      * said no), no-data (the page had none of its data: signed out?), needs-update (read, but nothing your rules collect
-     * was found: the site changed), busy (300 reads of the site today), failed.
+     * was found: the site changed; 2026-11-25: not on a page your rules mark `"mayBeEmpty": true`, where finding nothing
+     * is a normal answer: ok with empty lists), busy (300 reads of the site today), failed.
      */
     export type PageDataReason = 'not-declared' | 'bad-argument' | 'declined' | 'no-data' | 'needs-update' | 'busy' | 'failed'
     /** Text, numbers, true / false, short lists of those: what your rules' fields give. */
     export type PageDataValue = string | number | boolean | Array<string | number | boolean>
     export type PageDataItems = Record<string, Array<Record<string, PageDataValue>>>
     export type PageDataResult =
-        | { ok: true; items: PageDataItems; /** when it was read (ms) */ at: number; /** from GEM Shell's cache */ cached: boolean; problems: string[]; /** 2026-11-23: parts of the list read beyond the page (older shells: absent) */ more?: number }
+        | { ok: true; items: PageDataItems; /** when it was read (ms) */ at: number; /** from GEM Shell's cache */ cached: boolean; problems: string[]; /** 2026-11-23: parts of the list read beyond the page (older shells: absent) */ more?: number; /** 2026-11-25: the choice made before reading (older shells: absent: the page as it is) */ chosen?: string }
         | { ok: false; reason: PageDataReason; error?: string; problems?: string[] }
     export type PageDataPage = { name: string; label: string; params: string[]; collects: Array<{ kind: string; label: string; fields: string[] }>; /** 2026-11-23: how many more parts a read may ask for (0: none) */ more?: number }
     export interface WidgetPageData {
@@ -1381,8 +1456,14 @@ declare module 'gexplorer/widgets' {
          * A page's items. fresh: read again (unless the last read is under a minute old). 2026-11-23: more: on a page whose
          * rules have `more`, GEM Shell scrolls it that many times (its max at most), adding the next parts of the list
          * (each counts as a read of the day; kept in the cache: asking no more, or as many, again doesn't scroll again).
+         * 2026-11-25: choose: on a page whose rules have that choice (`choices`: { oldest: { label, click: [selectors],
+         * text: '^Oldest$', response: '/youtubei/v1/browse' } }), GEM Shell's hidden reader makes that ONE click first (a
+         * sort, a tab) and gives the list it brings (`chosen` says it was made; an older shell gives the page as it is).
+         * Fenced: the text pattern may take no word of an action (Subscribe, Delete, Buy...), only a choice control is
+         * clicked (a tab, an option), and after it nothing that could change anything leaves the page but the declared
+         * response's request. Part of your PageData permission (the choice's label is in GEM Shell's question).
          */
-        read(page: string, params?: Record<string, string>, opts?: { fresh?: boolean; more?: number }): Promise<PageDataResult>
+        read(page: string, params?: Record<string, string>, opts?: { fresh?: boolean; more?: number; choose?: string }): Promise<PageDataResult>
         /**
          * 2026-11-22: a picture an item gave you (an avatar, a thumbnail), as a local address for <img> (GEM Shell's image
          * cache, your room). Only addresses GEM Shell handed you in an item; re-encoded, at most 4096 px a side.
@@ -1394,9 +1475,19 @@ declare module 'gexplorer/widgets' {
         | { ok: false; reason: 'not-from-page' | 'declined' | 'bad-argument' | 'failed'; error?: string }
 
     export interface WidgetWeb {
-        surface(el: HTMLElement, opts: { url: string; version?: WebVersion }): Promise<WebSurface | { ok: false; reason: WebReason; error?: string }>
+        /** 2026-11-25: `key` (letters, digits, - _; 40 at most): the page kept under it while a job holds it comes back over `el`, as it is (see WidgetJob.hold). */
+        surface(el: HTMLElement, opts: { url: string; version?: WebVersion; key?: string }): Promise<WebSurface | { ok: false; reason: WebReason; error?: string }>
         /** userAdded only, right after the user's click or key press in your widget: the consent dialog for that domain. */
         addDomain(domain: string): Promise<WebResult & { domain?: string }>
+        /** 2026-11-24 (Encourage this creator): how many creators the user encourages (their pages unfiltered); 0 when unknown. Older shells: absent. */
+        encouraged?(): Promise<number>
+        /**
+         * 2026-11-25 (older shells: absent): which of these creators (their ids on the site, 2000 at most) the user
+         * encourages, on `site`: one of your rules files (its first domain is the list's site). Under your PageData
+         * permission for that site (GEM Shell asks as for your pages). For a filter of the creators you show; the list
+         * itself stays GEM Shell's. Ask again when WebBlocked.encouraged changes.
+         */
+        encouragedAmong?(site: string, ids: string[]): Promise<WebResult & { ids?: string[] }>
     }
 
     /** One program of sdk.installedApps().list() (a desktop program's uninstall entry). */
@@ -2330,6 +2421,33 @@ declare module 'gexplorer/widgets' {
         limits?: GridSizeLimits, opts?: { intent?: 'h' | 'v' }): Map<string, GridRect> | null
     /** The first free spot for a new colSpan × rowSpan item, rows top → bottom from `fromRow`, cells left → right. */
     export function gridFirstFree(snap: GridSnapshot, columns: number, colSpan?: number, rowSpan?: number, fromRow?: number): GridRect
+
+    // ── Collapsible panels (NEW 2026-11-24, GEM YT 1.0) ─────────────────────
+    // Where your tiles go in px when some are panels that fold to a strip, like a split pane folded by hand. The
+    // cells stay the truth (gridDrag / gridResize): folding is only how they're drawn, so unfolding gives a panel
+    // back exactly its cells.
+    //   const placed = gridPlace(tiles, 24, { width, rowHeight, gap }, { upNext: { edge: 'right', folded } })
+    //   // each tile: { x, y, width, height, state: 'full' | 'compact' | 'folded', foldedBy?: 'user' | 'layout' }
+    // - A folded panel is a strip (34 px) along its edge; the space goes to the tiles beside it on its inner side, in
+    //   its own rows (a tile beside it grows by the least that the tiles on that side free). Tiles above and below
+    //   are never touched; what no tile can take stays empty.
+    // - Under `compact` (300 px) a panel is 'compact' (stack it: a thumbnail, a line or two). Under `min` (150 px)
+    //   the layout folds it (foldedBy 'layout'), unless `opened`: then it gets `min` from the same neighbours.
+    // - Left / right panels fold across the columns, top / bottom ones across the rows. Draw the strip yourself
+    //   (state 'folded'): its title, an icon, a count.
+    export type GridPanelEdge = 'left' | 'right' | 'top' | 'bottom'
+    export type GridPanel = { edge: GridPanelEdge; folded?: boolean; opened?: boolean; min?: number; compact?: number }
+    /** width: the grid's inner width (the columns share it); rowHeight: one row; gap: between cells. px. */
+    export type GridBox = { width: number; rowHeight: number; gap: number }
+    export type GridPlaced = {
+        x: number; y: number; width: number; height: number
+        state: 'full' | 'compact' | 'folded'
+        foldedBy?: 'user' | 'layout'
+        edge?: GridPanelEdge
+    }
+    /** Every tile placed in px (from the grid's top-left), its panels folded as they and the room say. strip: 34 px. */
+    export function gridPlace(items: ReadonlyArray<GridItem>, columns: number, box: GridBox,
+        panels?: Readonly<Record<string, GridPanel>>, opts?: { strip?: number }): Map<string, GridPlaced>
 
     // ── Listings ───────────────────────────────────────────────────────────
     // A ListingSource is the row source behind any list-shaped widget. Get one
@@ -3583,6 +3701,17 @@ declare module 'gexplorer/widgets' {
          * then releases it (a held video keeps playing, parked, while the widget is unmounted).
          */
         hold(handle: AudioHandle | VideoHandle): void
+        /**
+         * 2026-11-25 (older GEM Shells: refused): a web page of your widget's, opened with a key
+         * (sdk.web().surface(el, { url, key })): it outlives your widget while the job runs, and your next
+         * surface(el, { key }) takes it back as it is (no reload). What it does while your widget is hidden:
+         *   'audio' (default): it plays on out of view (its sound; GEM Shell lowers its memory use meanwhile);
+         *   'pause': its videos and sounds are paused when your widget lets go of it;
+         *   'video': the live page shows in the job's card in the operations tray, the region `show` of your
+         *            last regions (surface.regions) filling the card (its video); the tray folded: as 'audio'.
+         * Called again: the options change. The job's end closes the page if your widget isn't showing it.
+         */
+        hold(page: WebSurface, opts?: { whenHidden?: 'audio' | 'pause' | 'video'; show?: string }): void
         /**
          * The job needs the user (true) or no longer does (false): its card is marked and the
          * operations tray's flap wiggles until the tray is opened. A widget that is not on

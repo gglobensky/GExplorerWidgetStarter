@@ -1,12 +1,16 @@
 {
   "schema": 1,
   "site": "youtube",
-  "version": "2026.11.23.5",
+  "version": "2026.11.26.1",
   "about": "YouTube's own page data (ytInitialData) -> channels and videos. Written against the shapes captured on 2026-11-22. GEM YT's rules (moved from GEM Shell, 2026-11-22: the widget brings them).",
   "domains": ["youtube.com"],
   "base": "https://www.youtube.com",
   "lang": "en",
-  "requires": ["paths", "each", "where", "first", "when", "matches", "eq", "exists", "startsWith", "text", "count", "duration", "relativeDate", "bestImage", "handle", "percent", "bool", "skipUnder", "replace", "more"],
+  "requires": ["paths", "each", "where", "first", "when", "matches", "eq", "exists", "startsWith", "text", "count", "duration", "relativeDate", "bestImage", "handle", "percent", "bool", "skipUnder", "replace", "more", "responses", "number", "choices", "shapes"],
+  "shapes": {
+    "text": [{ "key": "simpleText" }, { "key": "content" }, { "list": "runs", "key": "text" }],
+    "images": ["sources", "thumbnails"]
+  },
   "pages": {
     "subscriptions": {
       "label": "your subscriptions",
@@ -21,8 +25,34 @@
       "url": "https://www.youtube.com/{channel}/videos?hl=en",
       "params": { "channel": "^(@[\\w.-]{1,100}|channel/UC[\\w-]{22})$" },
       "data": { "var": "ytInitialData" },
-      "collect": ["video", "channelInfo"],
+      "collect": ["video", "channelInfo", "channelBanner"],
+      "more": { "response": "/youtubei/v1/browse", "max": 5 },
+      "choices": {
+        "oldest": {
+          "label": "oldest first",
+          "click": ["chip-bar-view-model chip-view-model", "yt-chip-cloud-chip-renderer", "#chips yt-chip-cloud-chip-renderer"],
+          "text": "^Oldest$",
+          "response": "/youtubei/v1/browse"
+        }
+      }
+    },
+    "channel-popular": {
+      "label": "a channel's most popular videos",
+      "fresh": 360,
+      "url": "https://www.youtube.com/playlist?list={list}&hl=en",
+      "params": { "list": "^UULP[\\w-]{22}$" },
+      "data": { "var": "ytInitialData" },
+      "collect": ["playlistVideo", "video"],
       "more": { "response": "/youtubei/v1/browse", "max": 5 }
+    },
+    "channel-featured": {
+      "label": "the channels a channel features",
+      "fresh": 1440,
+      "url": "https://www.youtube.com/{channel}/featured?hl=en",
+      "params": { "channel": "^(@[\\w.-]{1,100}|channel/UC[\\w-]{22})$" },
+      "data": { "var": "ytInitialData" },
+      "collect": ["featuredChannel"],
+      "mayBeEmpty": true
     },
     "subscription-feed": {
       "label": "the latest videos of your subscriptions",
@@ -41,6 +71,12 @@
     }
   },
   "items": {
+    "videoOwner": {
+      "label": "the video playing and its channel",
+      "find": "videoDetails",
+      "key": "videoId",
+      "fields": { "videoId": "videoId", "channelId": "channelId", "name": "author" }
+    },
     "channel": {
       "label": "channels",
       "find": "channelRenderer",
@@ -95,6 +131,9 @@
         "views": [{
           "each": "metadata.lockupMetadataViewModel.metadata.contentMetadataViewModel.metadataRows[*].metadataParts[*]",
           "where": { "matches": ["text", "(views?|watching)$"] }, "first": "text", "as": ["text", "count"]
+        }, {
+          "each": "metadata.lockupMetadataViewModel.metadata.contentMetadataViewModel.metadataRows[*].metadataParts[*]",
+          "where": { "matches": ["text", "^\\d[\\d.,]*\\s?[KMB]?$"] }, "first": "text", "as": ["text", "count"]
         }],
         "watched": [{ "path": "contentImage.thumbnailViewModel.overlays[*].thumbnailBottomOverlayViewModel.progressBar.thumbnailOverlayProgressBarViewModel.startPercent", "as": "percent" }],
         "channelId": [
@@ -110,6 +149,47 @@
         "channelAvatar": [{ "path": "metadata.lockupMetadataViewModel.image.decoratedAvatarViewModel.avatar.avatarViewModel.image", "as": "bestImage" }]
       }
     },
+    "playlistVideo": {
+      "label": "a playlist's videos",
+      "find": "playlistVideoRenderer",
+      "key": "id",
+      "optional": ["length", "views", "published", "publishedText", "watched", "channelId", "channelHandle", "channelName"],
+      "fields": {
+        "id": ["videoId"],
+        "title": [{ "path": "title", "as": "text" }],
+        "thumbnail": [
+          { "path": "videoId", "when": { "matches": ["videoId", "^[\\w-]{6,20}$"] }, "as": { "replace": ["^([\\w-]+)$", "https://i.ytimg.com/vi/$1/mqdefault.jpg"] } },
+          { "path": "thumbnail", "as": "bestImage" }
+        ],
+        "length": [{ "path": "lengthText", "as": ["text", "duration"] }, { "path": "lengthSeconds", "as": "number" }],
+        "views": [{ "each": "videoInfo.runs[*]", "where": { "matches": ["text", "views?$"] }, "first": "text", "as": ["text", "count"] }],
+        "published": [{ "each": "videoInfo.runs[*]", "where": { "matches": ["text", " ago$"] }, "first": "text", "as": ["text", "relativeDate"] }],
+        "publishedText": [{ "each": "videoInfo.runs[*]", "where": { "matches": ["text", " ago$"] }, "first": "text", "as": "text" }],
+        "watched": [{ "path": "thumbnailOverlays[*].thumbnailOverlayResumePlaybackRenderer.percentDurationWatched", "as": "percent" }],
+        "channelId": ["shortBylineText.runs[0].navigationEndpoint.browseEndpoint.browseId"],
+        "channelHandle": [{ "path": "shortBylineText.runs[0].navigationEndpoint.browseEndpoint.canonicalBaseUrl", "as": "handle" }],
+        "channelName": [{ "path": "shortBylineText", "as": "text" }]
+      }
+    },
+    "featuredChannel": {
+      "label": "the channels it features",
+      "find": "gridChannelRenderer",
+      "key": "id",
+      "optional": ["handle", "avatar", "subscribers"],
+      "fields": {
+        "id": ["channelId", "navigationEndpoint.browseEndpoint.browseId"],
+        "name": [{ "path": "title", "as": "text" }],
+        "handle": [
+          { "path": "navigationEndpoint.browseEndpoint.canonicalBaseUrl", "as": "handle" },
+          { "path": "subscriberCountText", "as": ["text", "handle"] }
+        ],
+        "avatar": [{ "path": "thumbnail", "as": "bestImage" }],
+        "subscribers": [
+          { "path": "subscriberCountText", "when": { "matches": ["subscriberCountText", "subscribers?$"] }, "as": ["text", "count"] },
+          { "path": "videoCountText", "when": { "matches": ["videoCountText", "subscribers?$"] }, "as": ["text", "count"] }
+        ]
+      }
+    },
     "channelInfo": {
       "label": "the channel's details",
       "find": "channelMetadataRenderer",
@@ -122,6 +202,101 @@
         "description": [{ "path": "description", "as": "text" }],
         "keywords": [{ "path": "keywords", "as": "text" }]
       }
+    },
+    "channelBanner": {
+      "label": "the channel's banner",
+      "find": "imageBannerViewModel",
+      "fields": {
+        "image": [{ "path": "image", "as": "bestImage" }]
+      }
     }
+  },
+  "regions": {
+    "player": { "label": "the video", "selector": ["#movie_player", "ytd-player#ytd-player"] },
+    "upNext": { "label": "Up next", "selector": ["ytd-watch-next-secondary-results-renderer", "#secondary #related"], "scroll": true, "pad": 6 },
+    "queue": { "label": "your queue", "selector": ["ytd-playlist-panel-renderer#playlist", "#secondary ytd-playlist-panel-renderer"], "scroll": true, "pad": 6 },
+    "comments": { "label": "the comments", "selector": ["ytd-comments#comments", "#comments"], "scroll": true, "pad": 12 },
+    "description": { "label": "the description", "selector": ["ytd-watch-metadata", "#above-the-fold"], "scroll": true, "pad": 12 }
+  },
+  "responses": {
+    "video": { "label": "the video you're watching", "url": "/youtubei/v1/player", "var": "ytInitialPlayerResponse", "item": "videoOwner" }
+  },
+  "analysis": {
+    "words": ["views", "view", "watching", "waiting", "subscriber", "subscribers", "video", "videos", "streamed", "premiered", "premieres", "members", "shorts", "views."],
+    "probes": {
+      "*": { "masthead": "#masthead", "guide": "tp-yt-app-drawer#guide" },
+      "pages": { "contents": "ytd-browse #primary #contents" },
+      "watch": {
+        "watch": "ytd-watch-flexy", "player": "#player", "playerContainer": "#player-container", "video": "video",
+        "title": "ytd-watch-metadata", "owner": "ytd-video-owner-renderer", "likes": "segmented-like-dislike-button-view-model",
+        "description": "ytd-watch-metadata #description", "comments": "ytd-comments#comments",
+        "upNext": "ytd-watch-next-secondary-results-renderer", "secondary": "#secondary", "chips": "yt-chip-cloud-renderer"
+      }
+    },
+    "pages": {
+      "watch": {
+        "label": "a video's page (always the same public video)",
+        "url": "https://www.youtube.com/watch?v={v}&hl=en",
+        "data": { "var": "ytInitialData" },
+        "params": { "v": "^[\\w-]{11}$" },
+        "defaults": { "v": "jNQXAC9IVRw" }
+      },
+      "channel-channels": {
+        "label": "a channel's Channels tab (the channels it features)",
+        "url": "https://www.youtube.com/{channel}/channels?hl=en",
+        "data": { "var": "ytInitialData" },
+        "params": { "channel": "^(@[\\w.-]{1,100}|channel/UC[\\w-]{22})$" },
+        "defaults": { "channel": "@LinusTechTips" }
+      },
+      "channel-home": {
+        "label": "a channel's home tab (its shelves, featured channels among them)",
+        "url": "https://www.youtube.com/{channel}/featured?hl=en",
+        "data": { "var": "ytInitialData" },
+        "params": { "channel": "^(@[\\w.-]{1,100}|channel/UC[\\w-]{22})$" },
+        "defaults": { "channel": "@LinusTechTips" }
+      }
+    },
+    "guess": {
+      "channel": [{ "item": "channel", "field": "handle", "prefix": "@" }, { "item": "channel", "field": "id", "prefix": "channel/" }]
+    }
+  },
+  "creator": {
+    "response": "video", "item": "videoOwner",
+    "fields": { "video": "videoId", "id": "channelId", "name": "name" },
+    "address": [{ "param": "v" }, { "path": "^/shorts/([A-Za-z0-9_-]{6,20})" }]
+  },
+  "now": {
+    "label": "the video you're watching",
+    "fields": {
+      "videoId": { "param": "v" },
+      "title": { "selector": ["ytd-watch-metadata #title h1", "#above-the-fold #title h1"], "text": true },
+      "channelName": { "selector": ["ytd-watch-metadata ytd-channel-name a", "#owner ytd-channel-name a"], "text": true },
+      "channelHandle": { "selector": ["ytd-watch-metadata ytd-channel-name a", "#owner ytd-channel-name a"], "attr": "href", "match": "/(@[\\w.-]+)" },
+      "queue": { "selector": ["ytd-playlist-panel-renderer#playlist:not([hidden]) #publisher-container", "ytd-playlist-panel-renderer#playlist:not([hidden]) .index-message"], "text": true, "match": "(\\d+\\s*/\\s*\\d+)" },
+      "next": {
+        "selector": [".ytp-next-button"],
+        "attr": "href"
+      }
+    }
+  },
+  "menus": [
+    { "on": ["yt-lockup-view-model", "ytd-compact-video-renderer", "ytd-playlist-panel-video-renderer"],
+      "button": ["[class*=menu-button] button", "ytd-menu-renderer yt-icon-button#button button", "ytd-menu-renderer button", "button[aria-label=\"More actions\"]", "button[aria-label=\"Action menu\"]"] },
+    { "on": ["ytd-comment-view-model", "ytd-comment-renderer"],
+      "button": ["#action-menu button", "ytd-menu-renderer button"] }
+  ],
+  "overlays": ["ytd-popup-container tp-yt-iron-dropdown", "ytd-popup-container yt-sheet-view-model", "tp-yt-iron-dropdown yt-sheet-view-model", ".ytp-popup.ytp-contextmenu", "ytd-popup-container tp-yt-paper-dialog", "ytd-popup-container ytd-modal-with-title-and-button-renderer", "tp-yt-paper-toast", "yt-notification-action-renderer"],
+  "hide": ["#masthead-container", "ytd-masthead", "tp-yt-app-drawer#guide", "ytd-mini-guide-renderer"],
+  "theme": {
+    "--yt-spec-base-background": "bg",
+    "--yt-spec-general-background-a": "bg",
+    "--yt-spec-brand-background-solid": "bg",
+    "--yt-spec-raised-background": "surface",
+    "--yt-spec-menu-background": "surface",
+    "--yt-spec-badge-chip-background": "surface-2",
+    "--yt-spec-text-primary": "fg",
+    "--yt-spec-text-secondary": "fg-muted",
+    "--yt-spec-10-percent-layer": "border",
+    "--yt-spec-call-to-action": "accent"
   }
 }

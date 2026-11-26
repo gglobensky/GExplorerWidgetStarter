@@ -92,6 +92,10 @@ All of them are generic over your item type (`<script setup generic="T extends L
 
 ## History
 
+- **3.12.0 (2026-11-23):** lists that go on. LibraryFloor emits `end-reached(shelfId)` when the department is
+  scrolled near its end (600 px ahead; asked again when its items change, so a list still too short asks again), and
+  has a `focus-end` slot under its last row; `.glu-floor-end-note` (with an `<i>` spinner) for "Loading more…". No new
+  skin keys. First used by GEM YT 0.3.9 (older videos as you scroll).
 - **3.11.0 (2026-11-23):** a poster's `bars` (a little chart under its caption, null weeks drawn faint) and `flag`
   (a sticker on its corner); a shelf's `dim` (put away: the rack faded and dusty, brighter on hover). No new skin keys.
   First used by GEM YT 0.3.1 (posting rhythm, overdue and quiet channels).

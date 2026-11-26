@@ -1,21 +1,21 @@
-// GEM YT 0.3.0 (2026-11-23): what GEM YT remembers between starts. Two documents of the widget type (sdk.configRead /
-// configWrite: shared by its copies, kept by GEM Shell on this computer only):
+// What GEM YT remembers between starts: two documents of the widget type (sdk.configRead / configWrite: shared by its
+// copies, kept by GEM Shell on this computer only).
 //
-//   gem-yt-memory   the racks as they were last seen: your channels, each rack's latest videos (what a rack shows),
-//                   the two feeds, the aisle's order, and which GEM Shell picture went with which address. Drawn at
-//                   once at the next start, then read again behind them (racks as they come into view).
+//   gem-yt-memory   your channels as last seen: each channel's latest videos, the two feeds, the channels' order, and
+//                   which GEM Shell picture went with which address (banners included). Shown at once at the next
+//                   start, then read again behind them.
 //   gem-yt-ledger   what GEM YT learns about each channel over time: when it was last read, its uploads (video id and
 //                   date, the newest MAX_UPLOADS: a date first seen as "2 days ago" stays more precise than a later
-//                   "3 weeks ago"), its subscriber counts (one a day), and the background survey's daily count. The
-//                   ground for the back room, posting rhythm and filters (plan-2026-11-23-gem-yt-subscriptions.md).
+//                   "3 weeks ago"), its subscriber counts (one a day), its banner, and the background survey's daily
+//                   count. The ground for posting rhythm, Overdue / Quiet and the filters.
 //
 // Pure (no SDK, no Vue). Anything that doesn't fit when read back is left out, never a reason to fail.
-import { channelOf, videoOf, type Channel, type Video } from './racks'
+import { channelOf, videoOf, type Channel, type Video } from './items'
 
 export const MEMORY_DOC = 'gem-yt-memory'
 export const LEDGER_DOC = 'gem-yt-ledger'
-/** Videos kept per rack (what a rack shows) and per feed. */
-export const RACK_KEEP = 18
+/** Videos kept per channel (what its page first shows) and per feed. */
+export const CHANNEL_KEEP = 18
 /**
  * 0.3.8: a channel whose department you went further into (More videos): all of what was read is kept (up to
  * DEEP_KEEP), for the DEEP_CHANNELS last ones, so next time its older videos are there without scrolling YouTube again.
@@ -58,6 +58,8 @@ export type ChannelRecord = {
   subs: Array<[number, number]>
   /** 0.3.5: what the channel says of itself (its page's metadata): description (1000 characters), keywords (topics.ts) */
   about?: { d?: string; k?: string[] }
+  /** 0.4.0: its banner (its page's header picture): YouTube's address, https only */
+  banner?: string
 }
 export type Ledger = { version: 1; channels: Record<string, ChannelRecord>; survey: { day: number; count: number } }
 
@@ -77,7 +79,7 @@ export function readMemory(raw: unknown): Memory | null {
   if (num(raw.visitAt)) out.visitAt = raw.visitAt
   if (Array.isArray(raw.deep)) out.deep = raw.deep.filter((id): id is string => typeof id === 'string' && ids.has(id)).slice(-DEEP_CHANNELS)
   const deep = new Set(out.deep ?? [])
-  if (obj(raw.videos)) for (const [id, list] of Object.entries(raw.videos)) if (ids.has(id)) out.videos[id] = videos(list, deep.has(id) ? DEEP_KEEP : RACK_KEEP)
+  if (obj(raw.videos)) for (const [id, list] of Object.entries(raw.videos)) if (ids.has(id)) out.videos[id] = videos(list, deep.has(id) ? DEEP_KEEP : CHANNEL_KEEP)
   if (obj(raw.feeds)) for (const [id, list] of Object.entries(raw.feeds)) if (/^feed:[a-z]{1,20}$/.test(id)) out.feeds[id] = videos(list, FEED_KEEP)
   if (Array.isArray(raw.order)) out.order = raw.order.filter((id): id is string => typeof id === 'string' && ids.has(id))
   if (obj(raw.pictures))
@@ -86,25 +88,27 @@ export function readMemory(raw: unknown): Memory | null {
   return out
 }
 
-/** The memory to save: only the pictures of what it keeps (so the document never grows past the racks). */
-export function makeMemory(channels: Channel[], order: string[], rackVideos: Map<string, Video[]>, feeds: Map<string, Video[]>,
-  pictures: Map<string, string>, now: number, visitAt?: number, deepIds: string[] = []): Memory {
+/** The memory to save: only the pictures of what it keeps (so the document never grows past what's shown). */
+export function makeMemory(channels: Channel[], order: string[], channelVideos: Map<string, Video[]>, feeds: Map<string, Video[]>,
+  pictures: Map<string, string>, now: number, visitAt?: number, deepIds: string[] = [], extraPictures: Iterable<string> = []): Memory {
   const deep = deepIds.slice(-DEEP_CHANNELS)
   const mem: Memory = { version: 1, at: now, channels, videos: {}, feeds: {}, order, pictures: {}, ...(visitAt ? { visitAt } : {}), ...(deep.length ? { deep } : {}) }
   const deepSet = new Set(deep)
   const keepPic = (url: string | undefined) => { const to = url && pictures.get(url); if (url && to) mem.pictures[url] = to }
   for (const c of channels) {
     keepPic(c.avatar)
-    const list = rackVideos.get(c.id)
+    const list = channelVideos.get(c.id)
     if (!list) continue
-    mem.videos[c.id] = list.slice(0, deepSet.has(c.id) ? DEEP_KEEP : RACK_KEEP)
-    // the pictures of what a rack shows (a deep channel's others are made again when its department is opened)
-    for (const v of mem.videos[c.id].slice(0, RACK_KEEP)) keepPic(v.thumbnail)
+    mem.videos[c.id] = list.slice(0, deepSet.has(c.id) ? DEEP_KEEP : CHANNEL_KEEP)
+    // the pictures of what a channel first shows (a deep channel's others are made again when its page is opened)
+    for (const v of mem.videos[c.id].slice(0, CHANNEL_KEEP)) keepPic(v.thumbnail)
   }
   for (const [id, list] of feeds) {
     mem.feeds[id] = list.slice(0, FEED_KEEP)
-    for (const v of mem.feeds[id]) keepPic(v.thumbnail)
+    for (const v of mem.feeds[id]) { keepPic(v.thumbnail); keepPic(v.channelAvatar) }
   }
+  // 0.4.0: the banners (Creators), Discover's avatars
+  for (const url of extraPictures) keepPic(url)
   return mem
 }
 
@@ -130,6 +134,7 @@ export function readLedger(raw: unknown): Ledger {
       const k = Array.isArray(r.about.k) ? r.about.k.filter((t): t is string => typeof t === 'string' && t.length <= 40).slice(0, 30) : undefined
       if (d || k?.length) rec.about = { ...(d ? { d } : {}), ...(k?.length ? { k } : {}) }
     }
+    if (isBanner(r.banner)) rec.banner = r.banner
     out.channels[id] = rec
   }
   return out
@@ -176,6 +181,14 @@ export function noteAbout(ledger: Ledger, channelId: string, description: string
   const rec = recordOf(ledger, channelId)
   const d = description?.slice(0, 1000)
   rec.about = { ...(d ? { d } : {}), ...(keywords.length ? { k: keywords.slice(0, 30) } : {}) }
+}
+
+/** 0.4.0: a picture's address as GEM YT keeps it: https, not too long. */
+const isBanner = (v: unknown): v is string => typeof v === 'string' && v.startsWith('https://') && v.length < 2000
+
+/** 0.4.0: the channel's banner, from its page (undefined: it has none, or it wasn't found: the one known stays). */
+export function noteBanner(ledger: Ledger, channelId: string, url: unknown): void {
+  if (isBanner(url)) recordOf(ledger, channelId).banner = url
 }
 
 export function lastUpload(ledger: Ledger, channelId: string): number | undefined {
