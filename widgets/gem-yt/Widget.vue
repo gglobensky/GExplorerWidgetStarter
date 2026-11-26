@@ -34,7 +34,9 @@ import ChannelVideosPart from './parts/ChannelVideosPart.vue'
 import Ribbon from './parts/Ribbon.vue'
 import { VOTES_CREDIT, createVotes, type Votes } from './core/votes'
 import { hubSteps } from './parts/hubGrid'
-import { listPart, type ListTab } from './parts/listTabs'
+import { useToolbar } from './use/toolbar'
+import { useNowPlaying } from './use/nowPlaying'
+import { useWatchJob } from './use/watchJob'
 
 const HOME = 'https://www.youtube.com/'
 const THUMB = { width: 320, height: 180 }
@@ -179,67 +181,12 @@ const barFolded = ref(false)
 /** 0.20.0: the sidebar player's height, tab and ⤢, kept per copy */
 const compactSaved = ref<CompactSaved>(readCompact(null))
 function keepCompact(c: CompactSaved) { compactSaved.value = c; save({ compact: c }) }
-// What the page says now (S3), declared before the watchers that read it at once
-const nowInfo = ref<Record<string, string | null>>({})
-const media = ref<{ playing: boolean; time: number; duration: number; ended: boolean; pip?: boolean } | null>(null)
-// 0.14.0: picture in picture (GEM Shell's surface.pip: the page's own video in the system's floating window). null:
-// this GEM Shell can't. Its state from the last answer, then from the media watch (you may close its window).
-const pipOn = ref(false)
-watch(() => media.value?.pip, v => { if (typeof v === 'boolean') pipOn.value = v })
-const canPip = ref(false)
+// What the page shows now, picture in picture, the next video (use/nowPlaying.ts)
+const { nowInfo, media, owner, watchNow, stopWatching, nowWhat, nowState, nowLine, pipOn, canPip, pipState, togglePip, nextUrl, playNext } =
+  useNowPlaying({ surface: () => surface, snack })
 
-// ── 0.15.0: the video outlives GEM YT (GEM Shell's jobs: the page held, the operations tray's card) ───────────────
-// While a video is open in Standard mode, a job "watching" holds the page: leaving GEM YT (another tab) then only
-// lets go of it, and GEM Shell keeps it as the setting says (its sound; the video in the job's card; paused).
-// Coming back takes the same page back (no reload). Picture in picture keeps playing whatever the setting.
-type Hidden = 'audio' | 'video' | 'pause'
-function hiddenSetting(): Hidden {
-  const v = settings?.values?.hidden
-  return v === 'video' || v === 'pause' ? v : 'audio'
-}
-let watchJob: any = null
-let jobRefused = false
-function syncJob() {
-  const jobs = (sdk as any)?.jobs?.()
-  if (!jobs || !surface || jobRefused) return
-  const vid = mode.value === 'standard' ? nowInfo.value.videoId : null
-  if (!vid) {
-    const running = watchJob ?? jobs.current?.('watching')
-    if (running?.alive) running.end()
-    watchJob = null
-    return
-  }
-  const title = `Watching: ${nowInfo.value.title || 'a YouTube video'}`
-  try {
-    watchJob = jobs.ensure('watching', { title })
-    watchJob.update({ title })
-    watchJob.hold(surface, { whenHidden: pipOn.value ? 'audio' : hiddenSetting(), show: 'player' })
-  } catch (err) {
-    jobRefused = true   // an older GEM Shell (no web pages in jobs): as before, the page closes with GEM YT
-    console.warn('[GEM YT] the video can’t outlive GEM YT here', err)
-  }
-}
-watch([() => nowInfo.value.videoId, () => nowInfo.value.title, mode, pipOn], () => syncJob())
-const pipState = computed(() => (canPip.value ? pipOn.value : null))
-/** 0.17.1: the player's next video (the rules' now "next": the ⏭ button's address), opened in the same page */
-const nextUrl = computed(() => {
-  const h = nowInfo.value.next
-  if (!h) return null
-  try {
-    const u = new URL(h, 'https://www.youtube.com')
-    return /(^|\.)youtube\.com$/.test(u.hostname) && u.pathname === '/watch' && u.searchParams.get('v') ? u.href : null
-  } catch { return null }
-})
-function playNext() { if (nextUrl.value) void surface?.load(nextUrl.value) }
-async function togglePip() {
-  if (!surface?.pip) return
-  const r = await surface.pip('toggle')
-  if (r.ok) { pipOn.value = r.on; return }
-  const why = String(r.error ?? r.reason)
-  snack(/^unsupported|NotSupportedError/.test(why)
-    ? 'This GEM Shell’s browser doesn’t allow picture in picture.'
-    : /^no-video/.test(why) ? 'No video to float yet: play one first.' : `Picture in picture didn’t start (${why}).`)
-}
+// The video outlives GEM YT: a job holds the page (use/watchJob.ts)
+const { syncJob } = useWatchJob({ sdk, surface: () => surface, settings: () => settings?.values, standard: () => mode.value === 'standard', nowInfo, pipOn })
 /** The hub grid's columns and rows (the tiles' steps) */
 const hubGrid = hubSteps(sdk)
 const watchLayout = ref<WatchLayout>(defaultLayoutFor('wide', hubGrid.cols, hubGrid.rows))
@@ -294,142 +241,15 @@ watch(() => [layoutSize.value, showTiles.value] as const, ([size, on]) => {
   snack(`GEM YT arranged the video’s tiles for a ${SIZE_WORDS[size]} widget. Drag the lines and fold the panels as you like: this size remembers how you leave it.`)
 })
 
-// ── What's playing (GEM Shell S3: the page's media, the rules' "now" fields) ──────────────────────────────────────
-// The Player's head (the title, the channel, Paused / Ended) and the Channel part. The Queue (part 2) will use "ended".
-let stopNow: (() => void) | null = null
-let stopMedia: (() => void) | null = null
-// 0.9.1 (GEM Shell's response reader): whose video it is, from YouTube's own player data (its channel id: the playing
-// channel found by id, not only by its handle or name on the page). Kept only when it's the address's video (an ad's
-// player data names the ad).
-let stopData: (() => void) | null = null
-const owner = ref<{ videoId: string; channelId: string; name?: string } | null>(null)
-const videoOfPage = (u: string) => { try { return new URL(u).searchParams.get('v') } catch { return null } }
-let watching = false
-async function watchNow() {
-  if (watching || !surface?.onMedia || !surface.now) return
-  watching = true
-  stopMedia = surface.onMedia((m: NonNullable<typeof media.value>) => { media.value = m })
-  const r = await surface.now('youtube', (f: Record<string, string | null>) => { nowInfo.value = f })
-  if (r.ok) stopNow = r.stop ?? null
-  else console.warn('[GEM YT] what’s playing: not watched', r.error ?? r.reason)
-  if (surface?.onData && watching) {
-    const d = await surface.onData('youtube', (x: { page: string; items: Record<string, Array<Record<string, unknown>>> }) => {
-      const v = videoOfPage(x.page)
-      for (const o of x.items.videoOwner ?? [])
-        if (v && o.videoId === v && typeof o.channelId === 'string' && o.channelId)
-          owner.value = { videoId: v, channelId: o.channelId, name: typeof o.name === 'string' ? o.name : undefined }
-    })
-    if (d.ok) stopData = d.stop ?? null
-    else console.warn('[GEM YT] whose video: not read', d.error ?? d.reason)
-  }
-}
-function stopWatching() {
-  watching = false
-  stopNow?.(); stopNow = null
-  stopMedia?.(); stopMedia = null
-  stopData?.(); stopData = null
-  owner.value = null
-  nowInfo.value = {}
-  media.value = null
-}
-const clockOf = (s: number) => { const t = Math.floor(s); const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, x = t % 60; return `${h ? `${h}:${String(m).padStart(2, '0')}` : m}:${String(x).padStart(2, '0')}` }
-// 0.21.1: what's playing and its state apart (the title scrolls in GEM Shell's marquee; the clock beside it changes every
-// second and would restart it)
-const nowWhat = computed(() => { const n = nowInfo.value; return [n.title, n.channelName ?? n.channelHandle].filter(Boolean).join(' — ') })
-const nowState = computed(() => {
-  const m = media.value
-  return !m ? '' : m.ended ? 'Ended' : !m.playing ? (m.time ? `Paused ${clockOf(m.time)}` : '') : m.duration ? `${clockOf(m.time)} / ${clockOf(m.duration)}` : ''
+// ── The toolbar: a strip and its panel (use/toolbar.ts) ─────────────────────────────────────────────────────────────
+const { watchingVideo, stripTitle, stripAvatar, stripInitial, canMedia, panelView, openPanel, toggleMedia, toggleMute, closePanel } = useToolbar({
+  sdk, surface: () => surface, frame, nowInfo, nowLine, media, sound, currentUrl, avatar: () => playingCard.value?.avatar,
+  panelComponent: ToolbarPanel, snack, status,
 })
-const nowLine = computed(() => [nowWhat.value, nowState.value].filter(Boolean).join(' · '))
-// 0.21.2: the toolbar's part moved here, after what its watchers read at once (currentUrl, nowLine): declared before
-// them, a watcher's first run read a const not made yet ("Cannot access … before initialization")
-// ── 0.18.0: the toolbar (parts/ToolbarStrip.vue, parts/ToolbarPanel.vue) ─────────────────────────────────────────
-// The page sits in the frame (1 px, out of view: its sound keeps it running). ▣ or ☰ opens a panel under the strip
-// (ui.openPopover); its body reports itself and GEM YT moves the page over it (surface.moveTo: no reload), then places
-// YouTube's player or list there (page regions). Closed: the page goes back to the frame, still playing.
-const watchingVideo = computed(() => !!nowInfo.value.videoId || isWatchUrl(currentUrl.value))
-const stripTitle = computed(() => (watchingVideo.value ? nowInfo.value.title || nowLine.value || 'YouTube' : 'YouTube'))
-const stripAvatar = computed(() => playingCard.value?.avatar)
-const stripInitial = computed(() => (nowInfo.value.channelName || 'Y').slice(0, 1).toUpperCase())
-const canMedia = computed(() => typeof surface?.media === 'function' || !!media.value)
-type PanelView = 'video' | 'list'
-type PanelTab = ListTab
-const panel = shallowRef<{ handle: { close(): void; update(p: Record<string, unknown>): void }; view: PanelView; tab: PanelTab; el: HTMLElement | null; w: number; h: number } | null>(null)
-const panelTick = ref(0)
-const panelView = computed(() => { void panelTick.value; return panel.value?.view ?? null })
-function panelProps(view: PanelView, tab: PanelTab) {
-  return {
-    view, tab, watching: watchingVideo.value, title: stripTitle.value, queue: nowInfo.value.queue ?? null,
-    onBody: panelBody, onView: (v: PanelView) => setPanel(v, null), onTab: (t: PanelTab) => setPanel(null, t),
-  }
-}
-function openPanel(view: PanelView, anchor: HTMLElement) {
-  const ui = (sdk as any)?.ui?.()
-  if (!surface || !ui?.openPopover) return
-  if (typeof surface.moveTo !== 'function') { snack('This GEM Shell can’t show the video in a panel yet.'); return }
-  const old = panel.value
-  if (old) { old.handle.close() }
-  if (old && old.view === view) return
-  const tab: PanelTab = old?.tab ?? 'upNext'
-  let mine: typeof panel.value = null
-  const h = ui.openPopover({
-    anchor, component: ToolbarPanel, props: panelProps(view, tab), placement: 'below', maxWidth: 640, maxHeight: 640,
-    onClose: () => { if (panel.value === mine) { panel.value = null; panelTick.value++; panelSent = ''; pageHome() } },
-  })
-  if (!h) return
-  mine = { handle: h, view, tab, el: null, w: 0, h: 0 }
-  panel.value = mine
-  panelTick.value++
-}
-function setPanel(view: PanelView | null, tab: PanelTab | null) {
-  const p = panel.value
-  if (!p) return
-  p.view = view ?? p.view
-  p.tab = tab ?? p.tab
-  p.handle.update(panelProps(p.view, p.tab))
-  panelTick.value++
-}
-/** The panel's body (null: gone), with its size */
-function panelBody(el: HTMLElement | null, w: number, h: number) {
-  const p = panel.value
-  if (!p) return
-  if (!el) { if (p.el) { p.el = null; pageHome() } return }
-  if (el !== p.el) {
-    if (!surface?.moveTo?.(el)) return
-    p.el = el
-  }
-  p.w = w; p.h = h
-  panelTick.value++
-}
-/** The page back in the frame (out of view): the whole page again, so a panel opened later starts clean */
-function pageHome() {
-  if (!surface || !frame.value) return
-  surface.moveTo?.(frame.value)
-  void surface.regions?.('youtube', null)
-}
-// What the panel's body shows: YouTube's player or its list, else the whole page (not on a video: browse, pick one)
-let panelSent = ''
-watch(() => [panelTick.value, watchingVideo.value, nowInfo.value.queue] as const, () => {
-  const p = panel.value
-  if (!p?.el || !surface?.regions || p.w < 120 || p.h < 68) return
-  const part = p.view === 'video' ? 'player' : listPart(p.tab, !!nowInfo.value.queue)
-  const place = watchingVideo.value ? { [part]: { x: 0, y: 0, width: Math.floor(p.w), height: Math.floor(p.h) } } : null
-  const k = JSON.stringify(place)
-  if (k === panelSent) return
-  panelSent = k
-  void surface.regions('youtube', place).then((r: any) => { if (r && !r.ok) status.value = `Panel: ${r.error ?? r.reason}` })
-})
-// The panel's head follows what's playing
-watch(() => [watchingVideo.value, stripTitle.value, nowInfo.value.queue] as const, () => {
-  const p = panel.value
-  if (p) p.handle.update(panelProps(p.view, p.tab))
-})
-async function toggleMedia() {
-  if (!surface?.media) return
-  const r = await surface.media('toggle')
-  if (r?.ok && media.value) media.value = { ...media.value, playing: r.playing }
-}
-function toggleMute() { surface?.mute?.(!sound.value.muted) }
+// In the sidebar, what's playing also goes in the header GEM Shell gives the widget ("GEM YT · <title>", scrolling)
+watch(() => (compactPlayer.value && showTiles.value ? nowWhat.value || null : null), t => {
+  try { (sdk as any)?.ui?.()?.setHeaderStatus?.(t) } catch { /* an older GEM Shell, or a preview */ }
+}, { immediate: true })
 
 /** The playing channel, if it's one of yours: its card (pictures asked once it's known). */
 const playingChannel = computed(() => {
@@ -1740,7 +1560,8 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  if (panel.value) { const p = panel.value; panel.value = null; p.handle.close() }   // 0.18.0
+  closePanel()
+  if (compactPlayer.value) try { (sdk as any)?.ui?.()?.setHeaderStatus?.(null) } catch { /* a preview */ }
   for (const off of offs) off()
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
   queue.length = 0

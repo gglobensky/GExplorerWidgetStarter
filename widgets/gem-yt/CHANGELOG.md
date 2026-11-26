@@ -3,6 +3,7 @@
 YouTube in GEM Shell. Newest first. Before 1.0 (0.10.0), GEM YT mode showed your channels on racks; they were replaced
 by the pages (Feed, Creators, Discover, a channel's page, the watch page in tiles).
 
+- **0.22.1**: In the sidebar, the video's title also shows in GEM Shell's header ("GEM YT · <title>", scrolling), as the local player's song does; the toolbar, what's playing and the job that keeps the page moved out of Widget.vue (use/)
 - **0.22.0** (2026-11-26): A cleanup, nothing changes for you: the history moved here, the racks' and aisles' old names became the tags' and the channels', one hub-grid helper and one list-tabs part instead of copies
 - **0.21.2**: GEM YT starts again (0.21.1: a value read before it was made, in the toolbar's part)
 - **0.21.1**: The tab is Description everywhere (as in the hub's tiles); the video's title scrolls in the hub's and the sidebar's heads and the toolbar panel's (the clock stays beside it)
